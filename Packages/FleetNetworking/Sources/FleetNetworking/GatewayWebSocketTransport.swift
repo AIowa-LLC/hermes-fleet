@@ -132,6 +132,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
         await teardown(.normalClosure, error: nil)
     }
 
+    /// The `gateway.ready` payload adopted on the last successful connect
+    /// (nil until the handshake completes). Surfaces the M3 adoption seam:
+    /// the connectivity layer maps this onto the FleetCore `GatewayReadyAdoption`.
+    public func adoptedReady() -> GatewayEvent.ReadyPayload? {
+        readyPayload
+    }
+
     // MARK: RPC request/response (M2 — roster RPCs)
 
     /// Send a JSON-RPC request and await the correlated response/error.
@@ -194,22 +201,35 @@ public actor GatewayWebSocketTransport: HermesTransport {
     // MARK: handshake
 
     private func waitForReady() async throws -> GatewayEvent.ReadyPayload {
-        try await withThrowingTaskGroup(of: GatewayEvent.ReadyPayload.self) { group in
-            group.addTask { [readyEvents] in
-                for await payload in readyEvents {
-                    return payload
+        do {
+            return try await withThrowingTaskGroup(of: GatewayEvent.ReadyPayload.self) { group in
+                group.addTask { [readyEvents] in
+                    for await payload in readyEvents {
+                        return payload
+                    }
+                    throw TransportError.readyTimeout
                 }
-                throw TransportError.readyTimeout
+                group.addTask { [config] in
+                    try await Task.sleep(for: config.connectTimeout)
+                    throw TransportError.readyTimeout
+                }
+                guard let result = try await group.next() else {
+                    throw TransportError.readyTimeout
+                }
+                group.cancelAll()
+                return result
             }
-            group.addTask { [config] in
-                try await Task.sleep(for: config.connectTimeout)
-                throw TransportError.readyTimeout
+        } catch TransportError.readyTimeout {
+            // The handshake stream ended without a payload. If the socket
+            // actually died during the handshake (unreachable host, closed
+            // socket), surface the classified reason instead of a bare
+            // timeout — that is the M3 reachable/unreachable distinction.
+            // A still-open silent server leaves `connectionState == .connecting`
+            // here, so it correctly remains `.readyTimeout`.
+            if case .error(let reason) = connectionState {
+                throw TransportError.connectionClosed(reason)
             }
-            guard let result = try await group.next() else {
-                throw TransportError.readyTimeout
-            }
-            group.cancelAll()
-            return result
+            throw TransportError.readyTimeout
         }
     }
 
