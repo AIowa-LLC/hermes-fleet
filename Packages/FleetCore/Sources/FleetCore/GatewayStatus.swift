@@ -29,13 +29,29 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
         self == .online || self == .degraded
     }
 
-    /// Map the transport seam's observable state onto the user-facing status.
+    /// Map a transport seam's observable state onto the user-facing status.
     public init(transportState: TransportState) {
         switch transportState {
         case .connected: self = .online
         case .connecting: self = .connecting
         case .disconnected: self = .offline
         case .failed(let detail): self = Self.classify(failureDetail: detail)
+        }
+    }
+
+    /// Map a `GatewayConnectivityError` (the M3 UI-facing vocabulary) onto the
+    /// §13 status. A failed probe is a classification, never a thrown error —
+    /// reachable/unreachable is the spec §31 acceptance.
+    public init(connectivityError: GatewayConnectivityError) {
+        switch connectivityError {
+        case .authenticationRequired:
+            self = .authenticationRequired
+        case .unsupported:
+            self = .unsupported
+        case .unreachable, .timeout:
+            self = .offline
+        case .connectionFailed(let detail), .invalidState(let detail):
+            self = Self.classify(failureDetail: detail)
         }
     }
 

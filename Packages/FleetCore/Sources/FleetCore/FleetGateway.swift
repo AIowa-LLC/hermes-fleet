@@ -27,6 +27,9 @@ public struct FleetGateway: Identifiable, Hashable, Sendable {
     /// True once the gateway has been authenticated (token/ticket stored) —
     /// informational only; never a secret.
     public var authConfigured: Bool
+    /// Non-secret authentication configuration (strategy + credential-stored
+    /// flag). The secret itself lives in Keychain (spec §12, §16).
+    public var authConfiguration: GatewayAuthConfiguration
 
     public init(
         id: GatewayID,
@@ -36,7 +39,8 @@ public struct FleetGateway: Identifiable, Hashable, Sendable {
         capabilities: Set<String> = [],
         serverIdentity: String? = nil,
         replayEpoch: String? = nil,
-        authConfigured: Bool = false
+        authConfigured: Bool = false,
+        authConfiguration: GatewayAuthConfiguration = .none
     ) {
         self.id = id
         self.displayName = displayName
@@ -46,5 +50,6 @@ public struct FleetGateway: Identifiable, Hashable, Sendable {
         self.serverIdentity = serverIdentity
         self.replayEpoch = replayEpoch
         self.authConfigured = authConfigured
+        self.authConfiguration = authConfiguration
     }
 }

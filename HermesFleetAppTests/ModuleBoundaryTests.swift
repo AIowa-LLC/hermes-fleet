@@ -1,4 +1,5 @@
 import XCTest
+import Security
 import FleetCore
 import FleetNetworking
 import FleetSecurity
@@ -164,6 +165,96 @@ final class ModuleBoundaryTests: XCTestCase {
             XCTAssertEqual(error, .notConnected)
         } catch {
             XCTFail("unexpected error \(error)")
+        }
+    }
+
+    // MARK: M7 — gateway registry + Keychain credential storage usable from the app
+
+    func testGatewayRegistrySeamIsConstructibleInComposition() async throws {
+        // Prove the M7 registry seam (FleetCore `GatewayRegistryManaging`) is
+        // constructible in the app composition root over the Keychain
+        // credential store (FleetSecurity) — the boundary the Gateways screen
+        // later wires to. No network is touched: a stub connection classifies
+        // an unconnected/unreachable probe instead of hanging.
+        let store = InMemoryCredentialStore()
+        let service: any GatewayRegistryManaging = GatewayRegistryService(
+            credentials: store,
+            connectionFactory: { gateway, _ in
+                StubRegistryConnection(gatewayID: gateway.id)
+            }
+        )
+        let endpoint = URL(string: "http://127.0.0.1:9119")!
+        let id = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = try await service.addGateway(
+            GatewayRegistration(id: id, displayName: "MacBook", endpoint: endpoint))
+        XCTAssertEqual(gateway.displayName, "MacBook")
+        let registeredCount = await service.allGateways().count
+        XCTAssertEqual(registeredCount, 1)
+
+        // Auth config: store a credential, mark configured, clear it.
+        try await service.saveCredential(GatewayCredential(rawValue: "fixture-token"), for: id)
+        let hasCredential = await service.hasCredential(for: id)
+        XCTAssertTrue(hasCredential)
+        try await service.clearCredential(for: id)
+        let afterClear = await service.hasCredential(for: id)
+        XCTAssertFalse(afterClear)
+
+        // Test connection: the stub is unreachable → classified offline, no crash.
+        let result = try await service.testConnection(to: id)
+        XCTAssertEqual(result.status, .offline)
+
+        // Remove is safe and idempotent after registration.
+        try await service.removeGateway(id)
+        let remainingCount = await service.allGateways().count
+        XCTAssertEqual(remainingCount, 0)
+    }
+
+    func testKeychainCredentialStoreSafeAttributesInApp() {
+        // The "Keychain safe" acceptance (spec §16/§27/§31 Security): gateway
+        // credentials use GenericPassword, WhenUnlockedThisDeviceOnly, no
+        // iCloud sync — asserted from the exact attributes the store builds.
+        let attributes = KeychainCredentialStore.baseAttributes(account: "<dev-workstation>")
+        XCTAssertEqual(attributes[kSecClass as String] as? String, kSecClassGenericPassword as String)
+        XCTAssertEqual(
+            attributes[kSecAttrAccessible as String] as? String,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
+        XCTAssertEqual(
+            attributes[kSecAttrService as String] as? String,
+            "<legacy-personal-bundle-id>.gateway-credentials")
+    }
+
+    func testKeychainCredentialStoreRoundTripInApp() async throws {
+        // Real Keychain round-trip on the simulator (the app's own keychain):
+        // save → load → delete. Proves the FleetSecurity store actually
+        // persists/retrieves a credential in the app context, with no secret
+        // leaking into the value's description.
+        let store = KeychainCredentialStore()
+        let id = GatewayID(rawValue: "m7-boundary-test-gateway")
+        let credential = GatewayCredential(rawValue: "boundary-fixture-token")
+
+        try await store.deleteCredential(for: id) // clean slate
+        defer { Task { try? await store.deleteCredential(for: id) } }
+
+        try await store.saveCredential(credential, for: id)
+        let loaded = try await store.loadCredential(for: id)
+        XCTAssertEqual(loaded, credential)
+        XCTAssertEqual(loaded?.description, "[REDACTED]", "secret never prints")
+
+        try await store.deleteCredential(for: id)
+        let afterDelete = try await store.loadCredential(for: id)
+        XCTAssertNil(afterDelete, "credential is gone after delete")
+    }
+
+    /// Minimal stub connection used by the app-level registry boundary test.
+    private struct StubRegistryConnection: GatewayConnectivityProviding {
+        let gatewayID: GatewayID
+        var status: GatewayStatus { .offline }
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func connect() async throws { throw GatewayConnectivityError.unreachable }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: "stub", endpoint: nil)
         }
     }
 
