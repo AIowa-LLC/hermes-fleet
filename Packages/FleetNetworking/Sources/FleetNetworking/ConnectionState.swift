@@ -1,0 +1,72 @@
+import Foundation
+import os
+import FleetCore
+
+/// Transport-side connection state machine. Richer than `TransportState`
+/// (which is what FleetCore's seam exposes); maps cleanly onto it.
+public enum ConnectionState: Sendable, Hashable, Equatable {
+    /// No socket exists.
+    case idle
+    /// Socket handshake in progress; waiting for `gateway.ready`.
+    case connecting
+    /// Socket open AND `gateway.ready` received — fully connected.
+    case open
+    /// Cleanly closed (client requested or server normal closure).
+    case closed
+    /// Failed/abnormal termination, with a human + machine-readable reason.
+    case error(DisconnectReason)
+
+    /// Map onto the FleetCore seam's observable state.
+    public var transportState: TransportState {
+        switch self {
+        case .idle: return .disconnected
+        case .connecting: return .connecting
+        case .open: return .connected
+        case .closed: return .disconnected
+        case .error(let reason): return .failed(reason.debugDescription)
+        }
+    }
+}
+
+/// Timeouts/heartbeat knobs for the transport. Defaults match the reference
+/// client (`apps/shared/src/json-rpc-gateway.ts`): 15s ping / 45s inbound
+/// deadline / 15s connect / 120s request.
+public struct TransportConfiguration: Sendable, Equatable {
+    public var pingInterval: Duration
+    public var inboundDeadline: Duration
+    public var connectTimeout: Duration
+    public var requestTimeout: Duration
+
+    public init(
+        pingInterval: Duration = .seconds(15),
+        inboundDeadline: Duration = .seconds(45),
+        connectTimeout: Duration = .seconds(15),
+        requestTimeout: Duration = .seconds(120)
+    ) {
+        self.pingInterval = pingInterval
+        self.inboundDeadline = inboundDeadline
+        self.connectTimeout = connectTimeout
+        self.requestTimeout = requestTimeout
+    }
+
+    public static let standard = TransportConfiguration()
+}
+
+/// Thread-safe box for the observable `TransportState` so the actor can expose
+/// a `nonisolated` property. Uses `OSAllocatedUnfairLock` (async-safe scoped
+/// locking) — `NSLock` is unavailable from async contexts on this toolchain.
+public final class TransportStateBox: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<TransportState>(initialState: .disconnected)
+
+    public init(_ initial: TransportState = .disconnected) {
+        lock.withLock { $0 = initial }
+    }
+
+    public var current: TransportState {
+        lock.withLock { $0 }
+    }
+
+    public func set(_ newValue: TransportState) {
+        lock.withLock { $0 = newValue }
+    }
+}

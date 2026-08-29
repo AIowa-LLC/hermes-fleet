@@ -1,0 +1,302 @@
+import XCTest
+import FleetCore
+import FleetNetworking
+
+/// Fake ticket minter for transport tests (no network).
+struct StaticTicketMinter: WSTicketMinting {
+    let ticket: WSTicket
+    func mintTicket() async throws -> WSTicket { ticket }
+}
+
+/// Scripted gateway.ready payload used across transport integration tests.
+func readyFrame(replayEpoch: String = "epoch-1") -> String {
+    #"{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"skin":{},"change_events":true,"heartbeat":true,"replay_epoch":"\#(replayEpoch)"}}}"#
+}
+
+final class GatewayWebSocketTransportTests: XCTestCase {
+
+    /// A transport pointed at an in-process server with a short heartbeat
+    /// config (fast tests), and a ready frame pushed on open.
+    private func makeTransport(
+        serverPort: UInt16,
+        pingInterval: Duration = .milliseconds(200),
+        inboundDeadline: Duration = .seconds(30),
+        connectTimeout: Duration = .seconds(10),
+        ticket: WSTicket = WSTicket(token: "fixture-ticket", ttlSeconds: 30)
+    ) -> GatewayWebSocketTransport {
+        let base = URL(string: "http://127.0.0.1:\(serverPort)")!
+        let config = TransportConfiguration(
+            pingInterval: pingInterval,
+            inboundDeadline: inboundDeadline,
+            connectTimeout: connectTimeout,
+            requestTimeout: .seconds(10)
+        )
+        return GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticTicketMinter(ticket: ticket),
+            configuration: config
+        )
+    }
+
+    // MARK: connect + gateway.ready
+
+    func testConnectReceivesReadyAndEntersConnected() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [readyFrame()],
+            onText: { frame in
+                // Echo gateway.ping responses so heartbeat stays healthy.
+                if frame.contains("\"gateway.ping\"") {
+                    guard let id = Self.extractID(from: frame) else { return [] }
+                    return [Self.pongFrame(id: id)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        XCTAssertEqual(transport.state, .disconnected)
+
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+        await transport.disconnect()
+        XCTAssertEqual(transport.state, .disconnected)
+    }
+
+    func testConnectWithoutReadyTimesOut() async throws {
+        // Server opens but never sends gateway.ready → connect must time out.
+        let server = try InProcessWebSocketServer(script: .init())
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(
+            serverPort: server.listeningPort, connectTimeout: .milliseconds(500))
+        do {
+            try await transport.connect()
+            XCTFail("expected ready timeout")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .readyTimeout)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+        // The transport must not be left in a connected state after a failed
+        // handshake; it either stays disconnected or records a failure.
+        XCTAssertNotEqual(transport.state, .connected, "must not be connected after ready timeout")
+    }
+
+    // MARK: heartbeat
+
+    func testHeartbeatSendsPingsAndKeepsConnectionAlive() async throws {
+        // Track how many gateway.ping frames the server sees.
+        let pingCounter = PingCounter()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [readyFrame()],
+            onText: { frame in
+                if frame.contains("\"gateway.ping\"") {
+                    pingCounter.increment()
+                    guard let id = Self.extractID(from: frame) else { return [] }
+                    return [Self.pongFrame(id: id)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(
+            serverPort: server.listeningPort, pingInterval: .milliseconds(150))
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        // Let a few heartbeat intervals elapse.
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertGreaterThanOrEqual(pingCounter.count, 2, "expected repeated pings")
+
+        await transport.disconnect()
+    }
+
+    func testHeartbeatOnlyRunsWhenGatedByReadyFlag() async throws {
+        // gateway.ready with heartbeat:false must NOT start pinging.
+        let pingCounter = PingCounter()
+        let noHeartbeatReady = #"{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"heartbeat":false,"change_events":true,"replay_epoch":"e1"}}}"#
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [noHeartbeatReady],
+            onText: { frame in
+                if frame.contains("\"gateway.ping\"") { pingCounter.increment() }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(
+            serverPort: server.listeningPort, pingInterval: .milliseconds(100))
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(pingCounter.count, 0, "heartbeat must be gated on ready.heartbeat")
+
+        await transport.disconnect()
+    }
+
+    func testHeartbeatStaleConnectionMapsToAbnormalClosure() async throws {
+        // Server sends ready but never responds → after inboundDeadline the
+        // transport must treat the connection as stale (failed).
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [readyFrame()]
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(
+            serverPort: server.listeningPort,
+            pingInterval: .milliseconds(100),
+            inboundDeadline: .milliseconds(500)
+        )
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        // Wait past the deadline; the stale handler should flip to failed.
+        let deadline = Date().addingTimeInterval(3)
+        while transport.state == .connected && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard case .failed(let reason) = transport.state else {
+            return XCTFail("expected failed state after stale heartbeat, got \(transport.state)")
+        }
+        XCTAssertTrue(reason.contains("abnormal"), "expected abnormal closure reason, got \(reason)")
+    }
+
+    // MARK: close-code mapping
+
+    func testServerClose4401MapsToReauth() async throws {
+        // Server closes with 4401 (bad credential) shortly after ready.
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [readyFrame()],
+            onText: { _ in [] }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        // Ask the server to close with 4401.
+        server.sendClose(code: 4401)
+
+        let deadline = Date().addingTimeInterval(3)
+        while transport.state == .connected && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard case .failed(let reason) = transport.state else {
+            return XCTFail("expected failed state after 4401 close, got \(transport.state)")
+        }
+        XCTAssertTrue(reason.contains("reauthentication"), "expected reauth mapping, got \(reason)")
+    }
+
+    func testServerClose1000MapsToDisconnected() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [readyFrame()],
+            onText: { _ in [] }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        server.sendClose(code: 1000)
+        let deadline = Date().addingTimeInterval(3)
+        while transport.state == .connected && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertNotEqual(transport.state, .connected, "normal close should end the connection")
+    }
+
+    // MARK: URL building
+
+    func testBuildWebSocketURLAppendsTicket() throws {
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let url = try XCTUnwrap(
+            GatewayWebSocketTransport.buildWebSocketURL(
+                base: base, path: "/api/ws", ticket: WSTicket(token: "t-123", ttlSeconds: 30)))
+        XCTAssertEqual(url.scheme, "ws")
+        XCTAssertEqual(url.host, "127.0.0.1")
+        XCTAssertEqual(url.port, 9119)
+        XCTAssertEqual(url.path, "/api/ws")
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "ticket" })
+        XCTAssertEqual(query?.value, "t-123")
+    }
+
+    func testBuildWebSocketURLHTTPSBecomesWSS() throws {
+        let base = URL(string: "https://gateway.example.com:9443")!
+        let url = try XCTUnwrap(
+            GatewayWebSocketTransport.buildWebSocketURL(
+                base: base, path: "/api/ws", ticket: WSTicket(token: "t", ttlSeconds: 30)))
+        XCTAssertEqual(url.scheme, "wss")
+        XCTAssertEqual(url.port, 9443)
+    }
+
+    // MARK: state machine
+
+    func testConnectionStateMapsToTransportState() {
+        XCTAssertEqual(ConnectionState.idle.transportState, .disconnected)
+        XCTAssertEqual(ConnectionState.connecting.transportState, .connecting)
+        XCTAssertEqual(ConnectionState.open.transportState, .connected)
+        XCTAssertEqual(ConnectionState.closed.transportState, .disconnected)
+        XCTAssertEqual(ConnectionState.error(.serverError).transportState, .failed("server error (1011)"))
+    }
+
+    func testConnectFromConnectedStateIsRejected() async throws {
+        let script = InProcessWebSocketServer.Script(onOpen: [readyFrame()])
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        do {
+            try await transport.connect()
+            XCTFail("second connect while connected should be rejected")
+        } catch let error as TransportError {
+            guard case .invalidState = error else { return XCTFail("expected invalidState, got \(error)") }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+        await transport.disconnect()
+    }
+
+    // MARK: helpers
+
+    private static func extractID(from frame: String) -> String? {
+        guard let data = frame.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = obj["id"] as? String else { return nil }
+        return id
+    }
+
+    private static func pongFrame(id: String) -> String {
+        #"{"jsonrpc":"2.0","id":"\#(id)","result":{"ok":true}}"#
+    }
+}
+
+/// Thread-safe counter used to observe server-side received pings.
+final class PingCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _count = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+    func increment() { lock.lock(); _count += 1; lock.unlock() }
+}
