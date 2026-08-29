@@ -186,13 +186,16 @@ final class ConversationClientTests: XCTestCase {
         XCTAssertEqual(captured.sessionID, "sess-001")
     }
 
-    func testResumeSessionNotFoundMaps4001() async throws {
+    func testResumeSessionNotFoundMaps4007() async throws {
         let script = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
             onText: { frame in
                 guard let (id, method, _) = Self.extractRequest(frame) else { return [] }
                 if method == "session.resume" {
-                    return [Self.errorFrame(id: id, code: 4001, message: "session not found")]
+                    // session.resume reports an unknown stored session with 4007
+                    // (methods_session.py:543) — NOT 4001, which is the
+                    // `_sess_nowait` code for prompt.submit / session.interrupt.
+                    return [Self.errorFrame(id: id, code: 4007, message: "session not found")]
                 }
                 return []
             }

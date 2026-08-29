@@ -41,8 +41,10 @@ Deliverables:
 - **`GatewayConversationClient`** (FleetNetworking) — concrete
   `ConversationProviding`: `session.create` / `session.resume` / `prompt.submit`
   / `session.interrupt` over the M1 transport `request()` correlation; maps
-  4001 → `.sessionNotFound`, 4006 → `.invalidRequest`, transport failures →
-  `.rpcFailed`; `events` maps the transport event channel onto the domain.
+  4001 and 4007 ("session not found", both the `_sess_nowait` and the
+  `session.resume` DB-lookup paths) → `.sessionNotFound`, 4006 →
+  `.invalidRequest`, transport failures → `.rpcFailed`; `events` maps the
+  transport event channel onto the domain.
 
 Explicitly NOT in M5: reconnect/replay (M6), registry (M7), session close/delete
 (P3 excludes destructive ops), persistence (P5), UI wiring (P6). The mutating
@@ -73,7 +75,7 @@ seam is explicit-user-action only — no implicit ownership claim.
   background/error, session-info, unknown preserved, session value + hashable,
   prompt streaming, interrupt result, error vocabulary.
 - `FleetNetworkingTests/ConversationClientTests.swift` — 13 tests: create
-  params + decode (incl. seed messages), resume param + decode, 4001 → notFound,
+  params + decode (incl. seed messages), resume param + decode, 4007 → notFound,
   4006 → invalidRequest, submit prompt params + decode, 4001 → notFound,
   interrupt params + decode, all-RPC not-connected, **full turn streaming in
   order** (start → delta×2 → status → thinking → reasoning → tool.start →
@@ -106,10 +108,13 @@ seam is explicit-user-action only — no implicit ownership claim.
 4. **`gateway.ready` is a handshake, not a conversation event.** It is dropped
    from the conversation event mapping (the transport consumes it for its own
    ready handshake) so the turn stream is exactly the turn's events.
-5. **Error codes are classified, not opaque.** 4001 "session not found" and 4006
-   "session_id required" map to typed `.sessionNotFound` / `.invalidRequest`
-   (verified `methods_session.py`), so the UI can render "session gone / resume
-   again" instead of a generic failure; transport failures map to `.rpcFailed`.
+5. **Error codes are classified, not opaque.** 4001 and 4007 "session not found"
+   and 4006 "session_id required" map to typed `.sessionNotFound` /
+   `.invalidRequest` (verified in the gateway source: 4001 comes from
+   `_sess_nowait` `server.py:3400` for prompt.submit / session.interrupt, 4007
+   from the `session.resume` handler's own DB lookup `methods_session.py:543`),
+   so the UI can render "session gone / resume again" instead of a generic
+   failure; transport failures map to `.rpcFailed`.
 6. **Tests run against in-process servers, never a live node.** Consistent with
    M1–M4; `InProcessWebSocketServer` scripts `session.*` / `prompt.submit`
    responses and pushes streamed event frames, and the safety gate records every
@@ -120,8 +125,9 @@ seam is explicit-user-action only — no implicit ownership claim.
 - `session.create` → `{session_id, stored_session_id?, message_count, messages,
   info: {model?, provider?, profile_name?}}` — `methods_session.py:14` (returns
   lightweight session immediately; agent builds in the background).
-- `session.resume` → same envelope; requires `session_id` (else 4006), 4001 when
-  the session is unknown — `methods_session.py:374`.
+- `session.resume` → same envelope; requires `session_id` (else 4006), 4007 when
+  the session is unknown (its own DB lookup — `methods_session.py:543`) —
+  `methods_session.py:374`.
 - `prompt.submit` → `{"status": "streaming"}` immediately; params
   `{session_id, text}` — `methods_prompt.py:287-934`.
 - `session.interrupt` → `{"status": "interrupted"}` (+ `turn_isolation` on the
@@ -157,7 +163,8 @@ Conversation evidence (in-process servers, no live node):
 - create: title/profile/model/provider/cols params captured; session_id +
   stored_session_id + model/provider/profile_name decoded; seed messages
   decoded via the shared projection ✓
-- resume: session_id param captured; 4001 → sessionNotFound; 4006 →
+- resume: session_id param captured; 4007 → sessionNotFound (unknown stored
+  session, matches the real gateway `methods_session.py:543`); 4006 →
   invalidRequest ✓
 - submit: session_id + text captured; `{"status":"streaming"}` → isStreaming;
   4001 → sessionNotFound ✓

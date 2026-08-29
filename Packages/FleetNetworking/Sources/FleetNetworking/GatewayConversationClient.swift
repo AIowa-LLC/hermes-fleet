@@ -260,6 +260,13 @@ public struct GatewayConversationClient: ConversationProviding {
     static func mapRPCError(_ error: JSONRPCError) -> ConversationError {
         switch error.code {
         case 4001:
+            // `_sess_nowait` rejects a runtime id the gateway no longer holds
+            // (prompt.submit / session.interrupt paths) with 4001.
+            return .sessionNotFound(error.message)
+        case 4007:
+            // `session.resume` does its own DB lookup and reports an unknown
+            // stored session with 4007 (methods_session.py). Both codes mean
+            // "session gone — resume again / re-create".
             return .sessionNotFound(error.message)
         case 4006:
             return .invalidRequest(error.message)
