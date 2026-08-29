@@ -136,3 +136,20 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
         }
     }
 }
+
+// MARK: M8 — GatewayRosterSession (connectivity + roster on ONE transport)
+
+/// M8: a `SingleGatewayConnection` is a full per-gateway roster session. The
+/// roster RPCs (`profiles.list` / `session.list`) are delegated to a
+/// `GatewayRosterClient` bound to the SAME transport this connection owns, so
+/// the multi-gateway aggregation service connects once per gateway and fetches
+/// its roster over that same socket (synthesis §13, spec §31 Multi-Gateway).
+extension SingleGatewayConnection: GatewayRosterSession {
+    public func fetchProfiles() async throws -> [ProfileDescriptor] {
+        try await GatewayRosterClient(gatewayID: gatewayID, transport: transport).fetchProfiles()
+    }
+
+    public func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
+        try await GatewayRosterClient(gatewayID: gatewayID, transport: transport).fetchSessions(for: route, limit: limit)
+    }
+}

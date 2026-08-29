@@ -246,6 +246,52 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertNil(afterDelete, "credential is gone after delete")
     }
 
+    // MARK: M8 — multi-gateway union roster seam usable from the app composition root
+
+    func testFleetRosterSeamIsConstructibleInComposition() async throws {
+        // Prove the M8 union-roster seam (FleetCore `FleetRosterProviding`)
+        // is constructible in the app composition root over the registry +
+        // credential seams — the boundary the Fleet screen later wires to.
+        // No network is touched: stub sessions classify an unreachable gateway
+        // instead of hanging, and the refresh never throws for a gateway
+        // outage (spec §31 Multi-Gateway / §30 partial availability).
+        let store = InMemoryCredentialStore()
+        let registry: any GatewayRegistryManaging = GatewayRegistryService(
+            credentials: store,
+            connectionFactory: { gateway, _ in
+                StubRegistryConnection(gatewayID: gateway.id)
+            }
+        )
+        let roster: any FleetRosterProviding = FleetRosterService(
+            registry: registry,
+            credentials: store,
+            sessionFactory: { gateway, _ in
+                StubRosterSession(gatewayID: gateway.id)
+            }
+        )
+
+        // Two registered gateways, both unreachable via stubs.
+        _ = try await registry.addGateway(GatewayRegistration(
+            id: GatewayID(rawValue: "<dev-workstation>"), displayName: "MacBook",
+            endpoint: URL(string: "http://127.0.0.1:8642")!))
+        _ = try await registry.addGateway(GatewayRegistration(
+            id: GatewayID(rawValue: "arch"), displayName: "Arch",
+            endpoint: URL(string: "http://127.0.0.1:9900")!))
+
+        let snapshot = await roster.refreshRoster()
+
+        // Partial availability: both classified offline, no crash, no throw.
+        XCTAssertEqual(snapshot.reachableGateways.count, 0)
+        XCTAssertEqual(snapshot.unreachableGateways.count, 2)
+        XCTAssertEqual(
+            snapshot.outcome(for: GatewayID(rawValue: "<dev-workstation>")),
+            .failed(status: .offline, detail: "gateway unreachable"))
+        XCTAssertEqual(snapshot.outcome(for: GatewayID(rawValue: "arch")),
+            .failed(status: .offline, detail: "gateway unreachable"))
+        XCTAssertTrue(snapshot.roster.allBots.isEmpty, "unreachable gateways contribute no bots")
+        XCTAssertEqual(snapshot.roster.allGateways.count, 2, "gateway entries preserved with last-known state")
+    }
+
     /// Minimal stub connection used by the app-level registry boundary test.
     private struct StubRegistryConnection: GatewayConnectivityProviding {
         let gatewayID: GatewayID
@@ -256,6 +302,21 @@ final class ModuleBoundaryTests: XCTestCase {
         func currentGateway() async -> FleetGateway {
             FleetGateway(id: gatewayID, displayName: "stub", endpoint: nil)
         }
+    }
+
+    /// Minimal stub roster session used by the app-level M8 boundary test: an
+    /// unreachable gateway classifies offline without touching the network.
+    private struct StubRosterSession: GatewayRosterSession {
+        let gatewayID: GatewayID
+        var status: GatewayStatus { .offline }
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func connect() async throws { throw GatewayConnectivityError.unreachable }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: "stub", endpoint: nil)
+        }
+        func fetchProfiles() async throws -> [ProfileDescriptor] { throw RosterError.notConnected }
+        func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { throw RosterError.notConnected }
     }
 
     /// Minimal ticket minter for the app-level boundary test (no network).
