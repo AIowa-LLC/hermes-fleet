@@ -263,6 +263,42 @@ final class RosterClientTests: XCTestCase {
         XCTAssertEqual(captured.limit, 50)
     }
 
+    // MARK: M9 — route traversal guards fail closed
+
+    func testFetchSessionsRejectsUnsafeRouteBeforeTransport() async {
+        let client = GatewayRosterClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            transport: makeTransport(serverPort: 1))
+        let route = Route(gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+                          profileSlug: ProfileSlug(rawValue: "../etc"))
+        do {
+            _ = try await client.fetchSessions(for: route, limit: 20)
+            XCTFail("expected invalidRoute")
+        } catch let error as RosterError {
+            guard case .invalidRoute = error else {
+                return XCTFail("expected invalidRoute, got \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testFetchSessionsSafeRouteStillChecksConnection() async {
+        let client = GatewayRosterClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            transport: makeTransport(serverPort: 1))
+        let route = Route(gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+                          profileSlug: ProfileSlug(rawValue: "researcher"))
+        do {
+            _ = try await client.fetchSessions(for: route, limit: 20)
+            XCTFail("expected notConnected")
+        } catch let error as RosterError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     // MARK: routing collision at transport level — A/default vs B/default
 
     func testRoutingCollisionDistinctAcrossTwoGateways() async throws {

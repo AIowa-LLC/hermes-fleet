@@ -50,6 +50,9 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
     case sessionNotFound(String)
     /// The gateway rejected the request params (e.g. `session_id` required).
     case invalidRequest(String)
+    /// The session key or profile is not a safe routing key (path traversal,
+    /// separators) — fail closed before any RPC is sent (M9).
+    case invalidSessionKey(String)
 
     public var errorDescription: String? {
         switch self {
@@ -58,6 +61,7 @@ public enum ConversationError: Error, Sendable, Equatable, LocalizedError {
         case .rpcFailed(let s): return "conversation RPC failed: \(s)"
         case .sessionNotFound(let s): return "session not found: \(s)"
         case .invalidRequest(let s): return "invalid conversation request: \(s)"
+        case .invalidSessionKey(let s): return "invalid session key: \(s)"
         }
     }
 }

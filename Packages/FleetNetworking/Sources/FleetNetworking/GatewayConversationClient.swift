@@ -37,6 +37,11 @@ public struct GatewayConversationClient: ConversationProviding {
         provider: String?,
         cols: Int?
     ) async throws -> ConversationSession {
+        // M9 fail-closed guard: an unsafe profile slug never reaches the
+        // transport (path traversal into the gateway's profile namespace).
+        if let profile, !RoutingGuard.isValidRouteComponent(profile) {
+            throw ConversationError.invalidSessionKey("profile is not a safe routing key: \(profile)")
+        }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         var params: [String: JSONValue] = [:]
         if let title { params["title"] = .string(title) }
@@ -57,6 +62,10 @@ public struct GatewayConversationClient: ConversationProviding {
     }
 
     public func resumeSession(sessionID: String) async throws -> ConversationSession {
+        // M9 fail-closed guard (precedes the connected-state check on purpose).
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
+        }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
@@ -72,6 +81,10 @@ public struct GatewayConversationClient: ConversationProviding {
     }
 
     public func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+        // M9 fail-closed guard (precedes the connected-state check on purpose).
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
+        }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         let params: JSONValue = .object([
             "session_id": .string(sessionID),
@@ -95,6 +108,10 @@ public struct GatewayConversationClient: ConversationProviding {
     }
 
     public func interrupt(sessionID: String) async throws -> InterruptResult {
+        // M9 fail-closed guard (precedes the connected-state check on purpose).
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
+        }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {

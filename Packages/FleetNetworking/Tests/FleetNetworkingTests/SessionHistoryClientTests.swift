@@ -372,6 +372,38 @@ final class SessionHistoryClientTests: XCTestCase {
             "read path should have used exactly the read-only methods"
         )
     }
+
+    // MARK: M9 — session-key traversal guards fail closed
+
+    func testFetchSessionHistoryRejectsUnsafeSessionKeyBeforeTransport() async {
+        let client = GatewaySessionHistoryClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.fetchSessionHistory(sessionID: "../etc")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as SessionHistoryError {
+            guard case .invalidSessionKey = error else {
+                return XCTFail("expected invalidSessionKey, got \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testFetchSessionStatusRejectsUnsafeSessionKeyBeforeTransport() async {
+        let client = GatewaySessionHistoryClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.fetchSessionStatus(sessionID: "a/b")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as SessionHistoryError {
+            guard case .invalidSessionKey = error else {
+                return XCTFail("expected invalidSessionKey, got \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
 }
 
 /// Thread-safe recorder of every inbound RPC method, observed server-side.

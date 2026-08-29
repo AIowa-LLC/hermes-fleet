@@ -28,6 +28,11 @@ public struct GatewayRosterClient: RosterProviding {
     }
 
     public func fetchSessions(for route: Route, limit: Int = 200) async throws -> [SessionSummary] {
+        // M9 fail-closed guard: an unsafe route never reaches the transport.
+        // This check precedes the connected-state check on purpose.
+        guard route.isRoutingSafe else {
+            throw RosterError.invalidRoute("route \(route.id) is not a safe routing key")
+        }
         guard case .connected = transport.state else { throw RosterError.notConnected }
         let params: JSONValue = .object([
             "profile": .string(route.profileSlug.rawValue),

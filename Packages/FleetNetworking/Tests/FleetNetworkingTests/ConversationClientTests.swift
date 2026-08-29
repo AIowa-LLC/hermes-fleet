@@ -240,12 +240,16 @@ final class ConversationClientTests: XCTestCase {
 
         let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
         do {
-            _ = try await client.resumeSession(sessionID: "")
+            // A safe, non-empty id passes the M9 client guard and reaches the
+            // gateway, which answers 4006 "session_id required" → mapped to
+            // .invalidRequest. (An EMPTY id is now rejected client-side by the
+            // M9 guard before any RPC — see testResumeSessionRejectsEmptyKey.)
+            _ = try await client.resumeSession(sessionID: "missing")
             XCTFail("expected invalidRequest")
         } catch let error as ConversationError {
             XCTAssertEqual(error, .invalidRequest("session_id required"))
         } catch {
-            XCTFail("unexpected error \\(error)")
+            XCTFail("unexpected error \(error)")
         }
     }
 
@@ -612,6 +616,92 @@ final class ConversationClientTests: XCTestCase {
             Set(allowed), mutatingWhitelist,
             "conversation path should have used exactly the explicit user-action methods"
         )
+    }
+
+    // MARK: M9 — session-key / profile traversal guards fail closed
+
+    func testResumeSessionRejectsUnsafeSessionKeyBeforeTransport() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.resumeSession(sessionID: "../x")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .invalidSessionKey("session_id is not a safe session key: ../x"))
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testResumeSessionRejectsEmptyKeyBeforeTransport() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.resumeSession(sessionID: "")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .invalidSessionKey("session_id is not a safe session key: "))
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testSubmitPromptRejectsUnsafeSessionKeyBeforeTransport() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.submitPrompt(sessionID: "a/b", text: "hi")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as ConversationError {
+            guard case .invalidSessionKey = error else {
+                return XCTFail("expected invalidSessionKey, got \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testInterruptRejectsUnsafeSessionKeyBeforeTransport() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.interrupt(sessionID: "..\\x")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as ConversationError {
+            guard case .invalidSessionKey = error else {
+                return XCTFail("expected invalidSessionKey, got \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testCreateSessionRejectsUnsafeProfileBeforeTransport() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.createSession(title: nil, profile: "../x", model: nil, provider: nil, cols: nil)
+            XCTFail("expected invalidSessionKey")
+        } catch let error as ConversationError {
+            guard case .invalidSessionKey = error else {
+                return XCTFail("expected invalidSessionKey, got \(error)")
+            }
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testCreateSessionSafeProfileStillChecksConnection() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.createSession(title: nil, profile: "researcher", model: nil, provider: nil, cols: nil)
+            XCTFail("expected notConnected")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
     }
 }
 

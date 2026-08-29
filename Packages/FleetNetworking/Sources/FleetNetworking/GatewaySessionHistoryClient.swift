@@ -23,6 +23,10 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
     // MARK: SessionHistoryProviding
 
     public func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
+        // M9 fail-closed guard (precedes the connected-state check on purpose).
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw SessionHistoryError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
+        }
         guard case .connected = transport.state else { throw SessionHistoryError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
@@ -41,6 +45,10 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
     }
 
     public func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
+        // M9 fail-closed guard (precedes the connected-state check on purpose).
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw SessionHistoryError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
+        }
         guard case .connected = transport.state else { throw SessionHistoryError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {

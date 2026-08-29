@@ -13,6 +13,12 @@ public struct GatewayID: RawRepresentable, Hashable, Sendable, Codable, CustomSt
     }
 
     public var description: String { rawValue }
+
+    /// The ID is a safe routing key (M9): a single path-safe token with no
+    /// `#` — otherwise the derived `Route.id` string could be ambiguous.
+    public var isRoutingSafe: Bool {
+        RoutingGuard.isValidRouteComponent(rawValue)
+    }
 }
 
 extension GatewayID {

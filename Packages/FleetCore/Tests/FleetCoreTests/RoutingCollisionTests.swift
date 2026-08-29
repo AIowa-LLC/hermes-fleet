@@ -169,4 +169,85 @@ final class RoutingCollisionTests: XCTestCase {
         XCTAssertEqual(decoded, d)
         XCTAssertEqual(decoded.lastSession?.id, "s1")
     }
+
+    // MARK: M9 — fail-closed resolution on ambiguity (spec §5.6, §36)
+
+    private func makeCollisionRoster() -> FleetRoster {
+        var roster = FleetRoster()
+        roster.upsertGateway(FleetGateway(id: gatewayA, displayName: "A"))
+        roster.upsertGateway(FleetGateway(id: gatewayB, displayName: "B"))
+        roster.setBots(on: gatewayA, from: [ProfileDescriptor(name: "default", path: "/home/a")])
+        roster.setBots(on: gatewayB, from: [ProfileDescriptor(name: "default", path: "/home/b")])
+        return roster
+    }
+
+    func testResolveAmbiguousSlugReturnsBothCandidates() {
+        let roster = makeCollisionRoster()
+        let result = roster.resolve(profileSlug: slug)
+        guard case .ambiguous(let routes) = result else {
+            return XCTFail("expected .ambiguous, got \(result)")
+        }
+        XCTAssertEqual(routes.count, 2)
+        XCTAssertEqual(Set(routes), Set([
+            Route(gatewayID: gatewayA, profileSlug: slug),
+            Route(gatewayID: gatewayB, profileSlug: slug),
+        ]))
+    }
+
+    func testResolveUniqueSlugReturnsResolvedRoute() {
+        var roster = makeCollisionRoster()
+        roster.upsertGateway(FleetGateway(id: gatewayA, displayName: "A"))
+        roster.setBots(on: gatewayA, from: [
+            ProfileDescriptor(name: "default", path: "/home/a"),
+            ProfileDescriptor(name: "researcher", path: "/home/a/r"),
+        ])
+        let result = roster.resolve(profileSlug: ProfileSlug(rawValue: "researcher"))
+        XCTAssertEqual(result, .resolved(
+            Route(gatewayID: gatewayA, profileSlug: ProfileSlug(rawValue: "researcher"))))
+    }
+
+    func testResolveUnknownSlugReturnsNotFound() {
+        let roster = makeCollisionRoster()
+        XCTAssertEqual(roster.resolve(profileSlug: ProfileSlug(rawValue: "nope")), .notFound)
+    }
+
+    func testResolveUnsafeSlugFailsClosed() {
+        let roster = makeCollisionRoster()
+        // A traversal slug is never interpreted — even though ".." matches
+        // nothing, it must be .invalid, not .notFound, so a caller can
+        // distinguish "not registered" from "do not use this key".
+        guard case .invalid = roster.resolve(profileSlug: ProfileSlug(rawValue: "../default")) else {
+            return XCTFail("expected .invalid for an unsafe slug")
+        }
+    }
+
+    func testResolveDisplayNameAmbiguityNeverGuesses() {
+        var roster = FleetRoster()
+        roster.upsertGateway(FleetGateway(id: gatewayA, displayName: "A"))
+        roster.upsertGateway(FleetGateway(id: gatewayB, displayName: "B"))
+        roster.setBots(on: gatewayA, from: [
+            ProfileDescriptor(name: "default", path: "/home/a", displayName: "Main Bot")])
+        roster.setBots(on: gatewayB, from: [
+            ProfileDescriptor(name: "default", path: "/home/b", displayName: "Main Bot")])
+
+        guard case .ambiguous(let routes) = roster.resolve(displayName: "Main Bot") else {
+            return XCTFail("expected .ambiguous for a shared display name, got \(roster.resolve(displayName: "Main Bot"))")
+        }
+        XCTAssertEqual(routes.count, 2)
+    }
+
+    func testResolveDisplayNameUniqueReturnsRoute() {
+        var roster = makeCollisionRoster()
+        roster.upsertGateway(FleetGateway(id: gatewayA, displayName: "A"))
+        roster.setBots(on: gatewayA, from: [
+            ProfileDescriptor(name: "default", path: "/home/a", displayName: "Main")])
+        let result = roster.resolve(displayName: "Main")
+        XCTAssertEqual(result, .resolved(
+            Route(gatewayID: gatewayA, profileSlug: slug)))
+    }
+
+    func testResolveDisplayNameUnknownReturnsNotFound() {
+        let roster = makeCollisionRoster()
+        XCTAssertEqual(roster.resolve(displayName: "Ghost Bot"), .notFound)
+    }
 }

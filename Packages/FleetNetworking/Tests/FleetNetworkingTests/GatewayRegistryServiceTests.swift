@@ -166,6 +166,32 @@ final class GatewayRegistryServiceTests: XCTestCase {
         }
     }
 
+    func testAddGatewayUnsafeIDRejected() async throws {
+        let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
+        for raw in ["../gateway", "a/b", "a#b", "a\\b"] {
+            do {
+                _ = try await service.addGateway(GatewayRegistration(
+                    id: GatewayID(rawValue: raw), displayName: "A", endpoint: endpointA))
+                XCTFail("expected invalidGatewayID for '\(raw)'")
+            } catch let error as GatewayRegistryError {
+                guard case .invalidGatewayID = error else {
+                    return XCTFail("expected invalidGatewayID for '\(raw)', got \(error)")
+                }
+            } catch {
+                XCTFail("unexpected error \(error)")
+            }
+        }
+    }
+
+    func testAddGatewaySafeDerivedIDAccepted() async throws {
+        // host:port derived IDs (dots + colon within a token) are valid route
+        // components — the M9 guard must not reject them.
+        let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
+        let gateway = try await service.addGateway(
+            GatewayRegistration(displayName: "MacBook", endpoint: endpointA))
+        XCTAssertEqual(gateway.id.rawValue, "127.0.0.1:8642")
+    }
+
     // MARK: lookup (fail closed)
 
     func testLookupFailsClosedForUnknownGateway() async throws {

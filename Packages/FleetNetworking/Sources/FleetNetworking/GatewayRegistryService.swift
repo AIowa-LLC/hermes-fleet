@@ -61,6 +61,12 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             throw GatewayRegistryError.invalidEndpoint
         }
         let id = registration.id ?? GatewayID(endpoint: registration.endpoint)
+        // M9 fail-closed guard: an unsafe gateway ID (path traversal, `#`,
+        // separators) is rejected before registration — it must never become
+        // the identity half of a route or a Keychain key.
+        guard id.isRoutingSafe else {
+            throw GatewayRegistryError.invalidGatewayID(id.rawValue)
+        }
         guard registry.gateway(for: id) == nil else {
             throw GatewayRegistryError.duplicate(id)
         }

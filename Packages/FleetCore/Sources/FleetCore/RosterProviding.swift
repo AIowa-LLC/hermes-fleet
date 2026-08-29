@@ -28,12 +28,16 @@ public enum RosterError: Error, Sendable, Equatable, LocalizedError {
     case malformedPayload(String)
     /// The gateway rejected the request.
     case rpcFailed(String)
+    /// The requested route is not a safe routing key (path traversal, `#`,
+    /// separators) — fail closed before any RPC is sent (M9).
+    case invalidRoute(String)
 
     public var errorDescription: String? {
         switch self {
         case .notConnected: return "gateway not connected"
         case .malformedPayload(let s): return "malformed roster payload: \(s)"
         case .rpcFailed(let s): return "roster RPC failed: \(s)"
+        case .invalidRoute(let s): return "invalid route: \(s)"
         }
     }
 }

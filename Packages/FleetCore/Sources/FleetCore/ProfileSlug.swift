@@ -11,4 +11,11 @@ public struct ProfileSlug: RawRepresentable, Hashable, Sendable, Codable, Custom
     }
 
     public var description: String { rawValue }
+
+    /// The slug is a safe routing key (M9): a single path-safe token with no
+    /// `#` — otherwise the derived `Route.id` string could be ambiguous and
+    /// the slug could smuggle path traversal into `session.list`/`session.create`.
+    public var isRoutingSafe: Bool {
+        RoutingGuard.isValidRouteComponent(rawValue)
+    }
 }

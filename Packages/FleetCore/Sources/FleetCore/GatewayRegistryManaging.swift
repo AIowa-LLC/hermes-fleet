@@ -59,8 +59,11 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
     case invalidEndpoint
     /// The display name is empty after trimming.
     case emptyDisplayName
-    /// A credential-store operation failed (detail is non-secret).
+    /// The credential-store operation failed (detail is non-secret).
     case credentialStoreFailed(String)
+    /// The registration supplied a gateway ID that is not a safe routing key
+    /// (path traversal, `#`, separators) — fail closed (M9).
+    case invalidGatewayID(String)
 
     public var errorDescription: String? {
         switch self {
@@ -69,6 +72,7 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
         case .invalidEndpoint: return "gateway endpoint must be an http(s) URL"
         case .emptyDisplayName: return "gateway display name cannot be empty"
         case .credentialStoreFailed(let detail): return "credential store failed: \(detail)"
+        case .invalidGatewayID(let detail): return "invalid gateway ID: \(detail)"
         }
     }
 }

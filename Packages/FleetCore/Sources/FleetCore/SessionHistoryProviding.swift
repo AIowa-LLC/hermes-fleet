@@ -32,6 +32,9 @@ public enum SessionHistoryError: Error, Sendable, Equatable, LocalizedError {
     case rpcFailed(String)
     /// The gateway reported the session does not exist / is not readable.
     case sessionNotFound(String)
+    /// The session key is not a safe routing key (path traversal, separators)
+    /// — fail closed before any RPC is sent (M9).
+    case invalidSessionKey(String)
 
     public var errorDescription: String? {
         switch self {
@@ -39,6 +42,7 @@ public enum SessionHistoryError: Error, Sendable, Equatable, LocalizedError {
         case .malformedPayload(let s): return "malformed session payload: \(s)"
         case .rpcFailed(let s): return "session read RPC failed: \(s)"
         case .sessionNotFound(let s): return "session not found: \(s)"
+        case .invalidSessionKey(let s): return "invalid session key: \(s)"
         }
     }
 }
