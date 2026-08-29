@@ -61,6 +61,39 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(connection.status, .offline)
     }
 
+    // MARK: M4 — session READ path seam usable from the app composition root
+
+    func testSessionReadSeamIsConstructibleInComposition() async {
+        // Prove the M4 session read path (FleetCore `SessionHistoryProviding`)
+        // is constructible in the app composition root over the same transport
+        // — the boundary that later milestone wires the Sessions screen to.
+        // No network is touched: the seam is built and its error classification
+        // for an unconnected transport is verified (read-only path, §5.4).
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30), inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(2), requestTimeout: .seconds(10)
+        )
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticAppTicketMinter(),
+            configuration: config
+        )
+        let readClient: any SessionHistoryProviding = GatewaySessionHistoryClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            transport: transport
+        )
+        // Not connected → the read path classifies, it does not hang or mutate.
+        do {
+            _ = try await readClient.fetchSessionHistory(sessionID: "s")
+            XCTFail("expected notConnected from unconnected read client")
+        } catch let error as SessionHistoryError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     /// Minimal ticket minter for the app-level boundary test (no network).
     private struct StaticAppTicketMinter: WSTicketMinting {
         func mintTicket() async throws -> WSTicket {
