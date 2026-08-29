@@ -63,6 +63,37 @@ final class GatewayRegistryServiceTests: XCTestCase {
         }
     }
 
+    /// A stub connection that RECORDS `disconnect()` invocations, so tests can
+    /// assert the probe is always torn down (ADR #3) even on classified-failure
+    /// paths where no real socket exists.
+    private final class RecordingStubConnection: GatewayConnectivityProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        private let connectError: GatewayConnectivityError?
+        private let lock = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+        init(gatewayID: GatewayID, connectError: GatewayConnectivityError?) {
+            self.gatewayID = gatewayID
+            self.connectError = connectError
+        }
+
+        var disconnectCount: Int { lock.withLock { $0 } }
+
+        var status: GatewayStatus {
+            guard let connectError else { return .online }
+            return GatewayStatus(connectivityError: connectError)
+        }
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func connect() async throws {
+            if let connectError { throw connectError }
+        }
+        func disconnect() async {
+            lock.withLock { $0 += 1 }
+        }
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: "stub", endpoint: nil)
+        }
+    }
+
     private func makeService(
         credentials: CredentialStoring,
         factory: @escaping GatewayConnectionFactory
@@ -252,15 +283,15 @@ final class GatewayRegistryServiceTests: XCTestCase {
         defer { server.stop() }
 
         let base = URL(string: "http://127.0.0.1:\(server.listeningPort)")!
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30), inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(10), requestTimeout: .seconds(10))
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticTestTicketMinter(),
+            configuration: config)
         let factory: GatewayConnectionFactory = { gateway, _ in
-            let config = TransportConfiguration(
-                pingInterval: .seconds(30), inboundDeadline: .seconds(30),
-                connectTimeout: .seconds(10), requestTimeout: .seconds(10))
-            let transport = GatewayWebSocketTransport(
-                baseURL: base,
-                ticketMinter: StaticTestTicketMinter(),
-                configuration: config)
-            return SingleGatewayConnection(
+            SingleGatewayConnection(
                 gatewayID: gateway.id, displayName: gateway.displayName,
                 endpoint: gateway.endpoint, transport: transport)
         }
@@ -272,6 +303,12 @@ final class GatewayRegistryServiceTests: XCTestCase {
         XCTAssertEqual(result.status, .online)
         XCTAssertTrue(result.capabilities.contains(.heartbeat))
         XCTAssertTrue(result.capabilities.contains(.changeEvents))
+
+        // Teardown assertion (ADR #3): the probe closed its own connection
+        // before returning — the transport reached a terminal state rather
+        // than being abandoned with running receive/heartbeat tasks.
+        XCTAssertEqual(transport.state, .disconnected,
+            "testConnection must tear down the probe connection before returning")
 
         // Registry entry reflects the adopted capability surface (spec §5.3).
         let gatewayValue = await service.gateway(for: id)
@@ -326,6 +363,22 @@ final class GatewayRegistryServiceTests: XCTestCase {
         try await register(service)
         let result = try await service.testConnection(to: gatewayA)
         XCTAssertEqual(result.status, .degraded)
+    }
+
+    // MARK: test connection — probe teardown on every exit path (ADR #3)
+
+    func testTestConnectionFailurePathTearsDownProbe() async throws {
+        // A classified failure must also tear the probe connection down — no
+        // path may abandon an open socket / running tasks.
+        let recording = RecordingStubConnection(gatewayID: gatewayA, connectError: .unreachable)
+        let factory: GatewayConnectionFactory = { _, _ in recording }
+        let service = makeService(credentials: TestCredentialStore(), factory: factory)
+        try await register(service)
+
+        let result = try await service.testConnection(to: gatewayA)
+        XCTAssertEqual(result.status, .offline)
+        XCTAssertEqual(recording.disconnectCount, 1,
+            "testConnection must tear down the probe connection on the failure path too")
     }
 
     // MARK: test connection — credential passed to the factory (auth config)

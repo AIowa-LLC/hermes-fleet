@@ -170,7 +170,7 @@ simulator runtime · host macOS 26.6.2.
 | `swift build --package-path Packages/FleetSecurity` | Build complete, 0 errors |
 | `swift test --package-path Packages/FleetSecurity` | **10 tests, 0 failures** (new FleetSecurityTests target) |
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors |
-| `swift test --package-path Packages/FleetNetworking` | **112 tests, 0 failures** (90 prior + 22 new GatewayRegistryServiceTests) |
+| `swift test --package-path Packages/FleetNetworking` | **113 tests, 0 failures** (90 prior + 23 new GatewayRegistryServiceTests, incl. probe-teardown assertions) |
 | `xcodegen generate` | Regenerated; team `<personal-team-id>` present; package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 18 tests, 0 failures** (15 prior + 3 new M7 boundary tests, incl. real simulator Keychain round-trip) |
@@ -190,6 +190,9 @@ Registry evidence (in-process servers + scripted stubs, no live node):
 - `testConnection` classification: 4401→`.authenticationRequired`,
   unreachable/timeout→`.offline`, unsupported→`.unsupported`,
   server-error→`.degraded` ✓
+- probe teardown: `testConnection` tears down its probe connection on EVERY
+  exit path — success (real transport reaches terminal `.disconnected`) and
+  classified failure (recorded `disconnect()` call) — ADR #3 ✓
 - stored credential flows to the connection factory (auth config) ✓
 - Keychain: attributes = GenericPassword / WhenUnlockedThisDeviceOnly /
   no-sync (asserted); real simulator round-trip save→load→delete with

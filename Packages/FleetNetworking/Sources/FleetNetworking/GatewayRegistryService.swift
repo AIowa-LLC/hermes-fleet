@@ -143,6 +143,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         let credential = try? await credentials.loadCredential(for: id)
         let connection = connectionFactory(gateway, credential)
 
+        let result: GatewayTestResult
         do {
             try await connection.connect()
             let adopted = await connection.adoptedReady()
@@ -154,7 +155,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
                 entry.replayEpoch = adopted?.replayEpoch
                 entry.authConfigured = credential != nil
             }
-            return GatewayTestResult(
+            result = GatewayTestResult(
                 status: connection.status,
                 capabilities: GatewayCapabilities(strings: adopted?.capabilities ?? []),
                 serverIdentity: gateway.serverIdentity
@@ -164,13 +165,22 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             registry.update(id) { entry in
                 entry.connectionState = .failed(status.rawValue)
             }
-            return GatewayTestResult(status: status)
+            result = GatewayTestResult(status: status)
         } catch {
             let status = GatewayStatus.offline
             registry.update(id) { entry in
                 entry.connectionState = .failed("\(error)")
             }
-            return GatewayTestResult(status: status)
+            result = GatewayTestResult(status: status)
         }
+
+        // ADR #3 — the probe ALWAYS tears down its connection before
+        // returning: `disconnect()` is idempotent and safe from every state
+        // (spec §31 "disconnect does not crash"), so this single await covers
+        // the success path and every classified-failure path alike. Without
+        // it, the probe's WebSocket socket + receive/heartbeat tasks are
+        // abandoned after a successful test.
+        await connection.disconnect()
+        return result
     }
 }
