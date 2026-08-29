@@ -14,6 +14,10 @@ let package = Package(
         .package(path: "../FleetCore")
     ],
     targets: [
-        .target(name: "FleetPersistence", dependencies: ["FleetCore"])
+        .target(name: "FleetPersistence", dependencies: ["FleetCore"]),
+        .testTarget(
+            name: "FleetPersistenceTests",
+            dependencies: ["FleetPersistence", "FleetCore"]
+        )
     ]
 )
