@@ -128,6 +128,45 @@ final class ModuleBoundaryTests: XCTestCase {
         }
     }
 
+    // MARK: M6 — reconnect/replay seam usable from the app composition root
+
+    func testReplaySeamIsConstructibleInComposition() async {
+        // Prove the M6 reconnect/replay seam (FleetCore `ReplayProviding`) is
+        // constructible in the app composition root over the same transport
+        // the read/conversation paths use. No network is touched: the seam is
+        // built and its error classification for an unconnected transport is
+        // verified (replay is observation, never an implicit mutation — §5.4).
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30), inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(2), requestTimeout: .seconds(10)
+        )
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticAppTicketMinter(),
+            configuration: config
+        )
+        let history: any SessionHistoryProviding = GatewaySessionHistoryClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            transport: transport
+        )
+        let replay: any ReplayProviding = GatewayReplayEngine(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            transport: transport,
+            history: history
+        )
+        // Not connected → the replay seam classifies; it does not hang or
+        // invent events.
+        do {
+            _ = try await replay.replayAfterReconnect()
+            XCTFail("expected notConnected from unconnected replay engine")
+        } catch let error as ReplayError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     /// Minimal ticket minter for the app-level boundary test (no network).
     private struct StaticAppTicketMinter: WSTicketMinting {
         func mintTicket() async throws -> WSTicket {

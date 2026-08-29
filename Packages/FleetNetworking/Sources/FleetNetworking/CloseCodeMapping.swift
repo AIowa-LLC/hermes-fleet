@@ -81,6 +81,12 @@ public enum CloseCodeMapping {
     /// was observed (e.g. abnormal teardown).
     public static func reason(for error: any Error) -> DisconnectReason {
         let nsError = error as NSError
+        // POSIX ENOTCONN (57): socket dropped without a close frame — the
+        // network-switch / abnormal-loss signal. Classify as abnormal closure
+        // rather than an opaque unknown.
+        if nsError.domain == NSPOSIXErrorDomain, nsError.code == 57 {
+            return .abnormalClosure
+        }
         if nsError.domain == NSURLErrorDomain {
             switch nsError.code {
             case NSURLErrorSecureConnectionFailed,

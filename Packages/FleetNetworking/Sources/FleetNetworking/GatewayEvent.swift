@@ -51,6 +51,20 @@ public struct GatewayEvent: Sendable, Hashable {
     /// Decode an inbound `method:"event"` notification.
     public init?(event: JSONRPCEvent) {
         guard let params = event.params?.objectValue else { return nil }
+        self.init(paramsObject: params)
+    }
+
+    /// Decode a BARE replay event object returned inside a
+    /// `session.events.since` response (event_replay.py: `events_since`
+    /// returns each frame's `params` dict — top-level `type` / `session_id` /
+    /// `seq` / `payload`, NOT wrapped in a JSON-RPC envelope). Same shape as
+    /// the event params, so the same tolerant decode applies.
+    public init?(replayParams value: JSONValue) {
+        guard let params = value.objectValue else { return nil }
+        self.init(paramsObject: params)
+    }
+
+    private init?(paramsObject params: [String: JSONValue]) {
         let raw = params["type"]?.stringValue ?? ""
         self.rawType = raw
         self.type = EventType(rawValue: raw) ?? .unknown

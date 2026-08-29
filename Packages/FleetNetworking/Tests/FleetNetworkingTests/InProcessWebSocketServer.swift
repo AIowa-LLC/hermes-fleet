@@ -28,13 +28,21 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
     }
 
     private let listener: NWListener
-    private let script: Script
+    /// One script per accepted connection; connection N uses
+    /// `scripts[min(N, scripts.count-1)]` so reconnects can be scripted with
+    /// different behavior per connection (P4 reconnect suite).
+    private let scripts: [Script]
     private let stateLock = NSLock()
     private var _connection: NWConnection?
     private var _inboundCount = 0
+    private var _connectionCount = 0
 
-    public init(script: Script) throws {
-        self.script = script
+    public convenience init(script: Script) throws {
+        try self.init(scripts: [script])
+    }
+
+    public init(scripts: [Script]) throws {
+        self.scripts = scripts.isEmpty ? [Script()] : scripts
         let parameters = NWParameters.tcp
         let wsOptions = NWProtocolWebSocket.Options()
         wsOptions.autoReplyPing = true
@@ -43,6 +51,14 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
         }
         parameters.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
         self.listener = try NWListener(using: parameters, on: .any)
+    }
+
+    /// The number of WebSocket connections accepted so far (1-based). Lets a
+    /// test observe that a reconnect actually opened a fresh connection.
+    public var connectionCount: Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _connectionCount
     }
 
     /// The port this server is listening on (valid after `start`).
@@ -79,6 +95,16 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
         listener.cancel()
     }
 
+    /// Abruptly cancel the current connection WITHOUT a close frame — the
+    /// network-switch / abnormal-loss simulation (client observes a transport
+    /// error, no close code → `.abnormalClosure`).
+    public func abortConnection() {
+        stateLock.lock()
+        let connection = _connection
+        stateLock.unlock()
+        connection?.cancel()
+    }
+
     /// Deliver a server→client close frame with the given application code
     /// (e.g. 4401). `NWProtocolWebSocket.CloseCode.applicationCode` carries
     /// 4400–4999 verbatim.
@@ -109,17 +135,21 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
 
     private func accept(_ connection: NWConnection) {
         stateLock.lock()
+        _connectionCount += 1
+        let index = min(_connectionCount - 1, scripts.count - 1)
+        let script = scripts[index]
         _connection = connection
+        _inboundCount = 0
         stateLock.unlock()
         connection.start(queue: .global())
         // Push scripted open frames once the handshake has settled.
         for frame in script.onOpen {
             sendText(frame, on: connection)
         }
-        runReceiveLoop(connection)
+        runReceiveLoop(connection, script: script)
     }
 
-    private func runReceiveLoop(_ connection: NWConnection) {
+    private func runReceiveLoop(_ connection: NWConnection, script: Script) {
         connection.receiveMessage { [weak self] content, _, isComplete, error in
             guard let self else { return }
             if let content, isComplete {
@@ -130,7 +160,7 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
                         // NWProtocolWebSocket reports received text messages
                         // as .cont on some paths; decode any data-bearing frame.
                         if let string = String(data: content, encoding: .utf8) {
-                            self.handleText(string)
+                            self.handleText(string, script: script)
                         }
                     case .close:
                         connection.cancel()
@@ -143,12 +173,12 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
             if error != nil {
                 connection.cancel()
             } else {
-                self.runReceiveLoop(connection)
+                self.runReceiveLoop(connection, script: script)
             }
         }
     }
 
-    private func handleText(_ string: String) {
+    private func handleText(_ string: String, script: Script) {
         stateLock.lock()
         _inboundCount += 1
         let count = _inboundCount
@@ -165,7 +195,6 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
             sendClose(code: 1000)
         }
     }
-
     private func sendText(_ string: String, on connection: NWConnection) {
         let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
         let context = NWConnection.ContentContext(
