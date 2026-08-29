@@ -6,17 +6,31 @@ import Foundation
 /// `ws_tickets.py`): `POST {base}/api/auth/ws-ticket` → `{"ticket": "...",
 /// "ttl_seconds": 30}`. The ticket is base64url, single-use, TTL 30s — a
 /// fresh ticket must be minted immediately before every WebSocket connect.
-public struct WSTicket: Sendable, Hashable, Equatable {
+public struct WSTicket: Sendable, Hashable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
     public let token: String
     public let ttlSeconds: Int
+    /// When this ticket was minted, for client-side TTL enforcement
+    /// (single-use, 30s TTL — synthesis §11; never connect with a stale
+    /// ticket). Defaults to now so existing call sites stay unchanged.
+    public let mintedAt: Date
 
-    public init(token: String, ttlSeconds: Int) {
+    public init(token: String, ttlSeconds: Int, mintedAt: Date = Date()) {
         self.token = token
         self.ttlSeconds = ttlSeconds
+        self.mintedAt = mintedAt
     }
 
     /// The auth query param to attach: `?ticket=<token>`.
     public var authQueryItem: URLQueryItem { URLQueryItem(name: "ticket", value: token) }
+
+    /// Client-side TTL enforcement (synthesis §11: single-use, 30s TTL).
+    /// A ticket whose TTL has elapsed must be re-minted — never reused.
+    public func isExpired(asOf now: Date = Date()) -> Bool {
+        now.timeIntervalSince(mintedAt) > Double(ttlSeconds)
+    }
+
+    public var description: String { "[REDACTED]" }
+    public var debugDescription: String { "WSTicket(redacted)" }
 }
 
 /// Abstraction over ticket minting so the transport can be tested with a
@@ -89,4 +103,12 @@ public struct WSTicketClient: WSTicketMinting {
         }
         return WSTicket(token: ticket, ttlSeconds: ttl)
     }
+}
+
+// MARK: - Redaction (spec §29: no credentials in logs/UI)
+
+extension WSTicketClient: CustomStringConvertible, CustomDebugStringConvertible {
+    /// The client's printable form never includes the session token.
+    public var description: String { "WSTicketClient(baseURL: \(baseURL))" }
+    public var debugDescription: String { description }
 }

@@ -12,6 +12,9 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
     case requestTimeout
     case connectionClosed(DisconnectReason)
     case transportFailure(String)
+    /// Authentication (ticket mint / loopback token lookup) failed before the
+    /// socket opened. Never carries secret material (spec §29).
+    case authenticationFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -23,6 +26,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
         case .requestTimeout: return "request timed out"
         case .connectionClosed(let r): return "connection closed: \(r.debugDescription)"
         case .transportFailure(let s): return "transport failure: \(s)"
+        case .authenticationFailed(let s): return "authentication failed: \(s)"
         }
     }
 }
@@ -47,7 +51,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
 public actor GatewayWebSocketTransport: HermesTransport {
     // MARK: configuration
     private let baseURL: URL
-    private let ticketMinter: any WSTicketMinting
+    private let authentication: any AuthenticationProviding
     private let sessionFactory: any WebSocketSessionFactory
     private let config: TransportConfiguration
 
@@ -117,13 +121,36 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     public init(
         baseURL: URL,
+        authentication: any AuthenticationProviding,
+        sessionFactory: any WebSocketSessionFactory = URLSessionWebSocketSessionFactory(),
+        configuration: TransportConfiguration = .standard,
+        initialState: TransportState = .disconnected
+    ) {
+        self.baseURL = baseURL
+        self.authentication = authentication
+        self.sessionFactory = sessionFactory
+        self.config = configuration
+        self.stateBox = TransportStateBox(initialState)
+        self.lastInbound = .now
+        let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
+        self.readyEvents = stream
+        self.readyContinuation = continuation
+        let (eventStream, eventContinuation) = AsyncStream<GatewayEvent>.makeStream()
+        self.eventStream = eventStream
+        self.eventContinuation = eventContinuation
+    }
+
+    /// M1-compatible init: a plain `WSTicketMinting` is adapted to the
+    /// `AuthenticationProviding` seam (ticket-only auth).
+    public init(
+        baseURL: URL,
         ticketMinter: any WSTicketMinting,
         sessionFactory: any WebSocketSessionFactory = URLSessionWebSocketSessionFactory(),
         configuration: TransportConfiguration = .standard,
         initialState: TransportState = .disconnected
     ) {
         self.baseURL = baseURL
-        self.ticketMinter = ticketMinter
+        self.authentication = TicketOnlyAuthenticator(ticketMinter: ticketMinter)
         self.sessionFactory = sessionFactory
         self.config = configuration
         self.stateBox = TransportStateBox(initialState)
@@ -162,8 +189,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
         readyContinuation = readyCont
 
         do {
-            let ticket = try await ticketMinter.mintTicket()
-            guard let url = Self.buildWebSocketURL(base: baseURL, path: "/api/ws", ticket: ticket) else {
+            let authentication = try await self.authentication.authenticate()
+            guard let url = Self.buildWebSocketURL(
+                base: baseURL, path: "/api/ws", authentication: authentication
+            ) else {
                 throw TransportError.unableToBuildURL
             }
             let session = sessionFactory.makeSession(url: url)
@@ -190,6 +219,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
         } catch let error as TransportError {
             await teardown(connectionState == .open ? .normalClosure : .abnormalClosure, error: error)
             throw error
+        } catch let error as AuthenticationError {
+            // Auth material could not be produced (ticket mint failed / TTL
+            // expired / loopback token missing). Classify explicitly; never
+            // echo the raw credential (spec §29).
+            let wrapped = TransportError.authenticationFailed(error.localizedDescription)
+            await teardown(.reauthenticationRequired, error: wrapped)
+            throw wrapped
         } catch {
             let mapped = CloseCodeMapping.reason(for: error)
             await teardown(mapped, error: TransportError.connectionClosed(mapped))
@@ -580,9 +616,16 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     // MARK: URL building
 
-    /// Build `ws(s)://host:port/api/ws?ticket=...` from a base `http(s)://`
-    /// origin, matching `buildHermesWebSocketUrl`.
-    public static func buildWebSocketURL(base: URL, path: String, ticket: WSTicket) -> URL? {
+    /// Build `ws(s)://host:port/api/ws` with the connection's authentication
+    /// query (`?ticket=...` for a single-use ticket, `?token=...` for a
+    /// loopback token, or no auth query). Matches `buildHermesWebSocketUrl`.
+    /// The returned URL contains the secret auth value — never log it directly;
+    /// use `Redaction.redactedURL(_:)` (spec §29).
+    public static func buildWebSocketURL(
+        base: URL,
+        path: String,
+        authentication: ConnectionAuthentication
+    ) -> URL? {
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             return nil
         }
@@ -594,8 +637,22 @@ public actor GatewayWebSocketTransport: HermesTransport {
         }
         components.path = path
         var query = components.queryItems ?? []
-        query.append(ticket.authQueryItem)
+        switch authentication {
+        case .none:
+            break
+        case .ticket(let token):
+            query.append(URLQueryItem(name: "ticket", value: token.rawValue))
+        case .loopbackToken(let token):
+            query.append(URLQueryItem(name: "token", value: token.rawValue))
+        }
         components.queryItems = query
         return components.url
+    }
+
+    /// M1-compatible ticket-only URL builder (single-use `?ticket=`).
+    public static func buildWebSocketURL(base: URL, path: String, ticket: WSTicket) -> URL? {
+        buildWebSocketURL(
+            base: base, path: path,
+            authentication: .ticket(StoredToken(rawValue: ticket.token)))
     }
 }

@@ -424,6 +424,96 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertFalse("\(epoch ?? "")".contains("secret"), "no token material in cache")
     }
 
+    // MARK: M11 — Authentication Hardening usable from the app composition root
+
+    func testAuthenticationProviderSeamIsConstructibleInComposition() async throws {
+        // The M11 auth seam (spec §16 "AuthenticationProvider"; synthesis §11)
+        // is constructible in the app composition root over the Keychain token
+        // store + a ticket minter. Proves the ticket and loopback-token paths
+        // both produce auth material WITHOUT exposing the raw secret, and the
+        // `.none` path yields no auth.
+        let keychain = KeychainTokenStore()
+        let id = GatewayID(rawValue: "m11-boundary-gateway")
+
+        // Ticket path: a session-token gateway mints a single-use ticket.
+        let ticketAuth = GatewayAuthenticator(
+            gatewayID: id, strategy: .sessionToken,
+            ticketMinter: StaticAppTicketMinter())
+        let ticketResult = try await ticketAuth.authenticate()
+        guard case .ticket(let token) = ticketResult else {
+            return XCTFail("expected ticket auth, got \(ticketResult)")
+        }
+        XCTAssertEqual(token.rawValue, "fixture-ticket")
+        XCTAssertEqual(ticketResult.description, "[REDACTED]", "auth value never prints")
+
+        // Loopback path: a loopback-token gateway loads the token from Keychain.
+        try await keychain.saveToken(StoredToken(rawValue: "loop-token-abc"), for: id)
+        defer { Task { try? await keychain.deleteToken(for: id) } }
+        let loopAuth = GatewayAuthenticator(
+            gatewayID: id, strategy: .loopbackToken, tokenStore: keychain)
+        let loopResult = try await loopAuth.authenticate()
+        guard case .loopbackToken(let loopToken) = loopResult else {
+            return XCTFail("expected loopbackToken auth, got \(loopResult)")
+        }
+        XCTAssertEqual(loopToken.rawValue, "loop-token-abc")
+        XCTAssertFalse("\(loopResult)".contains("loop-token-abc"))
+
+        // None path: an open gateway authenticates with `.none`.
+        let noneAuth = GatewayAuthenticator(gatewayID: id, strategy: .none)
+        let noneResult = try await noneAuth.authenticate()
+        XCTAssertEqual(noneResult, .none)
+    }
+
+    func testWSTicketAndAuthRedactionInApp() {
+        // spec §16/§29: no credentials in logs/UI. A WS ticket and the
+        // connection-auth value never print their raw secret, in the app
+        // context (composition root could log these by accident).
+        let ticket = WSTicket(token: "app-secret-ticket-value", ttlSeconds: 30)
+        XCTAssertEqual(ticket.description, "[REDACTED]")
+        XCTAssertFalse("\(ticket)".contains("app-secret-ticket-value"))
+
+        let auth = ConnectionAuthentication.ticket(StoredToken(rawValue: "app-secret-ticket-value"))
+        XCTAssertEqual(auth.description, "[REDACTED]")
+        XCTAssertFalse("\(auth)".contains("app-secret-ticket-value"))
+
+        let loopback = ConnectionAuthentication.loopbackToken(StoredToken(rawValue: "app-loop-secret"))
+        XCTAssertEqual(loopback.description, "[REDACTED]")
+        XCTAssertFalse("\(loopback)".contains("app-loop-secret"))
+    }
+
+    func testLoopbackTokenAndTicketURLBuildingInApp() {
+        // synthesis §11: the socket carries `?ticket=` (single-use) or
+        // `?token=` (loopback). Both build in the app composition context.
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let ticketURL = GatewayWebSocketTransport.buildWebSocketURL(
+            base: base, path: "/api/ws",
+            authentication: .ticket(StoredToken(rawValue: "ticket-xyz")))!
+        XCTAssertEqual(
+            URLComponents(url: ticketURL, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "ticket" })?.value,
+            "ticket-xyz")
+
+        let loopURL = GatewayWebSocketTransport.buildWebSocketURL(
+            base: base, path: "/api/ws",
+            authentication: .loopbackToken(StoredToken(rawValue: "token-xyz")))!
+        XCTAssertEqual(
+            URLComponents(url: loopURL, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "token" })?.value,
+            "token-xyz")
+    }
+
+    func testRedactionScrubsAuthQueryInApp() {
+        // spec §29: network error logs redact credentials and sensitive query
+        // parameters. A built auth URL, if ever logged, must not leak the secret.
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let url = GatewayWebSocketTransport.buildWebSocketURL(
+            base: base, path: "/api/ws",
+            authentication: .ticket(StoredToken(rawValue: "top-secret-in-app")))!
+        let redacted = Redaction.redactedURL(url)
+        XCTAssertFalse(redacted.contains("top-secret-in-app"))
+        XCTAssertTrue(redacted.contains("ticket="))
+    }
+
     /// Minimal stub connection used by the app-level registry boundary test.
     private struct StubRegistryConnection: GatewayConnectivityProviding {
         let gatewayID: GatewayID

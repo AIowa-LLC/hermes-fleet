@@ -18,6 +18,9 @@ public struct GatewayAuthConfiguration: Hashable, Sendable, Codable {
         case sessionToken
         /// Future bearer-token strategy (accepted vocabulary; not v0).
         case bearerToken
+        /// Loopback token passed as `?token=` on the socket (synthesis §11
+        /// "optional loopback `?token=`"; spec §16 trusted-network strategy).
+        case loopbackToken
     }
 
     public var strategy: Strategy
