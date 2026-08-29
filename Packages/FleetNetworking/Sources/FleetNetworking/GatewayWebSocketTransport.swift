@@ -9,6 +9,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
     case unableToBuildURL
     case connectTimeout
     case readyTimeout
+    case requestTimeout
     case connectionClosed(DisconnectReason)
     case transportFailure(String)
 
@@ -19,6 +20,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
         case .unableToBuildURL: return "unable to build WebSocket URL"
         case .connectTimeout: return "WebSocket connect timed out"
         case .readyTimeout: return "gateway.ready handshake timed out"
+        case .requestTimeout: return "request timed out"
         case .connectionClosed(let r): return "connection closed: \(r.debugDescription)"
         case .transportFailure(let s): return "transport failure: \(s)"
         }
@@ -52,6 +54,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private var lastInbound: ContinuousClock.Instant
     private var readyPayload: GatewayEvent.ReadyPayload?
     private var nextHeartbeatID: Int = 0
+
+    // MARK: RPC correlation (M2)
+    /// Requests awaiting a correlated response, keyed by request id.
+    /// The receive loop resumes the matching continuation on `.response` /
+    /// `.error`; teardown fails every pending request so callers never hang.
+    private var pendingRequests: [JSONRPCID: CheckedContinuation<JSONValue, any Error>] = [:]
+    private var nextRequestID: Int = 0
 
     /// Ready-handshake channel: the receive loop yields `gateway.ready`
     /// payloads here; `waitForReady()` consumes the first one with a timeout.
@@ -123,6 +132,65 @@ public actor GatewayWebSocketTransport: HermesTransport {
         await teardown(.normalClosure, error: nil)
     }
 
+    // MARK: RPC request/response (M2 — roster RPCs)
+
+    /// Send a JSON-RPC request and await the correlated response/error.
+    ///
+    /// M2 uses this for `profiles.list` / `session.list` (roster RPCs).
+    ///
+    /// Implementation (ADR-style): the continuation is registered synchronously
+    /// on the actor, then a timeout task races it. The timeout task and the
+    /// send task BOTH route through `failPending`, which removes-and-resumes
+    /// the continuation exactly once — so a silent gateway or a dropped socket
+    /// yields a classification (`requestTimeout` / `connectionClosed`) instead
+    /// of a hung caller, and a late response to a timed-out request is a no-op.
+    public func request(method: String, params: JSONValue? = nil) async throws -> JSONValue {
+        guard connectionState == .open else {
+            throw TransportError.invalidState("request from \(connectionState)")
+        }
+        guard let session else {
+            throw TransportError.invalidState("request with no session")
+        }
+        nextRequestID += 1
+        // String request ids (rpc-N), mirroring the heartbeat's heartbeat-N:
+        // the fixture server and correlation map both key on the string form.
+        let id = JSONRPCID.string("rpc-\(nextRequestID)")
+        let frame = JSONRPCRequest(id: id, method: method, params: params)
+        let line = try JSONRPCCodec.encode(.request(frame))
+
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<JSONValue, any Error>) in
+            pendingRequests[id] = cont
+            // Send on a detached task so a send failure can fail the pending
+            // continuation rather than leaving it dangling.
+            Task { [weak self] in
+                guard let self else {
+                    cont.resume(throwing: TransportError.transportFailure("transport deallocated"))
+                    return
+                }
+                do {
+                    try await session.send(.text(line))
+                } catch {
+                    await self.failPending(id: id, error: TransportError.transportFailure("send failed: \(error)"))
+                }
+            }
+            // Timeout race: fail the pending continuation if no response
+            // arrived within requestTimeout.
+            Task { [weak self, config] in
+                try? await Task.sleep(for: config.requestTimeout)
+                await self?.failPending(id: id, error: TransportError.requestTimeout)
+            }
+        }
+    }
+
+    /// Remove-and-resume a pending continuation exactly once.
+    ///
+    /// Safe under racing: only the first caller finds the id still registered;
+    /// a response arriving after a timeout (or a duplicate timeout) is a no-op.
+    private func failPending(id: JSONRPCID, error: any Error) async {
+        guard let continuation = pendingRequests.removeValue(forKey: id) else { return }
+        continuation.resume(throwing: error)
+    }
+
     // MARK: handshake
 
     private func waitForReady() async throws -> GatewayEvent.ReadyPayload {
@@ -183,14 +251,17 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case .event(let event):
             guard let gatewayEvent = GatewayEvent(event: event) else { return }
             await handleEvent(gatewayEvent)
-        case .response:
-            // P1: no pending RPC correlation yet (conversation RPCs are P3).
-            // The response still counts as inbound activity for the heartbeat
-            // deadline, which handleInbound already accounted for.
-            break
-        case .error:
-            // Server-side error to one of our requests (e.g. heartbeat).
-            break
+        case .response(let response):
+            // Correlate with a pending RPC request (M2: profiles.list /
+            // session.list) by exact id. Unknown/duplicate ids are ignored —
+            // a late response to a timed-out request must not crash.
+            if let continuation = pendingRequests.removeValue(forKey: response.id) {
+                continuation.resume(returning: response.result ?? .null)
+            }
+        case .error(let error):
+            if let continuation = pendingRequests.removeValue(forKey: error.id) {
+                continuation.resume(throwing: error.error)
+            }
         case .request:
             break // server → client requests don't occur on this seam
         }
@@ -270,6 +341,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
         switch connectionState {
         case .closed, .error: wasTerminal = true
         default: wasTerminal = false
+        }
+        // Fail every in-flight RPC request so awaiters never hang: a dropped
+        // socket is a classification, not an endless await.
+        let pending = pendingRequests
+        pendingRequests.removeAll()
+        for continuation in pending.values {
+            continuation.resume(throwing: TransportError.connectionClosed(reason))
         }
         receiveLoopTask?.cancel()
         heartbeatTask?.cancel()

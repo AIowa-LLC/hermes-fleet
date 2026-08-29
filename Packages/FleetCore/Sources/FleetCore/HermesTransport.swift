@@ -17,7 +17,7 @@ public protocol HermesTransport: Sendable {
 }
 
 /// Observable connection state of a gateway transport.
-public enum TransportState: Equatable, Sendable {
+public enum TransportState: Hashable, Equatable, Sendable {
     case disconnected
     case connecting
     case connected
