@@ -94,6 +94,40 @@ final class ModuleBoundaryTests: XCTestCase {
         }
     }
 
+    // MARK: M5 — conversation streaming seam usable from the app composition root
+
+    func testConversationSeamIsConstructibleInComposition() async {
+        // Prove the M5 conversation streaming seam (FleetCore
+        // `ConversationProviding`) is constructible in the app composition
+        // root over the same transport the read path uses — the boundary the
+        // later Conversation screen wires to. No network is touched: the seam
+        // is built and its error classification for an unconnected transport
+        // is verified (explicit user action only; no implicit mutation).
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30), inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(2), requestTimeout: .seconds(10)
+        )
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticAppTicketMinter(),
+            configuration: config
+        )
+        let conversation: any ConversationProviding = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            transport: transport
+        )
+        // Not connected → the mutating seam classifies; it does not hang.
+        do {
+            _ = try await conversation.submitPrompt(sessionID: "s", text: "hi")
+            XCTFail("expected notConnected from unconnected conversation client")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     /// Minimal ticket minter for the app-level boundary test (no network).
     private struct StaticAppTicketMinter: WSTicketMinting {
         func mintTicket() async throws -> WSTicket {

@@ -3,12 +3,29 @@ import Foundation
 /// Typed view of the gateway's server→client event frames
 /// (`{"jsonrpc":"2.0","method":"event","params":{"type":...,"payload":...}}`).
 ///
-/// M1 implements only the events the transport needs for its own lifecycle
-/// (`gateway.ready`, `error`); the conversation/streaming vocabulary
-/// (`message.*`, `tool.*`, `status.update`, …) is a later milestone (P3).
+/// M1 implements the events the transport needs for its own lifecycle
+/// (`gateway.ready`, `error`). M5 adds the conversation/streaming vocabulary
+/// (`message.*`, `tool.*`, `status.*`, `thinking/reasoning.*`,
+/// `background.complete`, `session.info`) so the conversation client can route
+/// streamed turn events by type while unknown event types stay preserved for
+/// forward compatibility (spec §5.5).
 public struct GatewayEvent: Sendable, Hashable {
     public enum EventType: String, Sendable, Hashable {
         case gatewayReady = "gateway.ready"
+        case sessionInfo = "session.info"
+        case messageStart = "message.start"
+        case messageDelta = "message.delta"
+        case messageInterim = "message.interim"
+        case messageComplete = "message.complete"
+        case thinkingDelta = "thinking.delta"
+        case reasoningDelta = "reasoning.delta"
+        case reasoningAvailable = "reasoning.available"
+        case statusUpdate = "status.update"
+        case toolStart = "tool.start"
+        case toolGenerating = "tool.generating"
+        case toolProgress = "tool.progress"
+        case toolComplete = "tool.complete"
+        case backgroundComplete = "background.complete"
         case error = "error"
 
         /// Unknown event types are preserved for forward compatibility and

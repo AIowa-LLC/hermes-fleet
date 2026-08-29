@@ -67,6 +67,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private let readyEvents: AsyncStream<GatewayEvent.ReadyPayload>
     private let readyContinuation: AsyncStream<GatewayEvent.ReadyPayload>.Continuation
 
+    /// Inbound event channel (M5): every decoded `GatewayEvent` is yielded
+    /// here so the conversation client can subscribe to streamed turn events
+    /// (`message.*`, `tool.*`, `status.*`, `thinking/reasoning.*`,
+    /// `message.complete`, …). Unbounded buffering means a subscriber attached
+    /// after events begin arriving still receives them in order. Single
+    /// consumer: one conversation client per gateway subscribes.
+    private let eventStream: AsyncStream<GatewayEvent>
+    private let eventContinuation: AsyncStream<GatewayEvent>.Continuation
+
     private let clock = ContinuousClock()
 
     public init(
@@ -85,6 +94,9 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
+        let (eventStream, eventContinuation) = AsyncStream<GatewayEvent>.makeStream()
+        self.eventStream = eventStream
+        self.eventContinuation = eventContinuation
     }
 
     // MARK: HermesTransport
@@ -288,6 +300,11 @@ public actor GatewayWebSocketTransport: HermesTransport {
     }
 
     private func handleEvent(_ event: GatewayEvent) async {
+        // Yield every inbound event to the subscription channel first (M5):
+        // the conversation client consumes `message.*` / `tool.*` /
+        // `status.*` / `thinking.*` / `reasoning.*` / `message.complete` /
+        // `session.info` / `error` events from here.
+        eventContinuation.yield(event)
         switch event.type {
         case .gatewayReady:
             let payload = event.ready ?? GatewayEvent.ReadyPayload(
@@ -296,9 +313,21 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case .error:
             // Surface transport-level error events; P1 just records them.
             break
-        case .unknown:
+        case .sessionInfo, .messageStart, .messageDelta, .messageInterim,
+             .messageComplete, .thinkingDelta, .reasoningDelta,
+             .reasoningAvailable, .statusUpdate, .toolStart, .toolGenerating,
+             .toolProgress, .toolComplete, .backgroundComplete, .unknown:
+            // Conversation/streaming events are forwarded via the event
+            // channel above; the transport itself does not interpret them.
             break
         }
+    }
+
+    /// Subscribe to the gateway's inbound event stream (M5 conversation
+    /// streaming). The returned stream yields every decoded `GatewayEvent` in
+    /// arrival order. Single consumer: one conversation client per gateway.
+    public nonisolated func subscribeToEvents() -> AsyncStream<GatewayEvent> {
+        eventStream
     }
 
     // MARK: heartbeat
@@ -374,6 +403,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         receiveLoopTask = nil
         heartbeatTask = nil
         readyContinuation.finish()
+        eventContinuation.finish()
         await session?.close(code: 1000, reason: nil)
         session = nil
         guard !wasTerminal else { return }
