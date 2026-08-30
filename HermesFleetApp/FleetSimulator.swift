@@ -172,7 +172,7 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
             streamBox.yield(.messageComplete(
                 sessionID: sessionID,
-                text: "Hello from the scripted fleet. You said: \\(text)",
+                text: "Hello from the scripted fleet. You said: \(text)",
                 status: nil,
                 error: nil
             ))

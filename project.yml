@@ -71,13 +71,28 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.tonysimons.HermesFleetAppTests
         GENERATE_INFOPLIST_FILE: YES
 
+  HermesFleetAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - HermesFleetAppUITests
+    dependencies:
+      - target: HermesFleetApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tonysimons.HermesFleetAppUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: HermesFleetApp
+
 schemes:
   HermesFleetApp:
     build:
       targets:
         HermesFleetApp: all
         HermesFleetAppTests: [test]
+        HermesFleetAppUITests: [test]
     test:
       gatherCoverageData: true
       targets:
         - HermesFleetAppTests
+        - HermesFleetAppUITests

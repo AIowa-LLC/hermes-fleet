@@ -47,7 +47,6 @@ public struct ConversationView: View {
             viewModel?.teardown()
         }
         .background(FleetTheme.background.ignoresSafeArea())
-        .accessibilityIdentifier("fleet.conversation")
     }
 
     // MARK: Canvas
