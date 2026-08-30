@@ -28,9 +28,12 @@
 		A61B399EE4B0054EF82EA89C /* AppCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7F6E782B2770F110FAB14A9 /* AppCompositionTests.swift */; };
 		AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */; };
 		B9F70C648F21F01431B2BCBC /* HermesFleetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */; };
+		C6F51B49816B3F8801F18F68 /* AppLockProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A603A8D0B8049916523C335 /* AppLockProviders.swift */; };
 		CBAF6553CBB3340D244FEFD5 /* FleetSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 4FD859AB5DC4007FABF3E84F /* FleetSecurity */; };
+		CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */; };
 		CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */; };
 		E966FB2E068DD8CF603A349B /* L1LiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4F9B97BE138E2E91D5F991 /* L1LiveGatewayUITests.swift */; };
+		EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */; };
 		F37E76F893963CDB1E25D544 /* FleetServiceGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */; };
 /* End PBXBuildFile section */
 
@@ -53,6 +56,8 @@
 
 /* Begin PBXFileReference section */
 		07655520ABEDB2077F32D167 /* HermesFleetReconnectUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesFleetReconnectUITests.swift; sourceTree = "<group>"; };
+		0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H1AppLockUITests.swift; sourceTree = "<group>"; };
+		0A603A8D0B8049916523C335 /* AppLockProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockProviders.swift; sourceTree = "<group>"; };
 		0F3B4DCFA36A97723EE623AB /* FleetCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetCore; path = Packages/FleetCore; sourceTree = SOURCE_ROOT; };
 		2380AC190371692E170A3C23 /* FleetSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSimulator.swift; sourceTree = "<group>"; };
 		260BB18804C7394A2D1C217E /* FleetNetworking */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetNetworking; path = Packages/FleetNetworking; sourceTree = SOURCE_ROOT; };
@@ -81,6 +86,7 @@
 		F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesFleetApp.swift; sourceTree = "<group>"; };
 		F3E045B2C895711DCB6AC796 /* S3CleartextWarningUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = S3CleartextWarningUITests.swift; sourceTree = "<group>"; };
 		FABC7CBF939AAF966D3C7ACD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockControllerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,6 +123,7 @@
 			children = (
 				E7F6E782B2770F110FAB14A9 /* AppCompositionTests.swift */,
 				743944B9CB1507020C1B2A8C /* AppEnvironmentTests.swift */,
+				FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */,
 				5BEEFC0BD1DC4133FB63310C /* ConversationFixtureLoopTests.swift */,
 				C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */,
 				484982E3D802092C667BDF10 /* FleetCoreLogicTests.swift */,
@@ -157,6 +164,7 @@
 		AF6506D798A8561D17008717 /* HermesFleetApp */ = {
 			isa = PBXGroup;
 			children = (
+				0A603A8D0B8049916523C335 /* AppLockProviders.swift */,
 				745ADDE165B902910C38E299 /* Assets.xcassets */,
 				F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */,
 				2380AC190371692E170A3C23 /* FleetSimulator.swift */,
@@ -178,6 +186,7 @@
 		DF83902E7826FB13A48B61B9 /* HermesFleetAppUITests */ = {
 			isa = PBXGroup;
 			children = (
+				0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */,
 				5637DB7B24B46E1A35E0B3ED /* HermesFleetHappyPathUITests.swift */,
 				07655520ABEDB2077F32D167 /* HermesFleetReconnectUITests.swift */,
 				BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */,
@@ -330,6 +339,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C6F51B49816B3F8801F18F68 /* AppLockProviders.swift in Sources */,
 				F37E76F893963CDB1E25D544 /* FleetServiceGraph.swift in Sources */,
 				3F560639A03BF741A77E72F8 /* FleetSimulator.swift in Sources */,
 				B9F70C648F21F01431B2BCBC /* HermesFleetApp.swift in Sources */,
@@ -342,6 +352,7 @@
 			files = (
 				A61B399EE4B0054EF82EA89C /* AppCompositionTests.swift in Sources */,
 				0F2A6454E506740BE84B1739 /* AppEnvironmentTests.swift in Sources */,
+				CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */,
 				99E6CF69A06EBD35702F27B0 /* ConversationFixtureLoopTests.swift in Sources */,
 				AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */,
 				2C1CA3847CBD066D704AE4C8 /* FleetCoreLogicTests.swift in Sources */,
@@ -354,6 +365,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */,
 				53AB0A9DB99780F8669D9A82 /* HermesFleetHappyPathUITests.swift in Sources */,
 				13F3F7A725F5265CD226E34D /* HermesFleetReconnectUITests.swift in Sources */,
 				CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */,

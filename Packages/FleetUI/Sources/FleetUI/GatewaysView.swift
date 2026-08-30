@@ -15,6 +15,7 @@ import FleetCore
 /// reinforcement only), per the semantic status map.
 public struct GatewaysView: View {
     private let environment: AppEnvironment
+    private let lockController: AppLockController
 
     /// Presentation-only sheet state (no secrets stored here).
     @State private var presentedSheet: PresentedSheet?
@@ -25,17 +26,20 @@ public struct GatewaysView: View {
         case add
         case edit(FleetGateway)
         case auth(GatewayID)
+        case settings
         var id: String {
             switch self {
             case .add: return "add"
             case .edit(let gateway): return "edit-\(gateway.id.rawValue)"
             case .auth(let id): return "auth-\(id.rawValue)"
+            case .settings: return "settings"
             }
         }
     }
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, lockController: AppLockController) {
         self.environment = environment
+        self.lockController = lockController
     }
 
     public var body: some View {
@@ -68,6 +72,15 @@ public struct GatewaysView: View {
                 }
                 .accessibilityIdentifier("fleet.gateways.refresh")
                 .disabled(environment.isRefreshing)
+
+                // H1 (R4): in-app Settings entry — hosts the App Lock toggle
+                // (default ON). UI-only gate; Keychain untouched.
+                Button {
+                    presentedSheet = .settings
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("fleet.gateways.settings")
             }
         }
         .sheet(item: $presentedSheet) { sheet in
@@ -111,6 +124,8 @@ public struct GatewaysView: View {
                 }
             case .auth(let id):
                 GatewayAuthSheet(environment: environment, gatewayID: id)
+            case .settings:
+                AppLockSettingsView(controller: lockController)
             }
         }
         .alert("Gateway Error", isPresented: .init(

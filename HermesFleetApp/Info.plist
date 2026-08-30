@@ -4,6 +4,10 @@
 <dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
+	<!-- H1 (R4): required for LocalAuthentication Face ID. Without this usage
+	     string the system refuses biometric policy on device (kLAErrorBiometryNotAvailable). -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Hermes Fleet uses Face ID to unlock the app and protect your fleet conversations.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- P3 LAN-gateway fix (t_eb5455f2): the app talks to a Hermes

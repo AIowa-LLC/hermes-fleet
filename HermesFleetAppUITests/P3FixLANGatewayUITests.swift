@@ -58,6 +58,9 @@ final class P3FixLANGatewayUITests: XCTestCase {
 
     func testLANGatewayUsernamePasswordReachesConnected() throws {
         let app = XCUIApplication()
+        // H1 (R4): the app lock defaults ON in Release; this live-gateway suite
+        // cold-launches straight into the registry, so opt out of the gate.
+        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
 
         // Release starts at the Gateways screen (empty registry).

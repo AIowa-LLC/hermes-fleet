@@ -26,6 +26,79 @@ enum FleetServiceGraph {
         #endif
     }
 
+    /// Builds the H1 app-lock controller.
+    ///
+    /// Provider + mode selection:
+    /// - Release (no launch env): real `LocalAuthenticationBiometricAuth`
+    ///   with `.followSetting` mode → the persisted toggle (default ON) gates
+    ///   the UI; biometrics with automatic device-passcode fallback.
+    /// - DEBUG: scripted auth driven by `HERMES_FLEET_APP_LOCK` /
+    ///   `HERMES_FLEET_LOCK_AUTH` launch env so the deterministic UI suites
+    ///   stay green and the H1 UI tests can force lock states deterministically.
+    ///
+    /// Launch-env overrides (honored in all configs so Release-only live
+    /// suites can opt out):
+    ///   `HERMES_FLEET_APP_LOCK` = `disabled`|`off` → never lock,
+    ///                             `enabled`|`on` → always lock,
+    ///                             `follow` → respect the persisted toggle.
+    ///   `HERMES_FLEET_LOCK_AUTH` (DEBUG) = `success` (default), `fail`,
+    ///                                       `fail-all`.
+    @MainActor
+    static func makeLockController() -> AppLockController {
+        let env = ProcessInfo.processInfo.environment
+
+        let mode: AppLockController.Mode
+        switch env["HERMES_FLEET_APP_LOCK"] {
+        case "disabled", "off", "":
+            mode = .disabled
+        case "enabled", "on":
+            mode = .enabled
+        case "follow":
+            mode = .followSetting
+        default:
+            #if DEBUG
+            // No env in DEBUG: keep the existing deterministic UI suites green
+            // (they cold-launch straight into the roster). H1 UI tests opt in
+            // via launch env; Release (below) enforces the persisted toggle.
+            mode = .disabled
+            #else
+            mode = .followSetting
+            #endif
+        }
+
+        // H1 test hygiene: `HERMES_FLEET_LOCK_RESET=1` clears the persisted
+        // toggle so the default-ON / persistence UI tests are deterministic
+        // regardless of earlier runs sharing the same simulator app container.
+        if env["HERMES_FLEET_LOCK_RESET"] == "1" {
+            let key = AppLockController.defaultsKey
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+
+        #if DEBUG
+        let auth: any AppLockBiometricAuth = makeScriptedLockAuth(env)
+        #else
+        let auth: any AppLockBiometricAuth = LocalAuthenticationBiometricAuth()
+        #endif
+
+        return AppLockController(auth: auth, mode: mode)
+    }
+
+    #if DEBUG
+    /// Scripted lock auth for deterministic H1 UI tests (DEBUG only).
+    private static func makeScriptedLockAuth(
+        _ env: [String: String]
+    ) -> any AppLockBiometricAuth {
+        switch env["HERMES_FLEET_LOCK_AUTH"] {
+        case "fail":
+            return ScriptedLockAuth(biometricResult: .failure, passcodeSucceeds: true)
+        case "fail-all":
+            return ScriptedLockAuth(biometricResult: .failure, passcodeSucceeds: false)
+        default:
+            return ScriptedLockAuth(biometricResult: .success, passcodeSucceeds: true)
+        }
+    }
+    #endif
+
     // MARK: Production — real stores + live transports
 
     static func makeProductionEnvironment() -> AppEnvironment {

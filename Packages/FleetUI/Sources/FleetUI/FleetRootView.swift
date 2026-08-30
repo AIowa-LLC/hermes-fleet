@@ -16,14 +16,20 @@ import FleetCore
 ///
 /// M14 theme: the whole stack is tinted Signal Red and rides on the themed
 /// background.
+///
+/// H1 (R4): when the app-lock controller is not `.unlocked`, ONLY the minimal
+/// lock screen renders — no roster/conversation content exists behind it. The
+/// lock gate is UI-only (Keychain reads are untouched).
 public struct FleetRootView: View {
     private let environment: AppEnvironment
+    private let lockController: AppLockController
     private let autoNav: String?
     @State private var path: [FleetScreen] = []
     @State private var autoNavHandled = false
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, lockController: AppLockController) {
         self.environment = environment
+        self.lockController = lockController
         #if DEBUG
         self.autoNav = ProcessInfo.processInfo.environment["HERMES_FLEET_AUTO_NAV"]
         #else
@@ -32,20 +38,26 @@ public struct FleetRootView: View {
     }
 
     public var body: some View {
-        NavigationStack(path: $path) {
-            GatewaysView(environment: environment)
-                .navigationDestination(for: FleetScreen.self) { screen in
-                    switch screen {
-                    case .bots(let gatewayID):
-                        BotsView(environment: environment, gatewayID: gatewayID)
-                    case .roster:
-                        FleetRosterView(environment: environment)
-                    case .botDetail(let route):
-                        BotDetailView(environment: environment, route: route)
-                    case .conversation(let route, let sessionID):
-                        ConversationView(environment: environment, route: route, sessionID: sessionID)
-                    }
+        Group {
+            if lockController.isLocked {
+                AppLockView(controller: lockController)
+            } else {
+                NavigationStack(path: $path) {
+                    GatewaysView(environment: environment, lockController: lockController)
+                        .navigationDestination(for: FleetScreen.self) { screen in
+                            switch screen {
+                            case .bots(let gatewayID):
+                                BotsView(environment: environment, gatewayID: gatewayID)
+                            case .roster:
+                                FleetRosterView(environment: environment)
+                            case .botDetail(let route):
+                                BotDetailView(environment: environment, route: route)
+                            case .conversation(let route, let sessionID):
+                                ConversationView(environment: environment, route: route, sessionID: sessionID)
+                            }
+                        }
                 }
+            }
         }
         .task {
             await performAutoNavIfNeeded()

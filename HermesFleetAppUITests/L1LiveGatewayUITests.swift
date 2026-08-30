@@ -26,6 +26,8 @@ final class L1LiveGatewayUITests: XCTestCase {
 
     func testAddRealGatewayViaU2UIAndAttemptLiveWalkthrough() throws {
         let app = XCUIApplication()
+        // H1 (R4): app lock defaults ON in Release; opt out for this live suite.
+        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
 
         // Step 1: open the app — Release starts at the Gateways screen (empty

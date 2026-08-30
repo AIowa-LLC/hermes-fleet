@@ -36,6 +36,8 @@ final class P3FixLoopbackGatewayUITests: XCTestCase {
 
     func testLoopbackGatewayUsernamePasswordReachesConnected() throws {
         let app = XCUIApplication()
+        // H1 (R4): app lock defaults ON in Release; opt out for this live suite.
+        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
         XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
                       "Gateways screen should be the root in Release")
