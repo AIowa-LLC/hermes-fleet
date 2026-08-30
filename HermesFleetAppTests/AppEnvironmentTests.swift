@@ -37,6 +37,35 @@ final class AppEnvironmentTests: XCTestCase {
         }
     }
 
+    /// A connection that throws `invalidState` on a SECOND connect — exactly
+    /// what the real transport does (`GatewayWebSocketTransport.connect()` on
+    /// an open socket). Counts calls so the test can prove the runtime never
+    /// drives a second connect on an already-connected gateway.
+    private final class InvalidStateOnSecondConnect: GatewayConnectivityProviding {
+        let gatewayID: GatewayID
+        /// Single-threaded test fixture (all access on the main actor); marked
+        /// `nonisolated(unsafe)` so the Sendable-conforming class can count
+        /// connect calls without lock machinery.
+        nonisolated(unsafe) private(set) var connectCount = 0
+        var status: GatewayStatus { .online }
+
+        init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
+
+        func adoptedReady() async -> GatewayReadyAdoption? {
+            GatewayReadyAdoption(replayEpoch: "test", heartbeatEnabled: true, changeEventsEnabled: true)
+        }
+        func connect() async throws {
+            connectCount += 1
+            if connectCount > 1 {
+                throw GatewayConnectivityError.invalidState("connect() from open")
+            }
+        }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue, endpoint: nil)
+        }
+    }
+
     private struct TestRosterSession: GatewayRosterSession {
         let gatewayID: GatewayID
         let profiles: [ProfileDescriptor]
@@ -214,6 +243,47 @@ final class AppEnvironmentTests: XCTestCase {
         await environment.reconnect(to: id)
         XCTAssertEqual(environment.connectionStates[id], .connected,
                        "reconnect leaves the gateway connected")
+    }
+
+    func testConnectWhileAlreadyConnectedIsNoOp() async {
+        // Faithful Release repro: the real transport throws invalidState on a
+        // second connect. The runtime must NEVER drive a second connect on an
+        // already-connected gateway — connect-while-connected is a no-op and
+        // the observable state stays .connected (never flips to .failed).
+        let connection = InvalidStateOnSecondConnect(gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in connection }
+        )
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: [])
+            }
+        )
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            connectionFactory: { gateway, _ in connection },
+            seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
+        )
+        await environment.load()
+        let id = GatewayID(rawValue: "<dev-workstation>")
+
+        await environment.connect(to: id)
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        XCTAssertEqual(connection.connectCount, 1)
+
+        // Second connect while already connected: guard short-circuits, the
+        // transport is never touched, and the state stays connected.
+        await environment.connect(to: id)
+        XCTAssertEqual(environment.connectionStates[id], .connected,
+                       "connect-while-connected must stay .connected")
+        XCTAssertEqual(connection.connectCount, 1,
+                       "runtime must not drive a second connect on an open connection")
     }
 
     // MARK: Roster seam (M8 union aggregation observable)

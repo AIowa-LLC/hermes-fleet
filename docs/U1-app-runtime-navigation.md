@@ -53,11 +53,12 @@ proves every seam stays constructible in the app context.
 | FleetPersistence package (swift test) | 15 tests, 0 failures |
 | xcodebuild test (iOS Simulator, iPhone 17 Pro) | **36 tests, 0 failures** (All tests passed) |
 | ModuleBoundaryTests (in app bundle) | 21 tests, 0 failures — boundary preserved |
-| AppEnvironmentTests (new, U1) | 8 tests, 0 failures |
+| AppEnvironmentTests (new, U1) | 9 tests, 0 failures |
 
 New U1 tests cover: load seeds + publishes gateways; seed only when registry empty; connect
 `connecting → connected`; connect failure classifies `.offline`; disconnect safe before/after
-connect; reconnect tears down then connects; roster refresh publishes bots with owning-gateway
+connect; reconnect tears down then connects; connect-while-connected is a no-op (idempotent,
+never flips to `.failed`); roster refresh publishes bots with owning-gateway
 provenance; cache seam observable.
 
 ## 4. Simulator evidence (iPhone 17 Pro, iOS 26.5)

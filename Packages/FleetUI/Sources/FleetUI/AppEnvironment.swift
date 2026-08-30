@@ -141,9 +141,13 @@ public final class AppEnvironment {
     // MARK: Connection lifecycle (runtime-owned, observable)
 
     /// Connect to a gateway: `connecting` → `connected`, or `failed(status)`.
-    /// Idempotent-safe: a connect on an already-connecting gateway is ignored.
+    /// Idempotent-safe: a connect on an already-connecting OR already-connected
+    /// gateway is ignored — a real transport throws `invalidState` on a second
+    /// connect, so the runtime must never drive one (the observable state would
+    /// otherwise wrongly flip `connected → failed(.offline)`).
     public func connect(to id: GatewayID) async {
-        guard connectionStates[id] != .connecting else { return }
+        guard connectionStates[id] != .connecting,
+              connectionStates[id] != .connected else { return }
         guard let gateway = gateways.first(where: { $0.id == id }) else { return }
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
