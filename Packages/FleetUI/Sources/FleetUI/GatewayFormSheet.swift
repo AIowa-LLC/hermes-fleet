@@ -27,6 +27,9 @@ struct GatewayFormSheet: View {
     @State private var usernameText: String
     @State private var passwordText: String
     @State private var isSaving = false
+    /// Explicit user confirmation to send credentials in cleartext to a
+    /// public (non-private/loopback) address — B2 save-gate. Never persisted.
+    @State private var confirmsCleartextSend = false
 
     init(
         title: String,
@@ -44,6 +47,7 @@ struct GatewayFormSheet: View {
         _tokenText = State(initialValue: "")
         _usernameText = State(initialValue: "")
         _passwordText = State(initialValue: "")
+        _confirmsCleartextSend = State(initialValue: false)
     }
 
     var body: some View {
@@ -57,6 +61,30 @@ struct GatewayFormSheet: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("fleet.gateways.form.endpoint")
+                }
+
+                if cleartextRisk {
+                    // B2: prominent cleartext warning when the endpoint is
+                    // http:// to a NON-private/loopback host — credentials
+                    // would travel unencrypted to a public address. Saving is
+                    // gated on explicit confirmation below.
+                    Section {
+                        Label {
+                            Text("Password will be sent unencrypted to a public address.")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(FleetTheme.accent)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(FleetTheme.accent)
+                        }
+                        .accessibilityIdentifier("fleet.gateways.form.cleartext-warning")
+
+                        Toggle("I understand — connect anyway", isOn: $confirmsCleartextSend)
+                            .accessibilityIdentifier("fleet.gateways.form.cleartext-confirm")
+                    } header: {
+                        Text("Security Warning")
+                    }
                 }
 
                 Section("Authentication") {
@@ -127,8 +155,20 @@ struct GatewayFormSheet: View {
         return url
     }
 
+    /// B2 cleartext risk: the endpoint is `http://` AND its host is NOT a
+    /// private or loopback address — credentials would travel unencrypted to
+    /// a public address. `https://` is never at risk. `PrivateNetwork` does
+    /// the network-free classification (RFC1918/127./::1/.local/localhost).
+    private var cleartextRisk: Bool {
+        guard let url = endpointURL,
+              url.scheme?.lowercased() == "http",
+              let host = url.host,
+              !host.isEmpty else { return false }
+        return !PrivateNetwork.isPrivateOrLoopbackHost(host)
+    }
+
     private var isValid: Bool {
-        !trimmedName.isEmpty && endpointURL != nil
+        !trimmedName.isEmpty && endpointURL != nil && (!cleartextRisk || confirmsCleartextSend)
     }
 
     private func save() {
