@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// A short-lived, single-use WebSocket upgrade ticket minted by the gateway.
 ///
@@ -48,11 +49,24 @@ public protocol WSTicketMinting: Sendable {
 public struct WSTicketClient: WSTicketMinting {
     public let baseURL: URL
     public let sessionToken: String?
+    /// Optional session cookie from `POST /auth/password-login`, replayed as
+    /// the `Cookie` header on the mint (P3 LAN-gateway username/password
+    /// flow). Mutually exclusive in practice with `sessionToken`.
+    public let sessionCookie: SessionCookie?
     public let urlSession: URLSession
 
-    public init(baseURL: URL, sessionToken: String?, urlSession: URLSession = .shared) {
+    /// Non-secret diagnostics (endpoint + HTTP status only).
+    private static let log = Logger(subsystem: "<legacy-personal-bundle-id>", category: "ws-ticket")
+
+    public init(
+        baseURL: URL,
+        sessionToken: String? = nil,
+        sessionCookie: SessionCookie? = nil,
+        urlSession: URLSession = .shared
+    ) {
         self.baseURL = baseURL
         self.sessionToken = sessionToken
+        self.sessionCookie = sessionCookie
         self.urlSession = urlSession
     }
 
@@ -84,11 +98,16 @@ public struct WSTicketClient: WSTicketMinting {
         if let sessionToken {
             request.setValue(sessionToken, forHTTPHeaderField: "X-Hermes-Session-Token")
         }
+        if let sessionCookie {
+            request.setValue(sessionCookie.headerValue, forHTTPHeaderField: "Cookie")
+        }
 
         let (data, response) = try await urlSession.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            Self.log.error("ws-ticket: HTTP \(http.statusCode)")
             throw TicketMintError.httpStatus(http.statusCode)
         }
+        Self.log.info("ws-ticket: minted ok (\(self.baseURL.absoluteString, privacy: .public))")
         let envelope: TicketEnvelope
         do {
             envelope = try JSONDecoder().decode(TicketEnvelope.self, from: data)

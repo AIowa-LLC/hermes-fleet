@@ -25,7 +25,7 @@ public struct KeychainCredentialStore: CredentialStoring {
         let account = gatewayID.rawValue
         // Delete any existing item first (idempotent upsert).
         deleteItem(account: account)
-        let data = Data(credential.rawValue.utf8)
+        let data = CredentialEncoding.encode(credential)
         var query = Self.baseAttributes(account: account)
         query[kSecValueData as String] = data
         let status = SecItemAdd(query as CFDictionary, nil)
@@ -43,12 +43,10 @@ public struct KeychainCredentialStore: CredentialStoring {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
-            guard let data = result as? Data,
-                  let value = String(data: data, encoding: .utf8),
-                  !value.isEmpty else {
+            guard let data = result as? Data else {
                 throw CredentialStoreError.malformedData
             }
-            return GatewayCredential(rawValue: value)
+            return try CredentialEncoding.decode(data)
         case errSecItemNotFound:
             return nil
         default:

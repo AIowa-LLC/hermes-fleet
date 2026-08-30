@@ -22,7 +22,7 @@ final class AuthenticationHardeningTests: XCTestCase {
         }
         func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? {
             lock.withLock { storage in
-                storage[gatewayID.rawValue].map(GatewayCredential.init(rawValue:))
+                storage[gatewayID.rawValue].map { GatewayCredential(rawValue: $0) }
             }
         }
         func deleteCredential(for gatewayID: GatewayID) async throws {

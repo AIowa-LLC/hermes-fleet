@@ -21,6 +21,12 @@ public struct GatewayAuthConfiguration: Hashable, Sendable, Codable {
         /// Loopback token passed as `?token=` on the socket (synthesis §11
         /// "optional loopback `?token=`"; spec §16 trusted-network strategy).
         case loopbackToken
+        /// Username/password against the gateway's password provider:
+        /// `POST /auth/password-login` → session cookie → `POST
+        /// /api/auth/ws-ticket` → `?ticket=` (P3 LAN-gateway fix). The
+        /// credential is the username + password pair (stored as one Keychain
+        /// item).
+        case usernamePassword
     }
 
     public var strategy: Strategy

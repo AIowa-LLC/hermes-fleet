@@ -157,6 +157,13 @@ enum FleetServiceGraph {
                 credentialStore: credentialStore,
                 baseURL: base
             )
+        case .usernamePassword:
+            return GatewayAuthenticator(
+                gatewayID: gateway.id,
+                strategy: .usernamePassword,
+                credentialStore: credentialStore,
+                baseURL: base
+            )
         }
     }
 

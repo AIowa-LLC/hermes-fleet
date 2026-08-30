@@ -43,6 +43,51 @@ final class FleetSecurityKeychainTests: XCTestCase {
         XCTAssertEqual(loaded?.rawValue, "second")
     }
 
+    // MARK: username/password composite (P3 LAN-gateway fix, t_eb5455f2)
+
+    func testUsernamePasswordCompositeRoundTripsThroughStore() async throws {
+        // The .usernamePassword strategy stores BOTH halves as one Keychain
+        // item: username + password must round-trip through the same
+        // CredentialStoring seam the UI writes.
+        let store = InMemoryCredentialStore()
+        try await store.saveCredential(
+            GatewayCredential(rawValue: "pw-123", username: "tony"),
+            for: gatewayID)
+
+        let loaded = try await store.loadCredential(for: gatewayID)
+        XCTAssertEqual(loaded?.username, "tony", "username half preserved")
+        XCTAssertEqual(loaded?.rawValue, "pw-123", "password half preserved")
+        XCTAssertEqual(loaded, GatewayCredential(rawValue: "pw-123", username: "tony"))
+    }
+
+    func testTokenOnlyCredentialStillRoundTrips() async throws {
+        // Legacy token-only shape must be unchanged by the composite encoding.
+        let store = InMemoryCredentialStore()
+        try await store.saveCredential(GatewayCredential(rawValue: "tok-1"), for: gatewayID)
+        let loaded = try await store.loadCredential(for: gatewayID)
+        XCTAssertEqual(loaded, GatewayCredential(rawValue: "tok-1"))
+        XCTAssertNil(loaded?.username)
+    }
+
+    func testCredentialEncodingBackwardCompat() throws {
+        // Bytes written as a legacy raw token (no composite prefix) decode as
+        // a token-only credential — previously-stored Keychain items survive.
+        let legacy = Data("legacy-token".utf8)
+        let decoded = try CredentialEncoding.decode(legacy)
+        XCTAssertEqual(decoded, GatewayCredential(rawValue: "legacy-token"))
+        XCTAssertNil(decoded.username)
+    }
+
+    func testCredentialEncodingCompositeDoesNotLeakPrefixBytes() throws {
+        // Round-trip through the versioned encoding; the raw value stored is
+        // the composite (username + password), never just the password.
+        let credential = GatewayCredential(rawValue: "pw", username: "u")
+        let encoded = CredentialEncoding.encode(credential)
+        XCTAssertNotEqual(encoded, Data("pw".utf8), "password alone must not be stored")
+        let decoded = try CredentialEncoding.decode(encoded)
+        XCTAssertEqual(decoded, credential)
+    }
+
     func testInMemoryStoreIsolationPerGateway() async throws {
         let store = InMemoryCredentialStore()
         let other = GatewayID(rawValue: "gaming-4090")

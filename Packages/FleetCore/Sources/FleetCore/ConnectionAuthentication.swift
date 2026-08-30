@@ -54,6 +54,9 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
     case ticketExpired
     /// A loopback token was requested but none is stored.
     case missingLoopbackToken
+    /// The username/password strategy needs the username half of the stored
+    /// credential, but the stored item is a token-only credential.
+    case missingUsername
     /// The underlying store/keychain call failed (detail non-secret).
     case storeUnavailable(String)
 
@@ -67,6 +70,8 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
             return "WebSocket ticket expired before connect"
         case .missingLoopbackToken:
             return "no loopback token stored for this gateway"
+        case .missingUsername:
+            return "no username stored for this gateway"
         case .storeUnavailable(let detail):
             return "authentication store unavailable: \(detail)"
         }

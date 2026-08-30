@@ -10,6 +10,10 @@ import FleetCore
 ///   minter is injected, one is built from the stored credential (read from
 ///   the SAME `CredentialStoring` the U2 UI writes via `saveCredential`), so
 ///   the credential is actually sent as `X-Hermes-Session-Token` on the mint.
+/// - `.usernamePassword` strategy → load the stored username+password,
+///   exchange them for a session cookie via `POST /auth/password-login`
+///   (`PasswordLoginClient`), then mint a single-use ticket with that cookie
+///   → `?ticket=` (P3 LAN-gateway flow).
 /// - `.loopbackToken` strategy → load the stored credential from
 ///   `CredentialStoring` (Keychain) and return `.loopbackToken(StoredToken)`
 ///   → `?token=`.
@@ -71,6 +75,37 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             let ticket = try await minter.mintTicket()
             // Single-use + 30s TTL (synthesis §11): never connect with a
             // stale ticket — re-mint instead.
+            guard !ticket.isExpired() else {
+                throw AuthenticationError.ticketExpired
+            }
+            return .ticket(StoredToken(rawValue: ticket.token))
+        case .usernamePassword:
+            // P3 LAN-gateway username/password flow: load the stored
+            // username+password, exchange it for a session cookie via
+            // POST /auth/password-login, then mint a single-use WS ticket with
+            // that cookie (POST /api/auth/ws-ticket) → ?ticket=.
+            guard let credentialStore else {
+                throw AuthenticationError.notConfigured
+            }
+            guard let baseURL else {
+                throw AuthenticationError.notConfigured
+            }
+            guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
+                throw AuthenticationError.missingLoopbackToken
+            }
+            guard let username = credential.username else {
+                throw AuthenticationError.missingUsername
+            }
+            let loginClient = PasswordLoginClient(baseURL: baseURL, urlSession: urlSession)
+            let sessionCookie = try await loginClient.login(
+                username: username,
+                password: credential.rawValue
+            )
+            let ticket = try await WSTicketClient(
+                baseURL: baseURL,
+                sessionCookie: sessionCookie,
+                urlSession: urlSession
+            ).mintTicket()
             guard !ticket.isExpired() else {
                 throw AuthenticationError.ticketExpired
             }

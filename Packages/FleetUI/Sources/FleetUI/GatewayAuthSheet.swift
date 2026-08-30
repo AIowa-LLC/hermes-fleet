@@ -17,6 +17,8 @@ struct GatewayAuthSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var strategy: GatewayAuthConfiguration.Strategy
     @State private var tokenText: String
+    @State private var usernameText: String
+    @State private var passwordText: String
     @State private var credentialStored = false
     @State private var isBusy = false
     @State private var errorText: String?
@@ -28,6 +30,8 @@ struct GatewayAuthSheet: View {
         _strategy = State(initialValue: gateway?.authConfiguration.strategy ?? .none)
         _credentialStored = State(initialValue: gateway?.authConfiguration.credentialStored ?? false)
         _tokenText = State(initialValue: "")
+        _usernameText = State(initialValue: "")
+        _passwordText = State(initialValue: "")
     }
 
     var body: some View {
@@ -39,6 +43,7 @@ struct GatewayAuthSheet: View {
                         Text("Session Token").tag(GatewayAuthConfiguration.Strategy.sessionToken)
                         Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
                         Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
+                        Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
                     }
                     .accessibilityIdentifier("fleet.gateways.auth.strategy")
 
@@ -60,6 +65,19 @@ struct GatewayAuthSheet: View {
                         Button("Save Token") { saveToken() }
                             .disabled(tokenText.isEmpty || isBusy)
                             .accessibilityIdentifier("fleet.gateways.auth.save-token")
+                    }
+                    if needsUsernamePasswordEntry {
+                        TextField("Username", text: $usernameText)
+                            .textContentType(.username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("fleet.gateways.auth.username")
+                        SecureField("Password", text: $passwordText)
+                            .textContentType(.password)
+                            .accessibilityIdentifier("fleet.gateways.auth.password")
+                        Button("Save Username & Password") { saveUsernamePassword() }
+                            .disabled(usernameText.isEmpty || passwordText.isEmpty || isBusy)
+                            .accessibilityIdentifier("fleet.gateways.auth.save-username-password")
                     }
                     if credentialStored {
                         Button("Clear Stored Credential", role: .destructive) { clearCredential() }
@@ -95,7 +113,12 @@ struct GatewayAuthSheet: View {
         switch strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
+        case .usernamePassword: return false
         }
+    }
+
+    private var needsUsernamePasswordEntry: Bool {
+        strategy == .usernamePassword
     }
 
     private func saveStrategy(_ newValue: GatewayAuthConfiguration.Strategy) {
@@ -125,6 +148,25 @@ struct GatewayAuthSheet: View {
             do {
                 try await environment.saveCredential(token, for: gatewayID)
                 tokenText = ""
+                credentialStored = true
+            } catch {
+                errorText = GatewaysView.describe(error)
+            }
+            isBusy = false
+        }
+    }
+
+    private func saveUsernamePassword() {
+        isBusy = true
+        errorText = nil
+        // Password rides as the secret half; username travels inside the same
+        // redacted credential so the login flow can present both.
+        let credential = GatewayCredential(rawValue: passwordText, username: usernameText)
+        Task {
+            do {
+                try await environment.saveCredential(credential, for: gatewayID)
+                usernameText = ""
+                passwordText = ""
                 credentialStored = true
             } catch {
                 errorText = GatewaysView.describe(error)

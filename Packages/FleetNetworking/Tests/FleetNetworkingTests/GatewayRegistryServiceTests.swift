@@ -25,7 +25,7 @@ final class GatewayRegistryServiceTests: XCTestCase {
             lock.withLock { $0[gatewayID.rawValue] = credential.rawValue }
         }
         func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? {
-            lock.withLock { $0[gatewayID.rawValue].map(GatewayCredential.init(rawValue:)) }
+            lock.withLock { $0[gatewayID.rawValue].map { GatewayCredential(rawValue: $0) } }
         }
         func deleteCredential(for gatewayID: GatewayID) async throws {
             lock.withLock { $0.removeValue(forKey: gatewayID.rawValue) }

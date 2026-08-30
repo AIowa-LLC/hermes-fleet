@@ -22,6 +22,10 @@ struct GatewayFormSheet: View {
     @State private var strategy: GatewayAuthConfiguration.Strategy
     /// Secure credential entry — only shown for token strategies; never echoed.
     @State private var tokenText: String
+    /// Username/password entry — only shown for the username/password
+    /// strategy; never echoed.
+    @State private var usernameText: String
+    @State private var passwordText: String
     @State private var isSaving = false
 
     init(
@@ -38,6 +42,8 @@ struct GatewayFormSheet: View {
         _endpointText = State(initialValue: initial?.endpoint?.absoluteString ?? "")
         _strategy = State(initialValue: initial?.authConfiguration.strategy ?? .none)
         _tokenText = State(initialValue: "")
+        _usernameText = State(initialValue: "")
+        _passwordText = State(initialValue: "")
     }
 
     var body: some View {
@@ -59,6 +65,7 @@ struct GatewayFormSheet: View {
                         Text("Session Token").tag(GatewayAuthConfiguration.Strategy.sessionToken)
                         Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
                         Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
+                        Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.strategy")
 
@@ -66,6 +73,16 @@ struct GatewayFormSheet: View {
                         SecureField("Token (optional now, editable later)", text: $tokenText)
                             .textContentType(.password)
                             .accessibilityIdentifier("fleet.gateways.form.token")
+                    }
+                    if needsUsernamePasswordEntry {
+                        TextField("Username", text: $usernameText)
+                            .textContentType(.username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("fleet.gateways.form.username")
+                        SecureField("Password", text: $passwordText)
+                            .textContentType(.password)
+                            .accessibilityIdentifier("fleet.gateways.form.password")
                     }
                 }
             }
@@ -90,7 +107,13 @@ struct GatewayFormSheet: View {
         switch strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
+        case .usernamePassword: return false
         }
+    }
+
+    /// The username/password strategy needs username + password fields.
+    private var needsUsernamePasswordEntry: Bool {
+        strategy == .usernamePassword
     }
 
     private var trimmedName: String {
@@ -120,12 +143,21 @@ struct GatewayFormSheet: View {
                 credentialStored: existing?.authConfiguration.credentialStored ?? false
             )
         )
-        let token: GatewayCredential? = (needsTokenEntry && !tokenText.isEmpty)
-            ? GatewayCredential(rawValue: tokenText)
-            : nil
+        // The credential for token strategies is the token itself; for the
+        // username/password strategy it is the password with the username
+        // attached (stored as one Keychain item — the authenticator reads
+        // both halves). Never echoed by the view layer.
+        let credential: GatewayCredential? = {
+            if strategy == .usernamePassword {
+                guard !usernameText.isEmpty, !passwordText.isEmpty else { return nil }
+                return GatewayCredential(rawValue: passwordText, username: usernameText)
+            }
+            guard needsTokenEntry, !tokenText.isEmpty else { return nil }
+            return GatewayCredential(rawValue: tokenText)
+        }()
 
         Task {
-            await onSave(registration, token)
+            await onSave(registration, credential)
             isSaving = false
             dismiss()
         }

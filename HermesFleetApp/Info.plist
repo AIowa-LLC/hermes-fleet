@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- P3 LAN-gateway fix (t_eb5455f2): the app talks to a Hermes
+		     gateway over cleartext http:// on the LAN (e.g.
+		     <lan-ip>:9120). NSAllowsLocalNetworking permits ATS to
+		     allow local-network loads (unqualified hostnames, .local
+		     domains, IP addresses) without disabling ATS globally. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- iOS 14+ local-network privacy: connecting to a LAN IP (e.g. the
+	     Hermes gateway at <lan-ip>:9120) requires this usage string.
+	     Without it the OS silently blocks the connection and the probe
+	     hangs instead of reaching the gateway. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Hermes Fleet connects to your Hermes gateway on the local network.</string>
+</dict>
+</plist>
