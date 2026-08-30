@@ -10,6 +10,7 @@
 		0098E9FDF89D44B5CE8F7285 /* P3FixLANGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA506D7F4BC4CAA5FA1860A /* P3FixLANGatewayUITests.swift */; };
 		0F2A6454E506740BE84B1739 /* AppEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 743944B9CB1507020C1B2A8C /* AppEnvironmentTests.swift */; };
 		13F3F7A725F5265CD226E34D /* HermesFleetReconnectUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07655520ABEDB2077F32D167 /* HermesFleetReconnectUITests.swift */; };
+		179BD4EFE6311D44DEF19762 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */; };
 		1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4799DB925C4D9935D2DD7D21 /* InProcessWebSocketServer.swift */; };
 		225FA7C42C7D6F474B3EA8AA /* FleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F4470D5B9599997A86EB24D /* FleetCore */; };
 		2C1CA3847CBD066D704AE4C8 /* FleetCoreLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 484982E3D802092C667BDF10 /* FleetCoreLogicTests.swift */; };
@@ -70,6 +71,7 @@
 		BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L1FixLiveGatewayUITests.swift; sourceTree = "<group>"; };
 		BE9D6EB7DC0A6113FF880570 /* HermesFleetApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HermesFleetApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationViewModelTests.swift; sourceTree = "<group>"; };
+		CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleBoundaryTests.swift; sourceTree = "<group>"; };
 		D8AD8785E7085FFB646B0A9C /* FleetUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetUI; path = Packages/FleetUI; sourceTree = SOURCE_ROOT; };
 		DE435C9B85312695131CC209 /* FleetPersistence */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetPersistence; path = Packages/FleetPersistence; sourceTree = SOURCE_ROOT; };
@@ -160,6 +162,7 @@
 				2380AC190371692E170A3C23 /* FleetSimulator.swift */,
 				F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */,
 				FABC7CBF939AAF966D3C7ACD /* Info.plist */,
+				CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */,
 			);
 			path = HermesFleetApp;
 			sourceTree = "<group>";
@@ -316,6 +319,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				90B9C115EEE142503EBBF622 /* Assets.xcassets in Resources */,
+				179BD4EFE6311D44DEF19762 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -535,7 +539,6 @@
 				INFOPLIST_FILE = HermesFleetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Hermes Fleet";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -575,7 +578,6 @@
 				INFOPLIST_FILE = HermesFleetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Hermes Fleet";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
