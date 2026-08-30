@@ -3,16 +3,22 @@ import FleetUI
 
 /// Composition root for Hermes Fleet.
 ///
-/// M0: assembles the fleet dashboard model and injects it into the UI shell.
-/// Later milestones wire the real service graph (transport, security,
-/// persistence) here — all behind the FleetCore seams, never inside SwiftUI.
+/// U1: builds the observable `AppEnvironment` runtime (registry + roster +
+/// cache + connection lifecycle, all behind FleetCore seams) and injects it
+/// into the U1 navigation shell. This is the ONLY place that wires the
+/// FleetNetworking concrete services into the app — SwiftUI never imports the
+/// transport module (M0 hard guard, enforced by ModuleBoundaryTests).
 @main
 struct HermesFleetApp: App {
-    @State private var model = FleetDashboardModel()
+    @State private var environment = FleetServiceGraph.makeDefaultEnvironment()
 
     var body: some Scene {
         WindowGroup {
-            FleetRootView(model: model)
+            FleetRootView(environment: environment)
+                .task {
+                    await environment.load()
+                    await environment.refreshRoster()
+                }
         }
     }
 }
