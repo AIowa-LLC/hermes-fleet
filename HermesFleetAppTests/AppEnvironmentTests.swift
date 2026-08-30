@@ -1,4 +1,5 @@
 import XCTest
+import os
 import FleetCore
 import FleetNetworking
 import FleetSecurity
@@ -115,6 +116,40 @@ final class AppEnvironmentTests: XCTestCase {
         }
     }
 
+    /// H2: inert connection-health accumulator double — records nothing, keeps
+    /// whatever the test seeds, so AppEnvironment tests exercise the runtime
+    /// wiring without touching SwiftData or the transport. Uses the
+    /// async-safe scoped `OSAllocatedUnfairLock` pattern.
+    private final class TestHealthAccumulator: ConnectionHealthAccumulating, @unchecked Sendable {
+        private struct State {
+            var stored: [GatewayID: GatewayHealthStats] = [:]
+            var didRehydrate = false
+        }
+        private let lock = OSAllocatedUnfairLock<State>(initialState: State())
+
+        func record(_ event: ConnectionHealthEvent, for gatewayID: GatewayID) async {}
+        func snapshot() async -> [GatewayID: GatewayHealthStats] {
+            lock.withLock { $0.stored }
+        }
+        func stats(for gatewayID: GatewayID) async -> GatewayHealthStats? {
+            lock.withLock { $0.stored[gatewayID] }
+        }
+        func rehydrate(gatewayIDs: [GatewayID]) async {
+            lock.withLock { $0.didRehydrate = true }
+        }
+        func forget(gatewayID: GatewayID) async {
+            lock.withLock { $0.stored[gatewayID] = nil }
+        }
+        /// Seed a snapshot for a gateway (test-only; exercises the observable
+        /// `healthStats` publishing path).
+        func seed(_ stats: GatewayHealthStats, for gatewayID: GatewayID) {
+            lock.withLock { $0.stored[gatewayID] = stats }
+        }
+        var rehydrated: Bool {
+            lock.withLock { $0.didRehydrate }
+        }
+    }
+
     /// Build a runtime over scripted seams. `seed` registers gateways first
     /// so `load()` finds a non-empty registry (production behavior).
     private func makeEnvironment(
@@ -145,6 +180,7 @@ final class AppEnvironmentTests: XCTestCase {
             connectionFactory: { gateway, _ in
                 TestConnection(gatewayID: gateway.id, result: .success(()))
             },
+            health: TestHealthAccumulator(),
             seedRegistrations: gateways
         )
         await environment.load()
@@ -200,11 +236,66 @@ final class AppEnvironmentTests: XCTestCase {
             connectionFactory: { gateway, _ in
                 TestConnection(gatewayID: gateway.id, result: .success(()))
             },
+            health: TestHealthAccumulator(),
             seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
         )
         await environment.load()
 
         XCTAssertEqual(environment.gateways.map(\.id.rawValue), ["existing"])
+    }
+
+    // MARK: H2 — connection health wiring (observable publishing)
+
+    func testHealthStatsRehydratePublishAndForget() async {
+        let health = TestHealthAccumulator()
+        let id = GatewayID(rawValue: "<dev-workstation>")
+        let seeded = GatewayHealthStats(
+            currentState: .offline,
+            firstObservedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            lastTransitionAt: Date(timeIntervalSince1970: 1_700_000_100),
+            connectedMilliseconds: 30_000,
+            disconnectedMilliseconds: 10_000,
+            reconnectCount: 1,
+            lastDisconnectReason: "normal closure"
+        )
+        health.seed(seeded, for: id)
+
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: [])
+            }
+        )
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            health: health,
+            seedRegistrations: []
+        )
+
+        await environment.load()
+        XCTAssertTrue(health.rehydrated, "load() must rehydrate the accumulator")
+        XCTAssertEqual(environment.healthStats[id]?.reconnectCount, 1,
+                       "persisted health stats published into the observable state")
+        XCTAssertEqual(environment.healthStats[id]?.uptimePercentage ?? 0, 75.0, accuracy: 0.01)
+
+        // Removing the gateway forgets its health stats.
+        try? await environment.removeGateway(id)
+        XCTAssertNil(environment.healthStats[id], "removal drops the health snapshot")
     }
 
     // MARK: Connection lifecycle — observable states
@@ -244,6 +335,7 @@ final class AppEnvironmentTests: XCTestCase {
             connectionFactory: { gateway, _ in
                 TestConnection(gatewayID: gateway.id, result: .failure(.unreachable))
             },
+            health: TestHealthAccumulator(),
             seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
         )
         await environment.load()
@@ -307,6 +399,7 @@ final class AppEnvironmentTests: XCTestCase {
             cache: try! SwiftDataCacheStore.makeInMemory(),
             sessionList: TestSessionList(),
             connectionFactory: { gateway, _ in connection },
+            health: TestHealthAccumulator(),
             seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
         )
         await environment.load()
@@ -438,6 +531,7 @@ final class AppEnvironmentTests: XCTestCase {
             connectionFactory: { gateway, _ in
                 TestConnection(gatewayID: gateway.id, result: .failure(.unreachable))
             },
+            health: TestHealthAccumulator(),
             seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
         )
         await environment.load()
@@ -571,7 +665,8 @@ final class AppEnvironmentTests: XCTestCase {
             sessionList: TestSessionList(),
             connectionFactory: { gateway, _ in
                 TestConnection(gatewayID: gateway.id, result: .success(()))
-            }
+            },
+            health: TestHealthAccumulator()
         )
         await environment.load()
         await environment.refreshRoster()

@@ -311,7 +311,8 @@ private struct ConversationBubbleView: View {
                 cache: try! SwiftDataCacheStore.makeInMemory(),
                 sessionList: PreviewSessionList(),
                 connectionFactory: { gateway, _ in PreviewConnection(gatewayID: gateway.id) },
-                conversationFactory: { gateway, _ in PreviewConversationSession(gatewayID: gateway.id) }
+                conversationFactory: { gateway, _ in PreviewConversationSession(gatewayID: gateway.id) },
+                health: PreviewHealthAccumulator()
             ),
             route: Route(
                 gatewayID: GatewayID(rawValue: "<dev-workstation>"),
@@ -367,6 +368,15 @@ private struct PreviewRoster: FleetRosterProviding {
 
 private struct PreviewSessionList: SessionListProviding {
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { [] }
+}
+
+/// H2 preview seam: inert health accumulator (no transport, no persistence).
+private struct PreviewHealthAccumulator: ConnectionHealthAccumulating {
+    func record(_ event: ConnectionHealthEvent, for gatewayID: GatewayID) async {}
+    func snapshot() async -> [GatewayID: GatewayHealthStats] { [:] }
+    func stats(for gatewayID: GatewayID) async -> GatewayHealthStats? { nil }
+    func rehydrate(gatewayIDs: [GatewayID]) async {}
+    func forget(gatewayID: GatewayID) async {}
 }
 
 private struct PreviewConversationSession: ConversationSessionProviding {

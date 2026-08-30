@@ -89,6 +89,11 @@ public final class AppEnvironment {
     /// Per-gateway connection lifecycle, observable.
     public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:]
 
+    /// H2: latest per-gateway connection-health snapshots (uptime %,
+    /// reconnects, last-disconnect reason, ping RTT). Updated by
+    /// `refreshHealthStats()`; the Health dashboard refreshes it live.
+    public private(set) var healthStats: [GatewayID: GatewayHealthStats] = [:]
+
     /// Per-gateway connection-test result, observable (§13 reachable /
     /// unreachable probe). Set only after `testConnection` completes; a
     /// gateway with no entry has never been tested this session.
@@ -114,6 +119,10 @@ public final class AppEnvironment {
     private let roster: any FleetRosterProviding
     private let cache: any CacheStoring
     private let connectionFactory: FleetConnectionFactory
+    /// H2: connection-health accumulator (FleetCore seam; concrete
+    /// `GatewayHealthStatsAccumulator` fed by the composition root's transport
+    /// feed task — FleetUI never touches the transport module).
+    private let health: any ConnectionHealthAccumulating
     /// Read-only `session.list` path for Bot detail (injected concrete:
     /// `GatewaySessionListService` in production, scripted in DEBUG/tests).
     private let sessionList: any SessionListProviding
@@ -140,6 +149,7 @@ public final class AppEnvironment {
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
+        health: any ConnectionHealthAccumulating,
         seedRegistrations: [GatewayRegistration] = []
     ) {
         self.registry = registry
@@ -148,6 +158,7 @@ public final class AppEnvironment {
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
+        self.health = health
         self.seedRegistrations = seedRegistrations
     }
 
@@ -172,6 +183,12 @@ public final class AppEnvironment {
         for gateway in gateways where connectionStates[gateway.id] == nil {
             connectionStates[gateway.id] = .idle
         }
+        // H2: restore persisted health stats for any registered gateway the
+        // accumulator has not observed this session (e.g. a gateway re-added
+        // after an app restart — the registry is in-memory, the health store
+        // is not). Live entries are untouched by the accumulator's guard.
+        await health.rehydrate(gatewayIDs: gateways.map(\.id))
+        healthStats = await health.snapshot()
     }
 
     /// Refresh the union fleet roster (M8). Never throws for a single-gateway
@@ -180,6 +197,12 @@ public final class AppEnvironment {
         isRefreshing = true
         defer { isRefreshing = false }
         rosterSnapshot = await roster.refreshRoster()
+    }
+
+    /// H2: copy the latest connection-health snapshots into the observable
+    /// state (the accumulator is fed continuously by the composition root).
+    public func refreshHealthStats() async {
+        healthStats = await health.snapshot()
     }
 
     // MARK: Connection lifecycle (runtime-owned, observable)
@@ -278,6 +301,9 @@ public final class AppEnvironment {
         activeConnections[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
+        // H2: drop the gateway's accumulated + persisted health stats.
+        await health.forget(gatewayID: id)
+        healthStats = await health.snapshot()
         await reloadGateways()
     }
 

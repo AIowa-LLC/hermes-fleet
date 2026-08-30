@@ -17,4 +17,7 @@ public enum FleetScreen: Hashable, Sendable {
     case botDetail(Route)
     /// Conversation for a session (U3 canvas; sessionID nil = create new).
     case conversation(Route, sessionID: String?)
+    /// H2 Connection health dashboard (per-gateway uptime / reconnects /
+    /// last-disconnect / ping RTT).
+    case health
 }

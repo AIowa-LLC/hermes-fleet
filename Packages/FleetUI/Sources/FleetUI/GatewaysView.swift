@@ -65,6 +65,13 @@ public struct GatewaysView: View {
                 }
                 .accessibilityIdentifier("fleet.gateways.roster")
 
+                // H2: Connection health dashboard (per-gateway uptime /
+                // reconnects / last-disconnect / ping RTT).
+                NavigationLink(value: FleetScreen.health) {
+                    Label("Health", systemImage: "heart.text.square")
+                }
+                .accessibilityIdentifier("fleet.gateways.health")
+
                 Button {
                     Task { await environment.refreshRoster() }
                 } label: {

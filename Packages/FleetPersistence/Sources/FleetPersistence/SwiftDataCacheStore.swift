@@ -157,6 +157,66 @@ public actor SwiftDataCacheStore: CacheStoring {
     }
 }
 
+// MARK: - HealthStatsStoring (H2 Connection health dashboard)
+
+extension SwiftDataCacheStore: HealthStatsStoring {
+    /// Replace the persisted health snapshot for a gateway (one row per
+    /// gateway; last writer wins — the accumulator persists after every
+    /// transition, so the row is always the latest observed state).
+    public func saveHealthStats(_ stats: GatewayHealthStats, for gatewayID: GatewayID) async throws {
+        let ctx = ModelContext(container)
+        let rows = try ctx.fetch(FetchDescriptor<CachedHealthStatsRow>())
+        for row in rows where row.gatewayID == gatewayID.rawValue {
+            ctx.delete(row)
+        }
+        ctx.insert(CachedHealthStatsRow(
+            gatewayID: gatewayID.rawValue,
+            currentStateRaw: stats.currentState.rawValue,
+            firstObservedAt: stats.firstObservedAt,
+            lastTransitionAt: stats.lastTransitionAt,
+            connectedMilliseconds: stats.connectedMilliseconds,
+            disconnectedMilliseconds: stats.disconnectedMilliseconds,
+            reconnectCount: stats.reconnectCount,
+            lastDisconnectReason: stats.lastDisconnectReason,
+            lastDisconnectAt: stats.lastDisconnectAt,
+            lastPingRTTMilliseconds: stats.lastPingRTTMilliseconds,
+            averagePingRTTMilliseconds: stats.averagePingRTTMilliseconds,
+            pingSampleCount: stats.pingSampleCount
+        ))
+        try ctx.save()
+    }
+
+    public func loadHealthStats(for gatewayID: GatewayID) async throws -> GatewayHealthStats? {
+        let ctx = ModelContext(container)
+        let rows = try ctx.fetch(FetchDescriptor<CachedHealthStatsRow>())
+        guard let row = rows.first(where: { $0.gatewayID == gatewayID.rawValue }) else {
+            return nil
+        }
+        return GatewayHealthStats(
+            currentState: GatewayStatus(rawValue: row.currentStateRaw) ?? .offline,
+            firstObservedAt: row.firstObservedAt,
+            lastTransitionAt: row.lastTransitionAt,
+            connectedMilliseconds: row.connectedMilliseconds,
+            disconnectedMilliseconds: row.disconnectedMilliseconds,
+            reconnectCount: row.reconnectCount,
+            lastDisconnectReason: row.lastDisconnectReason,
+            lastDisconnectAt: row.lastDisconnectAt,
+            lastPingRTTMilliseconds: row.lastPingRTTMilliseconds,
+            averagePingRTTMilliseconds: row.averagePingRTTMilliseconds,
+            pingSampleCount: row.pingSampleCount
+        )
+    }
+
+    public func deleteHealthStats(for gatewayID: GatewayID) async throws {
+        let ctx = ModelContext(container)
+        let rows = try ctx.fetch(FetchDescriptor<CachedHealthStatsRow>())
+        for row in rows where row.gatewayID == gatewayID.rawValue {
+            ctx.delete(row)
+        }
+        try ctx.save()
+    }
+}
+
 // MARK: - Factories
 
 public extension SwiftDataCacheStore {
@@ -165,6 +225,7 @@ public extension SwiftDataCacheStore {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
+                 CachedHealthStatsRow.self,
             configurations: config
         )
         return SwiftDataCacheStore(container: container)
@@ -181,6 +242,7 @@ public extension SwiftDataCacheStore {
         let config = ModelConfiguration(url: storeURL)
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
+                 CachedHealthStatsRow.self,
             configurations: config
         )
         // The store file is created eagerly at container init (verified); apply

@@ -634,4 +634,39 @@ final class ModuleBoundaryTests: XCTestCase {
             WSTicket(token: "fixture-ticket", ttlSeconds: 30)
         }
     }
+
+    // MARK: H2 — connection-health seam usable from the app composition root
+
+    func testConnectionHealthSeamIsConstructibleInComposition() async throws {
+        // Prove the H2 health seam (FleetCore `ConnectionHealthAccumulating` +
+        // `HealthStatsStoring`) is constructible in the app composition root
+        // over the SAME file-backed SwiftData store the cache uses — the
+        // boundary the Health dashboard wires to. No network: the accumulator
+        // is fed synthetic events and the snapshot round-trips through the
+        // store, proving stats survive an app restart (new accumulator over
+        // the same store).
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("H2Boundary-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = try SwiftDataCacheStore.makeFileBacked(
+            storeURL: dir.appendingPathComponent("cache.store"))
+        let id = GatewayID(rawValue: "<dev-workstation>")
+
+        let first: any ConnectionHealthAccumulating = GatewayHealthStatsAccumulator(store: store)
+        await first.record(.connectStarted, for: id)
+        await first.record(.connected, for: id)
+        await first.record(.disconnected(reason: "normal closure"), for: id)
+        await first.record(.pingRTT(milliseconds: 8.0), for: id)
+
+        // "Restart": a fresh accumulator over the same store restores the
+        // persisted stats (non-secret; the store is the file-backed cache).
+        let second: any ConnectionHealthAccumulating = GatewayHealthStatsAccumulator(store: store)
+        await second.rehydrate(gatewayIDs: [id])
+        let restored = await second.stats(for: id)
+        XCTAssertEqual(restored?.lastDisconnectReason, "normal closure")
+        XCTAssertEqual(restored?.pingSampleCount, 1)
+        XCTAssertEqual(restored?.lastPingRTTMilliseconds, 8.0)
+    }
 }

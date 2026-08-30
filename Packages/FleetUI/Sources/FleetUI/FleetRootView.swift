@@ -54,6 +54,8 @@ public struct FleetRootView: View {
                                 BotDetailView(environment: environment, route: route)
                             case .conversation(let route, let sessionID):
                                 ConversationView(environment: environment, route: route, sessionID: sessionID)
+                            case .health:
+                                HealthDashboardView(environment: environment)
                             }
                         }
                 }

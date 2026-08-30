@@ -117,6 +117,18 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private let eventStream: AsyncStream<GatewayEvent>
     private let eventContinuation: AsyncStream<GatewayEvent>.Continuation
 
+    /// H2 Connection health: every lifecycle observation this transport makes
+    /// (connect started / connected / disconnected with reason / heartbeat
+    /// ping RTT) is yielded here for the FleetCore stats accumulator. The
+    /// stream lives for the transport's lifetime and is single-consumer
+    /// (the composition root attaches one feed task per gateway connection).
+    private let healthStream: AsyncStream<ConnectionHealthEvent>
+    private let healthContinuation: AsyncStream<ConnectionHealthEvent>.Continuation
+
+    /// In-flight heartbeat pings keyed by id → send instant, for RTT
+    /// measurement. Removed on the correlated pong or the timeout cleanup.
+    private var pingStarts: [JSONRPCID: ContinuousClock.Instant] = [:]
+
     private let clock = ContinuousClock()
 
     public init(
@@ -138,6 +150,9 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (eventStream, eventContinuation) = AsyncStream<GatewayEvent>.makeStream()
         self.eventStream = eventStream
         self.eventContinuation = eventContinuation
+        let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream()
+        self.healthStream = healthStream
+        self.healthContinuation = healthContinuation
     }
 
     /// M1-compatible init: a plain `WSTicketMinting` is adapted to the
@@ -161,6 +176,9 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (eventStream, eventContinuation) = AsyncStream<GatewayEvent>.makeStream()
         self.eventStream = eventStream
         self.eventContinuation = eventContinuation
+        let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream()
+        self.healthStream = healthStream
+        self.healthContinuation = healthContinuation
     }
 
     // MARK: HermesTransport
@@ -181,6 +199,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         }
         connectionState = .connecting
         stateBox.set(.connecting)
+        healthContinuation.yield(.connectStarted)
 
         // Recreate the ready-handshake channel for this connection (M1 P4
         // residual fix): a prior teardown finished the previous channel.
@@ -210,6 +229,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
             readyPayload = ready
             connectionState = .open
             stateBox.set(.connected)
+            healthContinuation.yield(.connected)
 
             // Heartbeat is gated on the ready payload — mirror the reference
             // client instead of assuming.
@@ -451,10 +471,17 @@ public actor GatewayWebSocketTransport: HermesTransport {
             guard let gatewayEvent = GatewayEvent(event: event) else { return }
             await handleEvent(gatewayEvent)
         case .response(let response):
-            // Correlate with a pending RPC request (M2: profiles.list /
-            // session.list) by exact id. Unknown/duplicate ids are ignored —
-            // a late response to a timed-out request must not crash.
-            if let continuation = pendingRequests.removeValue(forKey: response.id) {
+            // H2: a correlated heartbeat pong measures ping RTT (the ping's
+            // send instant was recorded in `sendPing`). Heartbeat ids are
+            // never in `pendingRequests`, so this lookup is unambiguous.
+            if let start = pingStarts.removeValue(forKey: response.id) {
+                healthContinuation.yield(.pingRTT(
+                    milliseconds: Self.elapsedMilliseconds(from: start, to: clock.now)))
+            } else if let continuation = pendingRequests.removeValue(forKey: response.id) {
+                // Correlate with a pending RPC request (M2: profiles.list /
+                // session.list) by exact id. Unknown/duplicate ids are
+                // ignored — a late response to a timed-out request must not
+                // crash.
                 continuation.resume(returning: response.result ?? .null)
             }
         case .error(let error):
@@ -512,6 +539,14 @@ public actor GatewayWebSocketTransport: HermesTransport {
         eventStream
     }
 
+    /// H2 Connection health: subscribe to the transport's lifecycle
+    /// observations (`.connectStarted` / `.connected` / `.disconnected(reason)`
+    /// / `.pingRTT(ms)`). Lives for the transport's lifetime; the composition
+    /// root attaches one consumer task that feeds the FleetCore accumulator.
+    public nonisolated func subscribeToHealthEvents() -> AsyncStream<ConnectionHealthEvent> {
+        healthStream
+    }
+
     // MARK: heartbeat
 
     private func startHeartbeat(_ session: any WebSocketSession) {
@@ -537,10 +572,27 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let frame = JSONRPCRequest(id: id, method: "gateway.ping", params: .object([:]))
         do {
             let line = try JSONRPCCodec.encode(.request(frame))
+            // Record the send instant BEFORE sending; the correlated pong in
+            // the receive loop yields a `.pingRTT` health event (H2).
+            pingStarts[id] = clock.now
             try await session.send(.text(line))
+            // Timeout hygiene: drop the sample if no pong arrives so the
+            // dictionary never grows unbounded. The heartbeat loop itself
+            // never blocks on the pong (inbound-deadline detection stays live).
+            let deadline = config.requestTimeout
+            Task { [weak self, id] in
+                try? await Task.sleep(for: deadline)
+                await self?.dropPingIfUnanswered(id: id)
+            }
         } catch {
             // Send failure will surface via the receive loop / close path.
         }
+    }
+
+    /// Remove an unanswered heartbeat ping (a late pong is a no-op — the
+    /// sample was already dropped).
+    private func dropPingIfUnanswered(id: JSONRPCID) {
+        pingStarts[id] = nil
     }
 
     private func checkInboundDeadline() async {
@@ -620,6 +672,11 @@ public actor GatewayWebSocketTransport: HermesTransport {
             stateBox.set(.failed(reason.debugDescription))
         }
         lastDisconnectReason = reason
+        // H2: emit the disconnect observation exactly once per actual state
+        // transition (repeat teardowns are the `wasTerminal` path above and
+        // do NOT re-emit). The reason string is `DisconnectReason.debugDescription`
+        // — non-secret by construction.
+        healthContinuation.yield(.disconnected(reason: reason.debugDescription))
         // P4 (M6): finish the per-connection ready channel (waitForReady on
         // the closing connection must fail fast); the event channel is NOT
         // finished so a reconnecting client keeps its live subscription.
@@ -671,5 +728,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
         buildWebSocketURL(
             base: base, path: path,
             authentication: .ticket(StoredToken(rawValue: ticket.token)))
+    }
+
+    /// Milliseconds between two `ContinuousClock` instants (non-negative).
+    /// Used to convert a ping send→pong round-trip into a `Double` ms sample.
+    static func elapsedMilliseconds(from start: ContinuousClock.Instant, to end: ContinuousClock.Instant) -> Double {
+        let elapsed = end - start
+        return max(0, Double(elapsed.components.seconds) * 1000
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000)
     }
 }

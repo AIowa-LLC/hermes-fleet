@@ -121,15 +121,21 @@ enum FleetServiceGraph {
             credentials: credentialStore,
             sessionFactory: makeSessionFactory(credentialStore: credentialStore)
         )
-        let cache: any CacheStoring = makeFileBackedCache()
+        // The file-backed SwiftData cache doubles as the health-stats store
+        // (H2): same non-secret persistence seam, one store file.
+        let cacheStore = makeFileBackedCache()
+        let cache: any CacheStoring = cacheStore
+        let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
             registry: registry,
             roster: roster,
             cache: cache,
             sessionList: sessionList,
-            connectionFactory: makeConnectionFactory(credentialStore: credentialStore),
-            conversationFactory: makeConversationFactory(credentialStore: credentialStore)
+            connectionFactory: makeConnectionFactory(
+                credentialStore: credentialStore, health: health),
+            conversationFactory: makeConversationFactory(credentialStore: credentialStore),
+            health: health
         )
     }
 
@@ -157,14 +163,19 @@ enum FleetServiceGraph {
     }
 
     /// Real per-gateway connection: authenticator (from the gateway's auth
-    /// strategy) + WebSocket transport + single-gateway lifecycle.
+    /// strategy) + WebSocket transport + single-gateway lifecycle. Feeds the
+    /// H2 connection-health accumulator from the transport's health event
+    /// stream (the ONLY feed point — probe/roster/conversation transports are
+    /// deliberately not fed, so short-lived probes never skew uptime or the
+    /// reconnect counter).
     /// `nonisolated` so the `@Sendable` factory closures can build transports
     /// off the main actor (only `AppEnvironment` construction is main-isolated).
     nonisolated private static func makeConnectionFactory(
-        credentialStore: any CredentialStoring
+        credentialStore: any CredentialStoring,
+        health: any ConnectionHealthAccumulating
     ) -> FleetConnectionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, credentialStore: credentialStore)
+            makeConnection(gateway: gateway, credentialStore: credentialStore, health: health)
         }
     }
 
@@ -188,20 +199,50 @@ enum FleetServiceGraph {
 
     nonisolated private static func makeConnection(
         gateway: FleetGateway,
-        credentialStore: any CredentialStoring
+        credentialStore: any CredentialStoring,
+        health: (any ConnectionHealthAccumulating)? = nil
     ) -> SingleGatewayConnection {
         let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
         let transport = GatewayWebSocketTransport(
             baseURL: base,
             authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
-            configuration: .standard
+            configuration: makeTransportConfiguration()
         )
+        if let health {
+            // H2: feed the accumulator from this transport's lifecycle events
+            // for the lifetime of the connection (the stream never finishes).
+            let events = transport.subscribeToHealthEvents()
+            let gatewayID = gateway.id
+            Task { [health] in
+                for await event in events {
+                    await health.record(event, for: gatewayID)
+                }
+            }
+        }
         return SingleGatewayConnection(
             gatewayID: gateway.id,
             displayName: gateway.displayName,
             endpoint: gateway.endpoint,
             transport: transport
         )
+    }
+
+    /// Transport knobs. `HERMES_FLEET_PING_INTERVAL_SECONDS` (any config)
+    /// overrides the heartbeat interval so the H2 UI test can assert ping RTT
+    /// deterministically on a short-lived connection (the current LAN relay
+    /// drops sockets at ~30s; a 2s heartbeat renders RTT within seconds).
+    /// Test-support knob only — never a product feature.
+    nonisolated private static func makeTransportConfiguration() -> TransportConfiguration {
+        let env = ProcessInfo.processInfo.environment
+        if let raw = env["HERMES_FLEET_PING_INTERVAL_SECONDS"], let seconds = Double(raw), seconds > 0 {
+            return TransportConfiguration(
+                pingInterval: .milliseconds(Int64(seconds * 1000)),
+                inboundDeadline: .seconds(45),
+                connectTimeout: .seconds(15),
+                requestTimeout: .seconds(120)
+            )
+        }
+        return .standard
     }
 
     /// Authenticator honoring the gateway's configured auth strategy
@@ -243,8 +284,8 @@ enum FleetServiceGraph {
     /// File-backed SwiftData cache in Application Support, with the store's
     /// NSFileProtectionComplete + backup-exclusion (synthesis §12). Falls back
     /// to in-memory only if the container cannot be created (cache is
-    /// non-critical for U1).
-    private static func makeFileBackedCache() -> any CacheStoring {
+    /// non-critical for U1). Also serves as the H2 health-stats store.
+    private static func makeFileBackedCache() -> SwiftDataCacheStore {
         let directory = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory

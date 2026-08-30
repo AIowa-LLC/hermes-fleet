@@ -102,3 +102,66 @@ public final class CachedReplayEpochRow {
         self.epoch = epoch
     }
 }
+
+/// One persisted per-gateway connection-health snapshot (H2 Connection health
+/// dashboard). Mirrors `GatewayHealthStats` exactly — counts, timestamps, and
+/// classified reasons only.
+///
+/// **Structural no-secret invariant:** like every cache model, there is NO
+/// token, ticket, credential, password, or key field here — health stats are
+/// non-secret by construction (synthesis §12).
+@Model
+public final class CachedHealthStatsRow {
+    /// Owning gateway (canonical `GatewayID.rawValue`).
+    public var gatewayID: String
+    /// `GatewayStatus.rawValue` of the last known state ("online"/"offline"/…).
+    public var currentStateRaw: String
+    /// When the accumulator first observed this gateway.
+    public var firstObservedAt: Date
+    /// Wall-clock timestamp of the most recent state transition.
+    public var lastTransitionAt: Date
+    /// Accumulated connected time (milliseconds).
+    public var connectedMilliseconds: Int64
+    /// Accumulated disconnected time (milliseconds).
+    public var disconnectedMilliseconds: Int64
+    /// Number of re-establishments after the first connect.
+    public var reconnectCount: Int
+    /// Human-readable reason the connection last ended (non-secret).
+    public var lastDisconnectReason: String?
+    /// When that disconnect happened.
+    public var lastDisconnectAt: Date?
+    /// Most recent heartbeat ping RTT (milliseconds).
+    public var lastPingRTTMilliseconds: Double?
+    /// Running average heartbeat ping RTT (milliseconds).
+    public var averagePingRTTMilliseconds: Double?
+    /// Number of ping RTT samples observed.
+    public var pingSampleCount: Int
+
+    public init(
+        gatewayID: String,
+        currentStateRaw: String,
+        firstObservedAt: Date,
+        lastTransitionAt: Date,
+        connectedMilliseconds: Int64,
+        disconnectedMilliseconds: Int64,
+        reconnectCount: Int,
+        lastDisconnectReason: String?,
+        lastDisconnectAt: Date?,
+        lastPingRTTMilliseconds: Double?,
+        averagePingRTTMilliseconds: Double?,
+        pingSampleCount: Int
+    ) {
+        self.gatewayID = gatewayID
+        self.currentStateRaw = currentStateRaw
+        self.firstObservedAt = firstObservedAt
+        self.lastTransitionAt = lastTransitionAt
+        self.connectedMilliseconds = connectedMilliseconds
+        self.disconnectedMilliseconds = disconnectedMilliseconds
+        self.reconnectCount = reconnectCount
+        self.lastDisconnectReason = lastDisconnectReason
+        self.lastDisconnectAt = lastDisconnectAt
+        self.lastPingRTTMilliseconds = lastPingRTTMilliseconds
+        self.averagePingRTTMilliseconds = averagePingRTTMilliseconds
+        self.pingSampleCount = pingSampleCount
+    }
+}

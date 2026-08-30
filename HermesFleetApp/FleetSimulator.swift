@@ -41,7 +41,12 @@ extension FleetServiceGraph {
         // Scripted session.list read path for Bot detail.
         let sessionList: any SessionListProviding = ScriptedSessionListService()
         // In-memory cache (scripted; no file-backed store in the simulator).
-        let cache: any CacheStoring = (try! SwiftDataCacheStore.makeInMemory())
+        // Doubles as the health-stats store: scripted connections do not emit
+        // transport health events, so the dashboard shows live scripted state
+        // with "no data yet" stats — honest for the DEBUG walkthrough.
+        let cacheStore = try! SwiftDataCacheStore.makeInMemory()
+        let cache: any CacheStoring = cacheStore
+        let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
             registry: registry,
@@ -54,6 +59,7 @@ extension FleetServiceGraph {
             conversationFactory: { gateway, _ in
                 ScriptedConversationSession(gatewayID: gateway.id)
             },
+            health: health,
             seedRegistrations: ScriptedFleet.registrations
         )
     }
