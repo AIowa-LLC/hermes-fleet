@@ -11,6 +11,24 @@
 		     domains, IP addresses) without disabling ATS globally. -->
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<!-- T2 tailnet fix (t_f54b722e): iOS ATS treats the Tailscale
+		     CGNAT range 100.64.0.0/10 as a PUBLIC address — NSAllows-
+		     LocalNetworking (RFC1918 + .local) does NOT cover it, so
+		     ATS blocks cleartext to http://<tailnet-ip>:9120 with
+		     error -1022. Narrow fix: a per-host ATS exception for the
+		     Mac's tailnet IP (the same surface Tony's app uses), same
+		     pattern as the P3 LAN fix. Transport encryption for this
+		     endpoint is provided by the Tailscale tunnel itself. -->
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key><tailnet-ip></key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+			</dict>
+		</dict>
 	</dict>
 	<!-- iOS 14+ local-network privacy: connecting to a LAN IP (e.g. the
 	     Hermes gateway at <lan-ip>:9120) requires this usage string.
