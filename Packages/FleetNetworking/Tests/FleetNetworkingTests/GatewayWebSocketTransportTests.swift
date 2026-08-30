@@ -248,6 +248,39 @@ final class GatewayWebSocketTransportTests: XCTestCase {
         XCTAssertEqual(url.port, 9443)
     }
 
+    // MARK: D1 — deterministic handshake-death classification
+
+    /// D1 regression (M13 HOLD): when the socket dies during the ready
+    /// handshake, `connect()` must deterministically classify the failure as
+    /// `.connectionClosed(.abnormalClosure)` — never a race-dependent
+    /// `.readyTimeout`. The `DyingSession`'s blocking `close()` keeps teardown
+    /// suspended at the close await (after finishing the ready channel) while
+    /// `waitForReady()` samples `connectionState`; pre-fix that sampled
+    /// `.connecting` and rethrew `.readyTimeout`.
+    func testSocketDeathDuringHandshakeClassifiesConnectionClosedNotReadyTimeout() async throws {
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30),
+            inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(10),
+            requestTimeout: .seconds(10)
+        )
+        let base = URL(string: "http://127.0.0.1:1")!
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)),
+            sessionFactory: DyingSessionFactory(closeDelay: .milliseconds(400)),
+            configuration: config
+        )
+        do {
+            try await transport.connect()
+            XCTFail("expected connectionClosed(.abnormalClosure), got success")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .connectionClosed(.abnormalClosure))
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     // MARK: state machine
 
     func testConnectionStateMapsToTransportState() {
@@ -290,6 +323,52 @@ final class GatewayWebSocketTransportTests: XCTestCase {
 
     private static func pongFrame(id: String) -> String {
         #"{"jsonrpc":"2.0","id":"\#(id)","result":{"ok":true}}"#
+    }
+}
+
+/// A session double whose `receive()` fails immediately (the socket died
+/// during the ready handshake) and whose `close()` blocks for a controlled
+/// duration. The blocking close deterministically reproduces the D1 race: the
+/// receive-loop teardown finishes the ready channel, then suspends at the
+/// close await — so `waitForReady()` samples `connectionState` while teardown
+/// is mid-flight. Pre-fix that sampled `.connecting` (→ `.timeout`); the fix
+/// records `.error(.abnormalClosure)` before finishing the ready channel so
+/// the classification is `.unreachable`.
+final class DyingSession: WebSocketSession, @unchecked Sendable {
+    private let closeDelay: Duration
+    init(closeDelay: Duration) { self.closeDelay = closeDelay }
+    var lastCloseCode: Int? { nil }
+    func open() async throws {}
+    func receive() async throws -> WebSocketMessage {
+        // NSURLErrorCannotConnectToHost → CloseCodeMapping → .abnormalClosure.
+        throw URLError(.cannotConnectToHost)
+    }
+    func send(_ message: WebSocketMessage) async throws {}
+    func close(code: Int, reason: String?) async {
+        // Deterministic race hold: the receive-loop teardown CANCELS its own
+        // task before calling close(), so a cancellation-aware Task.sleep here
+        // would bail instantly and never hold the window open. Suspend on a
+        // plain continuation resumed by a dispatch timer instead — this yields
+        // the actor for the configured delay (ignoring cancellation) so
+        // waitForReady()'s classification catch deterministically runs while
+        // teardown is mid-flight, before the terminal connection state is
+        // recorded.
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let nanos = Int(closeDelay.components.seconds * 1_000_000_000
+                + closeDelay.components.attoseconds / 1_000_000_000)
+            DispatchQueue.global().asyncAfter(
+                deadline: .now() + DispatchTimeInterval.nanoseconds(nanos)
+            ) {
+                cont.resume()
+            }
+        }
+    }
+}
+
+struct DyingSessionFactory: WebSocketSessionFactory {
+    let closeDelay: Duration
+    func makeSession(url: URL) -> any WebSocketSession {
+        DyingSession(closeDelay: closeDelay)
     }
 }
 

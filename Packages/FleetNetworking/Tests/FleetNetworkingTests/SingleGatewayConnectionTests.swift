@@ -127,6 +127,41 @@ final class SingleGatewayConnectionTests: XCTestCase {
         XCTAssertNotEqual(connection.status, .online, "must not be left online after failed handshake")
     }
 
+    /// D1 regression (M13 HOLD): a socket that dies during the ready handshake
+    /// must map to `.unreachable` deterministically — even when the receive-loop
+    /// teardown is still in flight (suspended at the blocking `close()`) at the
+    /// instant `waitForReady()` classifies the failure. Pre-fix this sampled
+    /// `.connecting` and mapped `.timeout` instead of `.unreachable`.
+    func testSocketDeathDuringHandshakeIsUnreachableNotTimeout() async throws {
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30),
+            inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(10),
+            requestTimeout: .seconds(10)
+        )
+        let base = URL(string: "http://127.0.0.1:1")!
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)),
+            sessionFactory: DyingSessionFactory(closeDelay: .milliseconds(400)),
+            configuration: config
+        )
+        let connection = SingleGatewayConnection(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            displayName: "MacBook",
+            endpoint: base,
+            transport: transport
+        )
+        do {
+            try await connection.connect()
+            XCTFail("expected unreachable, got success")
+        } catch let error as GatewayConnectivityError {
+            XCTAssertEqual(error, .unreachable)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     func testServerClose4401MapsAuthenticationRequired() async throws {
         let server = try InProcessWebSocketServer(script: .init(onOpen: [readyFrame()]))
         try await server.start()

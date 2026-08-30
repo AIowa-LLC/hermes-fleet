@@ -574,9 +574,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
     }
 
     private func teardown(_ reason: DisconnectReason, error: (any Error)?) async {
-        // Idempotent: only the first teardown writes terminal state. Late
-        // receive-loop failures (e.g. the socket error surfaced after we
-        // already closed) must not clobber the classified reason.
+        // D1 (M13 HOLD): record the terminal connection state BEFORE finishing
+        // the per-connection ready channel. waitForReady() classifies a failed
+        // handshake by sampling connectionState at the instant the ready stream
+        // ends — if the socket died during the handshake, that sample must see
+        // `.error(reason)` (→ `.unreachable`), never the still-`.connecting`
+        // state that previously existed while teardown was suspended at the
+        // session close await (→ `.timeout`). A still-open silent server never
+        // reaches teardown, so `.connecting` there still correctly maps to
+        // `.readyTimeout` in waitForReady().
         let wasTerminal: Bool
         switch connectionState {
         case .closed, .error: wasTerminal = true
@@ -593,16 +599,18 @@ public actor GatewayWebSocketTransport: HermesTransport {
         heartbeatTask?.cancel()
         receiveLoopTask = nil
         heartbeatTask = nil
-        // P4 (M6): finish the per-connection ready channel (waitForReady on
-        // the closing connection must fail fast); the event channel is NOT
-        // finished so a reconnecting client keeps its live subscription.
-        readyContinuation.finish()
-        lastDisconnectReason = reason
-        await session?.close(code: 1000, reason: nil)
-        session = nil
-        replayHoldActive = false
-        replayHoldBuffer.removeAll()
-        guard !wasTerminal else { return }
+        // Record the terminal state before any suspension / channel finish so
+        // waitForReady()'s classification is deterministic (D1).
+        guard !wasTerminal else {
+            lastDisconnectReason = reason
+            readyContinuation.finish()
+            await session?.close(code: 1000, reason: nil)
+            session = nil
+            replayHoldActive = false
+            replayHoldBuffer.removeAll()
+            _ = error
+            return
+        }
         switch reason {
         case .normalClosure:
             connectionState = .closed
@@ -611,6 +619,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
             connectionState = .error(reason)
             stateBox.set(.failed(reason.debugDescription))
         }
+        lastDisconnectReason = reason
+        // P4 (M6): finish the per-connection ready channel (waitForReady on
+        // the closing connection must fail fast); the event channel is NOT
+        // finished so a reconnecting client keeps its live subscription.
+        readyContinuation.finish()
+        await session?.close(code: 1000, reason: nil)
+        session = nil
+        replayHoldActive = false
+        replayHoldBuffer.removeAll()
         _ = error // recorded; P1 surfaces via state only
     }
 
