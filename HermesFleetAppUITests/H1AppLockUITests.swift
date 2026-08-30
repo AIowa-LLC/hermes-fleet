@@ -41,6 +41,9 @@ final class H1AppLockUITests: XCTestCase {
         let passcodeButton = app.buttons["fleet.app-lock.passcode.unlock"]
         XCTAssertTrue(passcodeButton.waitForExistence(timeout: 15),
                       "cold launch must show the lock screen with the passcode fallback (acceptance)")
+        // Evidence: capture the LOCKED frame (minimal Signal-red overlay,
+        // roster NOT rendered) before unlocking.
+        attachScreenshot(of: app, name: "h1-cold-launch-LOCKED")
 
         // Roster/conversation content must NOT render behind the lock.
         XCTAssertFalse(app.staticTexts["MacBook M5"].exists,
