@@ -31,6 +31,9 @@ public enum RosterError: Error, Sendable, Equatable, LocalizedError {
     /// The requested route is not a safe routing key (path traversal, `#`,
     /// separators) — fail closed before any RPC is sent (M9).
     case invalidRoute(String)
+    /// The route's owning gateway is not registered — fail closed, never
+    /// guess a transport for an unknown gateway.
+    case gatewayNotFound(GatewayID)
 
     public var errorDescription: String? {
         switch self {
@@ -38,6 +41,7 @@ public enum RosterError: Error, Sendable, Equatable, LocalizedError {
         case .malformedPayload(let s): return "malformed roster payload: \(s)"
         case .rpcFailed(let s): return "roster RPC failed: \(s)"
         case .invalidRoute(let s): return "invalid route: \(s)"
+        case .gatewayNotFound(let id): return "gateway not registered: \(id.rawValue)"
         }
     }
 }

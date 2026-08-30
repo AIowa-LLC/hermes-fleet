@@ -78,12 +78,34 @@ public final class AppEnvironment {
     /// Per-gateway connection lifecycle, observable.
     public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:]
 
+    /// Per-gateway connection-test result, observable (§13 reachable /
+    /// unreachable probe). Set only after `testConnection` completes; a
+    /// gateway with no entry has never been tested this session.
+    public private(set) var testResults: [GatewayID: GatewayTestResult] = [:]
+
+    /// Gateways currently running a connection test (for a Testing… row).
+    public private(set) var testingGatewayIDs: Set<GatewayID> = []
+
+    /// Sessions per bot route, fetched via the read-only `session.list` seam.
+    /// Observable so Bot detail re-renders as a fetch resolves.
+    public private(set) var sessionsByRoute: [Route: [SessionSummary]] = [:]
+
+    /// Routes whose `session.list` fetch is in flight.
+    public private(set) var loadingRoutes: Set<Route> = []
+
+    /// Last classified read error per route (non-secret), for the Bot-detail
+    /// error state. Absent until a fetch fails.
+    public private(set) var sessionReadErrors: [Route: String] = [:]
+
     // MARK: Injected seams (composition root)
 
     private let registry: any GatewayRegistryManaging
     private let roster: any FleetRosterProviding
     private let cache: any CacheStoring
     private let connectionFactory: FleetConnectionFactory
+    /// Read-only `session.list` path for Bot detail (injected concrete:
+    /// `GatewaySessionListService` in production, scripted in DEBUG/tests).
+    private let sessionList: any SessionListProviding
     /// Gateways to register on first launch (empty registry) so the U1
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
@@ -97,12 +119,14 @@ public final class AppEnvironment {
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
         cache: any CacheStoring,
+        sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         seedRegistrations: [GatewayRegistration] = []
     ) {
         self.registry = registry
         self.roster = roster
         self.cache = cache
+        self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.seedRegistrations = seedRegistrations
     }
@@ -205,10 +229,101 @@ public final class AppEnvironment {
         return gateway
     }
 
+    /// Register a gateway and optionally store its credential in one seam
+    /// call (U2 add-gateway form). The credential is passed straight to the
+    /// registry's Keychain-safe store — it is never held by the view layer
+    /// or logged. `nil` credential → registration only.
+    public func addGateway(
+        _ registration: GatewayRegistration,
+        credential: GatewayCredential?
+    ) async throws -> FleetGateway {
+        let gateway = try await registry.addGateway(registration)
+        if let credential {
+            try await registry.saveCredential(credential, for: gateway.id)
+        }
+        await reloadGateways()
+        return gateway
+    }
+
+    /// Apply a partial edit to a gateway's display name / endpoint / auth
+    /// config. Throws `.notFound` / `.invalidEndpoint` from the registry seam.
+    public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
+        let gateway = try await registry.updateGateway(id, edits: edits)
+        await reloadGateways()
+        return gateway
+    }
+
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
         activeConnections[id] = nil
         connectionStates[id] = nil
+        testResults[id] = nil
         await reloadGateways()
+    }
+
+    // MARK: Auth config entry (M7 credential flow — Keychain-safe)
+
+    /// Store a credential for a gateway (Keychain via the registry seam; the
+    /// secret never transits the UI model or logs). Marks auth configured.
+    public func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
+        try await registry.saveCredential(credential, for: id)
+        await reloadGateways()
+    }
+
+    /// Clear the stored credential for a gateway (no-op when absent).
+    public func clearCredential(for id: GatewayID) async throws {
+        try await registry.clearCredential(for: id)
+        await reloadGateways()
+    }
+
+    /// Whether a credential is currently stored for a gateway (Keychain).
+    public func hasCredential(for id: GatewayID) async -> Bool {
+        await registry.hasCredential(for: id)
+    }
+
+    // MARK: Test connection (§13 reachable/unreachable probe, observable)
+
+    /// Probe a gateway's reachability and capability surface. Observable:
+    /// `testingGatewayIDs` while in flight, then `testResults[id]` set to the
+    /// classified §13 result. A classified failure (offline / authRequired /
+    /// unsupported / degraded) is stored, never thrown to the UI — only an
+    /// absent gateway throws (from the registry seam).
+    public func testConnection(to id: GatewayID) async throws {
+        guard gateways.contains(where: { $0.id == id }) else {
+            throw GatewayRegistryError.notFound(id)
+        }
+        testingGatewayIDs.insert(id)
+        defer { testingGatewayIDs.remove(id) }
+        let result = try await registry.testConnection(to: id)
+        testResults[id] = result
+        // Reflect the probe into the observable connection lifecycle so the
+        // row shows the §13 state without a separate connect attempt.
+        connectionStates[id] = GatewayConnectionState(status: result.status)
+    }
+
+    // MARK: Session list (Bot detail — read-only `session.list` seam)
+
+    /// Load a bot's sessions via the read-only `session.list` seam, cached in
+    /// the observable `sessionsByRoute`. Fail-closed: a classified read error
+    /// is recorded (non-secret) so the UI renders an error state, never a
+    /// crash.
+    public func loadSessions(for route: Route) async {
+        guard !loadingRoutes.contains(route) else { return }
+        loadingRoutes.insert(route)
+        defer { loadingRoutes.remove(route) }
+        do {
+            let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
+            sessionsByRoute[route] = sessions
+            sessionReadErrors[route] = nil
+        } catch let error as RosterError {
+            sessionReadErrors[route] = error.errorDescription
+        } catch {
+            sessionReadErrors[route] = String(describing: error)
+        }
+    }
+
+    /// Sessions for a route, or `nil` when never fetched.
+    public func sessions(for route: Route) -> [SessionSummary]? {
+        sessionsByRoute[route]
     }
 }

@@ -41,12 +41,18 @@ enum FleetServiceGraph {
             credentials: credentialStore,
             sessionFactory: makeSessionFactory(tokenStore: tokenStore)
         )
+        let sessionList: any SessionListProviding = GatewaySessionListService(
+            registry: registry,
+            credentials: credentialStore,
+            sessionFactory: makeSessionFactory(tokenStore: tokenStore)
+        )
         let cache: any CacheStoring = makeFileBackedCache()
 
         return AppEnvironment(
             registry: registry,
             roster: roster,
             cache: cache,
+            sessionList: sessionList,
             connectionFactory: makeConnectionFactory(tokenStore: tokenStore)
         )
     }

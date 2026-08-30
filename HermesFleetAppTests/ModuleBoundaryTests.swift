@@ -541,6 +541,46 @@ final class ModuleBoundaryTests: XCTestCase {
         func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { throw RosterError.notConnected }
     }
 
+    // MARK: U2 — `session.list` read seam usable from the app composition root
+
+    func testSessionListSeamIsConstructibleInComposition() async throws {
+        // Prove the U2 `session.list` read seam (FleetCore
+        // `SessionListProviding`) is constructible in the app composition root
+        // over the registry + credential + roster-session seams — the boundary
+        // Bot detail wires to. No network: an unconnected route classifies a
+        // read error instead of hanging (spec §5.4 observation-only).
+        let store = InMemoryCredentialStore()
+        let registry: any GatewayRegistryManaging = GatewayRegistryService(
+            credentials: store,
+            connectionFactory: { gateway, _ in
+                StubRegistryConnection(gatewayID: gateway.id)
+            }
+        )
+        _ = try await registry.addGateway(GatewayRegistration(
+            id: GatewayID(rawValue: "<dev-workstation>"), displayName: "MacBook",
+            endpoint: URL(string: "http://127.0.0.1:8642")!))
+
+        let sessionList: any SessionListProviding = GatewaySessionListService(
+            registry: registry,
+            credentials: store,
+            sessionFactory: { gateway, _ in
+                StubRosterSession(gatewayID: gateway.id)
+            }
+        )
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            profileSlug: ProfileSlug(rawValue: "default")
+        )
+        do {
+            _ = try await sessionList.fetchSessions(for: route, limit: 10)
+            XCTFail("expected notConnected from unreachable gateway")
+        } catch let error as RosterError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     /// Minimal ticket minter for the app-level boundary test (no network).
     private struct StaticAppTicketMinter: WSTicketMinting {
         func mintTicket() async throws -> WSTicket {
