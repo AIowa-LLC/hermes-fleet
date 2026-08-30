@@ -428,11 +428,12 @@ final class ModuleBoundaryTests: XCTestCase {
 
     func testAuthenticationProviderSeamIsConstructibleInComposition() async throws {
         // The M11 auth seam (spec §16 "AuthenticationProvider"; synthesis §11)
-        // is constructible in the app composition root over the Keychain token
-        // store + a ticket minter. Proves the ticket and loopback-token paths
-        // both produce auth material WITHOUT exposing the raw secret, and the
+        // is constructible in the app composition root over the Keychain
+        // credential store (the SAME store the U2 UI writes via saveCredential)
+        // + a ticket minter. Proves the ticket and loopback-token paths both
+        // produce auth material WITHOUT exposing the raw secret, and the
         // `.none` path yields no auth.
-        let keychain = KeychainTokenStore()
+        let keychain = KeychainCredentialStore()
         let id = GatewayID(rawValue: "m11-boundary-gateway")
 
         // Ticket path: a session-token gateway mints a single-use ticket.
@@ -446,11 +447,12 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(token.rawValue, "fixture-ticket")
         XCTAssertEqual(ticketResult.description, "[REDACTED]", "auth value never prints")
 
-        // Loopback path: a loopback-token gateway loads the token from Keychain.
-        try await keychain.saveToken(StoredToken(rawValue: "loop-token-abc"), for: id)
-        defer { Task { try? await keychain.deleteToken(for: id) } }
+        // Loopback path: a loopback-token gateway loads the credential from the
+        // SAME Keychain credential store the U2 UI writes via saveCredential.
+        try await keychain.saveCredential(GatewayCredential(rawValue: "loop-token-abc"), for: id)
+        defer { Task { try? await keychain.deleteCredential(for: id) } }
         let loopAuth = GatewayAuthenticator(
-            gatewayID: id, strategy: .loopbackToken, tokenStore: keychain)
+            gatewayID: id, strategy: .loopbackToken, credentialStore: keychain)
         let loopResult = try await loopAuth.authenticate()
         guard case .loopbackToken(let loopToken) = loopResult else {
             return XCTFail("expected loopbackToken auth, got \(loopResult)")

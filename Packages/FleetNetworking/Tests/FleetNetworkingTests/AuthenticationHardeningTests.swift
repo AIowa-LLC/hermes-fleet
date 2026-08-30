@@ -12,20 +12,44 @@ import FleetNetworking
 ///   FRESH ticket — never a silent retry with the same credential (spec §8.6).
 final class AuthenticationHardeningTests: XCTestCase {
 
-    /// Minimal in-memory `TokenStoring` stub (FleetCore seam) so the loopback
-    /// auth path is exercised hermetically without FleetSecurity.
-    private final class StubTokenStore: TokenStoring, @unchecked Sendable {
+    /// Minimal in-memory `CredentialStoring` stub (FleetCore seam) so the
+    /// loopback + session-token auth paths are exercised hermetically without
+    /// FleetSecurity. Mirrors the store the U2 UI writes via saveCredential.
+    private final class StubCredentialStore: CredentialStoring, @unchecked Sendable {
         private let lock = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
-        func saveToken(_ token: StoredToken, for gatewayID: GatewayID) async throws {
-            lock.withLock { $0[gatewayID.rawValue] = token.rawValue }
+        func saveCredential(_ credential: GatewayCredential, for gatewayID: GatewayID) async throws {
+            lock.withLock { $0[gatewayID.rawValue] = credential.rawValue }
         }
-        func loadToken(for gatewayID: GatewayID) async throws -> StoredToken? {
+        func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? {
             lock.withLock { storage in
-                storage[gatewayID.rawValue].map(StoredToken.init(rawValue:))
+                storage[gatewayID.rawValue].map(GatewayCredential.init(rawValue:))
             }
         }
-        func deleteToken(for gatewayID: GatewayID) async throws {
+        func deleteCredential(for gatewayID: GatewayID) async throws {
             _ = lock.withLock { storage in storage.removeValue(forKey: gatewayID.rawValue) }
+        }
+    }
+
+    /// Minimal connection stub (L1 fix #1 test): connect succeeds, no socket.
+    private struct StubConnection: GatewayConnectivityProviding {
+        let gatewayID: GatewayID
+        let connectResult: Result<GatewayReadyAdoption?, GatewayConnectivityError>
+        var status: GatewayStatus {
+            switch connectResult {
+            case .success: return .online
+            case .failure(let error): return GatewayStatus(connectivityError: error)
+            }
+        }
+        func adoptedReady() async -> GatewayReadyAdoption? {
+            if case .success(let ready) = connectResult { return ready }
+            return nil
+        }
+        func connect() async throws {
+            if case .failure(let error) = connectResult { throw error }
+        }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: "stub", endpoint: nil)
         }
     }
 
@@ -103,15 +127,15 @@ final class AuthenticationHardeningTests: XCTestCase {
         }
     }
 
-    // MARK: GatewayAuthenticator — loopback token path (Keychain-backed)
+    // MARK: GatewayAuthenticator — loopback token path (credential-store-backed)
 
     func testAuthenticatorLoopbackTokenPath() async throws {
-        let store = StubTokenStore()
-        try await store.saveToken(StoredToken(rawValue: "loop-token"), for: GatewayID(rawValue: "<dev-workstation>"))
+        let store = StubCredentialStore()
+        try await store.saveCredential(GatewayCredential(rawValue: "loop-token"), for: GatewayID(rawValue: "<dev-workstation>"))
         let auth = GatewayAuthenticator(
             gatewayID: GatewayID(rawValue: "<dev-workstation>"),
             strategy: .loopbackToken,
-            tokenStore: store)
+            credentialStore: store)
         let result = try await auth.authenticate()
         guard case .loopbackToken(let token) = result else {
             return XCTFail("expected loopbackToken auth, got \(result)")
@@ -123,7 +147,7 @@ final class AuthenticationHardeningTests: XCTestCase {
         let auth = GatewayAuthenticator(
             gatewayID: GatewayID(rawValue: "<dev-workstation>"),
             strategy: .loopbackToken,
-            tokenStore: StubTokenStore())
+            credentialStore: StubCredentialStore())
         do {
             _ = try await auth.authenticate()
             XCTFail("expected missingLoopbackToken")
@@ -132,6 +156,77 @@ final class AuthenticationHardeningTests: XCTestCase {
         } catch {
             XCTFail("unexpected error \(error)")
         }
+    }
+
+    // MARK: L1 fix #1 — the loopback authenticator reads the SAME credential
+    // store the U2 UI writes via saveCredential (was: a different
+    // KeychainTokenStore that nothing ever wrote → missingLoopbackToken).
+
+    func testLoopbackCredentialStoredViaRegistryReachesAuthenticator() async throws {
+        // Reproduce the L1 store-split: save a credential the way the U2 UI
+        // does (GatewayRegistryService.saveCredential → CredentialStoring),
+        // then authenticate a loopback gateway against that SAME store.
+        let store = StubCredentialStore()
+        let registry: any GatewayRegistryManaging = GatewayRegistryService(
+            credentials: store,
+            connectionFactory: { gateway, _ in
+                StubConnection(gatewayID: gateway.id, connectResult: .success(nil))
+            }
+        )
+        let gateway = try await registry.addGateway(GatewayRegistration(
+            id: GatewayID(rawValue: "<dev-workstation>"),
+            displayName: "MacBook",
+            endpoint: URL(string: "http://127.0.0.1:9119")!,
+            authConfiguration: GatewayAuthConfiguration(strategy: .loopbackToken, credentialStored: false)
+        ))
+        try await registry.saveCredential(GatewayCredential(rawValue: "ui-entered-token"), for: gateway.id)
+
+        let auth = GatewayAuthenticator(
+            gatewayID: gateway.id,
+            strategy: .loopbackToken,
+            credentialStore: store)
+        let result = try await auth.authenticate()
+        guard case .loopbackToken(let token) = result else {
+            return XCTFail("expected loopbackToken auth, got \(result)")
+        }
+        XCTAssertEqual(token.rawValue, "ui-entered-token",
+                       "the UI-entered credential (KeychainCredentialStore path) must authenticate a loopback gateway")
+    }
+
+    // MARK: L1 fix #3 — a .sessionToken gateway's stored credential is sent
+    // as X-Hermes-Session-Token on POST /api/auth/ws-ticket (was: built with
+    // sessionToken: nil → dead ticket minter).
+
+    func testSessionTokenAuthenticatorSendsStoredCredentialAsHeader() async throws {
+        // A real WSTicketClient backed by a URLProtocol mock captures the
+        // request, so we can prove the stored credential is sent as the
+        // X-Hermes-Session-Token header on the mint call.
+        TicketMintURLProtocol.statusCode = 200
+        TicketMintURLProtocol.body = Data(#"{"ticket":"abc123","ttl_seconds":30}"#.utf8)
+        TicketMintURLProtocol.capturedRequests = []
+        defer { TicketMintURLProtocol.capturedRequests = [] }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [TicketMintURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let store = StubCredentialStore()
+        try await store.saveCredential(GatewayCredential(rawValue: "dashboard-session-token"), for: GatewayID(rawValue: "<dev-workstation>"))
+        let auth = GatewayAuthenticator(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            strategy: .sessionToken,
+            credentialStore: store,
+            baseURL: URL(string: "http://127.0.0.1:9119")!,
+            urlSession: session)
+        let result = try await auth.authenticate()
+        guard case .ticket(let token) = result else {
+            return XCTFail("expected ticket auth, got \(result)")
+        }
+        XCTAssertEqual(token.rawValue, "abc123")
+        let request = try XCTUnwrap(TicketMintURLProtocol.capturedRequests.first)
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "X-Hermes-Session-Token"),
+            "dashboard-session-token",
+            "the stored credential must be sent as X-Hermes-Session-Token on the mint")
     }
 
     // MARK: GatewayAuthenticator — none path

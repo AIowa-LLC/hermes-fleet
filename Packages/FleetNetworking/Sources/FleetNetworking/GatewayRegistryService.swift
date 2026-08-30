@@ -120,8 +120,12 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         }
         registry.update(id) { gateway in
             gateway.authConfigured = true
+            // Preserve the gateway's configured strategy (set by the U2 UI via
+            // addGateway registration / updateGateway) — never force-override it.
+            // L1 finding #2: force-overriding to .sessionToken here made every
+            // UI-selected strategy (e.g. loopback) unreachable.
             gateway.authConfiguration = GatewayAuthConfiguration(
-                strategy: .sessionToken,
+                strategy: gateway.authConfiguration.strategy,
                 credentialStored: true
             )
         }

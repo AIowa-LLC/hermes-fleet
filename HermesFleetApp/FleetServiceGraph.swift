@@ -29,22 +29,24 @@ enum FleetServiceGraph {
     // MARK: Production — real stores + live transports
 
     static func makeProductionEnvironment() -> AppEnvironment {
+        // The U2 UI writes credentials here (saveCredential → KeychainCredentialStore)
+        // and every authenticator reads from THIS SAME store, so a credential
+        // entered in the UI reaches the live gateway (L1 fix: store split).
         let credentialStore = KeychainCredentialStore()
-        let tokenStore = KeychainTokenStore()
 
         let registry: any GatewayRegistryManaging = GatewayRegistryService(
             credentials: credentialStore,
-            connectionFactory: makeProbeFactory(tokenStore: tokenStore)
+            connectionFactory: makeProbeFactory(credentialStore: credentialStore)
         )
         let roster: any FleetRosterProviding = FleetRosterService(
             registry: registry,
             credentials: credentialStore,
-            sessionFactory: makeSessionFactory(tokenStore: tokenStore)
+            sessionFactory: makeSessionFactory(credentialStore: credentialStore)
         )
         let sessionList: any SessionListProviding = GatewaySessionListService(
             registry: registry,
             credentials: credentialStore,
-            sessionFactory: makeSessionFactory(tokenStore: tokenStore)
+            sessionFactory: makeSessionFactory(credentialStore: credentialStore)
         )
         let cache: any CacheStoring = makeFileBackedCache()
 
@@ -53,8 +55,8 @@ enum FleetServiceGraph {
             roster: roster,
             cache: cache,
             sessionList: sessionList,
-            connectionFactory: makeConnectionFactory(tokenStore: tokenStore),
-            conversationFactory: makeConversationFactory(tokenStore: tokenStore)
+            connectionFactory: makeConnectionFactory(credentialStore: credentialStore),
+            conversationFactory: makeConversationFactory(credentialStore: credentialStore)
         )
     }
 
@@ -63,13 +65,13 @@ enum FleetServiceGraph {
     /// connection factory; `nonisolated` so the `@Sendable` closure can build
     /// transports off the main actor.
     nonisolated private static func makeConversationFactory(
-        tokenStore: any TokenStoring
+        credentialStore: any CredentialStoring
     ) -> FleetConversationFactory {
         { gateway, _ in
             let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, tokenStore: tokenStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
                 configuration: .standard
             )
             return GatewayConversationSession(
@@ -86,39 +88,39 @@ enum FleetServiceGraph {
     /// `nonisolated` so the `@Sendable` factory closures can build transports
     /// off the main actor (only `AppEnvironment` construction is main-isolated).
     nonisolated private static func makeConnectionFactory(
-        tokenStore: any TokenStoring
+        credentialStore: any CredentialStoring
     ) -> FleetConnectionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, tokenStore: tokenStore)
+            makeConnection(gateway: gateway, credentialStore: credentialStore)
         }
     }
 
     /// Real probe connection used by the registry's `testConnection`.
     nonisolated private static func makeProbeFactory(
-        tokenStore: any TokenStoring
+        credentialStore: any CredentialStoring
     ) -> GatewayConnectionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, tokenStore: tokenStore)
+            makeConnection(gateway: gateway, credentialStore: credentialStore)
         }
     }
 
     /// Real roster session factory used by the union roster aggregation.
     nonisolated private static func makeSessionFactory(
-        tokenStore: any TokenStoring
+        credentialStore: any CredentialStoring
     ) -> GatewayRosterSessionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, tokenStore: tokenStore)
+            makeConnection(gateway: gateway, credentialStore: credentialStore)
         }
     }
 
     nonisolated private static func makeConnection(
         gateway: FleetGateway,
-        tokenStore: any TokenStoring
+        credentialStore: any CredentialStoring
     ) -> SingleGatewayConnection {
         let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
         let transport = GatewayWebSocketTransport(
             baseURL: base,
-            authentication: makeAuthenticator(gateway: gateway, tokenStore: tokenStore),
+            authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
             configuration: .standard
         )
         return SingleGatewayConnection(
@@ -130,12 +132,15 @@ enum FleetServiceGraph {
     }
 
     /// Authenticator honoring the gateway's configured auth strategy
-    /// (synthesis §11). No credential entry UI in U1 — the strategy is read
-    /// from the registry entry; loopback tokens are loaded from Keychain.
+    /// (synthesis §11). Credentials (loopback + session tokens) are loaded
+    /// from the SAME `CredentialStoring` the U2 UI writes via saveCredential,
+    /// so a UI-entered credential actually authenticates against a live
+    /// gateway (L1 fix: store split + dead ticket minter).
     nonisolated private static func makeAuthenticator(
         gateway: FleetGateway,
-        tokenStore: any TokenStoring
+        credentialStore: any CredentialStoring
     ) -> any AuthenticationProviding {
+        let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
         switch gateway.authConfiguration.strategy {
         case .none:
             return GatewayAuthenticator(gatewayID: gateway.id, strategy: .none)
@@ -143,14 +148,14 @@ enum FleetServiceGraph {
             return GatewayAuthenticator(
                 gatewayID: gateway.id,
                 strategy: .loopbackToken,
-                tokenStore: tokenStore
+                credentialStore: credentialStore
             )
         case .sessionToken, .bearerToken:
-            let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
             return GatewayAuthenticator(
                 gatewayID: gateway.id,
                 strategy: gateway.authConfiguration.strategy,
-                ticketMinter: WSTicketClient(baseURL: base, sessionToken: nil)
+                credentialStore: credentialStore,
+                baseURL: base
             )
         }
     }

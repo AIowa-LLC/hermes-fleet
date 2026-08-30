@@ -262,6 +262,12 @@ final class GatewayRegistryServiceTests: XCTestCase {
     func testSaveCredentialMarksGatewayConfigured() async throws {
         let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
         try await register(service)
+        // The gateway registered with its configured strategy (loopback here,
+        // as the U2 UI would set via addGateway registration).
+        _ = try await service.updateGateway(
+            gatewayA,
+            edits: GatewayEdit(authConfiguration: GatewayAuthConfiguration(
+                strategy: .loopbackToken, credentialStored: false)))
         try await service.saveCredential(GatewayCredential(rawValue: "secret"), for: gatewayA)
 
         let has = await service.hasCredential(for: gatewayA)
@@ -269,8 +275,29 @@ final class GatewayRegistryServiceTests: XCTestCase {
         let gatewayValue = await service.gateway(for: gatewayA)
         let gateway = try XCTUnwrap(gatewayValue)
         XCTAssertTrue(gateway.authConfigured)
-        XCTAssertEqual(gateway.authConfiguration.strategy, .sessionToken)
+        // L1 finding #2: the configured strategy is preserved — saveCredential
+        // must NOT force-override it to .sessionToken.
+        XCTAssertEqual(gateway.authConfiguration.strategy, .loopbackToken)
         XCTAssertTrue(gateway.authConfiguration.credentialStored)
+    }
+
+    /// L1 finding #2 regression: saveCredential preserves the gateway's
+    /// configured strategy (whatever the U2 UI selected) instead of forcing
+    /// .sessionToken.
+    func testSaveCredentialPreservesConfiguredStrategy() async throws {
+        let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
+        for strategy in [GatewayAuthConfiguration.Strategy.loopbackToken, .sessionToken, .bearerToken] {
+            let id = GatewayID(rawValue: "strategy-\(strategy.rawValue)")
+            _ = try await service.addGateway(GatewayRegistration(
+                id: id, displayName: "S", endpoint: endpointA,
+                authConfiguration: GatewayAuthConfiguration(strategy: strategy, credentialStored: false)))
+            try await service.saveCredential(GatewayCredential(rawValue: "secret-\(id.rawValue)"), for: id)
+            let gatewayValue = await service.gateway(for: id)
+            let gateway = try XCTUnwrap(gatewayValue, "gateway \(id.rawValue) present")
+            XCTAssertEqual(gateway.authConfiguration.strategy, strategy,
+                           "saveCredential must preserve the configured \(strategy.rawValue) strategy")
+            XCTAssertTrue(gateway.authConfiguration.credentialStored)
+        }
     }
 
     func testClearCredentialUnmarksGateway() async throws {

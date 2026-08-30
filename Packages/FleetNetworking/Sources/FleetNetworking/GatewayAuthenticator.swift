@@ -6,36 +6,50 @@ import FleetCore
 ///
 /// - `.sessionToken` / `.bearerToken` strategy → mint a single-use 30s WS
 ///   ticket via `WSTicketMinting` (`POST /api/auth/ws-ticket`), enforce the
-///   client-side TTL, and return `.ticket(StoredToken)` → `?ticket=`.
-/// - `.loopbackToken` strategy → load the stored loopback token via
-///   `TokenStoring` (Keychain) and return `.loopbackToken(StoredToken)` →
-///   `?token=`.
+///   client-side TTL, and return `.ticket(StoredToken)` → `?ticket=`. When no
+///   minter is injected, one is built from the stored credential (read from
+///   the SAME `CredentialStoring` the U2 UI writes via `saveCredential`), so
+///   the credential is actually sent as `X-Hermes-Session-Token` on the mint.
+/// - `.loopbackToken` strategy → load the stored credential from
+///   `CredentialStoring` (Keychain) and return `.loopbackToken(StoredToken)`
+///   → `?token=`.
 /// - `.none` → `.none` (no auth query).
 ///
 /// Safety (spec §16/§29): the provider never logs or echoes the raw ticket or
 /// token — `ConnectionAuthentication` redacts its printable representation and
 /// is not Codable, so auth material can never reach logs, cache, or UI.
 public struct GatewayAuthenticator: AuthenticationProviding {
-    /// The gateway this provider authenticates for (loopback token lookup is
-    /// per-peer in the token store).
+    /// The gateway this provider authenticates for (credential lookup is
+    /// per-peer in the credential store).
     public let gatewayID: GatewayID
     /// The gateway's authentication strategy.
     public let strategy: GatewayAuthConfiguration.Strategy
-    /// Mints single-use WS tickets (session-token/bearer strategy).
+    /// Mints single-use WS tickets (session-token/bearer strategy). When nil,
+    /// a client is built from the stored credential + base URL.
     private let ticketMinter: (any WSTicketMinting)?
-    /// Loads stored loopback tokens from Keychain (loopback strategy).
-    private let tokenStore: (any TokenStoring)?
+    /// Loads stored credentials from Keychain (loopback + session-token
+    /// strategies) — the SAME store the U2 UI writes via `saveCredential`.
+    private let credentialStore: (any CredentialStoring)?
+    /// Base URL used to build the ticket minter when none is injected.
+    private let baseURL: URL?
+    /// URLSession forwarded to the built `WSTicketClient` (testable injection;
+    /// defaults to `.shared`).
+    private let urlSession: URLSession
 
     public init(
         gatewayID: GatewayID,
         strategy: GatewayAuthConfiguration.Strategy,
         ticketMinter: (any WSTicketMinting)? = nil,
-        tokenStore: (any TokenStoring)? = nil
+        credentialStore: (any CredentialStoring)? = nil,
+        baseURL: URL? = nil,
+        urlSession: URLSession = .shared
     ) {
         self.gatewayID = gatewayID
         self.strategy = strategy
         self.ticketMinter = ticketMinter
-        self.tokenStore = tokenStore
+        self.credentialStore = credentialStore
+        self.baseURL = baseURL
+        self.urlSession = urlSession
     }
 
     public func authenticate() async throws -> ConnectionAuthentication {
@@ -43,18 +57,18 @@ public struct GatewayAuthenticator: AuthenticationProviding {
         case .none:
             return .none
         case .loopbackToken:
-            guard let tokenStore else {
+            guard let credentialStore else {
                 throw AuthenticationError.notConfigured
             }
-            guard let token = try await tokenStore.loadToken(for: gatewayID) else {
+            guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
                 throw AuthenticationError.missingLoopbackToken
             }
-            return .loopbackToken(token)
+            return .loopbackToken(StoredToken(rawValue: credential.rawValue))
         case .sessionToken, .bearerToken:
-            guard let ticketMinter else {
+            guard let minter = try await makeTicketMinter() else {
                 throw AuthenticationError.notConfigured
             }
-            let ticket = try await ticketMinter.mintTicket()
+            let ticket = try await minter.mintTicket()
             // Single-use + 30s TTL (synthesis §11): never connect with a
             // stale ticket — re-mint instead.
             guard !ticket.isExpired() else {
@@ -62,6 +76,18 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             }
             return .ticket(StoredToken(rawValue: ticket.token))
         }
+    }
+
+    /// The ticket minter for the session/bearer path: an injected minter wins
+    /// (tests / explicit wiring), otherwise one is built from the stored
+    /// credential so `X-Hermes-Session-Token` is actually sent on the mint.
+    private func makeTicketMinter() async throws -> (any WSTicketMinting)? {
+        if let ticketMinter { return ticketMinter }
+        guard let credentialStore, let baseURL else { return nil }
+        guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
+            throw AuthenticationError.missingLoopbackToken
+        }
+        return WSTicketClient(baseURL: baseURL, sessionToken: credential.rawValue, urlSession: urlSession)
     }
 }
 
