@@ -15,6 +15,6 @@ public enum FleetScreen: Hashable, Sendable {
     case roster
     /// Bot detail for an exact route: identity + status + sessions list.
     case botDetail(Route)
-    /// Conversation for a session (U3 placeholder canvas; session-scoped).
-    case conversation(Route, sessionID: String)
+    /// Conversation for a session (U3 canvas; sessionID nil = create new).
+    case conversation(Route, sessionID: String?)
 }

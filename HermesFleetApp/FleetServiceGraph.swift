@@ -53,8 +53,32 @@ enum FleetServiceGraph {
             roster: roster,
             cache: cache,
             sessionList: sessionList,
-            connectionFactory: makeConnectionFactory(tokenStore: tokenStore)
+            connectionFactory: makeConnectionFactory(tokenStore: tokenStore),
+            conversationFactory: makeConversationFactory(tokenStore: tokenStore)
         )
+    }
+
+    /// Real per-gateway conversation session (U3): connectivity + M5
+    /// conversation + M6 replay + M4 history over ONE transport. Mirrors the
+    /// connection factory; `nonisolated` so the `@Sendable` closure can build
+    /// transports off the main actor.
+    nonisolated private static func makeConversationFactory(
+        tokenStore: any TokenStoring
+    ) -> FleetConversationFactory {
+        { gateway, _ in
+            let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, tokenStore: tokenStore),
+                configuration: .standard
+            )
+            return GatewayConversationSession(
+                gatewayID: gateway.id,
+                displayName: gateway.displayName,
+                endpoint: gateway.endpoint,
+                transport: transport
+            )
+        }
     }
 
     /// Real per-gateway connection: authenticator (from the gateway's auth

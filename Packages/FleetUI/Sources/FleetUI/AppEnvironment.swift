@@ -17,6 +17,17 @@ public typealias FleetConnectionFactory = @Sendable (
     _ credential: GatewayCredential?
 ) -> any GatewayConnectivityProviding
 
+/// Builds a per-gateway conversation session (U3): connectivity + conversation
+/// + replay + history over one transport. Mirrors `FleetConnectionFactory` but
+/// lives in FleetUI so SwiftUI depends only on the FleetCore seam — never on
+/// the transport module (M0 hard guard). Injected at the composition root:
+/// production builds a `GatewayConversationSession`; DEBUG builds a scripted
+/// session; tests inject scripted doubles.
+public typealias FleetConversationFactory = @Sendable (
+    _ gateway: FleetGateway,
+    _ credential: GatewayCredential?
+) -> any ConversationSessionProviding
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -106,6 +117,9 @@ public final class AppEnvironment {
     /// Read-only `session.list` path for Bot detail (injected concrete:
     /// `GatewaySessionListService` in production, scripted in DEBUG/tests).
     private let sessionList: any SessionListProviding
+    /// U3 conversation sessions per gateway (injected concrete:
+    /// `GatewayConversationSession` in production, scripted in DEBUG/tests).
+    private let conversationFactory: FleetConversationFactory?
     /// Gateways to register on first launch (empty registry) so the U1
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
@@ -115,12 +129,17 @@ public final class AppEnvironment {
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
 
+    /// Lazily-built U3 conversation sessions per gateway (one per gateway;
+    /// created on first conversation screen use).
+    private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
+
     public init(
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
         cache: any CacheStoring,
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
+        conversationFactory: FleetConversationFactory? = nil,
         seedRegistrations: [GatewayRegistration] = []
     ) {
         self.registry = registry
@@ -128,6 +147,7 @@ public final class AppEnvironment {
         self.cache = cache
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
+        self.conversationFactory = conversationFactory
         self.seedRegistrations = seedRegistrations
     }
 
@@ -325,5 +345,29 @@ public final class AppEnvironment {
     /// Sessions for a route, or `nil` when never fetched.
     public func sessions(for route: Route) -> [SessionSummary]? {
         sessionsByRoute[route]
+    }
+
+    // MARK: U3 — conversation sessions (per-gateway, lazily built)
+
+    /// The conversation session for a gateway, building it on first use via
+    /// the injected `FleetConversationFactory` (one per gateway; survives view
+    /// teardowns so a reconnect mid-conversation stays on the same transport).
+    /// Returns `nil` when the factory is not wired or the gateway is absent
+    /// (fail closed).
+    public func conversationSession(for gatewayID: GatewayID) -> (any ConversationSessionProviding)? {
+        if let existing = conversationSessions[gatewayID] { return existing }
+        guard let factory = conversationFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let session = factory(gateway, nil)
+        conversationSessions[gatewayID] = session
+        return session
+    }
+
+    /// Build the U3 Conversation view model for a route (nil when the gateway
+    /// has no conversation session wired — the screen renders an unavailable
+    /// state, fail closed).
+    public func makeConversationViewModel(route: Route, sessionID: String?) -> ConversationViewModel? {
+        guard let session = conversationSession(for: route.gatewayID) else { return nil }
+        return ConversationViewModel(session: session, cache: cache, route: route, sessionID: sessionID)
     }
 }

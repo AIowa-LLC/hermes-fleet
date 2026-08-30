@@ -43,7 +43,7 @@ public struct FleetRootView: View {
                     case .botDetail(let route):
                         BotDetailView(environment: environment, route: route)
                     case .conversation(let route, let sessionID):
-                        ConversationView(route: route, sessionID: sessionID)
+                        ConversationView(environment: environment, route: route, sessionID: sessionID)
                     }
                 }
         }

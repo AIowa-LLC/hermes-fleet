@@ -51,6 +51,9 @@ extension FleetServiceGraph {
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
             },
+            conversationFactory: { gateway, _ in
+                ScriptedConversationSession(gatewayID: gateway.id)
+            },
             seedRegistrations: ScriptedFleet.registrations
         )
     }
@@ -61,6 +64,166 @@ extension FleetServiceGraph {
 private struct ScriptedSessionListService: SessionListProviding {
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
         ScriptedFleet.sessions(on: route)
+    }
+}
+
+/// Scripted per-gateway conversation session (DEBUG only): a scripted
+/// connection + a scripted conversation client that streams a canned turn
+/// (message.start → deltas → message.complete) after each prompt.submit, a
+/// no-op replay (nothing to replay), and scripted history. Makes the U3
+/// Conversation canvas fully walkable in the simulator without a live gateway.
+private struct ScriptedConversationSession: ConversationSessionProviding {
+    let gatewayID: GatewayID
+    private let client: ScriptedConversationClient
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+        self.client = ScriptedConversationClient(gatewayID: gatewayID)
+    }
+
+    var status: GatewayStatus {
+        // The `arch` gateway is scripted UNREACHABLE (partial-outage demo).
+        gatewayID.rawValue == "arch" ? .offline : .online
+    }
+
+    func adoptedReady() async -> GatewayReadyAdoption? {
+        gatewayID.rawValue == "arch"
+            ? nil
+            : GatewayReadyAdoption(replayEpoch: "scripted-1", heartbeatEnabled: true, changeEventsEnabled: true)
+    }
+
+    func connect() async throws {
+        if gatewayID.rawValue == "arch" {
+            throw GatewayConnectivityError.unreachable
+        }
+    }
+
+    func disconnect() async {}
+
+    func currentGateway() async -> FleetGateway {
+        FleetGateway(id: gatewayID, displayName: gatewayID.rawValue, endpoint: nil)
+    }
+
+    func reauthenticate() async throws {
+        if gatewayID.rawValue == "arch" {
+            throw GatewayConnectivityError.unreachable
+        }
+    }
+
+    var conversation: any ConversationProviding {
+        client
+    }
+
+    var replay: any ReplayProviding {
+        ScriptedReplay(gatewayID: gatewayID)
+    }
+
+    var history: any SessionHistoryProviding {
+        ScriptedHistory(gatewayID: gatewayID)
+    }
+}
+
+/// Scripted `ConversationProviding` that streams a canned turn after submit.
+private final class ScriptedConversationClient: ConversationProviding, @unchecked Sendable {
+    private let gatewayID: GatewayID
+    private let streamBox = ScriptedEventStreamBox()
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+    }
+
+    var events: AsyncStream<ConversationEvent> {
+        streamBox.stream
+    }
+
+    func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+        ConversationSession(
+            sessionID: "scripted-\\(gatewayID.rawValue)",
+            storedSessionID: "stored-scripted-\\(gatewayID.rawValue)",
+            messageCount: 0,
+            messages: [],
+            model: "scripted-model",
+            provider: "simulator",
+            profileName: profile
+        )
+    }
+
+    func resumeSession(sessionID: String) async throws -> ConversationSession {
+        ConversationSession(
+            sessionID: sessionID,
+            storedSessionID: "stored-\\(sessionID)",
+            messageCount: 0,
+            messages: [],
+            model: "scripted-model",
+            provider: "simulator",
+            profileName: nil
+        )
+    }
+
+    func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+        // Stream a canned assistant turn shortly after submit (async so the
+        // view model's event subscription is attached).
+        Task { [streamBox] in
+            try? await Task.sleep(for: .milliseconds(250))
+            streamBox.yield(.messageStart(sessionID: sessionID))
+            streamBox.yield(.messageDelta(sessionID: sessionID, text: "Hello from the scripted fleet. ", rendered: nil))
+            streamBox.yield(.messageDelta(sessionID: sessionID, text: "You said: ", rendered: nil))
+            streamBox.yield(.messageDelta(sessionID: sessionID, text: text, rendered: nil))
+            streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+            streamBox.yield(.messageComplete(
+                sessionID: sessionID,
+                text: "Hello from the scripted fleet. You said: \\(text)",
+                status: nil,
+                error: nil
+            ))
+        }
+        return PromptSubmission(status: "streaming")
+    }
+
+    func interrupt(sessionID: String) async throws -> InterruptResult {
+        InterruptResult(status: "interrupted")
+    }
+}
+
+/// Thread-safe box bridging the scripted client's event channel to the
+/// `AsyncStream` the view model subscribes to.
+private final class ScriptedEventStreamBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private let pair: (stream: AsyncStream<ConversationEvent>, continuation: AsyncStream<ConversationEvent>.Continuation)
+
+    init() {
+        self.pair = AsyncStream<ConversationEvent>.makeStream()
+    }
+
+    var stream: AsyncStream<ConversationEvent> {
+        lock.lock()
+        defer { lock.unlock() }
+        return pair.stream
+    }
+
+    func yield(_ event: ConversationEvent) {
+        lock.lock()
+        defer { lock.unlock() }
+        pair.continuation.yield(event)
+    }
+}
+
+/// Scripted no-op replay (DEBUG only) — nothing was missed in the simulator.
+private struct ScriptedReplay: ReplayProviding {
+    let gatewayID: GatewayID
+    func watermarks() async -> [SessionEventWatermark] { [] }
+    func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
+}
+
+/// Scripted read-only history (DEBUG only) — an empty transcript is fine for
+/// the simulator walkthrough.
+private struct ScriptedHistory: SessionHistoryProviding {
+    let gatewayID: GatewayID
+    func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
+        SessionHistory(sessionID: sessionID, count: 0, messages: [])
+    }
+    func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
+        SessionStatus.parse(output: "Session ID: \\(sessionID)")
     }
 }
 

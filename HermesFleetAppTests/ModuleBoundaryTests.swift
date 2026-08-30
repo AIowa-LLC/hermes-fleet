@@ -581,6 +581,51 @@ final class ModuleBoundaryTests: XCTestCase {
         }
     }
 
+    // MARK: U3 — conversation session seam usable from the app composition root
+
+    func testConversationSessionSeamIsConstructibleInComposition() async {
+        // Prove the U3 conversation bundle seam (FleetCore
+        // `ConversationSessionProviding`) is constructible in the app
+        // composition root over the same transport the connection uses — the
+        // boundary the Conversation screen wires to. No network is touched:
+        // the mutating seam classifies an unconnected transport as
+        // `.notConnected` instead of hanging (explicit user action only).
+        let base = URL(string: "http://127.0.0.1:9119")!
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30), inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(2), requestTimeout: .seconds(10)
+        )
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticAppTicketMinter(),
+            configuration: config
+        )
+        let session: any ConversationSessionProviding = GatewayConversationSession(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            displayName: "MacBook",
+            endpoint: base,
+            transport: transport
+        )
+        // The conversation path classifies an unconnected transport.
+        do {
+            _ = try await session.conversation.submitPrompt(sessionID: "s", text: "hi")
+            XCTFail("expected notConnected from unconnected conversation session")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+        // The replay path classifies an unconnected transport too.
+        do {
+            _ = try await session.replay.replayAfterReconnect()
+            XCTFail("expected notConnected from unconnected replay engine")
+        } catch let error as ReplayError {
+            XCTAssertEqual(error, .notConnected)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
     /// Minimal ticket minter for the app-level boundary test (no network).
     private struct StaticAppTicketMinter: WSTicketMinting {
         func mintTicket() async throws -> WSTicket {
