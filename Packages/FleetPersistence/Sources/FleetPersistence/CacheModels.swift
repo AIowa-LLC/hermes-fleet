@@ -24,6 +24,11 @@ public final class CachedMessageRow {
     public var timestamp: Double?
     /// Durable row identity for the persisted turn, when present.
     public var rowID: String?
+    /// Launch-stable client identity (B1): the UUID minted at SessionMessage
+    /// construction when the gateway stamped no row_id. Persisted so a fresh
+    /// model container reloads the same message with the same id across app
+    /// launches (never re-derived from a randomized hash).
+    public var clientID: String?
     /// Display-only classification, preserved verbatim.
     public var displayKind: String?
     /// Assistant reasoning/thinking content, when disclosed.
@@ -44,7 +49,8 @@ public final class CachedMessageRow {
         displayKind: String?,
         reasoning: String?,
         toolName: String?,
-        toolContext: String?
+        toolContext: String?,
+        clientID: String? = nil
     ) {
         self.gatewayID = gatewayID
         self.sessionID = sessionID
@@ -53,6 +59,7 @@ public final class CachedMessageRow {
         self.text = text
         self.timestamp = timestamp
         self.rowID = rowID
+        self.clientID = clientID
         self.displayKind = displayKind
         self.reasoning = reasoning
         self.toolName = toolName

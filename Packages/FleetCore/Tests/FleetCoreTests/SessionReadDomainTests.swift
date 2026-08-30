@@ -45,8 +45,28 @@ final class SessionReadDomainTests: XCTestCase {
 
         let noRowA = SessionMessage(role: .user, text: "hi", timestamp: 100, rowID: nil)
         let noRowB = SessionMessage(role: .user, text: "hi", timestamp: 100, rowID: nil)
-        XCTAssertEqual(noRowA.id, noRowB.id, "synthesized id is stable for the same message")
-        XCTAssertNotEqual(a.id, noRowA.id)
+        XCTAssertNotEqual(a.id, noRowA.id, "row_id and synthesized id never collide")
+        // B1: the synthesized id is a launch-stable UUID minted per message —
+        // never a randomized hash — so duplicate-text messages keep distinct ids.
+        XCTAssertNotEqual(noRowA.id, noRowB.id, "duplicate-text messages keep distinct ids")
+    }
+
+    // MARK: B1 — launch-stable message identity (no hashValue fallback)
+
+    func testDuplicateTextMessagesKeepDistinctIDs() {
+        // Two independently-constructed messages with identical content and no
+        // row_id must NOT collide on id. On the pre-B1 code the fallback was
+        // `text.hashValue` — same content → same id → collision.
+        let a = SessionMessage(role: .user, text: "same text", timestamp: 100, rowID: nil)
+        let b = SessionMessage(role: .user, text: "same text", timestamp: 100, rowID: nil)
+        XCTAssertNotEqual(a.id, b.id, "duplicate-text messages keep distinct ids")
+    }
+
+    func testSynthesizedIDIsLaunchStableUUID() {
+        // The synthesized id must be a launch-stable UUID minted at message
+        // construction — never a per-launch-randomized hashValue (B1).
+        let noRow = SessionMessage(role: .assistant, text: "thinking out loud", timestamp: nil, rowID: nil)
+        XCTAssertNotNil(UUID(uuidString: noRow.id), "synthesized id is a UUID, not a hash-derived string")
     }
 
     func testMessageToolFields() {

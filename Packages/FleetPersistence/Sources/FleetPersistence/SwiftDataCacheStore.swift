@@ -56,7 +56,8 @@ public actor SwiftDataCacheStore: CacheStoring {
                 displayKind: message.displayKind,
                 reasoning: message.reasoning,
                 toolName: message.toolName,
-                toolContext: message.toolContext
+                toolContext: message.toolContext,
+                clientID: message.clientID
             ))
         }
         try ctx.save()
@@ -78,7 +79,8 @@ public actor SwiftDataCacheStore: CacheStoring {
                 displayKind: row.displayKind,
                 reasoning: row.reasoning,
                 toolName: row.toolName,
-                toolContext: row.toolContext
+                toolContext: row.toolContext,
+                clientID: row.clientID
             )
         }
         return SessionHistory(sessionID: sessionID, count: messages.count, messages: messages)

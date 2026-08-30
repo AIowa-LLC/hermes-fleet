@@ -52,6 +52,13 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
     public let toolName: String?
     /// Tool message context (an 80-char preview of the call), tool only.
     public let toolContext: String?
+    /// Launch-stable client identity (B1): a UUID minted at message
+    /// construction when the gateway did not stamp a durable `row_id`, and
+    /// persisted through the FleetPersistence seam so the same stored message
+    /// reloads with the same id across app launches. Never derived from a
+    /// randomized hash. Excluded from value equality: two messages with
+    /// identical content are equal even when each carries its own minted id.
+    public let clientID: String?
 
     public init(
         role: SessionMessageRole,
@@ -61,7 +68,8 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
         displayKind: String? = nil,
         reasoning: String? = nil,
         toolName: String? = nil,
-        toolContext: String? = nil
+        toolContext: String? = nil,
+        clientID: String? = nil
     ) {
         self.role = role
         self.text = text
@@ -71,15 +79,49 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
         self.reasoning = reasoning
         self.toolName = toolName
         self.toolContext = toolContext
+        // Mint a launch-stable UUID at construction whenever there is no
+        // durable row_id and the caller (e.g. the persistence seam restoring a
+        // stored row) did not supply an existing one. This is the ONLY id
+        // source that never depends on Swift's randomized per-launch hashing.
+        self.clientID = clientID ?? (rowID == nil ? UUID().uuidString : nil)
     }
 
     /// Stable identity for list rendering: the durable `row_id` when the
-    /// gateway stamped one, else a synthesized role+timestamp+content key
-    /// that is stable for a given persisted message. Never derived from
-    /// content alone (content can legitimately repeat across messages).
+    /// gateway stamped one, else the launch-stable `clientID` minted at
+    /// construction (B1). The synthesized path is never derived from a
+    /// randomized hash, so a persisted message keeps the same id across
+    /// restarts and duplicate-text messages keep distinct ids.
     public var id: String {
+        if let rowID { return rowID }
+        if let clientID { return clientID }
+        // Unreachable in practice: init mints a clientID whenever rowID is
+        // nil. This defensive fallback stays deterministic (no hashValue).
         let stamp = timestamp.map { String($0) } ?? "nil"
-        return rowID ?? "\(role.rawValue)-\(stamp)-\(text.hashValue)"
+        return "\(role.rawValue)-\(stamp)"
+    }
+
+    /// Value equality is CONTENT equality (spec §5.5): the minted `clientID`
+    /// is identity, not content, so it is excluded from Equatable/Hashable.
+    public static func == (lhs: SessionMessage, rhs: SessionMessage) -> Bool {
+        lhs.role == rhs.role
+            && lhs.text == rhs.text
+            && lhs.timestamp == rhs.timestamp
+            && lhs.rowID == rhs.rowID
+            && lhs.displayKind == rhs.displayKind
+            && lhs.reasoning == rhs.reasoning
+            && lhs.toolName == rhs.toolName
+            && lhs.toolContext == rhs.toolContext
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(role)
+        hasher.combine(text)
+        hasher.combine(timestamp)
+        hasher.combine(rowID)
+        hasher.combine(displayKind)
+        hasher.combine(reasoning)
+        hasher.combine(toolName)
+        hasher.combine(toolContext)
     }
 
     /// Whether the message carries any renderable content: text, reasoning, or

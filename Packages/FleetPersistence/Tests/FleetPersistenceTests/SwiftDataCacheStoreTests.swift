@@ -161,6 +161,54 @@ final class SwiftDataCacheStoreTests: XCTestCase {
         XCTAssertEqual(archEpoch, "arch-epoch")
     }
 
+    // MARK: B1 — launch-stable message identity persists across fresh containers
+
+    /// B1 regression: the synthesized message id must be a launch-stable UUID
+    /// minted at message construction and persisted through this seam, so two
+    /// "app launches" (fresh model containers) reading the SAME persisted store
+    /// see identical ids — never a per-launch-randomized `hashValue`. Also
+    /// duplicate-text messages must keep distinct ids after reload, and a
+    /// gateway row_id must remain the durable identity.
+    func testFreshContainersRestoreIdenticalMessageIDs() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("S2Stable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let storeURL = dir.appendingPathComponent("cache.store")
+
+        // "Launch 1": persist a transcript with no row_id (synthesized-id path)
+        // including a duplicate-text pair, plus one gateway-stamped row_id.
+        let history = SessionHistory(sessionID: "s1", count: 3, messages: [
+            SessionMessage(role: .user, text: "duplicate", timestamp: 100, rowID: nil),
+            SessionMessage(role: .user, text: "duplicate", timestamp: 100, rowID: nil),
+            SessionMessage(role: .assistant, text: "answer", timestamp: 200, rowID: "r1"),
+        ])
+        do {
+            let storeA = try SwiftDataCacheStore.makeFileBacked(storeURL: storeURL)
+            try await storeA.saveHistory(history, for: m5)
+        }
+
+        // "Launch 2": a fresh model container on the same persisted store.
+        let storeB = try SwiftDataCacheStore.makeFileBacked(storeURL: storeURL)
+        let loadedB = try await storeB.loadHistory(sessionID: "s1", for: m5)
+        let idsB = loadedB?.messages.map(\.id) ?? []
+        XCTAssertEqual(idsB.count, 3, "transcript survives the relaunch")
+        // No-row_id messages mint launch-stable UUIDs, not hash-derived strings.
+        XCTAssertNotNil(UUID(uuidString: idsB[0]), "synthesized id is a UUID after reload")
+        XCTAssertNotNil(UUID(uuidString: idsB[1]), "synthesized id is a UUID after reload")
+        // Duplicate-text messages keep distinct ids after reload.
+        XCTAssertNotEqual(idsB[0], idsB[1], "duplicate-text messages keep distinct ids")
+        // A gateway row_id remains the durable identity.
+        XCTAssertEqual(idsB[2], "r1", "row_id stays the durable identity")
+
+        // "Launch 3": ANOTHER fresh container sees the exact same ids.
+        let storeC = try SwiftDataCacheStore.makeFileBacked(storeURL: storeURL)
+        let loadedC = try await storeC.loadHistory(sessionID: "s1", for: m5)
+        XCTAssertEqual(
+            loadedC?.messages.map(\.id) ?? [], idsB,
+            "two fresh model containers from the same persisted store yield identical ids")
+    }
+
     // MARK: Structural no-secret invariant
 
     /// Proves the cache models hold NO token/credential/secret field by
