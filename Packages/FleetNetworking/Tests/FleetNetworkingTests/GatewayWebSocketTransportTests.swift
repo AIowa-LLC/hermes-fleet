@@ -173,6 +173,89 @@ final class GatewayWebSocketTransportTests: XCTestCase {
         XCTAssertTrue(reason.contains("abnormal"), "expected abnormal closure reason, got \(reason)")
     }
 
+    // MARK: P1-4 — junk-frame liveness (binary/malformed must NOT refresh liveness)
+
+    /// P1-4 regression: a peer that sends ONLY periodic binary frames must not
+    /// stay "connected" forever. Binary frames are junk on the text-only
+    /// /api/ws seam — they must NOT refresh `lastInbound`, so the inbound
+    /// deadline fires and the peer is classified abnormal.
+    func testPeriodicBinaryFramesDoNotRefreshLiveness() async throws {
+        // Ready frame, then NOTHING but binary junk — no valid protocol frame.
+        let server = try InProcessWebSocketServer(script: .init(onOpen: [readyFrame()]))
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(
+            serverPort: server.listeningPort,
+            pingInterval: .milliseconds(100),
+            inboundDeadline: .milliseconds(400)
+        )
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        // Push binary junk CONTINUOUSLY for the whole wait window, so on the
+        // old (buggy) code the peer stays alive purely via junk frames. The
+        // fixed code must NOT count these as liveness → deadline fires.
+        let junker = Task {
+            while !Task.isCancelled {
+                server.sendBinary(Data([0x00, 0x01, 0x02]))
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        defer { junker.cancel() }
+
+        let deadline = Date().addingTimeInterval(3)
+        while transport.state == .connected && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard case .failed(let reason) = transport.state else {
+            return XCTFail("expected failed state after binary-only peer, got \(transport.state)")
+        }
+        XCTAssertTrue(reason.contains("abnormal"), "expected abnormal closure reason, got \(reason)")
+    }
+
+    /// P1-4 regression: a peer that sends malformed (non-JSON-RPC) text frames
+    /// must not stay connected forever. Consecutive junk beyond the bounded
+    /// threshold closes + classifies the connection.
+    func testMalformedFrameFloodClosesConnectionPastThreshold() async throws {
+        let server = try InProcessWebSocketServer(script: .init(onOpen: [readyFrame()]))
+        try await server.start()
+        defer { server.stop() }
+
+        // Tiny threshold + long deadline: the threshold, not the inbound
+        // deadline, must be what closes the connection.
+        let config = TransportConfiguration(
+            pingInterval: .milliseconds(200),
+            inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(10),
+            requestTimeout: .seconds(10),
+            malformedFrameLimit: 3
+        )
+        let base = URL(string: "http://127.0.0.1:\(server.listeningPort)")!
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)),
+            configuration: config
+        )
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+
+        // Flood malformed text frames (they fail JSON-RPC decode).
+        for _ in 0..<6 {
+            server.sendText("this is not json {{{")
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let deadline = Date().addingTimeInterval(3)
+        while transport.state == .connected && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard case .failed(let reason) = transport.state else {
+            return XCTFail("expected failed state after malformed flood, got \(transport.state)")
+        }
+        XCTAssertTrue(reason.contains("abnormal"), "expected abnormal closure reason, got \(reason)")
+    }
+
     // MARK: close-code mapping
 
     func testServerClose4401MapsToReauth() async throws {

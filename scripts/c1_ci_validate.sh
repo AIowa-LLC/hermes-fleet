@@ -10,11 +10,16 @@
 #    card's "4 packages" = FleetCore / FleetNetworking / FleetPersistence /
 #    FleetSecurity. FleetUI is validated via the module-boundary check + the
 #    app's hosted ModuleBoundaryTests below.
-#  - xcodebuild test is gated with -only-testing:HermesFleetAppTests. The
-#    HermesFleetAppUITests bundle contains ENVIRONMENTAL live-gateway tests
-#    (L1*/P3Fix* — need a real `hermes serve` / Tony's home LAN), which would
-#    fail on a runner with no gateway. They run locally against the live
-#    gateway; they are intentionally NOT part of CI.
+#  - xcodebuild test is gated with -only-testing selectors. The unit test
+#    bundle runs fully. The UI-test bundle's DETERMINISTIC scripted-fleet
+#    suites (DEBUG build — HappyPath, Reconnect, S3CleartextWarning, plus the
+#    RT2 removal/endpoint-sanitization and H1 app-lock suites) run in CI too.
+#    The ENVIRONMENTAL live-gateway suites (L1*/P3Fix*/T2Fix*/H2 — need a real
+#    `hermes serve` / Tony's home LAN / Tailscale) are intentionally NOT part
+#    of CI: they run locally against the live gateway. This was the P1-7 fix:
+#    previously `-only-testing:HermesFleetAppTests` excluded the ENTIRE UI
+#    bundle, so navigation/composer/reconnect/form regressions could merge with
+#    green CI.
 #  - CODE_SIGNING_ALLOWED must NOT be set to NO: the 4 Keychain-backed tests
 #    in ModuleBoundaryTests require the keychain-access-groups entitlement
 #    that only gets embedded when the app is signed. Simulator builds on
@@ -65,17 +70,25 @@ else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
 fi
 
-# --- 4. xcodebuild build+test (simulator), reliable unit subset --------------
-note "xcodebuild build + test (simulator), only-testing HermesFleetAppTests"
+# --- 4. xcodebuild build+test (simulator), reliable unit + deterministic UI ---
+note "xcodebuild build + test (simulator): HermesFleetAppTests + deterministic UI suites"
 # Resolve the first available iPhone simulator (runner images differ).
 SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*//')
 [ -n "$SIM_NAME" ] || SIM_NAME="iPhone 16"
 echo "  using simulator: $SIM_NAME"
 DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
 DD="$REPO/build/C1Ci"
+# P1-7: select the unit bundle PLUS every DETERMINISTIC scripted-fleet UI suite
+# (DEBUG build, no live gateway needed). The environmental live-gateway suites
+# (L1*/P3Fix*/T2Fix*/H2) are NOT selected here — they stay gated/manual.
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -destination "$DEST" -derivedDataPath "$DD" \
     -only-testing:HermesFleetAppTests \
+    -only-testing:HermesFleetAppUITests/HermesFleetHappyPathUITests \
+    -only-testing:HermesFleetAppUITests/HermesFleetReconnectUITests \
+    -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests \
+    -only-testing:HermesFleetAppUITests/RT2RemovalAndEndpointSanitizationUITests \
+    -only-testing:HermesFleetAppUITests/H1AppLockUITests \
     build test >/tmp/c1_xctest.log 2>&1; then
   TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/c1_xctest.log | tail -1)
   ok "xcodebuild build+test SUCCEEDED — $TESTLINE"

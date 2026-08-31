@@ -133,47 +133,24 @@ public final class ConversationViewModel {
 
     /// Connect → open the session (resume existing or create new) → subscribe
     /// to streamed events → hydrate persisted history for cold-start.
-    /// Idempotent: repeated calls are no-ops.
+    /// Idempotent: repeated calls while already live are no-ops; a failed
+    /// initial open can be retried (P1-5).
     public func start() async {
-        guard !hasStarted else { return }
-        hasStarted = true
-
-        // M10 cold-start: render persisted history immediately while the
-        // socket opens, so an offline/relaunch shows the last transcript.
-        if let sessionID, transcript.isEmpty {
-            await hydrateFromCache(sessionID: sessionID)
-        }
-
-        phase = .connecting
-        do {
-            try await session.connect()
-        } catch {
-            classifyConnectFailure(error)
-            return
-        }
-
-        phase = .opening
-        do {
-            if let sessionID {
-                let resumed = try await session.conversation.resumeSession(sessionID: sessionID)
-                openedSessionID = resumed.sessionID
-                applyOpenedSession(resumed)
-            } else {
-                let created = try await session.conversation.createSession(
-                    title: nil,
-                    profile: route.profileSlug.rawValue,
-                    model: nil,
-                    provider: nil,
-                    cols: nil
-                )
-                openedSessionID = created.sessionID
-                applyOpenedSession(created)
+        if !hasStarted {
+            hasStarted = true
+            // M10 cold-start: render persisted history immediately while the
+            // socket opens, so an offline/relaunch shows the last transcript.
+            if let sessionID, transcript.isEmpty {
+                await hydrateFromCache(sessionID: sessionID)
             }
-        } catch {
-            classifyOpenFailure(error)
-            return
         }
-
+        // Idempotent: if a session is already open, nothing to do — a repeated
+        // `.task` / view re-appear must not double-connect or clobber an open
+        // session. (Cold-start hydration sets `phase = .ready` as a rendering
+        // placeholder, so keying off the OPEN SESSION — not the phase — is what
+        // lets a cold start still connect.)
+        if openedSessionID != nil { return }
+        guard await connectAndOpen() else { return }
         // Adopt the gateway's replay epoch on first open so a LATER reconnect
         // actually replays (M6: the engine adopts on its first call and
         // replays on the next after a reconnect). Nothing is watermarked yet,
@@ -192,14 +169,66 @@ public final class ConversationViewModel {
             // Non-fatal: if the first adoption fails (e.g. transient drop
             // during open), the next reconnect will retry it.
         }
+    }
 
+    /// Connect the socket, then ensure the session is open and the event +
+    /// status subscriptions are live. Returns true only when a session is open
+    /// AND subscriptions exist — `.ready` is NEVER set without them (P1-5).
+    /// Shared by `start()` (initial open) and `reconnect()`/`reauthenticate()`
+    /// (recovery), so an initially-failed-open conversation recovers to a
+    /// WORKING composer instead of an enabled-but-dead one.
+    private func connectAndOpen() async -> Bool {
+        phase = .connecting
+        do {
+            try await session.connect()
+        } catch {
+            classifyConnectFailure(error)
+            return false
+        }
+        return await ensureOpenAndSubscribed()
+    }
+
+    /// Idempotent open + subscribe: open (create/resume) the session if none
+    /// is open, and start the event + status subscriptions. Returns true only
+    /// when both are live; on failure classifies and returns false.
+    private func ensureOpenAndSubscribed() async -> Bool {
+        if openedSessionID == nil {
+            phase = .opening
+            do {
+                if let sessionID {
+                    let resumed = try await session.conversation.resumeSession(sessionID: sessionID)
+                    openedSessionID = resumed.sessionID
+                    applyOpenedSession(resumed)
+                } else {
+                    let created = try await session.conversation.createSession(
+                        title: nil,
+                        profile: route.profileSlug.rawValue,
+                        model: nil,
+                        provider: nil,
+                        cols: nil
+                    )
+                    openedSessionID = created.sessionID
+                    applyOpenedSession(created)
+                }
+            } catch {
+                classifyOpenFailure(error)
+                return false
+            }
+        }
         startEventSubscription()
         startStatusWatcher()
         phase = .ready
+        return true
     }
 
     /// Explicit user action: reconnect after a transient drop, then run the M6
     /// replay hydration. The UI calls this from the reconnect banner.
+    ///
+    /// P1-5: a reconnect after an INITIAL connect/open failure must actually
+    /// (re)open the session + (re)start subscriptions before it can be called
+    /// ready — never set `.ready` with no session and a dead composer. When a
+    /// session IS already open (mid-stream drop), it is left as-is: reconnect
+    /// + replay only (the live event/status tasks keep running).
     public func reconnect() async {
         phase = .reconnecting
         do {
@@ -208,6 +237,12 @@ public final class ConversationViewModel {
             phase = .disconnected
             errorMessage = Self.nonSecret(error)
             return
+        }
+        if openedSessionID == nil {
+            // Initial connect/open failure recovery (P1-5): the session was
+            // never opened and subscriptions never started — open + subscribe
+            // before the connection can be called ready.
+            guard await ensureOpenAndSubscribed() else { return }
         }
         await runReplayHydration()
         phase = .ready
@@ -223,6 +258,9 @@ public final class ConversationViewModel {
             phase = .authRequired
             errorMessage = Self.nonSecret(error)
             return
+        }
+        if openedSessionID == nil {
+            guard await ensureOpenAndSubscribed() else { return }
         }
         await runReplayHydration()
         phase = .ready

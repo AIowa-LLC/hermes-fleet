@@ -65,6 +65,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private var receiveLoopTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var lastInbound: ContinuousClock.Instant
+    /// P1-4: consecutive junk frames (binary, or text failing JSON-RPC decode).
+    /// Reset on any valid protocol frame; teardown when the bounded limit is
+    /// exceeded. Junk NEVER refreshes `lastInbound`.
+    private var malformedFrameCount = 0
     private var readyPayload: GatewayEvent.ReadyPayload?
     private var nextHeartbeatID: Int = 0
 
@@ -218,6 +222,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
             self.session = session
 
             lastInbound = clock.now
+            malformedFrameCount = 0 // P1-4: fresh connection → fresh junk budget
             // Receive-loop FIRST (matching M5): the loop's `receive()` blocks
             // until the socket delivers; opening then guarantees frames are
             // read once they arrive. A stale failure from a PREVIOUS loop is
@@ -449,12 +454,24 @@ public actor GatewayWebSocketTransport: HermesTransport {
     }
 
     private func handleInbound(_ message: WebSocketMessage) async {
-        await setLastInbound()
         switch message {
         case .text(let line):
-            await handleText(line)
+            // Decode BEFORE touching liveness (P1-4): a malformed text frame
+            // is junk, not liveness — it must not keep a bad peer alive.
+            guard let decoded = try? JSONRPCCodec.decode(line) else {
+                await recordMalformedFrame()
+                return
+            }
+            // Valid protocol frame (event / response / error / request) — the
+            // only inbound traffic that counts as liveness. Heartbeat pongs
+            // arrive as correlated `.response`s and refresh here too.
+            await setLastInbound()
+            malformedFrameCount = 0
+            await handleDecoded(decoded)
         case .data:
-            break // /api/ws is text-only; binary frames are ignored in P1
+            // /api/ws is text-only; binary frames are junk (P1-4). They must
+            // neither refresh liveness nor be silently tolerated forever.
+            await recordMalformedFrame()
         }
     }
 
@@ -462,10 +479,19 @@ public actor GatewayWebSocketTransport: HermesTransport {
         lastInbound = clock.now
     }
 
-    private func handleText(_ line: String) async {
-        guard let decoded = try? JSONRPCCodec.decode(line) else {
-            return // malformed frame: skip (parse-error tolerance per threat model)
+    /// P1-4: count a junk frame (binary data or text failing JSON-RPC decode).
+    /// Consecutive junk past the bounded limit closes + classifies the
+    /// connection as abnormal — a bad/malformed peer can no longer masquerade
+    /// as "connected" forever by spamming junk that (pre-fix) refreshed
+    /// liveness.
+    private func recordMalformedFrame() async {
+        malformedFrameCount += 1
+        if malformedFrameCount >= config.malformedFrameLimit {
+            await teardown(.abnormalClosure, error: TransportError.connectionClosed(.abnormalClosure))
         }
+    }
+
+    private func handleDecoded(_ decoded: JSONRPCMessage) async {
         switch decoded {
         case .event(let event):
             guard let gatewayEvent = GatewayEvent(event: event) else { return }

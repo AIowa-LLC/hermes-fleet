@@ -322,6 +322,55 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.replayNotice, "Reconnected · replayed 1 missed event")
     }
 
+    // MARK: - P1-5 — recovery after an initial connect/open failure
+
+    /// P1-5 regression: when the INITIAL connection fails, the reconnect must
+    /// actually open a session and start subscriptions — never flip to `.ready`
+    /// with a dead composer. Pre-fix, `reconnect()` only reconnected + replayed,
+    /// leaving `openedSessionID` nil, so the enabled composer silently dropped
+    /// every `send()`.
+    func testReconnectAfterInitialConnectFailureRecoversToLiveSession() async throws {
+        let (scripted, viewModel) = try await makeFixture() // sessionID nil → create
+        scripted.connectError = .unreachable
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .failed("gateway unreachable"))
+
+        // Gateway comes back; the user taps Reconnect.
+        scripted.connectError = nil
+        await viewModel.reconnect()
+
+        XCTAssertEqual(viewModel.phase, .ready, "reconnect after initial failure must reach ready")
+        XCTAssertEqual(scripted.connectCount, 2, "reconnect must re-drive connect")
+        // The composer must be LIVE: send() must append a user row (pre-fix it
+        // no-oped because no session was ever opened).
+        await viewModel.send("hello")
+        XCTAssertEqual(viewModel.transcript.count, 1)
+        XCTAssertEqual(viewModel.transcript.first?.kind, .user)
+        XCTAssertEqual(viewModel.transcript.first?.text, "hello")
+        // Subscriptions must be live: a streamed turn must render.
+        scripted.push(.messageStart(sessionID: "s-1"))
+        await flush()
+        XCTAssertEqual(viewModel.phase, .streaming, "event subscription must be live after recovery")
+    }
+
+    /// P1-5 regression: an initial OPEN failure (createSession rejected) must
+    /// be retried by the reconnect — ready must not be reached with no session.
+    func testReconnectAfterInitialOpenFailureReopensSession() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        scripted.createResult = .failure(.sessionNotFound("gone"))
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .failed("Session not found: gone. Start a new conversation."))
+
+        scripted.createResult = .success(ConversationSession(sessionID: "s-1", profileName: "default"))
+        await viewModel.reconnect()
+
+        XCTAssertEqual(viewModel.phase, .ready, "reconnect after initial open failure must reach ready")
+        await viewModel.send("retry")
+        XCTAssertEqual(viewModel.transcript.count, 1)
+        XCTAssertEqual(viewModel.transcript.first?.kind, .user)
+        XCTAssertEqual(viewModel.transcript.first?.text, "retry")
+    }
+
     // MARK: - 4401 re-auth UX (M11 — no silent retry)
 
     func test4401SurfacesAuthRequiredNoSilentRetry() async throws {

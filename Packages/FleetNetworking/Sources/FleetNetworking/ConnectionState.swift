@@ -36,17 +36,24 @@ public struct TransportConfiguration: Sendable, Equatable {
     public var inboundDeadline: Duration
     public var connectTimeout: Duration
     public var requestTimeout: Duration
+    /// P1-4: maximum CONSECUTIVE junk frames (binary data, or text that fails
+    /// JSON-RPC decode) tolerated before the transport closes + classifies the
+    /// connection as abnormal. Junk frames never refresh liveness, so this
+    /// bounds how long a malformed/bad peer can masquerade as alive.
+    public var malformedFrameLimit: Int
 
     public init(
         pingInterval: Duration = .seconds(15),
         inboundDeadline: Duration = .seconds(45),
         connectTimeout: Duration = .seconds(15),
-        requestTimeout: Duration = .seconds(120)
+        requestTimeout: Duration = .seconds(120),
+        malformedFrameLimit: Int = 8
     ) {
         self.pingInterval = pingInterval
         self.inboundDeadline = inboundDeadline
         self.connectTimeout = connectTimeout
         self.requestTimeout = requestTimeout
+        self.malformedFrameLimit = malformedFrameLimit
     }
 
     public static let standard = TransportConfiguration()

@@ -207,4 +207,35 @@ public final class InProcessWebSocketServer: @unchecked Sendable {
             completion: .contentProcessed { _ in }
         )
     }
+
+    /// Deliver a server→client TEXT frame on the current connection. Accepts
+    /// ANY string — including malformed/non-JSON-RPC junk — so tests can push
+    /// malformed frames at the peer (P1-4 junk-liveness suite).
+    public func sendText(_ string: String) {
+        stateLock.lock()
+        let connection = _connection
+        stateLock.unlock()
+        if let connection { sendText(string, on: connection) }
+    }
+
+    /// Deliver a server→client BINARY frame on the current connection. /api/ws
+    /// is text-only, so binary frames are unsupported junk — used to prove a
+    /// binary-flooding peer cannot keep the transport "connected" forever
+    /// (P1-4).
+    public func sendBinary(_ data: Data) {
+        stateLock.lock()
+        let connection = _connection
+        stateLock.unlock()
+        guard let connection else { return }
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .binary)
+        let context = NWConnection.ContentContext(
+            identifier: "binary",
+            metadata: [metadata]
+        )
+        connection.send(
+            content: data,
+            contentContext: context,
+            completion: .contentProcessed { _ in }
+        )
+    }
 }
