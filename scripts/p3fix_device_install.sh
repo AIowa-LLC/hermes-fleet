@@ -5,7 +5,7 @@
 set -u
 cd <repo-root> || exit 1
 DD=build/DeviceDerivedData
-BUNDLE=<legacy-personal-bundle-id>
+BUNDLE=com.aiowa.hermesfleet
 UDID=<physical-device-id>
 
 echo "=== [1/3] build Release iphoneos ==="

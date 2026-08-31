@@ -15,7 +15,7 @@ UDID=$(xcrun simctl list devices booted 2>/dev/null | grep -oE '[0-9A-F-]{36}' |
 # The current build's UI bundle was built with -only-testing T2, but
 # test-without-building can still select the P3 test class if it's compiled
 # in (it is — all UITest sources compile together). Reinstall the app fresh.
-BUNDLE=<legacy-personal-bundle-id>
+BUNDLE=com.aiowa.hermesfleet
 xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
 xcrun simctl uninstall "$UDID" "$BUNDLE" 2>/dev/null || true
 xcrun simctl install "$UDID" "$DD/Build/Products/Release-iphonesimulator/HermesFleetApp.app"

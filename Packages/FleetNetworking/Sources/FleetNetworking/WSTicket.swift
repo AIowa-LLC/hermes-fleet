@@ -57,7 +57,7 @@ public struct WSTicketClient: WSTicketMinting {
     public let urlSession: URLSession
 
     /// Non-secret diagnostics (endpoint + HTTP status only).
-    private static let log = Logger(subsystem: "<legacy-personal-bundle-id>", category: "ws-ticket")
+    private static let log = Logger(subsystem: "com.aiowa.hermesfleet", category: "ws-ticket")
 
     public init(
         baseURL: URL,

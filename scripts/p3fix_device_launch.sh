@@ -3,7 +3,7 @@
 # launch evidence). Read-only.
 set -u
 UDID=<physical-device-id>
-BUNDLE=<legacy-personal-bundle-id>
+BUNDLE=com.aiowa.hermesfleet
 echo "=== launch app on device ==="
 xcrun devicectl device process launch --device "$UDID" "$BUNDLE" 2>&1 | tail -6
 echo "launch exit: $?"

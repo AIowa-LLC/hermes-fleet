@@ -25,7 +25,7 @@ if [ "${PIPESTATUS[0]}" -ne 0 ]; then echo "BUILD FAILED"; exit 1; fi
 
 echo
 echo "=== [2/4] Fresh-install app on booted sim (empty registry) ==="
-BUNDLE=<legacy-personal-bundle-id>
+BUNDLE=com.aiowa.hermesfleet
 xcrun simctl uninstall "$SIM" "$BUNDLE" 2>/dev/null || true
 APP="$DD/Build/Products/Release-iphonesimulator/HermesFleetApp.app"
 xcrun simctl install "$SIM" "$APP"
@@ -68,7 +68,7 @@ xcrun xcresulttool get test-results summary --path "$XCRESULT" \
 echo "  result summary -> build/p3fix_result_summary.txt"
 # App subsystem logs (password-login / ws-ticket instrumentation).
 xcrun simctl spawn "$SIM" log show --last 10m \
-  --predicate 'subsystem == "<legacy-personal-bundle-id>"' \
+  --predicate 'subsystem == "com.aiowa.hermesfleet"' \
   > build/p3fix_app_subsystem.log 2>/dev/null || true
 echo "  app subsystem log -> build/p3fix_app_subsystem.log ($(wc -l < build/p3fix_app_subsystem.log) lines)"
 # Pull screenshots out of the xcresult for vision verification.

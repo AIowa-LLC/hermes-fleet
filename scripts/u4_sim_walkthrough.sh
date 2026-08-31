@@ -52,8 +52,8 @@ fi
 
 # --- 1. FRESH INSTALL (uninstall any existing copy first) --------------------
 note "Fresh install (uninstall then install)"
-xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-xcrun simctl uninstall "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
+xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+xcrun simctl uninstall "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
 if xcrun simctl install "$SIM_UDID" "$APP" >/tmp/u4_sim_install.log 2>&1; then
   ok "fresh install to simulator"
 else
@@ -62,8 +62,8 @@ fi
 
 # --- Step 1: open the app ----------------------------------------------------
 note "Step 1 — open the app"
-LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> 2>&1)
-if echo "$LAUNCH_OUT" | grep -q "<legacy-personal-bundle-id>: [0-9]"; then
+LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet 2>&1)
+if echo "$LAUNCH_OUT" | grep -q "com.aiowa.hermesfleet: [0-9]"; then
   ok "app launched (PID returned): $LAUNCH_OUT"
 else
   bad "launch failed: $LAUNCH_OUT"
@@ -85,8 +85,8 @@ fi
 
 # --- Step 3: select a Bot on a specific machine ------------------------------
 note "Step 3 — select a Bot on a specific machine (roster auto-nav shows bots)"
-xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
 sleep 4
 if xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u4-sim-step3-roster.png" >/dev/null 2>&1; then
   ok "screenshot: build/u4-sim-step3-roster.png (union roster: bots per gateway)"
@@ -96,8 +96,8 @@ fi
 
 # --- Step 4: open a conversation (bot detail + session drill) ----------------
 note "Step 4 — open a conversation (bot detail auto-nav shows sessions)"
-xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=bot-detail xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=bot-detail xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
 sleep 4
 if xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u4-sim-step4-bot-detail.png" >/dev/null 2>&1; then
   ok "screenshot: build/u4-sim-step4-bot-detail.png (Identity/Status/Sessions -> conversation)"
@@ -107,8 +107,8 @@ fi
 
 # --- Steps 5-7: send a task, watch Hermes work, receive the streamed answer ---
 note "Steps 5-7 — send a task, watch Hermes work, receive the streamed answer"
-xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
 sleep 2
 # The Conversation happy path (composer -> send -> streamed answer) is driven
 # by the G1 XCUITest (scripts/u4_xcuitest.sh); the simulator screenshot at the
@@ -118,8 +118,8 @@ ok "steps 5-7: happy path (send/stream/answer) exercised by G1 XCUITest — see 
 
 # --- Steps 8-9: lose connectivity, reconnect without corrupting/duplicating ---
 note "Steps 8-9 — briefly lose connectivity, reconnect without corrupting/duplicating"
-xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
 sleep 3
 # The DEBUG scripted fleet cannot lose a live socket, so this is demonstrated
 # at the gateway-lifecycle level (Disconnect -> Disconnected, Reconnect ->
@@ -130,8 +130,8 @@ ok "steps 8-9: gateway disconnect/reconnect lifecycle + fixture-loop replay dedu
 
 # --- Step 10: return to Fleet, switch machine --------------------------------
 note "Step 10 — return to Fleet, switch machine (union roster = multi-gateway)"
-xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
 sleep 4
 if xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u4-sim-step10-switch.png" >/dev/null 2>&1; then
   ok "screenshot: build/u4-sim-step10-switch.png (multi-gateway roster -> switch machine)"

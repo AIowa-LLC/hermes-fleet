@@ -89,8 +89,8 @@ fi
 
 # --- 5. xcodegen + xcodebuild build/test (iOS Simulator, app-level) ----------
 note "xcodegen + xcodebuild build/test (iOS Simulator)"
-if xcodegen generate >/tmp/u2_xcodegen.log 2>&1 && grep -q '<personal-team-id>' HermesFleetApp.xcodeproj/project.pbxproj; then
-  ok "xcodegen regenerated; team <personal-team-id> present"
+if xcodegen generate >/tmp/u2_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+  ok "xcodegen regenerated; team 3JS22HX92T present"
 else
   bad "xcodegen / team missing"; tail -5 /tmp/u2_xcodegen.log
 fi
@@ -126,37 +126,37 @@ else
     else
       bad "app install failed"; tail -5 /tmp/u2_sim_install.log
     fi
-    LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> 2>&1)
-    if ! echo "$LAUNCH_OUT" | grep -qE '<legacy-personal-bundle-id>: [0-9]+'; then
+    LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet 2>&1)
+    if ! echo "$LAUNCH_OUT" | grep -qE 'com.aiowa.hermesfleet: [0-9]+'; then
       # Stale process / first-boot race: terminate and retry once.
-      xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
+      xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
       sleep 2
-      LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> 2>&1)
+      LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet 2>&1)
     fi
-    if echo "$LAUNCH_OUT" | grep -qE '<legacy-personal-bundle-id>: [0-9]+'; then
+    if echo "$LAUNCH_OUT" | grep -qE 'com.aiowa.hermesfleet: [0-9]+'; then
       ok "app launched (PID returned)"
       sleep 3
       xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-gateways.png" >/tmp/u2_sim_shot.log 2>&1 && ok "screenshot: build/u2-simulator-gateways.png" || bad "gateways screenshot failed"
       # Roster (union, partial outage) via the DEBUG auto-nav hook.
-      xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-      SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+      xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+      SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
       sleep 4
       xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-roster.png" >/tmp/u2_sim_shot3.log 2>&1 && ok "screenshot: build/u2-simulator-roster.png" || bad "roster screenshot failed"
       # Bot detail (identity + sessions via session.list) via the DEBUG hook.
-      xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-      SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=bot-detail xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+      xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+      SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=bot-detail xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
       sleep 4
       xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-bot-detail.png" >/tmp/u2_sim_shot4.log 2>&1 && ok "screenshot: build/u2-simulator-bot-detail.png" || bad "bot-detail screenshot failed"
       # Dynamic Type sanity: relaunch at a large accessibility content size and
       # capture the gateways/roster state, then restore the default size.
       # (simctl ui content-size is not available on this Xcode; the app-level
       # override rides on the preferred content-size category user default.)
-      xcrun simctl spawn "$SIM_UDID" defaults write <legacy-personal-bundle-id> UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityXXXL >/tmp/u2_sim_ui.log 2>&1 && ok "content size set to accessibility XXXL" || bad "content-size set failed"
-      xcrun simctl terminate "$SIM_UDID" <legacy-personal-bundle-id> 2>/dev/null || true
-      xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> >/dev/null 2>&1
+      xcrun simctl spawn "$SIM_UDID" defaults write com.aiowa.hermesfleet UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityXXXL >/tmp/u2_sim_ui.log 2>&1 && ok "content size set to accessibility XXXL" || bad "content-size set failed"
+      xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
+      xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
       sleep 3
       xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-dynamic-type.png" >/tmp/u2_sim_shot2.log 2>&1 && ok "screenshot: build/u2-simulator-dynamic-type.png (AX size)" || bad "dynamic-type screenshot failed"
-      xcrun simctl spawn "$SIM_UDID" defaults delete <legacy-personal-bundle-id> UIPreferredContentSizeCategoryName >/dev/null 2>&1
+      xcrun simctl spawn "$SIM_UDID" defaults delete com.aiowa.hermesfleet UIPreferredContentSizeCategoryName >/dev/null 2>&1
     else
       bad "app launch failed: $LAUNCH_OUT"
     fi

@@ -16,7 +16,7 @@ import FleetCore
 ///   collide.
 public struct KeychainTokenStore: TokenStoring {
     /// Keychain service name — scoped to this app's token/ticket store.
-    public static let serviceName = "<legacy-personal-bundle-id>.tokens"
+    public static let serviceName = "com.aiowa.hermesfleet.tokens"
 
     private let keychain: any KeychainSession
 

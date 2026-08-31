@@ -107,7 +107,7 @@ final class FleetSecurityKeychainTests: XCTestCase {
         let attributes = KeychainCredentialStore.baseAttributes(account: gatewayID.rawValue)
         XCTAssertEqual(
             attributes[kSecAttrService as String] as? String,
-            "<legacy-personal-bundle-id>.gateway-credentials")
+            "com.aiowa.hermesfleet.gateway-credentials")
     }
 
     func testKeychainAccountIsGatewayID() {

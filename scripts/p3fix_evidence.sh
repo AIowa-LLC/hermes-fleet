@@ -21,7 +21,7 @@ grep -aE "Test Case .*(passed|failed)|Executed 1 test" /tmp/p3fix_lb4.log 2>/dev
 
 # Auth flow subsystem log (proves app executed password-login -> ws-ticket against real gateway)
 xcrun simctl spawn booted log show --last 20m --info --debug \
-  --predicate 'subsystem == "<legacy-personal-bundle-id>"' 2>/dev/null \
+  --predicate 'subsystem == "com.aiowa.hermesfleet"' 2>/dev/null \
   | grep -aE "password-login|ws-ticket" | tail -6 | tee "$E/auth_flow.log"
 
 # ATS keys in Release build

@@ -1,7 +1,7 @@
 #!/bin/bash
 # U4 own-device dogfood — fresh free-team sideload on the iPhone 16 Pro Max.
 #
-# Builds the app for iphoneos (Debug, free personal team <personal-team-id>),
+# Builds the app for iphoneos (Debug, free personal team 3JS22HX92T),
 # verifies codesigning metadata by reference (no key material), FRESH-installs
 # on the physical device (uninstall any prior copy), launches it, verifies the
 # process is running, and records checksums.
@@ -26,12 +26,12 @@ DD="$REPO/build/DerivedDataU4Device"
 APP="$DD/Build/Products/Debug-iphoneos/HermesFleetApp.app"
 
 # --- 1. Build for device (free-team automatic signing) -----------------------
-note "Build Debug-iphoneos (free team <personal-team-id>, automatic signing)"
+note "Build Debug-iphoneos (free team 3JS22HX92T, automatic signing)"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -sdk iphoneos -destination 'generic/platform=iOS' \
     -derivedDataPath "$DD" \
     -allowProvisioningUpdates \
-    CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<personal-team-id> \
+    CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=3JS22HX92T \
     build >/tmp/u4_device_build.log 2>&1; then
   ok "device BUILD SUCCEEDED"
 else
@@ -44,8 +44,8 @@ if codesign -dv --verbose=4 "$APP" >/tmp/u4_device_codesign.log 2>&1; then
   echo "  $(grep -E '^Authority|^TeamIdentifier|^Identifier' /tmp/u4_device_codesign.log | tr '\n' ' ')"
   AUTHORITY=$(grep -c '^Authority=Apple Development' /tmp/u4_device_codesign.log)
   TEAM=$(grep '^TeamIdentifier' /tmp/u4_device_codesign.log | head -1)
-  if [ "$AUTHORITY" -ge 1 ] && echo "$TEAM" | grep -q '<personal-team-id>'; then
-    ok "codesign identity = Apple Development (team <personal-team-id>), by reference"
+  if [ "$AUTHORITY" -ge 1 ] && echo "$TEAM" | grep -q '3JS22HX92T'; then
+    ok "codesign identity = Apple Development (team 3JS22HX92T), by reference"
   else
     bad "codesign identity mismatch"; cat /tmp/u4_device_codesign.log
   fi
@@ -69,7 +69,7 @@ echo "  application-identifier: $(echo "$ENT" | grep -A1 'application-identifier
 
 # --- 3. FRESH install (uninstall any prior copy first) -----------------------
 note "Fresh install (uninstall then install) on iPhone 16 Pro Max"
-xcrun devicectl device uninstall app --device "$DEVICE" <legacy-personal-bundle-id> >/tmp/u4_device_uninstall.log 2>&1 && \
+xcrun devicectl device uninstall app --device "$DEVICE" com.aiowa.hermesfleet >/tmp/u4_device_uninstall.log 2>&1 && \
   ok "prior install removed (fresh state)" || ok "no prior install to remove (fresh state)"
 sleep 2
 if xcrun devicectl device install app --device "$DEVICE" "$APP" >/tmp/u4_device_install.log 2>&1; then
@@ -80,7 +80,7 @@ fi
 
 # --- 4. Launch + verify process ---------------------------------------------
 note "Launch + verify process on device"
-LAUNCH_OUT=$(xcrun devicectl device process launch --device "$DEVICE" <legacy-personal-bundle-id> 2>&1)
+LAUNCH_OUT=$(xcrun devicectl device process launch --device "$DEVICE" com.aiowa.hermesfleet 2>&1)
 if echo "$LAUNCH_OUT" | grep -qiE 'launch.*(succeeded|success|bundle|pid)|process.*launch' ; then
   ok "app launched: $(echo "$LAUNCH_OUT" | tail -2 | tr '\n' ' ')"
 else
@@ -91,7 +91,7 @@ else
     echo "  WARN: device reports locked — cannot launch without physical unlock."
     echo "  This is a device-state dependency, not an artifact defect."
     sleep 15
-    LAUNCH_OUT=$(xcrun devicectl device process launch --device "$DEVICE" <legacy-personal-bundle-id> 2>&1)
+    LAUNCH_OUT=$(xcrun devicectl device process launch --device "$DEVICE" com.aiowa.hermesfleet 2>&1)
     if echo "$LAUNCH_OUT" | grep -qE '^.*launch.*[0-9]{2,}:' ; then
       ok "app launched on retry: $(echo "$LAUNCH_OUT" | tail -2 | tr '\n' ' ')"
     elif echo "$LAUNCH_OUT" | grep -qiE 'unlock|locked'; then

@@ -76,8 +76,8 @@ fi
 
 # --- 5. xcodegen + xcodebuild build (iOS Simulator) ------------------------
 note "xcodegen + xcodebuild build (iOS Simulator)"
-if xcodegen generate >/tmp/m11_xcodegen.log 2>&1 && grep -q '<personal-team-id>' HermesFleetApp.xcodeproj/project.pbxproj; then
-  ok "xcodegen regenerated; team <personal-team-id> present"
+if xcodegen generate >/tmp/m11_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+  ok "xcodegen regenerated; team 3JS22HX92T present"
 else
   bad "xcodegen / team missing"; tail -5 /tmp/m11_xcodegen.log
 fi

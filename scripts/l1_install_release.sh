@@ -17,7 +17,7 @@ echo "  installing..."
 xcrun simctl install "$SIM" "$APP" && echo "  installed OK"
 
 echo "  launching..."
-xcrun simctl launch "$SIM" <legacy-personal-bundle-id>
+xcrun simctl launch "$SIM" com.aiowa.hermesfleet
 sleep 4
 
 echo "  capturing Gateways screen..."

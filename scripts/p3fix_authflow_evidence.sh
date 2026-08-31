@@ -5,6 +5,6 @@ set -u
 cd <repo-root> || exit 1
 E=build/p3fix_evidence
 xcrun simctl spawn booted log show --last 1h --info --debug \
-  --predicate 'subsystem == "<legacy-personal-bundle-id>"' 2>/dev/null \
+  --predicate 'subsystem == "com.aiowa.hermesfleet"' 2>/dev/null \
   | grep -aE "password-login|ws-ticket" | tail -12 | tee "$E/auth_flow.log"
 echo "=== Done ==="

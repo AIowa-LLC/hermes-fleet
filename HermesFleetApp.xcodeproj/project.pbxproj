@@ -298,16 +298,16 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					9740850ADFCED19DEA53002E = {
-						DevelopmentTeam = <personal-team-id>;
+						DevelopmentTeam = 3JS22HX92T;
 						ProvisioningStyle = Automatic;
 						TestTargetID = 9A6AD1F4D6B0B207E73A83F6;
 					};
 					9A6AD1F4D6B0B207E73A83F6 = {
-						DevelopmentTeam = <personal-team-id>;
+						DevelopmentTeam = 3JS22HX92T;
 						ProvisioningStyle = Automatic;
 					};
 					B3003DEB5DBA7762041D9FA5 = {
-						DevelopmentTeam = <personal-team-id>;
+						DevelopmentTeam = 3JS22HX92T;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -454,7 +454,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = <personal-team-id>;
+				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -496,7 +496,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.tonysimons.HermesFleetAppUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.HermesFleetAppUITests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = HermesFleetApp;
@@ -540,7 +540,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = <personal-team-id>;
+				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -580,7 +580,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = <legacy-personal-bundle-id>;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.hermesfleet;
 				PRODUCT_NAME = HermesFleetApp;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -597,7 +597,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.tonysimons.HermesFleetAppTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.HermesFleetAppTests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HermesFleetApp.app/HermesFleetApp";
@@ -619,7 +619,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = <legacy-personal-bundle-id>;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.hermesfleet;
 				PRODUCT_NAME = HermesFleetApp;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -636,7 +636,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.tonysimons.HermesFleetAppUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.HermesFleetAppUITests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = HermesFleetApp;
@@ -653,7 +653,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.tonysimons.HermesFleetAppTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.HermesFleetAppTests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HermesFleetApp.app/HermesFleetApp";

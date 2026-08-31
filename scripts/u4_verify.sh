@@ -59,8 +59,8 @@ run_pkg FleetPersistence
 
 # --- 3. xcodegen + xcodebuild build/test (iOS Simulator) ---------------------
 note "xcodegen + xcodebuild build/test (iOS Simulator)"
-if xcodegen generate >/tmp/u4_xcodegen.log 2>&1 && grep -q '<personal-team-id>' HermesFleetApp.xcodeproj/project.pbxproj; then
-  ok "xcodegen regenerated; team <personal-team-id> present"
+if xcodegen generate >/tmp/u4_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+  ok "xcodegen regenerated; team 3JS22HX92T present"
 else
   bad "xcodegen / team missing"; tail -5 /tmp/u4_xcodegen.log
 fi

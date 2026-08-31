@@ -58,7 +58,7 @@ xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
 if [ "${PIPESTATUS[0]}" -ne 0 ]; then echo "BUILD FAILED"; tail -30 /tmp/t2_build.log; exit 1; fi
 
 echo "=== [2/5] Fresh-install app on booted sim (empty registry) ==="
-BUNDLE=<legacy-personal-bundle-id>
+BUNDLE=com.aiowa.hermesfleet
 xcrun simctl terminate "$UDID" "$BUNDLE" 2>/dev/null || true
 xcrun simctl uninstall "$UDID" "$BUNDLE" 2>/dev/null || true
 APP="$DD/Build/Products/Release-iphonesimulator/HermesFleetApp.app"
@@ -98,7 +98,7 @@ grep -aE "Test Case .*(passed|failed)|Executed 1 test|error:" /tmp/t2_test.log |
 echo "  test result -> $E/uitest_result.txt"
 # App subsystem logs (password-login / ws-ticket / conversation instrumentation).
 xcrun simctl spawn "$UDID" log show --last 30m \
-  --predicate 'subsystem == "<legacy-personal-bundle-id>"' \
+  --predicate 'subsystem == "com.aiowa.hermesfleet"' \
   > "$E/app_subsystem.log" 2>/dev/null || true
 echo "  app subsystem log -> $E/app_subsystem.log ($(wc -l < "$E/app_subsystem.log") lines)"
 # Serve-tailnet frame window (before/after + turn frames) as evidence.

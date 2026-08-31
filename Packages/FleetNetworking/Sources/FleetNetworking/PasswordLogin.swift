@@ -73,7 +73,7 @@ public struct PasswordLoginClient: Sendable {
 
     /// Non-secret diagnostics for the LAN username/password flow (no
     /// credentials ever logged — only endpoint + HTTP status).
-    private static let log = Logger(subsystem: "<legacy-personal-bundle-id>", category: "password-login")
+    private static let log = Logger(subsystem: "com.aiowa.hermesfleet", category: "password-login")
 
     public init(baseURL: URL, urlSession: URLSession = .shared) {
         self.baseURL = baseURL

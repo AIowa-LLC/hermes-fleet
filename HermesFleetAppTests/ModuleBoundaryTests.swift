@@ -221,7 +221,7 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
         XCTAssertEqual(
             attributes[kSecAttrService as String] as? String,
-            "<legacy-personal-bundle-id>.gateway-credentials")
+            "com.aiowa.hermesfleet.gateway-credentials")
     }
 
     func testKeychainCredentialStoreRoundTripInApp() async throws {
@@ -307,7 +307,7 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
         XCTAssertEqual(
             attributes[kSecAttrService as String] as? String,
-            "<legacy-personal-bundle-id>.tokens")
+            "com.aiowa.hermesfleet.tokens")
     }
 
     func testKeychainTokenStoreRoundTripInApp() async throws {

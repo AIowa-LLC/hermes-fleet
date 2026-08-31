@@ -88,8 +88,8 @@ fi
 
 # --- 5. xcodegen + xcodebuild build/test (iOS Simulator, app-level) ----------
 note "xcodegen + xcodebuild build/test (iOS Simulator)"
-if xcodegen generate >/tmp/u1_xcodegen.log 2>&1 && grep -q '<personal-team-id>' HermesFleetApp.xcodeproj/project.pbxproj; then
-  ok "xcodegen regenerated; team <personal-team-id> present"
+if xcodegen generate >/tmp/u1_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+  ok "xcodegen regenerated; team 3JS22HX92T present"
 else
   bad "xcodegen / team missing"; tail -5 /tmp/u1_xcodegen.log
 fi
@@ -127,8 +127,8 @@ else
     else
       bad "app install failed"; tail -5 /tmp/u1_sim_install.log
     fi
-    LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" <legacy-personal-bundle-id> 2>&1)
-    if echo "$LAUNCH_OUT" | grep -qE '<legacy-personal-bundle-id>: [0-9]+'; then
+    LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet 2>&1)
+    if echo "$LAUNCH_OUT" | grep -qE 'com.aiowa.hermesfleet: [0-9]+'; then
       ok "app launched (PID returned)"
       sleep 3
       xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u1-simulator-gateways.png" >/tmp/u1_sim_shot.log 2>&1 && ok "screenshot: build/u1-simulator-gateways.png" || bad "screenshot failed"

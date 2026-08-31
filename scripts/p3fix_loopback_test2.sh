@@ -16,7 +16,7 @@ nc -z -w 2 127.0.0.1 9120 && echo "forwarder UP" || { echo "forwarder DOWN"; exi
 curl -sS -m 5 -o /dev/null -w "  loopback providers HTTP %{http_code}\n" "http://127.0.0.1:9120/api/auth/providers"
 
 SIM="iPhone 17 Pro"
-BUNDLE=<legacy-personal-bundle-id>
+BUNDLE=com.aiowa.hermesfleet
 xcrun simctl uninstall "$SIM" "$BUNDLE" 2>/dev/null || true
 xcrun simctl install "$SIM" "build/P3FixDerivedData/Build/Products/Release-iphonesimulator/HermesFleetApp.app"
 

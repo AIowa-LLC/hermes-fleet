@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
 
 SCHEME="HermesFleetApp"
-BUNDLE_ID="<legacy-personal-bundle-id>"
+BUNDLE_ID="com.aiowa.hermesfleet"
 DD="build/M14DerivedData"
 EVIDENCE="build/m14-evidence"
 UDID="393F1335-2DB1-48BD-96B9-A38B1EA488A4"   # iPhone 17 Pro (booted)
