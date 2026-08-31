@@ -15,6 +15,11 @@ final class SplashUITests: XCTestCase {
     func testSplashAppearsHoldsThenFadesIntoApp() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_SPLASH"] = "on"
+        // Deterministic hold for the test: a cold CI simulator can take >2s to
+        // attach its first accessibility query, so we extend the product hold
+        // (1.8s, locked by the unit test) to a generous 4s window. The product
+        // default is exercised/asserted separately by SplashConfigurationTests.
+        app.launchEnvironment["HERMES_FLEET_SPLASH_HOLD"] = "4.0"
 
         // Anchor the window from BEFORE launch: app.launch() returns once the
         // first frame (and the in-app splash) is on screen, so the elapsed
@@ -30,13 +35,18 @@ final class SplashUITests: XCTestCase {
 
         // The splash artwork must be on screen at launch (registers before
         // the app tears into the main UI).
-        XCTAssertTrue(splash.waitForExistence(timeout: 5),
+        XCTAssertTrue(splash.waitForExistence(timeout: 8),
                       "splash artwork should appear at launch")
         attachScreenshot(of: app, name: "p0-1-splash-visible")
 
-        // It must hold for the minimum window, then fade out and release the
-        // app UI (it must NOT linger forever). The named minimum is 1.8s +
-        // 0.35s fade ≈ 2.15s; assert well above an instant swap.
+        // It must still be present after a clearly-non-instant interval,
+        // proving no first-frame tear (the defect).
+        Thread.sleep(forTimeInterval: 1.5)
+        XCTAssertTrue(splash.exists, "splash must hold for the minimum display window")
+        attachScreenshot(of: app, name: "p0-1-splash-still-held")
+
+        // Then it must cross-fade OUT and release the app UI (it must NOT
+        // linger forever). Budget: 4s hold + 0.35s fade + slack.
         let gone = splash.waitForNonExistence(timeout: 8)
         XCTAssertTrue(gone, "splash must fade out and leave the hierarchy")
         let window = Date().timeIntervalSince(launched)

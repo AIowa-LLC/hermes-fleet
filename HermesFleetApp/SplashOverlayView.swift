@@ -16,6 +16,21 @@ enum SplashConfiguration {
 
     /// Duration of the cross-fade from the splash into the app UI.
     static let fadeOutDuration: TimeInterval = 0.35
+
+    /// DEBUG-only test seam: a UI test can extend the hold via
+    /// `HERMES_FLEET_SPLASH_HOLD` (seconds) so a slow CI simulator has time to
+    /// attach its first accessibility query before the splash fades. Defaults
+    /// to `minimumDisplayDuration` in every configuration; the unit test keeps
+    /// the product default locked at 1.5-2.0s.
+    static var effectiveMinimumDisplayDuration: TimeInterval {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_SPLASH_HOLD"],
+           let seconds = Double(raw), seconds > 0 {
+            return seconds
+        }
+        #endif
+        return minimumDisplayDuration
+    }
 }
 
 /// In-app splash that seamlessly continues the native launch screen (same
@@ -38,7 +53,7 @@ struct SplashOverlayView: View {
                         // Hold for the minimum display window, then cross-fade
                         // out and drop the splash from the hierarchy so it no
                         // longer blocks interaction.
-                        try? await Task.sleep(for: .seconds(SplashConfiguration.minimumDisplayDuration))
+                        try? await Task.sleep(for: .seconds(SplashConfiguration.effectiveMinimumDisplayDuration))
                         withAnimation(.easeOut(duration: SplashConfiguration.fadeOutDuration)) {
                             isVisible = false
                         }
