@@ -35,8 +35,7 @@ FleetCore          pure domain: GatewayID, ProfileSlug, AuthorizationClass,
    ▲
    ├──── FleetNetworking   (JSON-RPC/WebSocket transport, gateway registry,
    │                        roster, session/conversation/replay clients)
-   ├──── FleetSecurity     (Keychain credential/token stores + atomic upsert,
-   │                        auth classifier, redaction)
+   ├──── FleetSecurity     (Keychain credential/token stores + atomic upsert)
    ├──── FleetPersistence  (SwiftData non-secret cache + health stats)
    └──── FleetUI           (SwiftUI: roster, bot detail, conversation,
                             gateways, health dashboard, app-lock screens)
@@ -56,7 +55,7 @@ in.
 |---|---|---|
 | FleetCore | Pure domain types, origin/redaction policy, transport + health seams | — |
 | FleetNetworking | JSON-RPC/WebSocket transport, registry, roster, session, conversation, replay | FleetCore |
-| FleetSecurity | Keychain stores (atomic upsert), auth classifier, redaction | FleetCore |
+| FleetSecurity | Keychain stores (atomic upsert) | FleetCore |
 | FleetPersistence | SwiftData non-secret cache + health stats | FleetCore |
 | FleetUI | SwiftUI shell: roster, bot detail, conversation, gateways, health dashboard, app lock | FleetCore, FleetSecurity, FleetPersistence |
 | HermesFleetApp | Composition root, app lifecycle | all |
@@ -131,7 +130,7 @@ HermesFleetAppUITests/  deterministic scripted-fleet UI suites (CI) + environmen
 Packages/
   FleetCore/            pure domain + tests
   FleetNetworking/      JSON-RPC/WebSocket transport + registry/roster/session/replay
-  FleetSecurity/        Keychain stores + auth + redaction + app lock
+  FleetSecurity/        Keychain stores
   FleetPersistence/     SwiftData cache + health stats
   FleetUI/              SwiftUI shell + view models
 docs/M0-foundation.md   M0 scope/decisions (HISTORICAL foundation evidence)
