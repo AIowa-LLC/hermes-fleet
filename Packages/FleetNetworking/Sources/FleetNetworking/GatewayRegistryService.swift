@@ -56,11 +56,11 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard !displayName.isEmpty else {
             throw GatewayRegistryError.emptyDisplayName
         }
-        guard let scheme = registration.endpoint.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            throw GatewayRegistryError.invalidEndpoint
-        }
-        let id = registration.id ?? GatewayID(endpoint: registration.endpoint)
+        // P1-6: treat the endpoint as an ORIGIN — reject user-info, strip
+        // query/fragment at the registry boundary before anything is stored,
+        // displayed, or logged.
+        let endpoint = try GatewayEndpoint.normalizedOrigin(from: registration.endpoint)
+        let id = registration.id ?? GatewayID(endpoint: endpoint)
         // M9 fail-closed guard: an unsafe gateway ID (path traversal, `#`,
         // separators) is rejected before registration — it must never become
         // the identity half of a route or a Keychain key.
@@ -73,7 +73,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         let gateway = FleetGateway(
             id: id,
             displayName: displayName,
-            endpoint: registration.endpoint,
+            endpoint: endpoint,
             authConfiguration: registration.authConfiguration
         )
         registry.register(gateway)
@@ -84,14 +84,19 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard registry.gateway(for: id) != nil else {
             throw GatewayRegistryError.notFound(id)
         }
+        // P1-6: same origin boundary on endpoint edits.
+        let normalizedEdits: GatewayEdit
         if let endpoint = edits.endpoint {
-            guard let scheme = endpoint.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https" else {
-                throw GatewayRegistryError.invalidEndpoint
-            }
+            normalizedEdits = GatewayEdit(
+                displayName: edits.displayName,
+                endpoint: try GatewayEndpoint.normalizedOrigin(from: endpoint),
+                authConfiguration: edits.authConfiguration
+            )
+        } else {
+            normalizedEdits = edits
         }
         registry.update(id) { gateway in
-            let updated = edits.applied(to: gateway)
+            let updated = normalizedEdits.applied(to: gateway)
             gateway = updated
         }
         guard let updated = registry.gateway(for: id) else {
@@ -104,9 +109,16 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard registry.gateway(for: id) != nil else {
             throw GatewayRegistryError.notFound(id)
         }
+        // P1-8: credential cleanup failure must surface — never silently
+        // swallowed. Delete the credential first; only on success is the
+        // gateway removed, so a cleanup failure leaves the gateway registered
+        // (no "removed" UI while a secret may still exist).
+        do {
+            try await credentials.deleteCredential(for: id)
+        } catch {
+            throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+        }
         registry.remove(id)
-        // Best-effort credential cleanup (Keychain-safe; missing is a no-op).
-        try? await credentials.deleteCredential(for: id)
     }
 
     public func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
@@ -135,7 +147,13 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard registry.gateway(for: id) != nil else {
             throw GatewayRegistryError.notFound(id)
         }
-        try? await credentials.deleteCredential(for: id)
+        // P2-4: a failed delete must surface — do NOT mark the gateway
+        // un-configured while the secret may still exist.
+        do {
+            try await credentials.deleteCredential(for: id)
+        } catch {
+            throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+        }
         registry.update(id) { gateway in
             gateway.authConfigured = false
             gateway.authConfiguration = .none

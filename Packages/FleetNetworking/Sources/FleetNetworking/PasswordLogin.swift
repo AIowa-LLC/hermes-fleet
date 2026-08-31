@@ -1,5 +1,6 @@
 import Foundation
 import os
+import FleetCore
 
 /// A single session cookie captured from a `POST /auth/password-login`
 /// response, replayed as the `Cookie` header on the `POST /api/auth/ws-ticket`
@@ -102,7 +103,7 @@ public struct PasswordLoginClient: Sendable {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        Self.log.info("password-login: GET /api/auth/providers (\(self.baseURL.absoluteString, privacy: .public))")
+        Self.log.info("password-login: GET /api/auth/providers (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         do {
             let (data, response) = try await urlSession.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -125,7 +126,9 @@ public struct PasswordLoginClient: Sendable {
             }
             return provider
         } catch {
-            Self.log.error("password-login: providers request failed: \(String(describing: error), privacy: .public)")
+            // P1-6: log the failure without echoing the raw error description
+            // (URLError descriptions can embed the full URL incl. user-info).
+            Self.log.error("password-login: providers request failed (redacted)")
             throw error
         }
     }
@@ -144,7 +147,7 @@ public struct PasswordLoginClient: Sendable {
         ]
         request.httpBody = try JSONEncoder().encode(body)
 
-        Self.log.info("password-login: POST /auth/password-login (\(self.baseURL.absoluteString, privacy: .public))")
+        Self.log.info("password-login: POST /auth/password-login (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         let (_, response) = try await urlSession.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw PasswordLoginError.httpStatus(-1)
@@ -183,6 +186,8 @@ public struct PasswordLoginClient: Sendable {
 // MARK: - Redaction (spec §29: no credentials in logs/UI)
 
 extension PasswordLoginClient: CustomStringConvertible, CustomDebugStringConvertible {
-    public var description: String { "PasswordLoginClient(baseURL: \(baseURL))" }
+    /// The client's printable form never includes credentials OR any
+    /// user-info/password that may be embedded in the endpoint (P1-6).
+    public var description: String { "PasswordLoginClient(baseURL: \(Redaction.redactedURL(baseURL)))" }
     public var debugDescription: String { description }
 }

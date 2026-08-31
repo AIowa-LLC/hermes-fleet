@@ -17,20 +17,42 @@ public struct KeychainCredentialStore: CredentialStoring {
     /// Keychain service name — scoped to this app's gateway credentials.
     public static let serviceName = "<legacy-personal-bundle-id>.gateway-credentials"
 
-    public init() {}
+    private let keychain: any KeychainSession
+
+    public init() {
+        self.keychain = LiveKeychainSession()
+    }
+
+    /// Injectable `KeychainSession` (tests only — CI hermetic, no live
+    /// keychain). Production callers use `init()`.
+    init(keychain: any KeychainSession) {
+        self.keychain = keychain
+    }
 
     // MARK: CredentialStoring
 
     public func saveCredential(_ credential: GatewayCredential, for gatewayID: GatewayID) async throws {
         let account = gatewayID.rawValue
-        // Delete any existing item first (idempotent upsert).
-        deleteItem(account: account)
         let data = CredentialEncoding.encode(credential)
-        var query = Self.baseAttributes(account: account)
-        query[kSecValueData as String] = data
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw CredentialStoreError.unexpectedStatus(Int(status))
+        // P2-4: atomic upsert — SecItemUpdate when present, SecItemAdd only
+        // when not found. NEVER delete-then-add: a failed replacement must
+        // not lose the working credential.
+        let match = Self.baseAttributes(account: account)
+        let updateStatus = keychain.update(
+            match as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        if updateStatus == errSecItemNotFound {
+            var query = Self.baseAttributes(account: account)
+            query[kSecValueData as String] = data
+            let addStatus = keychain.add(query as CFDictionary)
+            guard addStatus == errSecSuccess else {
+                throw CredentialStoreError.unexpectedStatus(Int(addStatus))
+            }
+            return
+        }
+        guard updateStatus == errSecSuccess else {
+            throw CredentialStoreError.unexpectedStatus(Int(updateStatus))
         }
     }
 
@@ -40,7 +62,7 @@ public struct KeychainCredentialStore: CredentialStoring {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = keychain.copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
             guard let data = result as? Data else {
@@ -55,7 +77,16 @@ public struct KeychainCredentialStore: CredentialStoring {
     }
 
     public func deleteCredential(for gatewayID: GatewayID) async throws {
-        deleteItem(account: gatewayID.rawValue)
+        // P2-4: a failed delete must propagate — never silently ignored
+        // (a suppressed failure leaves a secret behind while UI/registry
+        // report it absent). Missing item is a no-op.
+        let status = keychain.delete(Self.baseAttributes(account: gatewayID.rawValue) as CFDictionary)
+        switch status {
+        case errSecSuccess, errSecItemNotFound:
+            return
+        default:
+            throw CredentialStoreError.unexpectedStatus(Int(status))
+        }
     }
 
     // MARK: query building (exposed for tests; no secret material)
@@ -71,9 +102,5 @@ public struct KeychainCredentialStore: CredentialStoring {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAttrSynchronizable as String: false,
         ]
-    }
-
-    private func deleteItem(account: String) {
-        SecItemDelete(Self.baseAttributes(account: account) as CFDictionary)
     }
 }

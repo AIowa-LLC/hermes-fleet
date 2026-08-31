@@ -298,7 +298,14 @@ public final class AppEnvironment {
 
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
+        // P1-8: retire session resources with the gateway — tear down the
+        // live connection (not just drop the reference), release the
+        // conversation session, and clear observable lifecycle state.
+        if let connection = activeConnections[id] {
+            await connection.disconnect()
+        }
         activeConnections[id] = nil
+        conversationSessions[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
         // H2: drop the gateway's accumulated + persisted health stats.

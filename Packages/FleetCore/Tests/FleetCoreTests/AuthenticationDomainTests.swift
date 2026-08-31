@@ -116,6 +116,31 @@ final class AuthenticationDomainTests: XCTestCase {
         XCTAssertTrue(redacted.contains("limit=10"))
     }
 
+    // MARK: P1-6 — user-info / password never survive redaction (spec §29)
+
+    func testRedactionStripsURLUserInfoPassword() {
+        // A pasted endpoint with embedded credentials must not print the
+        // user:password@ half of the URL (red-team P1-6).
+        let url = URL(string: "http://alice:super-secret-pw@<lan-ip>:9119/api/ws")!
+        let redacted = Redaction.redactedURL(url)
+        XCTAssertFalse(redacted.contains("super-secret-pw"), "URL password must never be printed")
+        XCTAssertFalse(redacted.contains("alice:"), "URL user-info must be stripped")
+        XCTAssertFalse(redacted.contains("@"), "the user-info delimiter must not survive")
+        XCTAssertTrue(redacted.contains("<lan-ip>"), "host preserved for §30 classification")
+    }
+
+    func testRedactionStripsUserInfoAndStillRedactsSensitiveQuery() {
+        // user-info + a secret query key together: BOTH must be scrubbed.
+        let url = URL(string: "http://user:pass@<lan-ip>:9119/api/ws?ticket=abc123&channel=chat")!
+        let redacted = Redaction.redactedURL(url)
+        XCTAssertFalse(redacted.contains("pass"))
+        XCTAssertFalse(redacted.contains("user:"))
+        XCTAssertFalse(redacted.contains("abc123"), "ticket value never appears")
+        XCTAssertTrue(redacted.contains("ticket="), "sensitive key redacted")
+        XCTAssertTrue(redacted.contains("channel=chat"), "non-secret query preserved")
+        XCTAssertTrue(redacted.contains("<lan-ip>"), "host preserved")
+    }
+
     func testRedactionPlaceholderValue() {
         XCTAssertEqual(Redaction.redacted("anything"), "[REDACTED]")
     }

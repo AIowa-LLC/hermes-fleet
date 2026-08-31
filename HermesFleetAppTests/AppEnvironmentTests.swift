@@ -489,6 +489,58 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertNil(environment.testResults[id])
     }
 
+    // MARK: P1-8 — removal retires session resources (disconnects the live connection)
+
+    /// A connection double that records `disconnect()` invocations.
+    private final class RecordingConnection: GatewayConnectivityProviding {
+        let gatewayID: GatewayID
+        nonisolated(unsafe) private(set) var disconnectCount = 0
+        var status: GatewayStatus { .online }
+        init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func connect() async throws {}
+        func disconnect() async { disconnectCount += 1 }
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue, endpoint: nil)
+        }
+    }
+
+    func testRemoveGatewayDisconnectsActiveConnection() async throws {
+        let id = GatewayID(rawValue: "<dev-workstation>")
+        let connection = RecordingConnection(gatewayID: id)
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { _, _ in connection }
+        )
+        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: [])
+            }
+        )
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { _, _ in connection },
+            health: TestHealthAccumulator(),
+            seedRegistrations: []
+        )
+        await environment.load()
+        await environment.connect(to: id)
+        XCTAssertEqual(connection.disconnectCount, 0)
+
+        try await environment.removeGateway(id)
+
+        XCTAssertEqual(connection.disconnectCount, 1,
+                       "P1-8: removal must disconnect the live connection")
+        XCTAssertTrue(environment.gateways.isEmpty)
+    }
+
     // MARK: U2 — test connection (reachable/unreachable per §13, observable)
 
     func testTestConnectionStoresReachableResult() async throws {

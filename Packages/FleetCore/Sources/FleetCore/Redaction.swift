@@ -36,10 +36,17 @@ public enum Redaction {
     /// printable string. The scheme/host/path and non-secret query values are
     /// preserved (so a human can still tell WHICH gateway failed, per spec
     /// §30), while every sensitive value is replaced with `[REDACTED]`.
+    ///
+    /// P1-6: user-info (`user:pass@host`) is also stripped — credential
+    /// material embedded in a URL must never reach logs or UI, regardless of
+    /// the query keys.
     public static func redactedURL(_ url: URL) -> String {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return placeholder
         }
+        // Strip any user-info half (user:pass@) before printing.
+        components.user = nil
+        components.password = nil
         let items = components.queryItems?.map { item -> URLQueryItem in
             guard sensitiveQueryKeys.contains(item.name) else { return item }
             return URLQueryItem(name: item.name, value: placeholder)

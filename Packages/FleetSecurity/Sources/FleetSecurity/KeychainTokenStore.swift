@@ -18,20 +18,42 @@ public struct KeychainTokenStore: TokenStoring {
     /// Keychain service name — scoped to this app's token/ticket store.
     public static let serviceName = "<legacy-personal-bundle-id>.tokens"
 
-    public init() {}
+    private let keychain: any KeychainSession
+
+    public init() {
+        self.keychain = LiveKeychainSession()
+    }
+
+    /// Injectable `KeychainSession` (tests only — CI hermetic, no live
+    /// keychain). Production callers use `init()`.
+    init(keychain: any KeychainSession) {
+        self.keychain = keychain
+    }
 
     // MARK: TokenStoring
 
     public func saveToken(_ token: StoredToken, for gatewayID: GatewayID) async throws {
         let account = gatewayID.rawValue
-        // Delete any existing item first (idempotent upsert).
-        deleteItem(account: account)
         let data = Data(token.rawValue.utf8)
-        var query = Self.baseAttributes(account: account)
-        query[kSecValueData as String] = data
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw TokenStoreError.unexpectedStatus(Int(status))
+        // P2-4: atomic upsert — SecItemUpdate when present, SecItemAdd only
+        // when not found. NEVER delete-then-add: a failed replacement must
+        // not lose the working token.
+        let match = Self.baseAttributes(account: account)
+        let updateStatus = keychain.update(
+            match as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        if updateStatus == errSecItemNotFound {
+            var query = Self.baseAttributes(account: account)
+            query[kSecValueData as String] = data
+            let addStatus = keychain.add(query as CFDictionary)
+            guard addStatus == errSecSuccess else {
+                throw TokenStoreError.unexpectedStatus(Int(addStatus))
+            }
+            return
+        }
+        guard updateStatus == errSecSuccess else {
+            throw TokenStoreError.unexpectedStatus(Int(updateStatus))
         }
     }
 
@@ -41,7 +63,7 @@ public struct KeychainTokenStore: TokenStoring {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = keychain.copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
             guard let data = result as? Data,
@@ -58,7 +80,15 @@ public struct KeychainTokenStore: TokenStoring {
     }
 
     public func deleteToken(for gatewayID: GatewayID) async throws {
-        deleteItem(account: gatewayID.rawValue)
+        // P2-4: a failed delete must propagate — never silently ignored.
+        // Missing item is a no-op.
+        let status = keychain.delete(Self.baseAttributes(account: gatewayID.rawValue) as CFDictionary)
+        switch status {
+        case errSecSuccess, errSecItemNotFound:
+            return
+        default:
+            throw TokenStoreError.unexpectedStatus(Int(status))
+        }
     }
 
     // MARK: query building (exposed for tests; no secret material)
@@ -74,9 +104,5 @@ public struct KeychainTokenStore: TokenStoring {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAttrSynchronizable as String: false,
         ]
-    }
-
-    private func deleteItem(account: String) {
-        SecItemDelete(Self.baseAttributes(account: account) as CFDictionary)
     }
 }

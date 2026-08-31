@@ -149,10 +149,11 @@ struct GatewayFormSheet: View {
     }
 
     private var endpointURL: URL? {
-        guard let url = URL(string: endpointText.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else { return nil }
-        return url
+        guard let url = URL(string: endpointText.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        // P1-6: treat the endpoint as an ORIGIN — reject user-info
+        // (user:pass@host) and strip query/fragment at the form boundary too,
+        // so credential material never leaves the text field.
+        return try? GatewayEndpoint.normalizedOrigin(from: url)
     }
 
     /// B2 cleartext risk: the endpoint is `http://` AND its host is NOT a

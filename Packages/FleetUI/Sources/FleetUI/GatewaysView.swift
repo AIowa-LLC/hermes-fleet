@@ -21,6 +21,10 @@ public struct GatewaysView: View {
     @State private var presentedSheet: PresentedSheet?
     /// Error surfaced to the user from a registry operation (non-secret).
     @State private var operationError: String?
+    /// P1-8: the gateway awaiting destructive-removal confirmation.
+    @State private var gatewayPendingRemoval: FleetGateway?
+    /// P1-8: the most recently removed gateway, for a bounded undo.
+    @State private var lastRemovedGateway: FleetGateway?
 
     enum PresentedSheet: Identifiable {
         case add
@@ -143,6 +147,41 @@ public struct GatewaysView: View {
         } message: {
             Text(operationError ?? "")
         }
+        // P1-8: destructive-removal confirmation — a named alert explaining
+        // that the stored credential is deleted with the gateway. Removal
+        // only proceeds on explicit confirm. (Alert, not confirmationDialog:
+        // its two buttons expose stable accessibility identifiers to XCUITest.)
+        .alert(
+            "Remove Gateway?",
+            isPresented: .init(
+                get: { gatewayPendingRemoval != nil },
+                set: { if !$0 { gatewayPendingRemoval = nil } }
+            )
+        ) {
+            Button("Remove Gateway", role: .destructive) {
+                confirmRemoval()
+            }
+            .accessibilityIdentifier("fleet.gateways.remove.confirm")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("fleet.gateways.remove.cancel")
+        } message: {
+            Text("This removes \"\(gatewayPendingRemoval?.displayName ?? "")\" and deletes its stored credential from the Keychain.")
+        }
+        // P1-8: bounded undo for the most recent removal (registry only — the
+        // credential is intentionally gone per the confirmation above).
+        .alert(
+            "Gateway Removed",
+            isPresented: .init(
+                get: { lastRemovedGateway != nil },
+                set: { if !$0 { lastRemovedGateway = nil } }
+            )
+        ) {
+            Button("Undo") { undoRemoval() }
+                .accessibilityIdentifier("fleet.gateways.remove.undo")
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Undo restores \"\(lastRemovedGateway?.displayName ?? "")\" as a gateway (no stored credential).")
+        }
         .background(FleetTheme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.gateways")
     }
@@ -177,7 +216,10 @@ public struct GatewaysView: View {
             .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue)")
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) {
-                    Task { try? await environment.removeGateway(gateway.id) }
+                    // P1-8: never remove on an unconfirmed swipe — require an
+                    // explicit, named confirmation that explains credential
+                    // deletion before the registry + Keychain are touched.
+                    gatewayPendingRemoval = gateway
                 } label: {
                     Label("Remove", systemImage: "trash")
                 }
@@ -236,6 +278,48 @@ public struct GatewaysView: View {
         }
         return String(describing: error)
     }
+
+    // MARK: P1-8 — confirmed removal + bounded undo
+
+    /// Execute the confirmed destructive removal. Surfaces any failure
+    /// (including a Keychain credential-cleanup failure) instead of
+    /// suppressing it, and offers a bounded undo on success.
+    private func confirmRemoval() {
+        guard let gateway = gatewayPendingRemoval else { return }
+        gatewayPendingRemoval = nil
+        Task {
+            do {
+                try await environment.removeGateway(gateway.id)
+                lastRemovedGateway = gateway
+            } catch {
+                operationError = Self.describe(error)
+            }
+        }
+    }
+
+    /// Undo the most recent removal: re-register the gateway (registry only —
+    /// the credential was intentionally deleted per the confirmation). Bounded
+    /// to the last removed gateway.
+    private func undoRemoval() {
+        guard let gateway = lastRemovedGateway else { return }
+        lastRemovedGateway = nil
+        guard let endpoint = gateway.endpoint else {
+            operationError = Self.describe(GatewayRegistryError.invalidEndpoint)
+            return
+        }
+        Task {
+            do {
+                _ = try await environment.addGateway(GatewayRegistration(
+                    id: gateway.id,
+                    displayName: gateway.displayName,
+                    endpoint: endpoint,
+                    authConfiguration: gateway.authConfiguration
+                ))
+            } catch {
+                operationError = Self.describe(error)
+            }
+        }
+    }
 }
 
 /// One gateway row: identity + test-result §13 status + runtime connection
@@ -275,7 +359,7 @@ private struct GatewayRowView: View {
                     .foregroundStyle(FleetTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(gateway.endpoint?.absoluteString ?? gateway.id.rawValue)
+                Text(gateway.endpoint.map(Redaction.redactedURL) ?? gateway.id.rawValue)
                     .font(.caption)
                     .foregroundStyle(FleetTheme.textSecondary)
                     .lineLimit(1)
@@ -323,7 +407,7 @@ private struct GatewayRowView: View {
                     .foregroundStyle(FleetTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(gateway.endpoint?.absoluteString ?? gateway.id.rawValue)
+                Text(gateway.endpoint.map(Redaction.redactedURL) ?? gateway.id.rawValue)
                     .font(.caption)
                     .foregroundStyle(FleetTheme.textSecondary)
                     .lineLimit(1)

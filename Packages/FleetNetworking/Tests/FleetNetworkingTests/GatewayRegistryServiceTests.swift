@@ -94,6 +94,16 @@ final class GatewayRegistryServiceTests: XCTestCase {
         }
     }
 
+    /// A credential store whose delete always fails — proves P1-8: registry
+    /// removal / clear must surface (not swallow) Keychain cleanup failures.
+    private final class FailingDeleteCredentialStore: CredentialStoring, @unchecked Sendable {
+        func saveCredential(_ credential: GatewayCredential, for gatewayID: GatewayID) async throws {}
+        func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? { nil }
+        func deleteCredential(for gatewayID: GatewayID) async throws {
+            throw CredentialStoreError.storeUnavailable("injected failure")
+        }
+    }
+
     private func makeService(
         credentials: CredentialStoring,
         factory: @escaping GatewayConnectionFactory
@@ -161,6 +171,44 @@ final class GatewayRegistryServiceTests: XCTestCase {
         do {
             _ = try await service.addGateway(GatewayRegistration(id: gatewayA, displayName: "A", endpoint: bad))
             XCTFail("expected invalid endpoint")
+        } catch let error as GatewayRegistryError {
+            XCTAssertEqual(error, .invalidEndpoint)
+        }
+    }
+
+    // MARK: P1-6 — endpoint must be a clean ORIGIN (no user-info, no query/fragment)
+
+    func testAddGatewayRejectsEndpointWithUserInfo() async throws {
+        let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
+        let bad = URL(string: "http://alice:password@127.0.0.1:8642")!
+        do {
+            _ = try await service.addGateway(GatewayRegistration(id: gatewayA, displayName: "A", endpoint: bad))
+            XCTFail("expected invalidEndpoint for user-info endpoint")
+        } catch let error as GatewayRegistryError {
+            XCTAssertEqual(error, .invalidEndpoint)
+        }
+    }
+
+    func testAddGatewayStripsQueryAndFragmentFromEndpoint() async throws {
+        let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
+        let dirty = URL(string: "http://127.0.0.1:8642/base?token=secret#frag")!
+        let gateway = try await service.addGateway(
+            GatewayRegistration(displayName: "MacBook", endpoint: dirty))
+        XCTAssertNil(gateway.endpoint?.query, "query must not be persisted")
+        XCTAssertNil(gateway.endpoint?.fragment, "fragment must not be persisted")
+        XCTAssertEqual(gateway.endpoint?.absoluteString, "http://127.0.0.1:8642/base")
+        XCTAssertFalse(gateway.endpoint?.absoluteString.contains("secret") == true,
+                       "query secret never survives the registry boundary")
+    }
+
+    func testUpdateGatewayRejectsEndpointWithUserInfo() async throws {
+        let service = makeService(credentials: TestCredentialStore(), factory: successFactory())
+        try await register(service)
+        let bad = URL(string: "http://bob:sekrit@127.0.0.1:8642")!
+        do {
+            _ = try await service.updateGateway(
+                gatewayA, edits: GatewayEdit(endpoint: bad))
+            XCTFail("expected invalidEndpoint for user-info endpoint")
         } catch let error as GatewayRegistryError {
             XCTAssertEqual(error, .invalidEndpoint)
         }
@@ -255,6 +303,46 @@ final class GatewayRegistryServiceTests: XCTestCase {
         let after = await service.hasCredential(for: gatewayA)
         XCTAssertNil(removed)
         XCTAssertFalse(after, "credential removed with the gateway")
+    }
+
+    // MARK: P1-8 — removal / clear surface credential-cleanup failure
+
+    func testRemoveGatewaySurfacesCredentialCleanupFailure() async throws {
+        let store = FailingDeleteCredentialStore()
+        let service = makeService(credentials: store, factory: successFactory())
+        try await register(service)
+
+        do {
+            try await service.removeGateway(gatewayA)
+            XCTFail("expected credentialStoreFailed when Keychain cleanup fails")
+        } catch let error as GatewayRegistryError {
+            guard case .credentialStoreFailed = error else {
+                return XCTFail("expected credentialStoreFailed, got \(error)")
+            }
+        }
+        // The gateway must remain registered — no silent half-removed state.
+        let stillThere = await service.gateway(for: gatewayA)
+        XCTAssertNotNil(stillThere)
+    }
+
+    func testClearCredentialSurfacesDeletionFailure() async throws {
+        let store = FailingDeleteCredentialStore()
+        let service = makeService(credentials: store, factory: successFactory())
+        try await register(service)
+        try await service.saveCredential(GatewayCredential(rawValue: "secret"), for: gatewayA)
+
+        do {
+            try await service.clearCredential(for: gatewayA)
+            XCTFail("expected credentialStoreFailed when Keychain delete fails")
+        } catch let error as GatewayRegistryError {
+            guard case .credentialStoreFailed = error else {
+                return XCTFail("expected credentialStoreFailed, got \(error)")
+            }
+        }
+        // authConfigured must NOT be flipped while the secret may still exist.
+        let gatewayValue = await service.gateway(for: gatewayA)
+        let gateway = try XCTUnwrap(gatewayValue)
+        XCTAssertTrue(gateway.authConfigured, "credential still configured after a failed clear")
     }
 
     // MARK: auth config (credential storage)

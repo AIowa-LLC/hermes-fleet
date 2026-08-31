@@ -1,5 +1,6 @@
 import Foundation
 import os
+import FleetCore
 
 /// A short-lived, single-use WebSocket upgrade ticket minted by the gateway.
 ///
@@ -107,7 +108,7 @@ public struct WSTicketClient: WSTicketMinting {
             Self.log.error("ws-ticket: HTTP \(http.statusCode)")
             throw TicketMintError.httpStatus(http.statusCode)
         }
-        Self.log.info("ws-ticket: minted ok (\(self.baseURL.absoluteString, privacy: .public))")
+        Self.log.info("ws-ticket: minted ok (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         let envelope: TicketEnvelope
         do {
             envelope = try JSONDecoder().decode(TicketEnvelope.self, from: data)
@@ -127,7 +128,8 @@ public struct WSTicketClient: WSTicketMinting {
 // MARK: - Redaction (spec §29: no credentials in logs/UI)
 
 extension WSTicketClient: CustomStringConvertible, CustomDebugStringConvertible {
-    /// The client's printable form never includes the session token.
-    public var description: String { "WSTicketClient(baseURL: \(baseURL))" }
+    /// The client's printable form never includes the session token OR any
+    /// user-info/password that may be embedded in the endpoint (P1-6).
+    public var description: String { "WSTicketClient(baseURL: \(Redaction.redactedURL(baseURL)))" }
     public var debugDescription: String { description }
 }
