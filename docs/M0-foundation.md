@@ -1,9 +1,23 @@
 # M0 Foundation — Hermes Fleet iOS
 
+> ## HISTORICAL FOUNDATION EVIDENCE (M0 only — 2026-08-28)
+>
+> This document records the **M0 skeleton** deliverable: project scaffolding,
+> module boundaries, and the dependency guard. It is **historical** and must
+> **not** be read as current status.
+>
+> The project has since shipped M1–M15, U1–U4, L1, C1, S2, S3, T2, X1, H1, H2
+> and the RT hardening wave (RT1–RT5). The authoritative current picture is the
+> **Milestone map** in `README.md` and the milestone notes in this directory;
+> architectural decisions from the hardening wave are recorded in `docs/adr/`.
+> The M0 dependency guard below (FleetUI never imports FleetNetworking) is
+> still enforced and verified by `ModuleBoundaryTests` in CI.
+
 **Task:** t_f5e8d645 · **Owner:** apple-dev · **Board:** hermes-fleet-ios
-**Status:** Implementation complete, evidence recorded. Handed to independent
-review (apple-qa / apple-design / apple-release / product scope / apple-dev
-final verification). M1–M15 are gated and NOT started.
+**Status (at time of M0, 2026-08-28):** Implementation complete, evidence
+recorded. Handed to independent review (apple-qa / apple-design / apple-release
+/ product scope / apple-dev final verification). M1–M15 were gated and NOT
+started **at that time**; they have since landed (see Milestone map).
 
 ## 1. Scope (M0 only)
 
@@ -66,7 +80,7 @@ FleetUI does not declare it — this is the structural proof of the M0 guard.
   (protocol + `TransportState`). Own package tests (`FleetCoreTests`).
 - **FleetNetworking / FleetSecurity / FleetPersistence** — boundary-only
   skeletons: a documented placeholder type that references a FleetCore type to
-  prove the dependency compiles. No implementation (gated).
+  prove the dependency compiles. No implementation (gated **at M0**).
 - **FleetUI** — `FleetDashboardModel` (@MainActor @Observable), `FleetRootView`
   (NavigationStack shell), `FleetDashboardView` (empty state per the product
   spec's fleet-first model, with accessibility identifiers).
@@ -84,7 +98,7 @@ FleetUI does not declare it — this is the structural proof of the M0 guard.
   - `AppCompositionTests` — app starts with an empty, inert fleet model.
 - Coverage collection is enabled (`gatherCoverageData`) for the QA lane.
 
-## 6. Acceptance criteria → evidence
+## 6. Acceptance criteria → evidence (M0, historical)
 
 | # | Criterion | Evidence |
 |---|---|---|
@@ -100,13 +114,13 @@ FleetUI does not declare it — this is the structural proof of the M0 guard.
 | 10 | No sensitive values in source | No keys/tokens; grep check clean |
 | 11 | M1 not started | No networking/auth/persistence implementation beyond placeholders |
 
-## 7. Known limitations (M0, intentional)
+## 7. Known limitations (M0, intentional — historical)
 
 - App icon slot is declared but empty (no generated visual assets in M0) —
   actool may emit a missing-icon warning; icons land with a later milestone /
   apple-release.
 - FleetSecurity/FleetPersistence/FleetNetworking ship placeholders only —
-  their real implementations are gated milestones.
+  their real implementations were gated milestones.
 - No UI test target in M0 (unit tests only, per task scope). UI tests join with
   the QA lane.
 
@@ -130,5 +144,5 @@ iOS 26.5 simulator runtime · host macOS 26.6.2.
 Test artifacts: `build/DerivedData/Logs/Test/Test-HermesFleetApp-2026.08.28_23-23-19--0500.xcresult`
 (coverage collection enabled for the QA lane).
 
-All 11 acceptance criteria hold — see §6 mapping.
-
+All 11 acceptance criteria held at M0 — see §6 mapping. **This is historical
+foundation evidence; see the README Milestone map for current status.**
