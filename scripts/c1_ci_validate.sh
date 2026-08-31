@@ -13,13 +13,23 @@
 #  - xcodebuild test is gated with -only-testing selectors. The unit test
 #    bundle runs fully. The UI-test bundle's DETERMINISTIC scripted-fleet
 #    suites (DEBUG build — HappyPath, Reconnect, S3CleartextWarning, plus the
-#    RT2 removal/endpoint-sanitization and H1 app-lock suites) run in CI too.
-#    The ENVIRONMENTAL live-gateway suites (L1*/P3Fix*/T2Fix*/H2 — need a real
-#    `hermes serve` / Tony's home LAN / Tailscale) are intentionally NOT part
-#    of CI: they run locally against the live gateway. This was the P1-7 fix:
-#    previously `-only-testing:HermesFleetAppTests` excluded the ENTIRE UI
-#    bundle, so navigation/composer/reconnect/form regressions could merge with
-#    green CI.
+#    RT2 removal/endpoint-sanitization, H1 app-lock and RT4 UX suites) run in
+#    CI too. The ENVIRONMENTAL live-gateway suites (L1*/P3Fix*/T2Fix*/H2 —
+#    need a real `hermes serve` / Tony's home LAN / Tailscale) are
+#    intentionally NOT part of CI: they run locally against the live gateway.
+#    This was the P1-7 fix: previously `-only-testing:HermesFleetAppTests`
+#    excluded the ENTIRE UI bundle, so navigation/composer/reconnect/form
+#    regressions could merge with green CI.
+#  - P1-7 regression fix (t_ea9f4624): NEVER mix a bare-bundle
+#    `-only-testing:<Bundle>` selector with class-level
+#    `-only-testing:<Bundle>/<Class>` selectors in ONE xcodebuild test
+#    invocation — xcodebuild then runs ONLY the class-level selections and
+#    silently drops the bare bundle (the ~90-test HermesFleetAppTests unit
+#    bundle stopped running in CI: RT2 "Executed 78 tests" before, RT4/RT5
+#    "Executed 14 tests" after). The unit bundle and the deterministic UI
+#    suites are therefore run as TWO separate xcodebuild test invocations
+#    (step 4a + 4b): a bare-bundle selector is safe on its own, and
+#    class-level selectors on their own.
 #  - CODE_SIGNING_ALLOWED must NOT be set to NO: the 4 Keychain-backed tests
 #    in ModuleBoundaryTests require the keychain-access-groups entitlement
 #    that only gets embedded when the app is signed. Simulator builds on
@@ -78,12 +88,30 @@ SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | se
 echo "  using simulator: $SIM_NAME"
 DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
 DD="$REPO/build/C1Ci"
-# P1-7: select the unit bundle PLUS every DETERMINISTIC scripted-fleet UI suite
-# (DEBUG build, no live gateway needed). The environmental live-gateway suites
-# (L1*/P3Fix*/T2Fix*/H2) are NOT selected here — they stay gated/manual.
-if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" \
-    -only-testing:HermesFleetAppTests \
+# P1-7 fix (t_ea9f4624): the unit bundle and the deterministic scripted-fleet
+# UI suites MUST be two separate xcodebuild test invocations — a bare-bundle
+# -only-testing selector mixed with class-level selectors makes xcodebuild
+# drop the bare bundle (see design notes). The environmental live-gateway
+# suites (L1*/P3Fix*/T2Fix*/H2) are NOT selected here — they stay gated/manual.
+XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
+    -destination "$DEST" -derivedDataPath "$DD")
+
+# 4a. FULL app-hosted unit bundle (HermesFleetAppTests, ~90 tests: M0 module
+#     boundary, AppEnvironment, ConversationViewModel incl. P1-5 regressions,
+#     AppLock, FleetCoreLogic, AppComposition, fixture loop, RT4 logic).
+if xcodebuild "${XC[@]}" -only-testing:HermesFleetAppTests \
+    build test >/tmp/c1_xctest_unit.log 2>&1; then
+  ULINE=$(grep -E 'Executed .* tests' /tmp/c1_xctest_unit.log | tail -1)
+  ok "xcodebuild UNIT tests (HermesFleetAppTests) SUCCEEDED — $ULINE"
+  echo "  $ULINE"
+else
+  bad "xcodebuild UNIT tests (HermesFleetAppTests) FAILED"
+  grep -E 'error:|failed|Test Suite|Executed' /tmp/c1_xctest_unit.log | tail -25
+fi
+
+# 4b. DETERMINISTIC scripted-fleet UI suites (DEBUG build, no live gateway
+#     needed). Class-level selectors only — safe on their own.
+if xcodebuild "${XC[@]}" \
     -only-testing:HermesFleetAppUITests/HermesFleetHappyPathUITests \
     -only-testing:HermesFleetAppUITests/HermesFleetReconnectUITests \
     -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests \
@@ -92,13 +120,13 @@ if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -only-testing:HermesFleetAppUITests/RT4RosterEmptyStateUITests \
     -only-testing:HermesFleetAppUITests/RT4FormSaveFailureUITests \
     -only-testing:HermesFleetAppUITests/RT4VoiceOverUITests \
-    build test >/tmp/c1_xctest.log 2>&1; then
-  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/c1_xctest.log | tail -1)
-  ok "xcodebuild build+test SUCCEEDED — $TESTLINE"
-  grep -E 'Executed .* tests' /tmp/c1_xctest.log | tail -1 | sed 's/^/  /'
+    build test >/tmp/c1_xctest_ui.log 2>&1; then
+  TLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/c1_xctest_ui.log | tail -1)
+  ok "xcodebuild DETERMINISTIC UI tests SUCCEEDED — $TLINE"
+  grep -E 'Executed .* tests' /tmp/c1_xctest_ui.log | tail -1 | sed 's/^/  /'
 else
-  bad "xcodebuild build+test FAILED"
-  grep -E 'error:|failed|Test Suite' /tmp/c1_xctest.log | tail -25
+  bad "xcodebuild DETERMINISTIC UI tests FAILED"
+  grep -E 'error:|failed|Test Suite|Executed' /tmp/c1_xctest_ui.log | tail -25
 fi
 
 # --- 5. secrets scan (gitleaks) ----------------------------------------------
