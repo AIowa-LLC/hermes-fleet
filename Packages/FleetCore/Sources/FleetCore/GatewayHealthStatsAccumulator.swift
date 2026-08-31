@@ -37,6 +37,13 @@ public actor GatewayHealthStatsAccumulator: ConnectionHealthAccumulating {
         var connectedSince: Date?
         var disconnectedSince: Date?
         var pingTotalMilliseconds: Double = 0
+        /// Whether this gateway has EVER reached `.connected` (across
+        /// restarts, via rehydrate). Drives reconnect counting: the first
+        /// `.connected` is 0, every re-establishment afterwards is +1. A
+        /// failed initial handshake only ever puts time in the disconnected
+        /// bucket — never sets this — so the next (real) first connect is
+        /// not promoted to a reconnect.
+        var hasConnectedOnce: Bool = false
     }
 
     private let store: any HealthStatsStoring
@@ -100,7 +107,14 @@ public actor GatewayHealthStatsAccumulator: ConnectionHealthAccumulating {
                 stats: restored,
                 phase: .disconnected,
                 connectedSince: nil,
-                disconnectedSince: timestamp
+                disconnectedSince: timestamp,
+                // Derive "has ever connected" from the persisted snapshot.
+                // `.online` covers a gateway killed mid-connection whose
+                // interval was never closed, so connectedMilliseconds is 0
+                // but the gateway HAD reached .connected before dying.
+                hasConnectedOnce: restored.connectedMilliseconds > 0
+                    || restored.reconnectCount > 0
+                    || restored.currentState == .online
             )
         }
     }
@@ -143,11 +157,15 @@ public actor GatewayHealthStatsAccumulator: ConnectionHealthAccumulating {
 
     private func beginConnectedInterval(_ entry: inout Entry, at timestamp: Date) {
         // Reconnect counting: the first connected event is the initial
-        // connect (0); every re-establishment afterwards is +1.
-        if entry.stats.firstObservedAt != .distantPast,
-           entry.stats.connectedMilliseconds > 0 || entry.stats.disconnectedMilliseconds > 0 {
+        // connect (0); every re-establishment afterwards is +1. Keyed off
+        // "has ever reached .connected", NOT settled time in either bucket:
+        // a failed first handshake (gateway unreachable/asleep) puts time in
+        // the disconnected bucket without ever establishing a connection, so
+        // the subsequent first success must stay 0.
+        if entry.hasConnectedOnce {
             entry.stats.reconnectCount += 1
         }
+        entry.hasConnectedOnce = true
         entry.phase = .connected
         entry.connectedSince = timestamp
         entry.stats.lastTransitionAt = timestamp

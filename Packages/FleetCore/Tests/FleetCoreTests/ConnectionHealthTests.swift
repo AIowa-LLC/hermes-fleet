@@ -93,6 +93,33 @@ final class ConnectionHealthTests: XCTestCase {
         XCTAssertEqual(stats.reconnectCount, 0, "initial connect is not a reconnect")
     }
 
+    func testFailedFirstHandshakeThenSuccessIsNotAReconnect() async throws {
+        let clock = ManualClock()
+        let accumulator = makeAccumulator(store: InMemoryHealthStatsStore(), clock: clock)
+
+        // The production-reachable defect: the FIRST-ever connect attempt
+        // fails before any `.connected` (gateway unreachable → transport
+        // yields .connectStarted then .disconnected from a failed
+        // handshake), then the retry succeeds. The failed window is real
+        // downtime, but the eventual success is still the FIRST connect —
+        // it must not be counted as a reconnect.
+        await accumulator.record(.connectStarted, for: id)
+        clock.advance(seconds: 5)
+        await accumulator.record(.disconnected(reason: "unreachable"), for: id)
+        clock.advance(seconds: 2)
+        await accumulator.record(.connectStarted, for: id)
+        await accumulator.record(.connected, for: id)
+
+        let stats = try unwrapStats(await accumulator.stats(for: id))
+        XCTAssertEqual(stats.reconnectCount, 0,
+            "failed initial handshake is not an establishment; first success is not a reconnect")
+        XCTAssertEqual(stats.connectedMilliseconds, 0, "no connected interval ever settled")
+        XCTAssertEqual(stats.disconnectedMilliseconds, 2_000,
+            "failed-handshake window is honest downtime")
+        XCTAssertEqual(stats.lastDisconnectReason, "unreachable")
+        XCTAssertEqual(stats.currentState, .online)
+    }
+
     func testDisconnectWhileConnectingRecordsReasonWithoutUptime() async throws {
         let clock = ManualClock()
         let accumulator = makeAccumulator(store: InMemoryHealthStatsStore(), clock: clock)
@@ -213,6 +240,34 @@ final class ConnectionHealthTests: XCTestCase {
         XCTAssertEqual(after.connectedMilliseconds, 0)
         XCTAssertEqual(after.disconnectedMilliseconds, 0, "restart window starts at rehydrate")
         XCTAssertEqual(after.lastDisconnectReason, "abnormal closure")
+    }
+
+    func testRehydrateOnlineSnapshotCountsNextReestablishmentAsReconnect() async throws {
+        let store = InMemoryHealthStatsStore()
+        let clock = ManualClock()
+        let first = makeAccumulator(store: store, clock: clock)
+
+        // Gateway reached .connected (hasConnectedOnce true), then the app
+        // was killed mid-connection: the persisted snapshot has
+        // currentState == .online but connectedMilliseconds == 0 (the
+        // interval was never closed). Rehydrate must derive the flag from
+        // `.online`, so the post-restart re-establishment counts as a
+        // reconnect — matching the "survives restart" contract.
+        await first.record(.connectStarted, for: id)
+        await first.record(.connected, for: id)
+        clock.advance(seconds: 100)
+
+        let second = makeAccumulator(store: store, clock: clock)
+        await second.rehydrate(gatewayIDs: [id])
+
+        await second.record(.connectStarted, for: id)
+        await second.record(.connected, for: id)
+
+        let stats = try unwrapStats(await second.stats(for: id))
+        XCTAssertEqual(stats.reconnectCount, 1,
+            ".online persisted snapshot must carry hasConnectedOnce across restart")
+        XCTAssertEqual(stats.connectedMilliseconds, 0,
+            "dead interval not claimed; new interval starts after rehydrate")
     }
 
     func testRehydrateNeverClobbersLiveEntry() async throws {
