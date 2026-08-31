@@ -2,29 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
-	<!-- H1 (R4): required for LocalAuthentication Face ID. Without this usage
-	     string the system refuses biometric policy on device (kLAErrorBiometryNotAvailable). -->
-	<key>NSFaceIDUsageDescription</key>
-	<string>Hermes Fleet uses Face ID to unlock the app and protect your fleet conversations.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- P3 LAN-gateway fix (t_eb5455f2): the app talks to a Hermes
-		     gateway over cleartext http:// on the LAN (e.g.
-		     <lan-ip>:9120). NSAllowsLocalNetworking permits ATS to
-		     allow local-network loads (unqualified hostnames, .local
-		     domains, IP addresses) without disabling ATS globally. -->
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
-		<!-- T2 tailnet fix (t_f54b722e): iOS ATS treats the Tailscale
-		     CGNAT range 100.64.0.0/10 as a PUBLIC address — NSAllows-
-		     LocalNetworking (RFC1918 + .local) does NOT cover it, so
-		     ATS blocks cleartext to http://<tailnet-ip>:9120 with
-		     error -1022. Narrow fix: a per-host ATS exception for the
-		     Mac's tailnet IP (the same surface Tony's app uses), same
-		     pattern as the P3 LAN fix. Transport encryption for this
-		     endpoint is provided by the Tailscale tunnel itself. -->
 		<key>NSExceptionDomains</key>
 		<dict>
 			<key><tailnet-ip></key>
@@ -36,11 +17,18 @@
 			</dict>
 		</dict>
 	</dict>
-	<!-- iOS 14+ local-network privacy: connecting to a LAN IP (e.g. the
-	     Hermes gateway at <lan-ip>:9120) requires this usage string.
-	     Without it the OS silently blocks the connection and the probe
-	     hangs instead of reaching the gateway. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Hermes Fleet uses Face ID to unlock the app and protect your fleet conversations.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Hermes Fleet connects to your Hermes gateway on the local network.</string>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 </dict>
 </plist>
