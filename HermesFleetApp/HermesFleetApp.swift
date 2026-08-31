@@ -22,12 +22,22 @@ struct HermesFleetApp: App {
 
     var body: some Scene {
         WindowGroup {
-            FleetRootView(environment: environment, lockController: lockController)
-                .task {
-                    await environment.load()
-                    await environment.refreshRoster()
-                    await lockController.authenticateIfNeeded()
+            ZStack {
+                FleetRootView(environment: environment, lockController: lockController)
+                    .task {
+                        await environment.load()
+                        await environment.refreshRoster()
+                        await lockController.authenticateIfNeeded()
+                    }
+
+                // P0-1: continue Tony's artwork past the native LaunchScreen
+                // for a guaranteed minimum display window, then cross-fade
+                // into the app UI. Skipped under XCUITest unless opted in
+                // (see SplashOverlayView.isEnabled).
+                if SplashOverlayView.isEnabled {
+                    SplashOverlayView()
                 }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
