@@ -43,6 +43,48 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         self.isStreaming = isStreaming
         self.isFailed = isFailed
     }
+
+    // MARK: VoiceOver semantics (P2-7)
+
+    /// A11y label identifying who produced this row + its content. Gives
+    /// assistive-tech users the speaker (User / Assistant / Tool / Status /
+    /// System / Error) that the combined bubble otherwise hides. Content is
+    /// omitted when empty (e.g. an assistant row still streaming its first
+    /// delta), so VoiceOver never announces a bare dangling comma.
+    public var accessibilityLabel: String {
+        let speaker: String
+        let content: String
+        switch kind {
+        case .user:
+            speaker = "User"
+            content = text
+        case .assistant:
+            speaker = "Assistant"
+            content = text
+        case .tool:
+            speaker = "Tool"
+            // Tool rows carry the tool name as `text` and context as `detail`.
+            content = [text, detail].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+        case .status:
+            speaker = "Status"
+            content = text
+        case .system:
+            speaker = "System"
+            content = text
+        case .error:
+            speaker = "Error"
+            content = text
+        }
+        return content.isEmpty ? speaker : speaker + ", " + content
+    }
+
+    /// A11y value describing live row state: "Streaming" while a turn is still
+    /// accumulating, "Failed" for an errored turn, otherwise "".
+    public var accessibilityValue: String {
+        if isFailed { return "Failed" }
+        if isStreaming { return "Streaming" }
+        return ""
+    }
 }
 
 /// The conversation screen view model (U3) — observable so SwiftUI renders the
@@ -92,7 +134,13 @@ public final class ConversationViewModel {
     // MARK: Observable state (SwiftUI renders these)
 
     public private(set) var phase: Phase = .idle
-    public private(set) var transcript: [ConversationRow] = []
+    /// The DISPLAY window the view renders — capped at `maxDisplayRows` so a
+    /// long-lived session never grows the in-memory array unboundedly (P2-8).
+    /// The authoritative, full history lives in `allRows` (and the persisted
+    /// cache), so capping the window never loses history.
+    public var transcript: [ConversationRow] {
+        Array(allRows.suffix(maxDisplayRows))
+    }
     public private(set) var isStreaming = false
     /// Non-secret replay hydration notice shown after a reconnect (M6).
     public private(set) var replayNotice: String?
@@ -109,24 +157,46 @@ public final class ConversationViewModel {
 
     private var openedSessionID: String?
     private var rowCounter = 0
-    private var eventTask: Task<Void, Never>?
-    private var statusWatcher: Task<Void, Never>?
+    /// `nonisolated(unsafe)`: the event task is only ever CANCELED from
+    /// `deinit` (a nonisolated context); cancel is thread-safe. All mutation
+    /// (creation, nil-out) happens on the main actor.
+    nonisolated(unsafe) private var eventTask: Task<Void, Never>?
+    /// `nonisolated(unsafe)`: same pattern — only canceled in `deinit`.
+    nonisolated(unsafe) private var statusWatcher: Task<Void, Never>?
     private var hasStarted = false
     /// Status poll cadence (short in tests; production uses the default).
     private let statusInterval: Duration
+    /// Authoritative transcript history — unbounded, persisted to the cache
+    /// (P2-8). The public `transcript` is a capped display window over this.
+    private var allRows: [ConversationRow] = []
+    /// Maximum rows kept in the in-memory display window (P2-8 retention
+    /// policy). Older rows remain in the persisted authoritative history.
+    private let maxDisplayRows: Int
 
     public init(
         session: any ConversationSessionProviding,
         cache: any CacheStoring,
         route: Route,
         sessionID: String?,
-        statusInterval: Duration = .milliseconds(400)
+        statusInterval: Duration = .milliseconds(400),
+        maxDisplayRows: Int = 200
     ) {
         self.session = session
         self.cache = cache
         self.route = route
         self.sessionID = sessionID
         self.statusInterval = statusInterval
+        self.maxDisplayRows = maxDisplayRows
+    }
+
+    /// P2-3: when the VM is permanently released (the conversation screen is
+    /// popped for good), stop the one-time event subscription so its task does
+    /// not linger holding the session. Temporary disappearances do NOT reach
+    /// here — the VM survives push/pop, so the live event stream is retained
+    /// (single-subscriber: it cannot be re-created after cancellation).
+    deinit {
+        eventTask?.cancel()
+        statusWatcher?.cancel()
     }
 
     // MARK: Lifecycle
@@ -135,6 +205,16 @@ public final class ConversationViewModel {
     /// to streamed events → hydrate persisted history for cold-start.
     /// Idempotent: repeated calls while already live are no-ops; a failed
     /// initial open can be retried (P1-5).
+    ///
+    /// P2-3: one-time init (hasStarted + cold-start hydrate + the event
+    /// subscription) is separate from the RESTARTABLE status watcher. The
+    /// client's `events` is a single-subscriber `AsyncStream` that cannot be
+    /// re-iterated after its consumer is cancelled (verified empirically), so
+    /// the event task is created ONCE and kept alive for the VM's lifetime —
+    /// `teardown()` never cancels it. A re-appear after a temporary
+    /// disappearance therefore only needs to restart the status watcher; the
+    /// live event subscription is untouched, so the screen is never left
+    /// without monitoring.
     public func start() async {
         if !hasStarted {
             hasStarted = true
@@ -144,12 +224,15 @@ public final class ConversationViewModel {
                 await hydrateFromCache(sessionID: sessionID)
             }
         }
-        // Idempotent: if a session is already open, nothing to do — a repeated
-        // `.task` / view re-appear must not double-connect or clobber an open
-        // session. (Cold-start hydration sets `phase = .ready` as a rendering
-        // placeholder, so keying off the OPEN SESSION — not the phase — is what
-        // lets a cold start still connect.)
-        if openedSessionID != nil { return }
+        // If a session is already open, this is a re-appear after a temporary
+        // disappearance: the connection + session + event subscription are
+        // still valid. Restart the RESTARTABLE status watcher (P2-3); do NOT
+        // re-create the event task — the stream cannot be re-iterated, and
+        // cancelling it would leave the screen permanently unsubscribed.
+        if openedSessionID != nil {
+            startStatusWatcher()
+            return
+        }
         guard await connectAndOpen() else { return }
         // Adopt the gateway's replay epoch on first open so a LATER reconnect
         // actually replays (M6: the engine adopts on its first call and
@@ -303,9 +386,12 @@ public final class ConversationViewModel {
     }
 
     /// Cancel background tasks (view disappear). Idempotent.
+    ///
+    /// P2-3: cancels ONLY the RESTARTABLE status watcher. The event
+    /// subscription is one-time (single-subscriber `AsyncStream` — cannot be
+    /// re-created after cancellation), so it is left running and dies with the
+    /// VM; a re-appear restarts the status watcher via `start()`.
     public func teardown() {
-        eventTask?.cancel()
-        eventTask = nil
         statusWatcher?.cancel()
         statusWatcher = nil
     }
@@ -315,7 +401,7 @@ public final class ConversationViewModel {
     private func hydrateFromCache(sessionID: String) async {
         guard let cached = try? await cache.loadHistory(sessionID: sessionID, for: route.gatewayID),
               !cached.messages.isEmpty else { return }
-        transcript = cached.messages.map { Self.row(from: $0, id: nextRowID()) }
+        allRows = cached.messages.map { Self.row(from: $0, id: nextRowID()) }
         hydratedFromCache = true
         phase = .ready
     }
@@ -324,7 +410,7 @@ public final class ConversationViewModel {
     /// projection returned by create/resume (when non-empty).
     private func applyOpenedSession(_ opened: ConversationSession) {
         if !opened.messages.isEmpty {
-            transcript = opened.messages.map { Self.row(from: $0, id: nextRowID()) }
+            allRows = opened.messages.map { Self.row(from: $0, id: nextRowID()) }
             hydratedFromCache = false
         }
         sessionTitle = opened.profileName
@@ -340,9 +426,20 @@ public final class ConversationViewModel {
 
     private func startEventSubscription() {
         eventTask?.cancel()
+        // P2-3: the conversation client's `events` is a SINGLE-SUBSCRIBER
+        // AsyncStream — once this task is cancelled, the stream cannot be
+        // re-iterated to receive new events (verified empirically). So the
+        // event subscription is created ONCE and kept alive for the VM's
+        // lifetime; `teardown()` never cancels it. The task holds the VM
+        // WEAKLY (per-iteration check, not a strong `guard let self` spanning
+        // the whole loop), so it dies naturally with the VM — no leak — and
+        // the stream continues to be consumed while the view is temporarily
+        // off-screen (no missed events, no dropped reconnect/auth monitoring).
         eventTask = Task { [weak self] in
-            guard let self else { return }
-            for await event in self.session.conversation.events {
+            guard let session = self?.session else { return }
+            let events = session.conversation.events
+            for await event in events {
+                guard let self, !Task.isCancelled else { break }
                 await self.apply(event)
             }
         }
@@ -375,9 +472,9 @@ public final class ConversationViewModel {
         case .messageComplete(_, let text, let status, let error):
             let isError = status == "error" || error != nil
             if let idx = lastAssistantIndex {
-                transcript[idx].text = text.isEmpty ? transcript[idx].text : text
-                transcript[idx].isStreaming = false
-                transcript[idx].isFailed = isError
+                allRows[idx].text = text.isEmpty ? allRows[idx].text : text
+                allRows[idx].isStreaming = false
+                allRows[idx].isFailed = isError
             }
             isStreaming = false
             phase = .ready
@@ -480,14 +577,14 @@ public final class ConversationViewModel {
                 switch outcome {
                 case .truncated(let sid), .failed(let sid, _):
                     if let history = try? await session.history.fetchSessionHistory(sessionID: sid) {
-                        transcript = history.messages.map { Self.row(from: $0, id: nextRowID()) }
+                        allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
                         hydratedFromCache = false
                         Task { await persistTranscript() }
                     }
                 case .epochChanged:
                     if let sid = openedSessionID,
                        let history = try? await session.history.fetchSessionHistory(sessionID: sid) {
-                        transcript = history.messages.map { Self.row(from: $0, id: nextRowID()) }
+                        allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
                         hydratedFromCache = false
                         Task { await persistTranscript() }
                     }
@@ -503,13 +600,13 @@ public final class ConversationViewModel {
     // MARK: Transcript mutation helpers
 
     private var lastAssistantIndex: Int? {
-        transcript.lastIndex { $0.kind == .assistant }
+        allRows.lastIndex { $0.kind == .assistant }
     }
 
     private func appendToAssistant(_ text: String) {
         if let idx = lastAssistantIndex {
-            transcript[idx].text += text
-            transcript[idx].isStreaming = true
+            allRows[idx].text += text
+            allRows[idx].isStreaming = true
         } else {
             appendRow(.init(id: nextRowID(), kind: .assistant, text: text, isStreaming: true))
         }
@@ -517,21 +614,21 @@ public final class ConversationViewModel {
 
     private func appendThinking(_ text: String) {
         if let idx = lastAssistantIndex {
-            transcript[idx].detail = (transcript[idx].detail ?? "") + text
+            allRows[idx].detail = (allRows[idx].detail ?? "") + text
         }
     }
 
     private func finalizeStreamingRow() {
         guard let idx = lastAssistantIndex else { return }
-        transcript[idx].isStreaming = false
+        allRows[idx].isStreaming = false
     }
 
     private func updateLastTool(_ name: String, generating: Bool, progress: String? = nil) {
-        if let idx = transcript.lastIndex(where: { $0.kind == .tool && $0.text == name }) {
+        if let idx = allRows.lastIndex(where: { $0.kind == .tool && $0.text == name }) {
             if let progress, !progress.isEmpty {
-                transcript[idx].detail = progress
+                allRows[idx].detail = progress
             } else {
-                transcript[idx].detail = generating ? "Generating…" : transcript[idx].detail
+                allRows[idx].detail = generating ? "Generating…" : allRows[idx].detail
             }
         } else {
             appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: generating ? "Generating…" : nil))
@@ -539,7 +636,7 @@ public final class ConversationViewModel {
     }
 
     private func appendRow(_ row: ConversationRow) {
-        transcript.append(row)
+        allRows.append(row)
     }
 
     private func nextRowID() -> String {
@@ -551,7 +648,9 @@ public final class ConversationViewModel {
 
     private func persistTranscript() async {
         guard let sid = openedSessionID else { return }
-        let messages = transcript.compactMap { Self.sessionMessage(from: $0) }
+        // P2-8: persist the AUTHORITATIVE history (`allRows`), never the capped
+        // display window — so retention never loses history from the cache.
+        let messages = allRows.compactMap { Self.sessionMessage(from: $0) }
         try? await cache.saveHistory(
             SessionHistory(sessionID: sid, count: messages.count, messages: messages),
             for: route.gatewayID

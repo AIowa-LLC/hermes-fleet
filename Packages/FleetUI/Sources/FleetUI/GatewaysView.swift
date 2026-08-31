@@ -97,16 +97,16 @@ public struct GatewaysView: View {
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .add:
+                // P2-6: let the form see save failures — it keeps the sheet
+                // open, preserves the non-secret fields, and surfaces the error
+                // inline for retry (the parent no longer swallows the error into
+                // a post-dismiss alert that races the sheet).
                 GatewayFormSheet(
                     title: "Add Gateway",
                     saveButton: "Add",
                     initial: nil
                 ) { registration, credential in
-                    do {
-                        _ = try await environment.addGateway(registration, credential: credential)
-                    } catch {
-                        operationError = Self.describe(error)
-                    }
+                    _ = try await environment.addGateway(registration, credential: credential)
                 }
             case .edit(let gateway):
                 GatewayFormSheet(
@@ -114,23 +114,19 @@ public struct GatewaysView: View {
                     saveButton: "Save",
                     initial: gateway
                 ) { registration, credential in
-                    do {
-                        // Apply the edited display name / endpoint / strategy.
-                        _ = try await environment.updateGateway(
-                            gateway.id,
-                            edits: GatewayEdit(
-                                displayName: registration.displayName,
-                                endpoint: registration.endpoint,
-                                authConfiguration: registration.authConfiguration
-                            )
+                    // Apply the edited display name / endpoint / strategy.
+                    _ = try await environment.updateGateway(
+                        gateway.id,
+                        edits: GatewayEdit(
+                            displayName: registration.displayName,
+                            endpoint: registration.endpoint,
+                            authConfiguration: registration.authConfiguration
                         )
-                        // Store a newly-entered credential (Keychain-safe);
-                        // nil keeps the registry's existing credential.
-                        if let credential {
-                            try await environment.saveCredential(credential, for: gateway.id)
-                        }
-                    } catch {
-                        operationError = Self.describe(error)
+                    )
+                    // Store a newly-entered credential (Keychain-safe);
+                    // nil keeps the registry's existing credential.
+                    if let credential {
+                        try await environment.saveCredential(credential, for: gateway.id)
                     }
                 }
             case .auth(let id):

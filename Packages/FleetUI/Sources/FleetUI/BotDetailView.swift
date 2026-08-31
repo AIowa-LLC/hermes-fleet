@@ -224,9 +224,29 @@ private struct SessionRowView: View {
     }
 
     private static func dateText(_ epoch: Double) -> String {
+        FleetSessionDateText.text(epoch)
+    }
+}
+
+/// P3-1: cached short-date/time formatter shared across every session row.
+///
+/// `DateFormatter` construction is expensive (locale + calendar + template
+/// setup); creating one per evaluated row (session lists can fetch 200 rows)
+/// churns objects on every observable update. This singleton caches a single
+/// `.short`/`.short` formatter — it is immutable after init and only ever read
+/// on the main actor (SwiftUI view evaluation), so sharing it is safe.
+public enum FleetSessionDateText {
+    @MainActor
+    private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
-        return formatter.string(from: Date(timeIntervalSince1970: epoch))
+        return formatter
+    }()
+
+    /// Format an epoch as a short date + short time, e.g. "8/30/26, 10:05 PM".
+    @MainActor
+    public static func text(_ epoch: Double) -> String {
+        formatter.string(from: Date(timeIntervalSince1970: epoch))
     }
 }

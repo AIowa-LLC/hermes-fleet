@@ -20,15 +20,37 @@ import FleetUI
 /// (`FleetServiceGraph.makeProductionEnvironment`).
 extension FleetServiceGraph {
 
+    /// P2-5 UI-test knob: `HERMES_FLEET_ZERO_BOTS=1` makes EVERY scripted
+    /// gateway report a healthy roster with ZERO bots, so the all-healthy
+    /// all-empty roster state is reachable in a deterministic UI test.
+    nonisolated static var zeroBotsEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_ZERO_BOTS"] == "1"
+    }
+
+    /// P2-6 UI-test knob: `HERMES_FLEET_SAVE_FAIL=1` makes the scripted
+    /// registry's save path (add/update/saveCredential) throw, so the form's
+    /// save-failure retry UX is reachable in a deterministic UI test.
+    nonisolated static var saveFailEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_SAVE_FAIL"] == "1"
+    }
+
     static func makeSimulatorEnvironment() -> AppEnvironment {
         // Scripted registry: in-memory credential store (no Keychain writes).
         let credentials = InMemoryCredentialStore()
-        let registry: any GatewayRegistryManaging = GatewayRegistryService(
+        let baseRegistry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
             }
         )
+        // P2-6: when the save-fail knob is set, wrap the registry so the
+        // add/edit save path throws (the UI test then verifies the form keeps
+        // the sheet open, preserves non-secret fields, and surfaces the error).
+        let registry: any GatewayRegistryManaging = if FleetServiceGraph.saveFailEnabled {
+            FailingSaveRegistry(inner: baseRegistry)
+        } else {
+            baseRegistry
+        }
         // Scripted union roster: FleetRosterService over scripted per-gateway
         // sessions (real M8 aggregation, scripted transport + roster RPCs).
         let roster: any FleetRosterProviding = FleetRosterService(
@@ -348,14 +370,49 @@ private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
     }
 }
 
+/// P2-6 DEBUG-only seam: a `GatewayRegistryManaging` wrapper that throws on
+/// the save path (add / update / saveCredential) while forwarding read +
+/// teardown operations to the inner registry. Lets the deterministic UI test
+/// drive the form's save-failure retry UX without a real transport failure.
+private struct FailingSaveRegistry: GatewayRegistryManaging {
+    let inner: any GatewayRegistryManaging
+
+    func allGateways() async -> [FleetGateway] { await inner.allGateways() }
+    func gateway(for id: GatewayID) async -> FleetGateway? { await inner.gateway(for: id) }
+    func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
+        throw GatewayRegistryError.credentialStoreFailed("injected save failure")
+    }
+    func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
+        throw GatewayRegistryError.credentialStoreFailed("injected save failure")
+    }
+    func removeGateway(_ id: GatewayID) async throws { try await inner.removeGateway(id) }
+    func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
+        throw GatewayRegistryError.credentialStoreFailed("injected save failure")
+    }
+    func clearCredential(for id: GatewayID) async throws { try await inner.clearCredential(for: id) }
+    func hasCredential(for id: GatewayID) async -> Bool { await inner.hasCredential(for: id) }
+    func testConnection(to id: GatewayID) async throws -> GatewayTestResult {
+        try await inner.testConnection(to: id)
+    }
+}
+
 /// Scripted per-gateway roster session: real M8 session shape, scripted
 /// `profiles.list` / `session.list` responses. The `arch` gateway is scripted
 /// UNREACHABLE so the union roster refresh classifies it offline while the
 /// healthy gateways still aggregate (spec §31 partial availability).
+///
+/// P2-5: when `HERMES_FLEET_ZERO_BOTS=1`, EVERY gateway reports a healthy,
+/// zero-bot roster (no outage, no profiles) so the all-healthy all-empty state
+/// is reachable for the No-Bots regression UI test.
 private struct ScriptedRosterSession: GatewayRosterSession {
     let gatewayID: GatewayID
 
-    private var isOutage: Bool { gatewayID.rawValue == "arch" }
+    private var isOutage: Bool {
+        guard !FleetServiceGraph.zeroBotsEnabled else { return false }
+        return gatewayID.rawValue == "arch"
+    }
+
+    private var hasNoBots: Bool { FleetServiceGraph.zeroBotsEnabled }
 
     var status: GatewayStatus { isOutage ? .offline : .online }
 
@@ -377,6 +434,7 @@ private struct ScriptedRosterSession: GatewayRosterSession {
 
     func fetchProfiles() async throws -> [ProfileDescriptor] {
         if isOutage { throw RosterError.notConnected }
+        if hasNoBots { return [] }
         return ScriptedFleet.profiles(on: gatewayID)
     }
 

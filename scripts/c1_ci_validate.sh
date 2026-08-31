@@ -89,6 +89,9 @@ if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests \
     -only-testing:HermesFleetAppUITests/RT2RemovalAndEndpointSanitizationUITests \
     -only-testing:HermesFleetAppUITests/H1AppLockUITests \
+    -only-testing:HermesFleetAppUITests/RT4RosterEmptyStateUITests \
+    -only-testing:HermesFleetAppUITests/RT4FormSaveFailureUITests \
+    -only-testing:HermesFleetAppUITests/RT4VoiceOverUITests \
     build test >/tmp/c1_xctest.log 2>&1; then
   TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/c1_xctest.log | tail -1)
   ok "xcodebuild build+test SUCCEEDED — $TESTLINE"

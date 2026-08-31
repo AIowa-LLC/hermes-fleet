@@ -14,7 +14,10 @@ struct GatewayFormSheet: View {
     private let saveButton: String
     /// Non-nil when editing an existing gateway (prefill).
     private let existing: FleetGateway?
-    private let onSave: (GatewayRegistration, GatewayCredential?) async -> Void
+    /// P2-6: the save seam now THROWS on failure so the form can distinguish a
+    /// successful save (dismiss + clear secrets) from a failure (keep the
+    /// sheet open, preserve non-secret fields for retry, surface the error).
+    private let onSave: (GatewayRegistration, GatewayCredential?) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var displayName: String
@@ -27,6 +30,8 @@ struct GatewayFormSheet: View {
     @State private var usernameText: String
     @State private var passwordText: String
     @State private var isSaving = false
+    /// P2-6: non-secret inline save-failure message (kept visible for retry).
+    @State private var saveError: String?
     /// Explicit user confirmation to send credentials in cleartext to a
     /// public (non-private/loopback) address — B2 save-gate. Never persisted.
     @State private var confirmsCleartextSend = false
@@ -35,7 +40,7 @@ struct GatewayFormSheet: View {
         title: String,
         saveButton: String,
         initial: FleetGateway?,
-        onSave: @escaping (GatewayRegistration, GatewayCredential?) async -> Void
+        onSave: @escaping (GatewayRegistration, GatewayCredential?) async throws -> Void
     ) {
         self.title = title
         self.saveButton = saveButton
@@ -113,12 +118,38 @@ struct GatewayFormSheet: View {
                             .accessibilityIdentifier("fleet.gateways.form.password")
                     }
                 }
+
+                // P2-6: inline, non-secret save-failure message. The sheet stays
+                // open and the non-secret fields are preserved so the user can
+                // retry without re-entering endpoint/auth strategy.
+                if let saveError {
+                    Section {
+                        Label {
+                            Text(saveError)
+                                .font(.caption)
+                                .foregroundStyle(FleetTheme.accent)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(FleetTheme.accent)
+                        }
+                        .accessibilityIdentifier("fleet.gateways.form.error")
+                    } header: {
+                        Text("Save Failed")
+                    }
+                }
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        // P2-6: intentional dismissal — clear secret material so
+                        // it never lingers in the view state.
+                        clearSecrets()
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("fleet.gateways.form.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saveButton) { save() }
@@ -198,9 +229,35 @@ struct GatewayFormSheet: View {
         }()
 
         Task {
-            await onSave(registration, credential)
-            isSaving = false
-            dismiss()
+            do {
+                // P2-6: only dismiss on SUCCESS. On failure the sheet stays
+                // open with the non-secret fields preserved for retry and the
+                // (non-secret) error surfaced inline — no discarded input.
+                try await onSave(registration, credential)
+                isSaving = false
+                clearSecrets()
+                dismiss()
+            } catch {
+                isSaving = false
+                saveError = Self.nonSecret(error)
+            }
         }
+    }
+
+    /// Clear secret fields (token / password) so they never linger in the view
+    /// state after a successful save or an intentional Cancel dismissal (P2-6).
+    /// Non-secret fields (display name, endpoint, strategy, username) are
+    /// intentionally preserved — on failure they stay for retry.
+    private func clearSecrets() {
+        tokenText = ""
+        passwordText = ""
+    }
+
+    /// Non-secret error description for inline display (mirrors GatewaysView).
+    static func nonSecret(_ error: any Error) -> String {
+        if let localized = error as? LocalizedError, let text = localized.errorDescription {
+            return text
+        }
+        return String(describing: error)
     }
 }

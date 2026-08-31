@@ -57,14 +57,15 @@ public struct FleetRosterView: View {
 
     /// Roster sections in stable gateway order: a healthy gateway's bots as a
     /// section, an unreachable gateway as an outage section.
+    ///
+    /// P2-5: a HEALTHY gateway with zero bots contributes NO section — an
+    /// all-healthy, all-empty fleet must render the `noBotsAnywhere` state,
+    /// not a row of empty section headers. Outage sections are ALWAYS
+    /// preserved (partial-outage resilience): an unreachable gateway still
+    /// reports its §13 state even with no bots.
     private var sections: [RosterSection] {
         guard let snapshot = environment.rosterSnapshot else { return [] }
-        return snapshot.roster.allGateways.map { gateway in
-            if case .failed(let status, let detail) = snapshot.outcome(for: gateway.id) {
-                return RosterSection(gateway: gateway, bots: [], outage: (status, detail))
-            }
-            return RosterSection(gateway: gateway, bots: snapshot.bots(on: gateway.id), outage: nil)
-        }
+        return Self.sections(from: snapshot)
     }
 
     private var rosterList: some View {
@@ -187,12 +188,38 @@ public struct FleetRosterView: View {
     }
 
     /// One per-gateway roster section (healthy bots or an outage).
-    struct RosterSection: Identifiable {
-        let gateway: FleetGateway
-        let bots: [FleetBot]
+    public struct RosterSection: Identifiable {
+        public let gateway: FleetGateway
+        public let bots: [FleetBot]
         /// (status, detail) when this gateway failed its refresh.
-        let outage: (GatewayStatus, String?)?
-        var id: String { gateway.id.rawValue }
+        public let outage: (GatewayStatus, String?)?
+        public var id: String { gateway.id.rawValue }
+
+        public init(
+            gateway: FleetGateway,
+            bots: [FleetBot],
+            outage: (GatewayStatus, String?)?
+        ) {
+            self.gateway = gateway
+            self.bots = bots
+            self.outage = outage
+        }
+    }
+
+    /// Build the roster sections from a snapshot (P2-5, testable pure logic).
+    ///
+    /// A healthy gateway with zero bots contributes NO section — an
+    /// all-healthy, all-empty fleet must render the No Bots state, not empty
+    /// section headers. Outage sections are always preserved.
+    public static func sections(from snapshot: FleetRosterSnapshot) -> [RosterSection] {
+        snapshot.roster.allGateways.compactMap { gateway in
+            if case .failed(let status, let detail) = snapshot.outcome(for: gateway.id) {
+                return RosterSection(gateway: gateway, bots: [], outage: (status, detail))
+            }
+            let bots = snapshot.bots(on: gateway.id)
+            guard !bots.isEmpty else { return nil }
+            return RosterSection(gateway: gateway, bots: bots, outage: nil)
+        }
     }
 }
 

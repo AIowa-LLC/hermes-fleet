@@ -430,4 +430,78 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.transcript.first?.text, "post-restart history")
         XCTAssertEqual(viewModel.replayNotice, "Reconnected · gateway restarted — history refreshed")
     }
+
+    // MARK: - P2-3 reappear keeps live subscriptions
+
+    /// RED (old): `teardown()` cancelled the event task, and `start()` returned
+    /// early on re-appear (session already open) — so a temporary
+    /// disappearance left the screen with NO live subscriptions; a pushed event
+    /// was silently dropped. GREEN (fix): the event subscription is ONE-TIME
+    /// (single-subscriber `AsyncStream` — cannot be re-created after
+    /// cancellation) and survives teardown; re-appear restarts the status
+    /// watcher. A pushed event still renders after teardown + re-appear.
+    func testReappearAfterTeardownRestartsSubscriptions() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        // Render one event while subscriptions are live.
+        scripted.push(.statusUpdate(sessionID: "s-1", kind: "info", text: "first"))
+        await flush()
+        XCTAssertTrue(viewModel.transcript.contains { $0.text == "first" })
+
+        // Simulate onDisappear: cancels the restartable status watcher (the
+        // one-time event subscription is intentionally retained).
+        viewModel.teardown()
+
+        // Simulate re-appear: `.task` calls start() again. The session is still
+        // open; start() restarts the status watcher and the live event
+        // subscription keeps flowing (P2-3).
+        await viewModel.start()
+
+        scripted.push(.statusUpdate(sessionID: "s-1", kind: "info", text: "second"))
+        await flush()
+        XCTAssertTrue(viewModel.transcript.contains { $0.text == "second" },
+                      "P2-3: reappear after teardown must keep the event subscription live")
+    }
+
+    // MARK: - P2-8 bounded display window preserves authoritative history
+
+    /// RED (old): `transcript` grew without bound as events streamed — after
+    /// 240 status rows the array held all 240. GREEN (fix): the public
+    /// transcript is a capped display window (default `maxDisplayRows = 200`)
+    /// over the authoritative history, so a long session stays bounded in the
+    /// UI while the full history remains persisted (cache) and rehydratable.
+    /// Uses the DEFAULT window (no new API) so this test compiles + runs on the
+    /// pre-fix VM too (runtime RED).
+    func testTranscriptWindowIsCappedAndPreservesAuthoritativeHistory() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        // Stream 240 status rows — far beyond the default 200-row window.
+        for i in 0..<240 {
+            scripted.push(.statusUpdate(sessionID: "s-1", kind: "info", text: "row-\(i)"))
+        }
+        // Drain the buffered events (the event task consumes on the main actor;
+        // a few 25ms flushes are enough for 240 cheap appends).
+        for _ in 0..<8 {
+            await flush()
+            if viewModel.transcript.last?.text == "row-239" { break }
+        }
+
+        // Display window is capped at the default 200.
+        XCTAssertEqual(viewModel.transcript.count, 200,
+                       "P2-8: display window must be capped at maxDisplayRows (200)")
+        // The NEWEST rows are the ones kept.
+        XCTAssertEqual(viewModel.transcript.last?.text, "row-239",
+                       "P2-8: newest rows retained at the window tail")
+
+        // Authoritative history is preserved: persist the full transcript and
+        // verify the cache holds ALL 240 rows, not just the 200-row window.
+        scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: "ok", error: nil))
+        await flush()
+        let cached = try await cache.loadHistory(sessionID: "s-1", for: GatewayID(rawValue: "<dev-workstation>"))
+        XCTAssertEqual(cached?.messages.count, 240,
+                       "P2-8: authoritative history must survive the display cap (cache holds all rows)")
+    }
 }

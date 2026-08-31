@@ -150,7 +150,10 @@ public struct ConversationView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            .onChange(of: model.transcript.count) {
+            // P2-8: key auto-scroll off the last row's identity, not the count —
+            // the display window is capped, so count stops changing once full
+            // while new rows keep arriving at the bottom.
+            .onChange(of: model.transcript.last?.id) {
                 if let last = model.transcript.last {
                     withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
@@ -234,6 +237,10 @@ private struct ConversationBubbleView: View {
             if row.kind != .user { Spacer(minLength: 60) }
         }
         .accessibilityElement(children: .combine)
+        // P2-7: expose speaker + content semantics and live turn state to
+        // assistive tech — the combined bubble text alone hides who spoke.
+        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityValue(row.accessibilityValue)
         .accessibilityIdentifier("fleet.conversation.row.\(row.id)")
     }
 
@@ -260,6 +267,9 @@ private struct ConversationBubbleView: View {
                     .foregroundStyle(row.isFailed ? FleetTheme.accent : FleetTheme.textPrimary)
                     .textSelection(.enabled)
                 if row.isStreaming {
+                    // P2-7: decorative streaming dots — hidden from assistive
+                    // tech (the row's accessibilityValue already announces
+                    // "Streaming").
                     HStack(spacing: 4) {
                         ForEach(0..<3, id: \.self) { i in
                             Circle()
@@ -268,6 +278,7 @@ private struct ConversationBubbleView: View {
                                 .opacity(0.6)
                         }
                     }
+                    .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, 14)
