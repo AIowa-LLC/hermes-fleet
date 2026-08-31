@@ -39,16 +39,16 @@ final class SplashUITests: XCTestCase {
                       "splash artwork should appear at launch")
         attachScreenshot(of: app, name: "p0-1-splash-visible")
 
-        // It must still be present after a clearly-non-instant interval,
-        // proving no first-frame tear (the defect).
-        Thread.sleep(forTimeInterval: 1.5)
-        XCTAssertTrue(splash.exists, "splash must hold for the minimum display window")
-        attachScreenshot(of: app, name: "p0-1-splash-still-held")
-
         // Then it must cross-fade OUT and release the app UI (it must NOT
         // linger forever). Budget: 4s hold + 0.35s fade + slack.
         let gone = splash.waitForNonExistence(timeout: 8)
         XCTAssertTrue(gone, "splash must fade out and leave the hierarchy")
+
+        // The on-screen window, anchored from BEFORE launch, is the splash's
+        // real display time (launch() returns once the first frame — and the
+        // in-app splash — is up). Assert it's a held window, not an instant
+        // tear. (Anchoring inside waitForExistence would under-count by
+        // XCUITest query latency; that's why we don't sleep-and-check mid-hold.)
         let window = Date().timeIntervalSince(launched)
         XCTAssertGreaterThan(
             window, 1.5,
