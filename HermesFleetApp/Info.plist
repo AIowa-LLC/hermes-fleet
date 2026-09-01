@@ -17,6 +17,13 @@
 				<key>NSIncludesSubdomains</key>
 				<false/>
 			</dict>
+			<key><lan-ip></key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+			</dict>
 		</dict>
 	</dict>
 	<key>NSFaceIDUsageDescription</key>
