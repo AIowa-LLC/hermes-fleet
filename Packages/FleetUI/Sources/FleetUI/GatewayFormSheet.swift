@@ -36,6 +36,8 @@ struct GatewayFormSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isSaving = false
+    /// F2: camera pairing-scanner presentation (fills the draft on success).
+    @State private var isShowingScanner = false
 
     init(
         title: String,
@@ -66,6 +68,16 @@ struct GatewayFormSheet: View {
                             .accessibilityIdentifier("fleet.gateways.form.endpoint")
                         pasteButton("fleet.gateways.form.paste.endpoint", into: $draftStore.endpointText)
                     }
+                    // F2: one-scan pairing — opens the camera scanner; a
+                    // successful scan fills this entire form (endpoint +
+                    // username/password strategy + credentials) and returns
+                    // here for Save.
+                    Button {
+                        isShowingScanner = true
+                    } label: {
+                        Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
+                    }
+                    .accessibilityIdentifier("fleet.gateways.form.scan")
                 }
 
                 if cleartextRisk {
@@ -168,6 +180,11 @@ struct GatewayFormSheet: View {
             }
         }
         .tint(FleetTheme.accent)
+        // F2: camera pairing scanner — successful scan fills the draft and
+        // returns here for Save.
+        .sheet(isPresented: $isShowingScanner) {
+            GatewayPairingScannerView(draftStore: draftStore)
+        }
         // P0-2: the form is deliberate — prevent accidental swipe-dismiss so
         // the user is never silently thrown out of an in-progress credential
         // entry. Dismissal is explicit (Cancel / Save).

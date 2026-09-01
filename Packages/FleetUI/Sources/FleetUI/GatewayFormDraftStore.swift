@@ -74,4 +74,36 @@ public final class GatewayFormDraftStore {
         confirmsCleartextSend = false
         saveError = nil
     }
+
+    // MARK: F2 — QR pairing apply (one scan fills the form)
+
+    /// Fill the whole form from a scanned pairing payload string (F2: one QR
+    /// scan replaces manual URL/username/password entry).
+    ///
+    /// The scanned text is decoded via `PairingPayload.decode`, then mapped
+    /// onto the draft fields exactly as if the user had typed them:
+    /// display name from the endpoint host, strategy `.usernamePassword`,
+    /// endpoint / username / password straight from the payload. The endpoint
+    /// is validated through the same `GatewayEndpoint.normalizedOrigin` path
+    /// the Save button uses, so a malformed URL in a QR fails here (keeping
+    /// the sheet open) instead of at save time.
+    ///
+    /// SECURITY: the payload's secret is placed ONLY in the in-memory draft
+    /// (same as typing) — never logged, never persisted. On Save it flows to
+    /// the Keychain via the existing seam; nothing is stored until then.
+    public func applyPairing(_ scanned: String) throws {
+        let payload = try PairingPayload.decode(scanned)
+        guard let url = URL(string: payload.url) else {
+            throw GatewayRegistryError.invalidEndpoint
+        }
+        let origin = try GatewayEndpoint.normalizedOrigin(from: url)
+        displayName = origin.host ?? "Gateway"
+        endpointText = origin.absoluteString
+        strategy = .usernamePassword
+        tokenText = ""
+        usernameText = payload.username
+        passwordText = payload.password
+        confirmsCleartextSend = false
+        saveError = nil
+    }
 }
