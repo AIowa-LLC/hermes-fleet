@@ -240,7 +240,10 @@ final class SingleGatewayConnectionTests: XCTestCase {
         XCTAssertEqual(connection.status, .offline)
     }
 
-    func testConnectFromAlreadyConnectedIsRejected() async throws {
+    func testConnectFromAlreadyConnectedIsIdempotentNoOp() async throws {
+        // P0-7: re-entering a conversation re-runs the connect flow against
+        // the still-open shared connection — must succeed without a second
+        // socket.
         let server = try InProcessWebSocketServer(script: .init(onOpen: [readyFrame()]))
         try await server.start()
         defer { server.stop() }
@@ -249,16 +252,11 @@ final class SingleGatewayConnectionTests: XCTestCase {
         try await connection.connect()
         XCTAssertEqual(connection.status, .online)
 
-        do {
-            try await connection.connect()
-            XCTFail("second connect while connected should be rejected")
-        } catch let error as GatewayConnectivityError {
-            guard case .invalidState = error else {
-                return XCTFail("expected invalidState, got \(error)")
-            }
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        try await connection.connect()
+        XCTAssertEqual(connection.status, .online)
+        XCTAssertEqual(server.connectionCount, 1,
+                       "idempotent connect must not open a second connection")
+
         await connection.disconnect()
     }
 

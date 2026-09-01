@@ -374,7 +374,10 @@ final class GatewayWebSocketTransportTests: XCTestCase {
         XCTAssertEqual(ConnectionState.error(.serverError).transportState, .failed("server error (1011)"))
     }
 
-    func testConnectFromConnectedStateIsRejected() async throws {
+    func testConnectFromOpenIsIdempotentNoOp() async throws {
+        // P0-7: a second connect() while OPEN must be an idempotent no-op —
+        // the dogfood defect "connect() from open" broke conversation
+        // re-entry against the shared per-gateway transport.
         let script = InProcessWebSocketServer.Script(onOpen: [readyFrame()])
         let server = try InProcessWebSocketServer(script: script)
         try await server.start()
@@ -384,14 +387,97 @@ final class GatewayWebSocketTransportTests: XCTestCase {
         try await transport.connect()
         XCTAssertEqual(transport.state, .connected)
 
-        do {
-            try await transport.connect()
-            XCTFail("second connect while connected should be rejected")
-        } catch let error as TransportError {
-            guard case .invalidState = error else { return XCTFail("expected invalidState, got \(error)") }
-        } catch {
-            XCTFail("unexpected error \(error)")
+        // Second connect: no throw, stays connected, NO second socket.
+        try await transport.connect()
+        XCTAssertEqual(transport.state, .connected)
+        XCTAssertEqual(server.connectionCount, 1,
+                       "idempotent connect must not open a second connection")
+
+        await transport.disconnect()
+    }
+
+    // MARK: P0-7 — event fan-out (multi-subscriber)
+
+    /// Thread-safe accumulator for the fan-out tests (module-local).
+    private final class FanOutCollector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _all: [GatewayEvent] = []
+        var all: [GatewayEvent] { lock.lock(); defer { lock.unlock() }; return _all }
+        func append(_ event: GatewayEvent) { lock.lock(); _all.append(event); lock.unlock() }
+    }
+
+    /// P0-7: two subscribers each receive every streamed event — the event
+    /// channel fans out instead of handing its only element to one consumer.
+    /// This is what lets a re-entered conversation (fresh view model) keep
+    /// rendering replies over the shared per-gateway transport.
+    func testEventFanOutDeliversToAllSubscribers() async throws {
+        let script = InProcessWebSocketServer.Script(onOpen: [readyFrame()])
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+
+        // Register BOTH subscriptions synchronously (registration happens in
+        // subscribeToEvents(), not when iteration starts — AsyncStream
+        // buffers yields until the consumer iterates), then spawn consumers.
+        // This removes the task-startup race that flaked under CI load.
+        let first = FanOutCollector()
+        let second = FanOutCollector()
+        let stream1 = transport.subscribeToEvents()
+        let stream2 = transport.subscribeToEvents()
+        let sub1 = Task { for await event in stream1 { first.append(event) } }
+        let sub2 = Task { for await event in stream2 { second.append(event) } }
+        defer { sub1.cancel(); sub2.cancel() }
+
+        server.sendText(#"{"jsonrpc":"2.0","method":"event","params":{"type":"message.delta","session_id":"s-1","seq":1,"payload":{"text":"hi"}}}"#)
+
+        let deadline = Date().addingTimeInterval(3)
+        while (first.all.isEmpty || second.all.isEmpty) && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
         }
+        XCTAssertEqual(first.all.count, 1, "first subscriber must receive the event")
+        XCTAssertEqual(second.all.count, 1, "second subscriber must receive the event")
+        XCTAssertEqual(first.all.first?.type, .messageDelta)
+        XCTAssertEqual(second.all.first?.type, .messageDelta)
+
+        await transport.disconnect()
+    }
+
+    /// P0-7: a subscriber attached AFTER a previous consumer cancelled still
+    /// receives subsequently streamed events (re-entry: the first view model
+    /// died, the new one must get a live pipe).
+    func testLateSubscriberAfterCancellationReceivesEvents() async throws {
+        let script = InProcessWebSocketServer.Script(onOpen: [readyFrame()])
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+
+        // First subscriber attaches, then cancels (view model popped).
+        let early = FanOutCollector()
+        let earlyStream = transport.subscribeToEvents()
+        let earlyTask = Task { for await event in earlyStream { early.append(event) } }
+        try await Task.sleep(for: .milliseconds(200))
+        earlyTask.cancel()
+
+        // Late subscriber registers synchronously (conversation re-entered).
+        let late = FanOutCollector()
+        let lateStream = transport.subscribeToEvents()
+        let lateTask = Task { for await event in lateStream { late.append(event) } }
+        defer { lateTask.cancel() }
+
+        server.sendText(#"{"jsonrpc":"2.0","method":"event","params":{"type":"message.delta","session_id":"s-1","seq":2,"payload":{"text":"again"}}}"#)
+
+        let deadline = Date().addingTimeInterval(3)
+        while late.all.isEmpty && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(late.all.count, 1, "late subscriber must receive the event after the first consumer cancelled")
+
         await transport.disconnect()
     }
 

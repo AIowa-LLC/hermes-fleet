@@ -362,12 +362,16 @@ final class ReconnectReplayTests: XCTestCase {
         subscription.cancel()
         try await Task.sleep(for: .milliseconds(100))
 
-        // The two replayed events reached the live channel, in order, and the
-        // earlier seq 1-3 events were NOT duplicated.
+        // The two replayed events reached the live channel, in order. P0-7
+        // fan-out semantics: the channel delivers to LIVE subscribers only —
+        // seq 1-3 were streamed before this subscription attached, so they
+        // must be entirely absent (and the replay injection must not
+        // re-deliver them either).
         let replayed = collector.all.filter { $0.seq ?? 0 > 3 }
         XCTAssertEqual(replayed.map(\.seq), [4, 5])
         let seq1to3 = collector.all.filter { ($0.seq ?? 0) >= 1 && ($0.seq ?? 0) <= 3 }
-        XCTAssertEqual(seq1to3.count, 3, "original events must not be duplicated by replay")
+        XCTAssertEqual(seq1to3.count, 0,
+                       "pre-subscription events must not be re-delivered (replay never duplicates)")
 
         await transport.disconnect()
     }

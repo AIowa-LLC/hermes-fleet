@@ -9,7 +9,10 @@ import FleetCore
 /// a session drills into the Conversation destination (U3 placeholder canvas).
 ///
 /// Observation only (spec §5.4): this screen reads `session.list` and issues
-/// NO mutating RPC — structurally, there is no create/resume/interrupt here.
+/// no mutating RPC itself — the "New Session" affordance (P0-7) is a
+/// navigation to the Conversation canvas, where `session.create` runs only on
+/// that explicit user action (the mutating seam stays in the conversation
+/// screen, never here).
 public struct BotDetailView: View {
     private let environment: AppEnvironment
     private let route: Route
@@ -30,10 +33,12 @@ public struct BotDetailView: View {
         }
         .navigationTitle(bot?.displayName ?? route.profileSlug.rawValue)
         .task {
-            // Refresh the bot's sessions on entry (idempotent; read-only).
-            if environment.sessions(for: route) == nil {
-                await environment.loadSessions(for: route)
-            }
+            // P0-7: refresh the bot's sessions on EVERY entry (read-only,
+            // concurrency-guarded in the environment) so a newly created
+            // session appears when the conversation is popped back to this
+            // list. Previously the nil-guard skipped refetch when a stale
+            // snapshot existed.
+            await environment.loadSessions(for: route)
         }
         .background(FleetTheme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.bot-detail")
@@ -110,6 +115,15 @@ public struct BotDetailView: View {
         let readError = environment.sessionReadErrors[route]
 
         return Section {
+            // P0-7: New session affordance — the only create path into the
+            // conversation canvas (session.create over the mutating
+            // ConversationProviding seam; sessionID nil = create).
+            NavigationLink(value: FleetScreen.conversation(route, sessionID: nil)) {
+                Label("New Session", systemImage: "plus.circle.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
+            }
+            .accessibilityIdentifier("fleet.bot-detail.sessions.new")
             if isLoading {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -156,7 +170,7 @@ public struct BotDetailView: View {
                     .foregroundStyle(FleetTheme.textSecondary)
             }
         } footer: {
-            Text("Session list is read-only (session.list). Conversation opens in a later milestone.")
+            Text("Sessions refresh from session.list each time this screen appears. New Session starts a conversation via session.create.")
         }
     }
 

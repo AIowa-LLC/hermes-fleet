@@ -275,6 +275,124 @@ final class ConversationFixtureLoopTests: XCTestCase {
         await viewModel.teardown()
     }
 
+    // MARK: - P0-7: conversation re-entry over the shared cached session
+
+    /// THE P0-7 acceptance: opening an EXISTING session and sending a message
+    /// must work even after the conversation screen was popped and re-entered.
+    /// The view model is destroyed on pop while the per-gateway conversation
+    /// session (and its transport) stays cached and OPEN — the re-entered view
+    /// model re-runs connect() (must be an idempotent no-op, never "connect()
+    /// from open"), resumes the session, and its event subscription must be a
+    /// FRESH live pipe over the transport's fan-out (not the previous view
+    /// model's dead single-subscriber stream).
+    func testReenteredConversationSendsAndStreamsOverStillOpenTransport() async throws {
+        let sessionID = "s-reentry"
+
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                switch method {
+                case "session.resume":
+                    return [Self.responseFrame(id: id, result: [
+                        "session_id": sessionID, "message_count": 0, "messages": [],
+                    ])]
+                case "prompt.submit":
+                    return [
+                        Self.responseFrame(id: id, result: ["status": "streaming"]),
+                        Self.seqEventFrame(type: "message.start", sessionID: sessionID, seq: 1),
+                        Self.seqEventFrame(type: "message.delta", sessionID: sessionID, seq: 2, payload: ["text": "Re "]),
+                        Self.seqEventFrame(type: "message.delta", sessionID: sessionID, seq: 3, payload: ["text": "entry OK"]),
+                        Self.seqEventFrame(type: "message.complete", sessionID: sessionID, seq: 4, payload: ["text": "Re entry OK"]),
+                    ]
+                case "session.events.since":
+                    return [Self.sinceResponse(id: id, events: [], latestSeq: 0)]
+                default:
+                    return []
+                }
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        // The SHARED per-gateway conversation session, as cached by
+        // AppEnvironment.conversationSession(for:) — one transport per gateway.
+        let conversationSession = GatewayConversationSession(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            displayName: "MacBook",
+            endpoint: URL(string: "http://127.0.0.1:\(server.listeningPort)")!,
+            transport: makeTransport(serverPort: server.listeningPort)
+        )
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            profileSlug: ProfileSlug(rawValue: "default")
+        )
+
+        func makeVM() -> ConversationViewModel {
+            ConversationViewModel(
+                session: conversationSession,
+                cache: try! SwiftDataCacheStore.makeInMemory(),
+                route: route,
+                sessionID: sessionID,
+                statusInterval: .milliseconds(25)
+            )
+        }
+
+        // 1. First entry: open the existing session, send, receive the reply.
+        //    Scoped so the view model DEALLOCATES on scope exit — exactly what
+        //    a navigation pop does to the conversation screen's @State VM.
+        weak var weakVM1: ConversationViewModel?
+        do {
+            let vm1 = makeVM()
+            weakVM1 = vm1
+            await vm1.start()
+            XCTAssertEqual(vm1.phase, .ready, "first open must reach ready")
+            await vm1.send("first hello")
+            try await waitUntil(
+                "vm1 reply streamed",
+                { vm1.transcript.last?.text == "Re entry OK" && vm1.phase == .ready },
+                context: viewModelContext(vm1)
+            )
+            XCTAssertEqual(vm1.errorMessage, nil, "no error on first entry")
+            await vm1.teardown()
+        }
+        // Wait for the pop to actually release the view model (its deinit
+        // cancels the event subscription task).
+        try await waitUntil("vm1 released after pop", { weakVM1 == nil })
+        XCTAssertNil(weakVM1, "popped view model must deallocate")
+
+        // 2. The transport stays OPEN on the shared cached session.
+        XCTAssertEqual(conversationSession.status, .online,
+                       "shared transport must still be open after pop")
+
+        // 3. RE-ENTRY: a brand-new view model over the SAME cached session —
+        //    start() re-runs connect (idempotent no-op), resumes, subscribes.
+        let vm2 = makeVM()
+        await vm2.start()
+        XCTAssertEqual(vm2.phase, .ready,
+                       "re-entry must reach ready — no 'connect() from open'")
+        XCTAssertEqual(vm2.errorMessage, nil)
+        XCTAssertEqual(server.connectionCount, 1,
+                       "re-entry must NOT open a second gateway connection")
+
+        // 4. Send on the re-entered conversation — the reply must stream into
+        //    the NEW view model over the fresh fan-out pipe.
+        await vm2.send("second hello")
+        try await waitUntil(
+            "vm2 reply streamed after re-entry",
+            { vm2.transcript.last?.text == "Re entry OK" && vm2.phase == .ready },
+            context: viewModelContext(vm2)
+        )
+        XCTAssertEqual(server.connectionCount, 1,
+                       "send after re-entry must not open a second connection")
+        XCTAssertEqual(vm2.errorMessage, nil,
+                       "no 'connect() from open' may surface in-conversation")
+
+        await vm2.teardown()
+        await conversationSession.disconnect()
+    }
+
     // MARK: - Helper
 
     private func waitUntil(

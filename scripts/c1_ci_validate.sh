@@ -114,6 +114,7 @@ fi
 if xcodebuild "${XC[@]}" \
     -only-testing:HermesFleetAppUITests/HermesFleetHappyPathUITests \
     -only-testing:HermesFleetAppUITests/HermesFleetReconnectUITests \
+    -only-testing:HermesFleetAppUITests/P0_7SessionStateMachineUITests \
     -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests \
     -only-testing:HermesFleetAppUITests/RT2RemovalAndEndpointSanitizationUITests \
     -only-testing:HermesFleetAppUITests/H1AppLockUITests \

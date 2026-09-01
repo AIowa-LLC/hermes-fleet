@@ -1,4 +1,5 @@
 import Foundation
+import os
 import FleetCore
 
 /// Errors thrown by `GatewayWebSocketTransport.connect()` / during the
@@ -108,18 +109,16 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private var readyEvents: AsyncStream<GatewayEvent.ReadyPayload>
     private var readyContinuation: AsyncStream<GatewayEvent.ReadyPayload>.Continuation
 
-    /// Inbound event channel (M5): every decoded `GatewayEvent` is yielded
-    /// here so the conversation client can subscribe to streamed turn events
-    /// (`message.*`, `tool.*`, `status.*`, `thinking/reasoning.*`,
-    /// `message.complete`, …). Unbounded buffering means a subscriber attached
-    /// after events begin arriving still receives them in order. Single
-    /// consumer: one conversation client per gateway subscribes.
-    ///
-    /// P4 (M6): the channel lives for the transport's lifetime — it is NOT
-    /// finished at teardown — so a reconnecting conversation client keeps
-    /// receiving replayed + live events on the same stream.
-    private let eventStream: AsyncStream<GatewayEvent>
-    private let eventContinuation: AsyncStream<GatewayEvent>.Continuation
+    /// Inbound event fan-out (M5, revised P0-7): every decoded `GatewayEvent`
+    /// is delivered to every live subscriber so the conversation client can
+    /// attach a FRESH event pipe each time a conversation screen is entered.
+    /// The previous single-subscriber channel died with the first consumer's
+    /// task (the view model is destroyed on pop), leaving a re-entered
+    /// conversation silently unsubscribed — replies streamed but never
+    /// rendered. Subscribers register in `subscribeToEvents()` and deregister
+    /// via the stream's `onTermination`; the registry is lock-boxed so the
+    /// `nonisolated` subscribe call stays synchronous.
+    private let eventSubscriptions: EventSubscriptionBox
 
     /// H2 Connection health: every lifecycle observation this transport makes
     /// (connect started / connected / disconnected with reason / heartbeat
@@ -151,12 +150,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
-        let (eventStream, eventContinuation) = AsyncStream<GatewayEvent>.makeStream()
-        self.eventStream = eventStream
-        self.eventContinuation = eventContinuation
         let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream()
         self.healthStream = healthStream
         self.healthContinuation = healthContinuation
+        self.eventSubscriptions = EventSubscriptionBox()
     }
 
     /// M1-compatible init: a plain `WSTicketMinting` is adapted to the
@@ -177,12 +174,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
-        let (eventStream, eventContinuation) = AsyncStream<GatewayEvent>.makeStream()
-        self.eventStream = eventStream
-        self.eventContinuation = eventContinuation
         let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream()
         self.healthStream = healthStream
         self.healthContinuation = healthContinuation
+        self.eventSubscriptions = EventSubscriptionBox()
     }
 
     // MARK: HermesTransport
@@ -194,11 +189,25 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// channel is recreated here so `waitForReady()` always waits on a fresh
     /// stream (the M1 P4 fix). Watermarks are intentionally NOT cleared: they
     /// survive reconnects so replay knows where to resume.
+    ///
+    /// P0-7: connect() is IDEMPOTENT from `.open` — it returns as a no-op
+    /// instead of throwing `invalidState`. The conversation screen is
+    /// push/popped while its per-gateway transport stays cached and open
+    /// (AppEnvironment keeps one conversation session per gateway), so a
+    /// re-entered conversation re-runs its connect flow against an
+    /// ALREADY-OPEN shared transport. That must be "already connected", never
+    /// an error (dogfood defect: "invalid gateway connection state: connect()
+    /// from open" rendered in-conversation on every send after re-entry).
+    /// Only `.connecting` still rejects — a CONCURRENT connect is a genuine
+    /// programming bug, not a re-entry.
     public func connect() async throws {
         switch connectionState {
+        case .open:
+            // P0-7: already connected — idempotent no-op success.
+            return
         case .idle, .closed, .error:
             break
-        default:
+        case .connecting:
             throw TransportError.invalidState("connect() from \(connectionState)")
         }
         connectionState = .connecting
@@ -547,22 +556,31 @@ public actor GatewayWebSocketTransport: HermesTransport {
         }
     }
 
-    /// Yield one event to the live subscription channel and advance the
-    /// session watermark (when `advanceWatermark` is true). Replayed events
-    /// and live frames both pass through here so watermarks stay monotonic.
+    /// Deliver one event to every live subscriber and advance the session
+    /// watermark (when `advanceWatermark` is true). Replayed events and live
+    /// frames both pass through here so watermarks stay monotonic.
     private func forward(_ event: GatewayEvent, advanceWatermark: Bool) {
-        eventContinuation.yield(event)
+        eventSubscriptions.yield(event)
         if advanceWatermark, let sessionID = event.sessionID, let seq = event.seq {
             sessionWatermarks[sessionID] = max(sessionWatermarks[sessionID] ?? 0, seq)
         }
     }
 
     /// Subscribe to the gateway's inbound event stream (M5 conversation
-    /// streaming). The returned stream yields every decoded `GatewayEvent` in
-    /// arrival order and lives for the transport's lifetime (reconnects
-    /// included). Single consumer: one conversation client per gateway.
+    /// streaming). Each call returns a FRESH stream yielding every decoded
+    /// `GatewayEvent` in arrival order; the subscription lives until the
+    /// consumer's iteration ends (view model deallocation cancels it), at
+    /// which point it is deregistered. P0-7: previously this handed out ONE
+    /// single-consumer channel, so a re-entered conversation (new view model
+    /// after pop) iterated a dead stream and never rendered replies — the
+    /// fan-out here is what makes conversation re-entry work.
     public nonisolated func subscribeToEvents() -> AsyncStream<GatewayEvent> {
-        eventStream
+        let (stream, continuation) = AsyncStream<GatewayEvent>.makeStream()
+        let id = eventSubscriptions.add(continuation)
+        continuation.onTermination = { [eventSubscriptions] _ in
+            eventSubscriptions.remove(id)
+        }
+        return stream
     }
 
     /// H2 Connection health: subscribe to the transport's lifecycle
@@ -762,5 +780,35 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let elapsed = end - start
         return max(0, Double(elapsed.components.seconds) * 1000
             + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000)
+    }
+}
+
+/// P0-7: lock-boxed fan-out registry for live event subscribers, so the
+/// transport's `nonisolated` `subscribeToEvents()` can register/deregister
+/// synchronously while the actor's `forward()` yields to every live
+/// continuation. `OSAllocatedUnfairLock` is async-safe (scoped locking),
+/// matching `TransportStateBox`.
+final class EventSubscriptionBox: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<[UUID: AsyncStream<GatewayEvent>.Continuation]>(initialState: [:])
+
+    /// Register a subscriber; returns its removal token.
+    func add(_ continuation: AsyncStream<GatewayEvent>.Continuation) -> UUID {
+        let id = UUID()
+        lock.withLock { $0[id] = continuation }
+        return id
+    }
+
+    /// Deregister a subscriber (idempotent — a token is removed once).
+    func remove(_ id: UUID) {
+        lock.withLock { _ = $0.removeValue(forKey: id) }
+    }
+
+    /// Deliver an event to every live subscriber.
+    func yield(_ event: GatewayEvent) {
+        lock.withLock { subscriptions in
+            for continuation in subscriptions.values {
+                continuation.yield(event)
+            }
+        }
     }
 }

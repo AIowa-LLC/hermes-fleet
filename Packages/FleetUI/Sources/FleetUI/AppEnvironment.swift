@@ -229,9 +229,9 @@ public final class AppEnvironment {
 
     /// Connect to a gateway: `connecting` → `connected`, or `failed(status)`.
     /// Idempotent-safe: a connect on an already-connecting OR already-connected
-    /// gateway is ignored — a real transport throws `invalidState` on a second
-    /// connect, so the runtime must never drive one (the observable state would
-    /// otherwise wrongly flip `connected → failed(.offline)`).
+    /// gateway is ignored. (P0-7: the transport's `connect()` is itself now
+    /// idempotent from `.open`, but the guard also prevents redundant work and
+    /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }

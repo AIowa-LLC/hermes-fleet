@@ -16,16 +16,21 @@ public struct GatewayConversationClient: ConversationProviding {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
 
-    /// Stream of conversation events for this gateway's sessions. Created in
-    /// `init` (single subscription) so repeated access returns the same
-    /// stream; iterate it BEFORE submitting a prompt so no streamed event is
-    /// missed.
-    public let events: AsyncStream<ConversationEvent>
+    /// Stream of conversation events for this gateway's sessions. P0-7: a
+    /// FRESH stream per access — the view model captures it once when it
+    /// starts its event subscription, and that subscription dies with the view
+    /// model when the conversation screen is popped. The transport fans every
+    /// decoded event out to all live subscribers, so a re-entered conversation
+    /// (new view model, same cached per-gateway session) receives a live pipe
+    /// instead of iterating the previous consumer's dead one. Iterate it
+    /// BEFORE submitting a prompt so no streamed event is missed.
+    public var events: AsyncStream<ConversationEvent> {
+        Self.eventStream(transport: transport)
+    }
 
     public init(gatewayID: GatewayID, transport: GatewayWebSocketTransport) {
         self.gatewayID = gatewayID
         self.transport = transport
-        self.events = Self.eventStream(transport: transport)
     }
 
     // MARK: ConversationProviding

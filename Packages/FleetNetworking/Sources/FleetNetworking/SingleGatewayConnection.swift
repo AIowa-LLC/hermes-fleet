@@ -79,12 +79,18 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
     }
 
     /// M11 — explicit re-authentication after a 4401 (or a client-side auth
-    /// failure). NEVER a silent retry with the same credential: `connect()`
-    /// always mints a FRESH single-use ticket / reloads the loopback token
-    /// through the injected `AuthenticationProviding` seam (spec §8.6 /
-    /// synthesis §11 "4401 → re-auth, no silent retry"). The composition root
-    /// decides WHEN to re-authenticate; this transport never does so on its own.
+    /// failure). NEVER a silent retry with the same credential: the existing
+    /// connection is torn down FIRST, then `connect()` mints a FRESH single-use
+    /// ticket / reloads the loopback token through the injected
+    /// `AuthenticationProviding` seam (spec §8.6 / synthesis §11 "4401 →
+    /// re-auth, no silent retry"). The composition root decides WHEN to
+    /// re-authenticate; this transport never does so on its own.
+    ///
+    /// P0-7 audit: the teardown is REQUIRED now that `connect()` is idempotent
+    /// from `.open` — without it, a reauthenticate() on a still-open transport
+    /// would degrade into a no-op and silently keep the stale credential.
     public func reauthenticate() async throws {
+        await transport.disconnect()
         try await connect()
     }
 

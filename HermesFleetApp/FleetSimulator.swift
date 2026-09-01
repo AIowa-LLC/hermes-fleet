@@ -215,26 +215,42 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
     }
 }
 
-/// Thread-safe box bridging the scripted client's event channel to the
-/// `AsyncStream` the view model subscribes to.
+/// Thread-safe fan-out box bridging the scripted client's event channel to
+/// the `AsyncStream`s the view model subscribes to. P0-7: each `stream`
+/// access returns a FRESH stream registered in the fan-out (deregistered on
+/// termination), mirroring the real transport's multi-subscriber event
+/// channel — a re-entered conversation (new view model after pop) gets a
+/// live pipe instead of the previous consumer's dead one.
 private final class ScriptedEventStreamBox: @unchecked Sendable {
     private let lock = NSLock()
-    private let pair: (stream: AsyncStream<ConversationEvent>, continuation: AsyncStream<ConversationEvent>.Continuation)
+    private var continuations: [UUID: AsyncStream<ConversationEvent>.Continuation] = [:]
 
-    init() {
-        self.pair = AsyncStream<ConversationEvent>.makeStream()
-    }
+    init() {}
 
     var stream: AsyncStream<ConversationEvent> {
         lock.lock()
         defer { lock.unlock() }
-        return pair.stream
+        let (stream, continuation) = AsyncStream<ConversationEvent>.makeStream()
+        let id = UUID()
+        continuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            self?.remove(id)
+        }
+        return stream
+    }
+
+    private func remove(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = continuations.removeValue(forKey: id)
     }
 
     func yield(_ event: ConversationEvent) {
         lock.lock()
         defer { lock.unlock() }
-        pair.continuation.yield(event)
+        for continuation in continuations.values {
+            continuation.yield(event)
+        }
     }
 }
 
