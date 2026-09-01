@@ -56,8 +56,9 @@ struct GatewayFormSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Gateway") {
+                Section {
                     TextField("Display Name", text: $draftStore.displayName)
+                        .foregroundStyle(FleetTheme.textPrimary)
                         .accessibilityIdentifier("fleet.gateways.form.name")
                     // P0-2: paste button next to the URL field.
                     HStack(spacing: 8) {
@@ -72,12 +73,19 @@ struct GatewayFormSheet: View {
                     // successful scan fills this entire form (endpoint +
                     // username/password strategy + credentials) and returns
                     // here for Save.
+                    // U7 (Gold Fleet): the scanner entry is the form's
+                    // highlighted secondary action — magenta label + icon on
+                    // the token surface (flat, no fill).
                     Button {
                         isShowingScanner = true
                     } label: {
                         Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
+                            .foregroundStyle(FleetTheme.accentMagenta)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.scan")
+                } header: {
+                    Text("Gateway")
+                        .foregroundStyle(FleetTheme.textSecondary)
                 }
 
                 if cleartextRisk {
@@ -89,11 +97,11 @@ struct GatewayFormSheet: View {
                         Label {
                             Text("Password will be sent unencrypted to a public address.")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(FleetTheme.accent)
+                                .foregroundStyle(FleetTheme.statusDegraded)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(FleetTheme.accent)
+                                .foregroundStyle(FleetTheme.statusDegraded)
                         }
                         .accessibilityIdentifier("fleet.gateways.form.cleartext-warning")
 
@@ -101,10 +109,11 @@ struct GatewayFormSheet: View {
                             .accessibilityIdentifier("fleet.gateways.form.cleartext-confirm")
                     } header: {
                         Text("Security Warning")
+                            .foregroundStyle(FleetTheme.statusDegraded)
                     }
                 }
 
-                Section("Authentication") {
+                Section {
                     Picker("Strategy", selection: $draftStore.strategy) {
                         Text("None").tag(GatewayAuthConfiguration.Strategy.none)
                         Text("Session Token").tag(GatewayAuthConfiguration.Strategy.sessionToken)
@@ -113,7 +122,6 @@ struct GatewayFormSheet: View {
                         Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.strategy")
-
                     if needsTokenEntry {
                         HStack(spacing: 8) {
                             SecureField("Token (optional now, editable later)", text: $draftStore.tokenText)
@@ -138,6 +146,9 @@ struct GatewayFormSheet: View {
                             pasteButton("fleet.gateways.form.paste.password", into: $draftStore.passwordText)
                         }
                     }
+                } header: {
+                    Text("Authentication")
+                        .foregroundStyle(FleetTheme.textSecondary)
                 }
 
                 // P2-6: inline, non-secret save-failure message. The sheet stays
@@ -148,18 +159,21 @@ struct GatewayFormSheet: View {
                         Label {
                             Text(saveError)
                                 .font(.caption)
-                                .foregroundStyle(FleetTheme.accent)
+                                .foregroundStyle(FleetTheme.statusDegraded)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(FleetTheme.accent)
+                                .foregroundStyle(FleetTheme.statusDegraded)
                         }
                         .accessibilityIdentifier("fleet.gateways.form.error")
                     } header: {
                         Text("Save Failed")
+                            .foregroundStyle(FleetTheme.statusDegraded)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(FleetTheme.background.ignoresSafeArea())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -175,11 +189,12 @@ struct GatewayFormSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saveButton) { save() }
                         .disabled(!isValid || isSaving)
+                        .foregroundStyle(FleetTheme.accentMagenta)
                         .accessibilityIdentifier("fleet.gateways.form.save")
                 }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(FleetTheme.accentMagenta)
         // F2: camera pairing scanner — successful scan fills the draft and
         // returns here for Save.
         .sheet(isPresented: $isShowingScanner) {

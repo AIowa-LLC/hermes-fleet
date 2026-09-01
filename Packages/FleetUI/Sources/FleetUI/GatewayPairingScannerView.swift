@@ -77,76 +77,87 @@ struct GatewayPairingScannerView: View {
     }
 
     /// Live status / error overlay above the camera preview.
+    /// U7 (Gold Fleet): gold-accent hint capsule; scan errors keep a high-
+    /// contrast black capsule with the degraded-red warning glyph (camera
+    /// previews stay legible over any live frame).
     private var statusOverlay: some View {
         VStack {
             Spacer()
             if let scanError {
-                Label(scanError, systemImage: "exclamationmark.triangle")
+                Label(scanError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
+                    .foregroundStyle(FleetTheme.textPrimary)
+                    .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.7), in: Capsule())
+                    .overlay(Capsule().strokeBorder(FleetTheme.statusDegraded, lineWidth: 1))
                     .accessibilityIdentifier("fleet.gateways.scan.error")
             } else {
-                Text("Point the camera at the gateway's pairing QR code")
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(.black.opacity(0.6), in: Capsule())
-                    .accessibilityIdentifier("fleet.gateways.scan.hint")
+                Label(
+                    "Point the camera at the gateway's pairing QR code",
+                    systemImage: "qrcode.viewfinder"
+                )
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(FleetTheme.accentGold)
+                .padding(.horizontal, FleetTheme.spacingLg)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.6), in: Capsule())
+                .overlay(Capsule().strokeBorder(FleetTheme.accentGold.opacity(0.4), lineWidth: 1))
+                .accessibilityIdentifier("fleet.gateways.scan.hint")
             }
         }
-        .padding(.bottom, 24)
+        .padding(.bottom, FleetTheme.spacingXl)
     }
 
     /// Shown when the live scanner is unavailable (simulator, restricted
     /// device, camera denied): explains why, and — in DEBUG, opt-in via
     /// launch environment — offers the deterministic simulated scan used by
     /// the UI test suite (CI has no camera).
+    /// U7 (Gold Fleet): token surface — background, gold QR glyph, white
+    /// primary text, secondary explainer.
     private var fallbackBody: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "qrcode.viewfinder")
                 .font(.system(size: 44))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(FleetTheme.accentGold)
                 .accessibilityHidden(true)
             Text("Live camera scanning isn't available on this device.\nUse a device with a camera, or enter the gateway details manually.")
                 .font(.callout)
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(FleetTheme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.gateways.scan.unavailable")
 
             if let scanError {
-                Label(scanError, systemImage: "exclamationmark.triangle")
+                Label(scanError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
+                    .foregroundStyle(FleetTheme.textPrimary)
+                    .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, 10)
-                    .background(.red.opacity(0.35), in: Capsule())
+                    .background(FleetTheme.statusDegraded.opacity(0.35), in: Capsule())
                     .accessibilityIdentifier("fleet.gateways.scan.error")
             }
 
             #if DEBUG
             if let simulated = Self.simulatedPayload {
-                VStack(spacing: 8) {
+                VStack(spacing: FleetTheme.spacingSm) {
                     Text("TEST HOOK (DEBUG)")
                         .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(FleetTheme.textSecondary)
                     Button {
                         handleRaw(simulated)
                     } label: {
                         Label("Simulate Scanned Code", systemImage: "wand.and.stars")
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(FleetTheme.accentMagenta)
                     .accessibilityIdentifier("fleet.gateways.scan.simulate")
                 }
-                .padding(.top, 8)
+                .padding(.top, FleetTheme.spacingSm)
             }
             #endif
         }
-        .padding(24)
+        .padding(FleetTheme.spacingXl)
     }
 
     #if os(iOS)

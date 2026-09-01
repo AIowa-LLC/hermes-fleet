@@ -3,11 +3,11 @@ import SwiftUI
 /// Minimal app-lock overlay (H1 / R4).
 ///
 /// Rendered at the root BEFORE any roster/conversation content when the
-/// `AppLockController` is not `.unlocked`. Black background with the
-/// Signal-Red brand accent (M14 theme) — a lock glyph + wordmark + a single
-/// unlock action. When biometrics fail or are unavailable the controller
-/// transitions to `.passcodeFallback` and this view automatically shows the
-/// passcode prompt (failed-biometric acceptance path).
+/// `AppLockController` is not `.unlocked`. Token background with the Gold
+/// Fleet brand accent (U7 re-skin) — a gold lock glyph + wordmark + a single
+/// magenta unlock action. When biometrics fail or are unavailable the
+/// controller transitions to `.passcodeFallback` and this view automatically
+/// shows the passcode prompt (failed-biometric acceptance path).
 ///
 /// The overlay is deliberately minimal: it gates access, it does not host
 /// fleet UI. All elements carry accessibility identifiers for the H1 UI test.
@@ -22,15 +22,15 @@ public struct AppLockView: View {
         ZStack {
             FleetTheme.background.ignoresSafeArea()
 
-            VStack(spacing: 20) {
+            VStack(spacing: FleetTheme.spacingXl) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(FleetTheme.accentGold)
                     .accessibilityHidden(true)
 
                 Text("Hermes Fleet")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .font(FleetTheme.titleFont)
+                    .foregroundStyle(FleetTheme.accentGold)
 
                 if controller.state == .passcodeFallback {
                     passcodePrompt
@@ -38,7 +38,7 @@ public struct AppLockView: View {
                     biometricPrompt
                 }
             }
-            .padding(24)
+            .padding(FleetTheme.spacingXl)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.app-lock.screen")
@@ -46,7 +46,7 @@ public struct AppLockView: View {
 
     /// Biometrics ready: a single unlock action (Face ID / Touch ID).
     private var biometricPrompt: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: FleetTheme.spacingMd) {
             Text(controller.state == .authenticating
                  ? "Checking…"
                  : "Unlock to access your fleet")
@@ -61,7 +61,7 @@ public struct AppLockView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accent)
+            .tint(FleetTheme.accentMagenta)
             .controlSize(.large)
             .disabled(controller.state == .authenticating)
             .accessibilityIdentifier("fleet.app-lock.unlock")
@@ -71,10 +71,10 @@ public struct AppLockView: View {
     /// Passcode fallback: biometrics failed or are unavailable — show the
     /// passcode path (system device-passcode via LocalAuthentication).
     private var passcodePrompt: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: FleetTheme.spacingMd) {
             Label("Authentication unavailable", systemImage: "exclamationmark.triangle.fill")
                 .font(.subheadline)
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(FleetTheme.statusDegraded)
                 .accessibilityIdentifier("fleet.app-lock.passcode.banner")
 
             Text("Use your device passcode to continue.")
@@ -89,7 +89,7 @@ public struct AppLockView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accent)
+            .tint(FleetTheme.accentMagenta)
             .controlSize(.large)
             .disabled(controller.state == .authenticating)
             .accessibilityIdentifier("fleet.app-lock.passcode.unlock")

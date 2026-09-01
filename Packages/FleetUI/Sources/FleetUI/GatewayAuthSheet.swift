@@ -53,8 +53,10 @@ struct GatewayAuthSheet: View {
                     }
                 } header: {
                     Text("Strategy")
+                        .foregroundStyle(FleetTheme.textSecondary)
                 } footer: {
                     Text("The credential itself lives in Keychain only and is never shown.")
+                        .foregroundStyle(FleetTheme.textSecondary)
                 }
 
                 Section("Credential") {
@@ -90,10 +92,15 @@ struct GatewayAuthSheet: View {
                     Section {
                         Text(errorText)
                             .font(.caption)
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(FleetTheme.statusDegraded)
+                    } header: {
+                        Text("Error")
+                            .foregroundStyle(FleetTheme.statusDegraded)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(FleetTheme.background.ignoresSafeArea())
             .navigationTitle("Authentication")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -105,7 +112,7 @@ struct GatewayAuthSheet: View {
                 Task { await saveStrategy(newValue) }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(FleetTheme.accentMagenta)
         .interactiveDismissDisabled(isBusy)
     }
 
