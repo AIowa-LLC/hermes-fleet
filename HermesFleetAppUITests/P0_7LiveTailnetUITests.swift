@@ -75,8 +75,9 @@ final class P0_7LiveTailnetUITests: XCTestCase {
         XCTAssertTrue(botRow.waitForExistence(timeout: 30),
                       "tailnet default bot should appear after roster refresh")
         tap(botRow)
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 15),
-                      "Bot detail should render for the tailnet default bot")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 15),
+            "Bot detail should render")
 
         // ---- 3. Open the EXISTING "default" session (first entry) ---------
         let defaultRow = firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.")
@@ -95,8 +96,9 @@ final class P0_7LiveTailnetUITests: XCTestCase {
 
         // ---- 4. POP + RE-ENTER the same session (the dogfood defect) ------
         tapBack(app)
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 15),
-                      "back on Bot detail after pop")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 15),
+            "Bot detail should render")
         attachScreenshot(of: app, name: "p07-step5-popped-to-bot-detail")
         tap(defaultRow)
         XCTAssertTrue(composer.waitForExistence(timeout: 20),
@@ -116,7 +118,7 @@ final class P0_7LiveTailnetUITests: XCTestCase {
 
         // ---- 5. NEW SESSION affordance (the second gap) --------------------
         tapBack(app)
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 15))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 15))
         let newSession = firstMatch(in: app, identifier: "fleet.bot-detail.sessions.new")
         XCTAssertTrue(newSession.waitForExistence(timeout: 10),
                       "New Session affordance must exist on the live sessions list")
@@ -131,7 +133,7 @@ final class P0_7LiveTailnetUITests: XCTestCase {
 
         // ---- 6. Pop back: the new session appears in the list --------------
         tapBack(app)
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 15))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 15))
         // Sessions refresh on entry (P0-7); give the read-only session.list
         // a moment, then look for a second session row.
         sleep(3)

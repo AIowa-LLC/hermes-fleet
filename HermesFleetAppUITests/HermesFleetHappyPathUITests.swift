@@ -40,8 +40,9 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
 
         // Step 4: open a conversation from Bot detail (session "Fleet setup").
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "Bot detail should render the identity section")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "Bot detail should render the identity section")
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
                       "Conversation canvas should open with a composer")
@@ -90,7 +91,7 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
         // Return to the fleet: pop back to the gateway's Bots screen, then back
         // to the Gateways list (root).

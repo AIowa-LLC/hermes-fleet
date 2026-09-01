@@ -204,7 +204,7 @@ public struct FleetDashboardView: View {
     private func botRow(_ bot: FleetBot) -> some View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
-                botAvatar(bot)
+                BotAvatar(displayName: bot.displayName)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bot.displayName)
                         .font(.body.weight(.semibold))
@@ -220,17 +220,6 @@ public struct FleetDashboardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.dashboard.bot.\(bot.route.gatewayID.rawValue)#\(bot.route.profileSlug.rawValue)")
-    }
-
-    /// Initials avatar square (magenta tint) — the mock's bot avatar slot.
-    private func botAvatar(_ bot: FleetBot) -> some View {
-        Text(FleetDashboardFormatting.avatarInitials(from: bot.displayName))
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(FleetTheme.accentMagenta)
-            .frame(width: 34, height: 34)
-            .background(FleetTheme.accentMagenta.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .accessibilityHidden(true)
     }
 
     /// "Gateway · Active 3m ago" from real roster data (no sessions → honest

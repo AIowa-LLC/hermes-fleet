@@ -95,8 +95,9 @@ final class U3TabNavigationUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "bot detail should push on the Gateways tab's stack")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "Bot detail should render")
 
         // Switch away and back — the pushed detail must survive the tab
         // switch (each tab keeps its own NavigationStack). Plain tap on the
@@ -105,8 +106,9 @@ final class U3TabNavigationUITests: XCTestCase {
         tapTab(app, "Home")
         XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 10))
         tapTab(app, "Gateways")
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "returning to the Gateways tab must restore the pushed bot detail")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "Bot detail should render")
         attachScreenshot(of: app, name: "u3-tab-switch-preserves-stack")
     }
 

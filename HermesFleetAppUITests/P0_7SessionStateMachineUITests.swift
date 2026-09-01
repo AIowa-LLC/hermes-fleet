@@ -28,8 +28,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         // Drill to Bot detail (MacBook M5 → Default).
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "Bot detail should render")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "Bot detail should render")
 
         // First entry into the existing session "Fleet setup".
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
@@ -48,8 +49,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
 
         // POP back to Bot detail, then RE-ENTER the same session.
         tapBackButton(app)
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "Back on Bot detail after pop")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "Bot detail should render")
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
         XCTAssertTrue(composer.waitForExistence(timeout: 10),
                       "Re-entered conversation canvas opens")
@@ -82,8 +84,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "Bot detail should render")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "Bot detail should render")
 
         // The P0-7 affordance: "New Session" on the sessions list.
         let newSession = firstMatch(in: app, identifier: "fleet.bot-detail.sessions.new")

@@ -8,6 +8,10 @@ import FleetCore
 /// when the roster refresh classified it unreachable (spec §31 partial
 /// availability / §30 "which gateway failed") instead of silently showing an
 /// empty list. Tapping a bot drills into its Bot detail (U2).
+///
+/// U5 (Gold Fleet re-skin): rows render on the design system — `FleetCard`
+/// surfaces with the avatar component, name, model/provider subtitle, and a
+/// `StatusPill` from the bot's real activity. Presentation-layer only.
 public struct BotsView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
@@ -54,8 +58,28 @@ public struct BotsView: View {
     }
 
     private func botList(_ bots: [FleetBot]) -> some View {
-        List(bots) { bot in
-            NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+        ScrollView {
+            LazyVStack(spacing: FleetTheme.spacingSm, pinnedViews: []) {
+                ForEach(bots) { bot in
+                    NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+                        botRow(bot)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("fleet.bots.row.\(bot.route.id)")
+                }
+            }
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.vertical, FleetTheme.spacingSm)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(FleetTheme.background)
+    }
+
+    /// U5 row spec: avatar + name + model/provider subtitle + status pill.
+    private func botRow(_ bot: FleetBot) -> some View {
+        FleetCard {
+            HStack(spacing: FleetTheme.spacingMd) {
+                BotAvatar(displayName: bot.displayName)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bot.displayName)
                         .font(.body.weight(.semibold))
@@ -67,17 +91,18 @@ public struct BotsView: View {
                         .monospaced()
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if let model = bot.model, let provider = bot.provider {
+                        Text("\(model) · \(provider)")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
+                Spacer()
+                StatusPill(status: FleetStatus(activity: bot.activity))
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("fleet.bots.row.\(bot.route.id)")
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FleetTheme.background)
-        .accessibilityIdentifier("fleet.bots.list")
+        .accessibilityElement(children: .combine)
     }
 
     private var emptyState: some View {
@@ -86,7 +111,7 @@ public struct BotsView: View {
                 Text("No Bots")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(FleetTheme.accentMagenta)
             }
         } description: {
             Text("No profiles reported for this gateway. Connect and refresh the roster.")
@@ -102,7 +127,7 @@ public struct BotsView: View {
                 Text(status)
             } icon: {
                 Image(systemName: "wifi.slash")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(FleetTheme.accentMagenta)
             }
         } description: {
             Text(detail)

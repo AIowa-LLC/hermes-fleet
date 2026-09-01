@@ -124,8 +124,9 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars[tailnetName].waitForExistence(timeout: 10),
                       "Bots screen for the tailnet gateway should open")
         tap(firstMatch(in: app, identifier: "fleet.bots.row.\(tailnetID)#default"))
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10),
-                      "Bot detail should render for the tailnet default bot")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 15),
+            "Bot detail should render")
         attachScreenshot(of: app, name: "t2-step4-tailnet-default-bot")
 
         let sessionID = readCleanSessionID()

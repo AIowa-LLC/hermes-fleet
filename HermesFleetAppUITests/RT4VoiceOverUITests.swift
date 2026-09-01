@@ -26,7 +26,7 @@ final class RT4VoiceOverUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
-        XCTAssertTrue(app.staticTexts["Identity"].waitForExistence(timeout: 10))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10))
 

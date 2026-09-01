@@ -44,6 +44,15 @@ final class FleetComponentsTests: XCTestCase {
         XCTAssertNotNil(SectionHeader(title: "Bots", viewAllAction: nil, actionTitle: "Manage").body)
     }
 
+    // MARK: - U5 shared avatar component
+
+    func testBotAvatarInit() {
+        // View-init for every initials shape (letters, multi-word, no letters).
+        XCTAssertNotNil(BotAvatar(displayName: "Researcher").body)
+        XCTAssertNotNil(BotAvatar(displayName: "MacBook Bot").body)
+        XCTAssertNotNil(BotAvatar(displayName: "123").body, "no-letter names fall back to '?'")
+    }
+
     // MARK: - FleetStatus labels + colors (all four states)
 
     func testFleetStatusLabels() {
