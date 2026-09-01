@@ -58,7 +58,7 @@ public struct GatewaysView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    presentedSheet = .add
+                    presentAddForm()
                 } label: {
                     Label("Add Gateway", systemImage: "plus")
                 }
@@ -101,10 +101,13 @@ public struct GatewaysView: View {
                 // open, preserves the non-secret fields, and surfaces the error
                 // inline for retry (the parent no longer swallows the error into
                 // a post-dismiss alert that races the sheet).
+                // P0-2: the form binds to the root-owned draft store so it
+                // survives the H1 lock / scenePhase teardown.
                 GatewayFormSheet(
                     title: "Add Gateway",
                     saveButton: "Add",
-                    initial: nil
+                    initial: nil,
+                    draftStore: environment.gatewayFormDraft
                 ) { registration, credential in
                     _ = try await environment.addGateway(registration, credential: credential)
                 }
@@ -112,7 +115,8 @@ public struct GatewaysView: View {
                 GatewayFormSheet(
                     title: "Edit Gateway",
                     saveButton: "Save",
-                    initial: gateway
+                    initial: gateway,
+                    draftStore: environment.gatewayFormDraft
                 ) { registration, credential in
                     // Apply the edited display name / endpoint / strategy.
                     _ = try await environment.updateGateway(
@@ -180,6 +184,51 @@ public struct GatewaysView: View {
         }
         .background(FleetTheme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.gateways")
+        // P0-2: after the H1 biometric lock releases, this view is re-created
+        // with `presentedSheet == nil`. If a gateway-form draft is in flight,
+        // re-present the sheet so the user returns exactly where they were.
+        .onAppear {
+            resumeGatewayFormDraftIfNeeded()
+        }
+    }
+
+    // MARK: P0-2 — in-progress form draft (survives the FaceID lock)
+
+    /// Open the Add-Gateway sheet, beginning a fresh draft in the root-owned
+    /// store (so an app background + relock mid-entry is restored on unlock).
+    private func presentAddForm() {
+        environment.gatewayFormDraft.begin(pendingSheet: .add, initial: nil)
+        presentedSheet = .add
+    }
+
+    /// Open the Edit-Gateway sheet, beginning a fresh draft seeded from the
+    /// gateway's current non-secret values.
+    private func presentEditForm(_ gateway: FleetGateway) {
+        environment.gatewayFormDraft.begin(pendingSheet: .edit(gateway.id), initial: gateway)
+        presentedSheet = .edit(gateway)
+    }
+
+    /// Re-present the in-progress form draft after a lock/unlock cycle (or a
+    /// scenePhase background that tore the sheet down). No-op when there is no
+    /// draft or a sheet is already up.
+    private func resumeGatewayFormDraftIfNeeded() {
+        let draft = environment.gatewayFormDraft
+        guard draft.isInProgress, presentedSheet == nil else { return }
+        switch draft.pendingSheet {
+        case .add:
+            presentedSheet = .add
+        case .edit(let gatewayID):
+            // The draft stores only the ID; resolve the current gateway so the
+            // edit sheet gets the live registry value. If it was removed while
+            // backgrounded, drop the stale draft instead of presenting a dead edit.
+            if let gateway = environment.gateway(for: gatewayID) {
+                presentedSheet = .edit(gateway)
+            } else {
+                draft.clear()
+            }
+        case nil:
+            break
+        }
     }
 
     // MARK: States
@@ -196,7 +245,7 @@ public struct GatewaysView: View {
             Text("Add your first Hermes gateway to see your fleet.")
         } actions: {
             Button("Add Gateway") {
-                presentedSheet = .add
+                presentAddForm()
             }
             .buttonStyle(.borderedProminent)
             .tint(FleetTheme.accent)
@@ -255,7 +304,7 @@ public struct GatewaysView: View {
                     Label("Authentication", systemImage: "key")
                 }
                 Button {
-                    presentedSheet = .edit(gateway)
+                    presentEditForm(gateway)
                 } label: {
                     Label("Edit", systemImage: "pencil")
                 }

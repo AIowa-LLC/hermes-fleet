@@ -1,71 +1,71 @@
 import SwiftUI
 import FleetCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Add / edit gateway form sheet (U2 registry management).
 ///
-/// Presentation-only: holds typed field state while the sheet is open; on
-/// Save it builds a `GatewayRegistration` plus an optional `GatewayCredential`
-/// and hands both to the `onSave` seam callback, which routes them straight to
-/// the registry + Keychain store. A credential, when entered, is passed by
-/// value to the seam and never held, logged, or stored in the view layer
-/// (spec §16/§29).
+/// P0-2: the form's field state is bound DIRECTLY to a
+/// `GatewayFormDraftStore` owned by `AppEnvironment` (composition root), not
+/// to ephemeral `@State`. When the H1 biometric lock engages (app
+/// backgrounded), `FleetRootView` swaps the whole navigation stack — and with
+/// it this sheet and any `@State` — for `AppLockView`. Because the field
+/// values live in the root-owned draft store, the sheet is re-presented after
+/// unlock with the user's typed data intact ("return exactly where you were").
+///
+/// On Save it builds a `GatewayRegistration` plus an optional
+/// `GatewayCredential` and hands both to the `onSave` seam callback, which
+/// routes them straight to the registry + Keychain store. A credential, when
+/// entered, is passed by value to the seam and never held, logged, or stored
+/// in the view layer (spec §16/§29). The draft store holds the typed secret
+/// text ONLY while the sheet is open; it is cleared on Cancel and on
+/// successful Save.
 struct GatewayFormSheet: View {
     private let title: String
     private let saveButton: String
-    /// Non-nil when editing an existing gateway (prefill).
+    /// Non-nil when editing an existing gateway (prefill / registration id).
     private let existing: FleetGateway?
     /// P2-6: the save seam now THROWS on failure so the form can distinguish a
     /// successful save (dismiss + clear secrets) from a failure (keep the
     /// sheet open, preserve non-secret fields for retry, surface the error).
     private let onSave: (GatewayRegistration, GatewayCredential?) async throws -> Void
 
+    /// The root-owned draft store this form binds to (P0-2).
+    @Bindable private var draftStore: GatewayFormDraftStore
+
     @Environment(\.dismiss) private var dismiss
-    @State private var displayName: String
-    @State private var endpointText: String
-    @State private var strategy: GatewayAuthConfiguration.Strategy
-    /// Secure credential entry — only shown for token strategies; never echoed.
-    @State private var tokenText: String
-    /// Username/password entry — only shown for the username/password
-    /// strategy; never echoed.
-    @State private var usernameText: String
-    @State private var passwordText: String
     @State private var isSaving = false
-    /// P2-6: non-secret inline save-failure message (kept visible for retry).
-    @State private var saveError: String?
-    /// Explicit user confirmation to send credentials in cleartext to a
-    /// public (non-private/loopback) address — B2 save-gate. Never persisted.
-    @State private var confirmsCleartextSend = false
 
     init(
         title: String,
         saveButton: String,
         initial: FleetGateway?,
+        draftStore: GatewayFormDraftStore,
         onSave: @escaping (GatewayRegistration, GatewayCredential?) async throws -> Void
     ) {
         self.title = title
         self.saveButton = saveButton
         self.existing = initial
+        self.draftStore = draftStore
         self.onSave = onSave
-        _displayName = State(initialValue: initial?.displayName ?? "")
-        _endpointText = State(initialValue: initial?.endpoint?.absoluteString ?? "")
-        _strategy = State(initialValue: initial?.authConfiguration.strategy ?? .none)
-        _tokenText = State(initialValue: "")
-        _usernameText = State(initialValue: "")
-        _passwordText = State(initialValue: "")
-        _confirmsCleartextSend = State(initialValue: false)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Gateway") {
-                    TextField("Display Name", text: $displayName)
+                    TextField("Display Name", text: $draftStore.displayName)
                         .accessibilityIdentifier("fleet.gateways.form.name")
-                    TextField("Endpoint (http://host:port)", text: $endpointText)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("fleet.gateways.form.endpoint")
+                    // P0-2: paste button next to the URL field.
+                    HStack(spacing: 8) {
+                        TextField("Endpoint (http://host:port)", text: $draftStore.endpointText)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("fleet.gateways.form.endpoint")
+                        pasteButton("fleet.gateways.form.paste.endpoint", into: $draftStore.endpointText)
+                    }
                 }
 
                 if cleartextRisk {
@@ -85,7 +85,7 @@ struct GatewayFormSheet: View {
                         }
                         .accessibilityIdentifier("fleet.gateways.form.cleartext-warning")
 
-                        Toggle("I understand — connect anyway", isOn: $confirmsCleartextSend)
+                        Toggle("I understand — connect anyway", isOn: $draftStore.confirmsCleartextSend)
                             .accessibilityIdentifier("fleet.gateways.form.cleartext-confirm")
                     } header: {
                         Text("Security Warning")
@@ -93,7 +93,7 @@ struct GatewayFormSheet: View {
                 }
 
                 Section("Authentication") {
-                    Picker("Strategy", selection: $strategy) {
+                    Picker("Strategy", selection: $draftStore.strategy) {
                         Text("None").tag(GatewayAuthConfiguration.Strategy.none)
                         Text("Session Token").tag(GatewayAuthConfiguration.Strategy.sessionToken)
                         Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
@@ -103,26 +103,35 @@ struct GatewayFormSheet: View {
                     .accessibilityIdentifier("fleet.gateways.form.strategy")
 
                     if needsTokenEntry {
-                        SecureField("Token (optional now, editable later)", text: $tokenText)
-                            .textContentType(.password)
-                            .accessibilityIdentifier("fleet.gateways.form.token")
+                        HStack(spacing: 8) {
+                            SecureField("Token (optional now, editable later)", text: $draftStore.tokenText)
+                                .textContentType(.password)
+                                .accessibilityIdentifier("fleet.gateways.form.token")
+                            pasteButton("fleet.gateways.form.paste.token", into: $draftStore.tokenText)
+                        }
                     }
                     if needsUsernamePasswordEntry {
-                        TextField("Username", text: $usernameText)
-                            .textContentType(.username)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .accessibilityIdentifier("fleet.gateways.form.username")
-                        SecureField("Password", text: $passwordText)
-                            .textContentType(.password)
-                            .accessibilityIdentifier("fleet.gateways.form.password")
+                        HStack(spacing: 8) {
+                            TextField("Username", text: $draftStore.usernameText)
+                                .textContentType(.username)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .accessibilityIdentifier("fleet.gateways.form.username")
+                            pasteButton("fleet.gateways.form.paste.username", into: $draftStore.usernameText)
+                        }
+                        HStack(spacing: 8) {
+                            SecureField("Password", text: $draftStore.passwordText)
+                                .textContentType(.password)
+                                .accessibilityIdentifier("fleet.gateways.form.password")
+                            pasteButton("fleet.gateways.form.paste.password", into: $draftStore.passwordText)
+                        }
                     }
                 }
 
                 // P2-6: inline, non-secret save-failure message. The sheet stays
                 // open and the non-secret fields are preserved so the user can
                 // retry without re-entering endpoint/auth strategy.
-                if let saveError {
+                if let saveError = draftStore.saveError {
                     Section {
                         Label {
                             Text(saveError)
@@ -144,9 +153,9 @@ struct GatewayFormSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        // P2-6: intentional dismissal — clear secret material so
-                        // it never lingers in the view state.
-                        clearSecrets()
+                        // P0-2 / P2-6: intentional dismissal — wipe the draft
+                        // (including secret material) so it never lingers.
+                        draftStore.clear()
                         dismiss()
                     }
                     .accessibilityIdentifier("fleet.gateways.form.cancel")
@@ -159,11 +168,34 @@ struct GatewayFormSheet: View {
             }
         }
         .tint(FleetTheme.accent)
+        // P0-2: the form is deliberate — prevent accidental swipe-dismiss so
+        // the user is never silently thrown out of an in-progress credential
+        // entry. Dismissal is explicit (Cancel / Save).
+        .interactiveDismissDisabled()
+    }
+
+    /// P0-2: explicit "Paste" affordance next to a credential / URL field —
+    /// reads the system pasteboard into the bound field. Standard long-press
+    /// paste with the keyboard visible remains available (never disabled).
+    private func pasteButton(_ id: String, into binding: Binding<String>) -> some View {
+        Button {
+            #if canImport(UIKit)
+            if let text = UIPasteboard.general.string {
+                binding.wrappedValue = text
+            }
+            #endif
+        } label: {
+            Label("Paste", systemImage: "doc.on.clipboard")
+                .font(.caption)
+                .labelStyle(.titleAndIcon)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityIdentifier(id)
     }
 
     /// Token strategies need a secure entry field. `.none` does not.
     private var needsTokenEntry: Bool {
-        switch strategy {
+        switch draftStore.strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
         case .usernamePassword: return false
@@ -172,15 +204,15 @@ struct GatewayFormSheet: View {
 
     /// The username/password strategy needs username + password fields.
     private var needsUsernamePasswordEntry: Bool {
-        strategy == .usernamePassword
+        draftStore.strategy == .usernamePassword
     }
 
     private var trimmedName: String {
-        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        draftStore.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var endpointURL: URL? {
-        guard let url = URL(string: endpointText.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        guard let url = URL(string: draftStore.endpointText.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
         // P1-6: treat the endpoint as an ORIGIN — reject user-info
         // (user:pass@host) and strip query/fragment at the form boundary too,
         // so credential material never leaves the text field.
@@ -200,7 +232,7 @@ struct GatewayFormSheet: View {
     }
 
     private var isValid: Bool {
-        !trimmedName.isEmpty && endpointURL != nil && (!cleartextRisk || confirmsCleartextSend)
+        !trimmedName.isEmpty && endpointURL != nil && (!cleartextRisk || draftStore.confirmsCleartextSend)
     }
 
     private func save() {
@@ -211,7 +243,7 @@ struct GatewayFormSheet: View {
             displayName: trimmedName,
             endpoint: endpoint,
             authConfiguration: GatewayAuthConfiguration(
-                strategy: strategy,
+                strategy: draftStore.strategy,
                 credentialStored: existing?.authConfiguration.credentialStored ?? false
             )
         )
@@ -220,12 +252,12 @@ struct GatewayFormSheet: View {
         // attached (stored as one Keychain item — the authenticator reads
         // both halves). Never echoed by the view layer.
         let credential: GatewayCredential? = {
-            if strategy == .usernamePassword {
-                guard !usernameText.isEmpty, !passwordText.isEmpty else { return nil }
-                return GatewayCredential(rawValue: passwordText, username: usernameText)
+            if draftStore.strategy == .usernamePassword {
+                guard !draftStore.usernameText.isEmpty, !draftStore.passwordText.isEmpty else { return nil }
+                return GatewayCredential(rawValue: draftStore.passwordText, username: draftStore.usernameText)
             }
-            guard needsTokenEntry, !tokenText.isEmpty else { return nil }
-            return GatewayCredential(rawValue: tokenText)
+            guard needsTokenEntry, !draftStore.tokenText.isEmpty else { return nil }
+            return GatewayCredential(rawValue: draftStore.tokenText)
         }()
 
         Task {
@@ -235,22 +267,15 @@ struct GatewayFormSheet: View {
                 // (non-secret) error surfaced inline — no discarded input.
                 try await onSave(registration, credential)
                 isSaving = false
-                clearSecrets()
+                // P0-2: successful save wipes the draft (secret material
+                // included) so nothing lingers after the sheet closes.
+                draftStore.clear()
                 dismiss()
             } catch {
                 isSaving = false
-                saveError = Self.nonSecret(error)
+                draftStore.saveError = Self.nonSecret(error)
             }
         }
-    }
-
-    /// Clear secret fields (token / password) so they never linger in the view
-    /// state after a successful save or an intentional Cancel dismissal (P2-6).
-    /// Non-secret fields (display name, endpoint, strategy, username) are
-    /// intentionally preserved — on failure they stay for retry.
-    private func clearSecrets() {
-        tokenText = ""
-        passwordText = ""
     }
 
     /// Non-secret error description for inline display (mirrors GatewaysView).

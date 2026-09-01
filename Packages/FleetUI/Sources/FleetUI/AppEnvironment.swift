@@ -94,6 +94,13 @@ public final class AppEnvironment {
     /// `refreshHealthStats()`; the Health dashboard refreshes it live.
     public private(set) var healthStats: [GatewayID: GatewayHealthStats] = [:]
 
+    /// P0-2: in-progress Add/Edit-Gateway form draft. Lives HERE (composition
+    /// root) so it survives the H1 biometric lock / scenePhase teardown — the
+    /// form sheet is destroyed on background+relock, and `GatewaysView`
+    /// re-presents it from this store on unlock. In-memory only, never
+    /// persisted.
+    public let gatewayFormDraft = GatewayFormDraftStore()
+
     /// Per-gateway connection-test result, observable (§13 reachable /
     /// unreachable probe). Set only after `testConnection` completes; a
     /// gateway with no entry has never been tested this session.
