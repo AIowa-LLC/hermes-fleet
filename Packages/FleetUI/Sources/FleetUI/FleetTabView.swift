@@ -165,6 +165,10 @@ public struct FleetTabView: View {
             ConversationView(environment: environment, route: route, sessionID: sessionID)
         case .health:
             HealthDashboardView(environment: environment)
+        case .gateways:
+            GatewaysView(environment: environment)
+        case .activity:
+            FleetActivityView(environment: environment)
         }
     }
 

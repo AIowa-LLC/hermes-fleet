@@ -20,4 +20,10 @@ public enum FleetScreen: Hashable, Sendable {
     /// H2 Connection health dashboard (per-gateway uptime / reconnects /
     /// last-disconnect / ping RTT).
     case health
+    /// U4: the registry cockpit, as a pushed destination (Home dashboard
+    /// "View All" drill-in on the tab's own stack).
+    case gateways
+    /// U4: the connection-activity feed, as a pushed destination (Home
+    /// dashboard "View All" drill-in on the tab's own stack).
+    case activity
 }
