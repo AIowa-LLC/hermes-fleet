@@ -15,6 +15,7 @@
 		179BD4EFE6311D44DEF19762 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */; };
 		1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4799DB925C4D9935D2DD7D21 /* InProcessWebSocketServer.swift */; };
 		225FA7C42C7D6F474B3EA8AA /* FleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F4470D5B9599997A86EB24D /* FleetCore */; };
+		230ED173C2D04A96779776A2 /* FleetThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */; };
 		2C1CA3847CBD066D704AE4C8 /* FleetCoreLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 484982E3D802092C667BDF10 /* FleetCoreLogicTests.swift */; };
 		2FAB6479B1024179FC62B75F /* SplashOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171DB809769D21B3E41B0561 /* SplashOverlayView.swift */; };
 		3BC9D5C1D9DB0AAA16B7E9E4 /* ModuleBoundaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */; };
@@ -109,6 +110,7 @@
 		C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationViewModelTests.swift; sourceTree = "<group>"; };
 		CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewayFormDraftStoreTests.swift; sourceTree = "<group>"; };
+		D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetThemeTests.swift; sourceTree = "<group>"; };
 		D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleBoundaryTests.swift; sourceTree = "<group>"; };
 		D8AD8785E7085FFB646B0A9C /* FleetUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetUI; path = Packages/FleetUI; sourceTree = SOURCE_ROOT; };
 		DE435C9B85312695131CC209 /* FleetPersistence */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetPersistence; path = Packages/FleetPersistence; sourceTree = SOURCE_ROOT; };
@@ -160,6 +162,7 @@
 				C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */,
 				C0AFEA3FBD054A724A5F5139 /* F2PairingApplyTests.swift */,
 				484982E3D802092C667BDF10 /* FleetCoreLogicTests.swift */,
+				D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */,
 				CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */,
 				BD81D83119A185906F3FABB8 /* GatewayPersistenceRelaunchTests.swift */,
 				D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */,
@@ -406,6 +409,7 @@
 				AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */,
 				504013619C0C5C1743CD1144 /* F2PairingApplyTests.swift in Sources */,
 				2C1CA3847CBD066D704AE4C8 /* FleetCoreLogicTests.swift in Sources */,
+				230ED173C2D04A96779776A2 /* FleetThemeTests.swift in Sources */,
 				0C26BBF27EF90EACF7C2DB65 /* GatewayFormDraftStoreTests.swift in Sources */,
 				568D3FC18BC8530AE3E7DA34 /* GatewayPersistenceRelaunchTests.swift in Sources */,
 				1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */,

@@ -22,6 +22,8 @@ struct HermesFleetApp: App {
 
     var body: some Scene {
         WindowGroup {
+            // U1 (Gold Fleet): the palette is dark-only; force the dark
+            // appearance app-wide so system chrome matches the tokens.
             ZStack {
                 FleetRootView(environment: environment, lockController: lockController)
                     .task {
@@ -38,6 +40,7 @@ struct HermesFleetApp: App {
                     SplashOverlayView()
                 }
             }
+            .preferredColorScheme(.dark)
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
