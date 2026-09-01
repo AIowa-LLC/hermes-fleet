@@ -39,6 +39,34 @@ final class SplashUITests: XCTestCase {
                       "splash artwork should appear at launch")
         attachScreenshot(of: app, name: "p0-1-splash-visible")
 
+        // P0-6 crop regression: the artwork must be UNCROPPED (aspect-fit,
+        // never aspect-fill) and centered on the full screen. The asset is
+        // 941x1672 (~0.563 w/h) — WIDER than a ~19.5:9 phone screen (~0.46),
+        // so the correct fit is width-limited: full screen WIDTH with
+        // symmetric top/bottom letterbox bars. (An aspect-FILL layout would
+        // instead render at the screen's ~0.46 ratio — the two are far apart,
+        // so a band on the asset ratio cleanly separates fit from fill.)
+        // Verified against live pixel evidence: 1320x2868 screenshot renders
+        // the artwork at 1320px wide (full width) x 2349px tall.
+        let frame = splash.frame
+        let screen = app.frame
+        let frameAspect = frame.width / frame.height
+        let assetAspect = 941.0 / 1672.0 // LaunchArtwork.png
+        XCTAssertEqual(frameAspect, assetAspect, accuracy: 0.06,
+                       "splash artwork aspect \(frameAspect) must match the asset \(assetAspect) — cropped/aspect-fill regression")
+        // Full-bleed horizontally: a width-limited fit touches both edges.
+        XCTAssertGreaterThan(frame.width, screen.width * 0.99,
+                             "aspect-fit artwork (wider than screen) must span the full screen width")
+        // Centered vertically with (imperceptible, near-black) letterbox
+        // bars above and below: equal margins, both > 0.
+        let topBar = frame.minY - screen.minY
+        let bottomBar = screen.maxY - frame.maxY
+        XCTAssertEqual(topBar, bottomBar, accuracy: 2.0,
+                       "splash artwork must be centered (top bar \(topBar) vs bottom bar \(bottomBar))")
+        XCTAssertGreaterThan(min(topBar, bottomBar), 0,
+                             "width-limited fit must letterbox vertically — filling the height would crop the artwork width")
+        attachScreenshot(of: app, name: "p0-6-splash-uncropped")
+
         // Then it must cross-fade OUT and release the app UI (it must NOT
         // linger forever). Budget: 4s hold + 0.35s fade + slack.
         let gone = splash.waitForNonExistence(timeout: 8)

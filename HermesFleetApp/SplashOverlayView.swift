@@ -43,11 +43,24 @@ struct SplashOverlayView: View {
     var body: some View {
         ZStack {
             if !isRemoved {
+                // P0-6: the splash must be geometrically IDENTICAL to the
+                // native LaunchScreen at the handoff frame, or the artwork
+                // visibly jumps when the system launch screen is dismissed
+                // (the dogfooded "jitter"). Both layers now use the same
+                // recipe: full-bleed dark background + aspect-FIT artwork
+                // centered on the FULL screen. aspectFit (not fill) because
+                // the artwork is ~9:16 (941x1672) — on a ~19.5:9 phone a
+                // fill crops ~18% of its width. The artwork's edges are
+                // near-black, so the letterbox bars are imperceptible against
+                // the matching background.
+                Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255)
+                    .ignoresSafeArea()
                 Image("LaunchArtwork")
                     .resizable()
-                    .scaledToFill()
+                    .scaledToFit()
                     .ignoresSafeArea()
-                    .background(Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255))
+                    // Opacity only — never animate layout, so the frame is
+                    // identical from the very first rendered pass.
                     .opacity(isVisible ? 1 : 0)
                     .task {
                         // Hold for the minimum display window, then cross-fade
@@ -64,6 +77,11 @@ struct SplashOverlayView: View {
                     .accessibilityLabel("Splash")
             }
         }
+        // Full-screen container from the first frame: both the background and
+        // the aspect-fit image center on the FULL screen — exactly the native
+        // LaunchScreen's geometry (imageView pinned to all four superview
+        // edges, scaleAspectFit) — with no safe-area-dependent re-layout.
+        .ignoresSafeArea()
     }
 
     /// Whether the in-app splash should be presented in this run.
