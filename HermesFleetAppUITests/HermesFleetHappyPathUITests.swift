@@ -22,6 +22,7 @@ final class HermesFleetHappyPathUITests: XCTestCase {
     func testHappyPathGatewaysToConversationStreamedAnswer() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // Step 1+2: open the app, see the machines (gateways) available.
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
@@ -83,6 +84,7 @@ final class HermesFleetHappyPathUITests: XCTestCase {
     func testReturnToFleetSwitchMachine() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))

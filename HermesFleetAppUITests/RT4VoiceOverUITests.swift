@@ -19,6 +19,7 @@ final class RT4VoiceOverUITests: XCTestCase {
     func testConversationRowExposesSpeakerLabel() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // Navigate: Gateways → MacBook M5 → Default bot → a session.
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10))

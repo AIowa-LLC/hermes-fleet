@@ -9,7 +9,7 @@ import UIKit
 /// P0-2: the form's field state is bound DIRECTLY to a
 /// `GatewayFormDraftStore` owned by `AppEnvironment` (composition root), not
 /// to ephemeral `@State`. When the H1 biometric lock engages (app
-/// backgrounded), `FleetRootView` swaps the whole navigation stack — and with
+/// backgrounded), `FleetTabView` swaps the whole tab shell — and with
 /// it this sheet and any `@State` — for `AppLockView`. Because the field
 /// values live in the root-owned draft store, the sheet is re-presented after
 /// unlock with the user's typed data intact ("return exactly where you were").

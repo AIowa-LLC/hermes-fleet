@@ -86,10 +86,11 @@ final class H1AppLockUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
                       "roster reachable after default-ON lock + biometric unlock")
 
-        // Open Settings → the App Lock toggle is ON by default (acceptance).
-        let settings = firstMatch(in: app, identifier: "fleet.gateways.settings")
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "Settings entry should exist")
-        settings.tap()
+        // Open Settings (U3: a root tab, no longer a Gateways sheet) → the
+        // App Lock toggle is ON by default (acceptance).
+        let settingsTab = app.tabBars.firstMatch.buttons["Settings"]
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 10), "Settings tab should exist")
+        settingsTab.tap()
 
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10), "App Lock toggle should appear")
@@ -102,9 +103,8 @@ final class H1AppLockUITests: XCTestCase {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertTrue(waitUntilValue(toggle, isOn: false, timeout: 5),
                       "App Lock toggle should read OFF after tap")
-        let done = app.buttons["fleet.settings.done"]
-        XCTAssertTrue(done.waitForExistence(timeout: 5), "Done button should appear")
-        done.tap()
+        // U3: Settings is a tab, not a sheet — no Done dismissal; leaving the
+        // tab persists the toggle immediately (UserDefaults write-through).
 
         // Restart the app. The reset flag must NOT be applied on relaunch —
         // we want the PERSISTED OFF toggle to drive the cold start.
@@ -118,9 +118,9 @@ final class H1AppLockUITests: XCTestCase {
                        "no lock screen when the persisted toggle is OFF")
 
         // Prove the toggle really persisted: reopen Settings and read OFF.
-        let settingsAgain = firstMatch(in: app, identifier: "fleet.gateways.settings")
-        XCTAssertTrue(settingsAgain.waitForExistence(timeout: 10))
-        settingsAgain.tap()
+        let settingsTabAgain = app.tabBars.firstMatch.buttons["Settings"]
+        XCTAssertTrue(settingsTabAgain.waitForExistence(timeout: 10))
+        settingsTabAgain.tap()
         let toggleAgain = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggleAgain.waitForExistence(timeout: 10))
         XCTAssertEqual(toggleAgain.value as? String, "0",

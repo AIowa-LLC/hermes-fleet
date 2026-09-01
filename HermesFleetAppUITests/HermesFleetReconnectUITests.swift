@@ -19,6 +19,7 @@ final class HermesFleetReconnectUITests: XCTestCase {
     func testGatewayDisconnectThenReconnectLifecycle() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
                       "Gateways screen should list MacBook M5")

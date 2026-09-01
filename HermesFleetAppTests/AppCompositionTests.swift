@@ -6,19 +6,21 @@ import FleetCore
 /// Composition smoke tests: the app starts with a clean, inert fleet model.
 @MainActor
 final class AppCompositionTests: XCTestCase {
-    func testAppStartsWithEmptyFleet() {
-        let model = FleetDashboardModel()
-        XCTAssertTrue(model.gateways.isEmpty, "M0 app starts with no gateways")
-        XCTAssertEqual(model.gateways.count, 0)
+    func testAppTabModelCoversTheFivePlanTabs() {
+        // U3: the root shell exposes exactly the five plan-of-record tabs, in
+        // order (Home / Bots / Gateways / Activity / Settings).
+        XCTAssertEqual(
+            FleetTab.allCases.map(\.label),
+            ["Home", "Bots", "Gateways", "Activity", "Settings"],
+            "the tab bar must match the plan-of-record five tabs in order"
+        )
     }
 
-    func testAppModelIsMainActorAndSendableFriendly() {
-        // Constructing through the @MainActor boundary must not trap or crash.
-        let model = FleetDashboardModel(gateways: [
-            FleetGateway(id: GatewayID(rawValue: "<dev-workstation>"), displayName: "MacBook")
-        ])
-        XCTAssertEqual(model.gateways.count, 1)
-        XCTAssertEqual(model.gateways.first?.displayName, "MacBook")
+    func testEveryTabHasDistinctSymbolAndLabel() {
+        XCTAssertEqual(Set(FleetTab.allCases.map(\.label)).count, FleetTab.allCases.count,
+                       "tab labels must be distinct")
+        XCTAssertEqual(Set(FleetTab.allCases.map(\.systemImage)).count, FleetTab.allCases.count,
+                       "tab symbols must be distinct")
     }
 }
 

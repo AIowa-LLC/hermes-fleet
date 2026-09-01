@@ -33,8 +33,7 @@ final class L1FixLiveGatewayUITests: XCTestCase {
         app.launch()
 
         // Release starts at the Gateways screen (empty registry).
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
-                      "Gateways screen should be the root in Release")
+        UITabNavigation.openGatewaysTab(app)
         attachScreenshot(of: app, name: "l1fix-step1-open-gateways")
 
         // Add the REAL gateway via the U2 add-gateway sheet (no hardcode).
@@ -94,8 +93,9 @@ final class L1FixLiveGatewayUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Unreachable"].exists,
                        "live gateway must NOT be offline after the auth fix")
 
-        // ACCEPTANCE 2: the Roster returns REAL profiles against the live serve.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.roster"))
+        // ACCEPTANCE 2: the Roster returns REAL profiles against the live serve
+        // (Bots tab under the U3 tab shell).
+        UITabNavigation.openBotsTab(app)
         // The roster auto-refreshes once at launch (before the gateway was
         // added), so re-probe explicitly — the same action a user takes.
         sleep(2)

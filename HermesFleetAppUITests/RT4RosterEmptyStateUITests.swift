@@ -19,12 +19,12 @@ final class RT4RosterEmptyStateUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_ZERO_BOTS"] = "1"
         app.launch()
 
-        // Gateways screen still lists the seeded fleet (all healthy now).
+        // The fleet still lists the seeded gateways (Home tab, real data).
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
-                      "Gateways screen should list MacBook M5")
+                      "Home should list MacBook M5 from the scripted fleet")
 
-        // Open the fleet roster.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.roster"))
+        // Open the fleet roster (Bots tab under the U3 tab shell).
+        UITabNavigation.openBotsTab(app)
 
         // P2-5: the all-healthy zero-bot roster must render the "No Bots" state
         // (a ContentUnavailableView). Its children carry the roster's `fleet.roster`

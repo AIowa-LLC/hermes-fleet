@@ -68,8 +68,7 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
 
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
-                      "Gateways screen should be the root in Release")
+        UITabNavigation.openGatewaysTab(app)
         handleLocalNetworkPrompt()
         attachScreenshot(of: app, name: "t2-step0-open-gateways")
 
@@ -97,7 +96,7 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
         // ---- 4. Refresh the union roster -> bots from BOTH gateways -------
         tap(firstMatch(in: app, identifier: "fleet.gateways.refresh"))
         sleep(6)
-        tap(firstMatch(in: app, identifier: "fleet.gateways.roster"))
+        UITabNavigation.openBotsTab(app)
         XCTAssertTrue(app.navigationBars["Fleet Roster"].waitForExistence(timeout: 10),
                       "Roster screen should open")
         XCTAssertTrue(app.staticTexts[tailnetName].waitForExistence(timeout: 15),
@@ -117,8 +116,8 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
             rosterRow.waitForExistence(timeout: 20) || rosterBot.waitForExistence(timeout: 5),
             "roster should list a bot on the tailnet gateway")
         attachScreenshot(of: app, name: "t2-step4-roster-both-gateways")
-        tapBack(in: app)
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10))
+        // Back to the registry cockpit (Gateways tab under the U3 shell).
+        UITabNavigation.openGatewaysTab(app)
 
         // ---- 5. Drill tailnet -> Default bot -> clean session -> turn -----
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.\(tailnetID)"))

@@ -25,6 +25,7 @@ final class F2QRPairingUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_PAIRING_SIMULATED_SCAN"] = simulatedScan
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // Open the Add-Gateway form (DEBUG scripted fleet renders the roster).
         let add = app.buttons["fleet.gateways.add"]
@@ -73,6 +74,7 @@ final class F2QRPairingUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_PAIRING_SIMULATED_SCAN"] = "{\"hello\":\"world\"}"
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))

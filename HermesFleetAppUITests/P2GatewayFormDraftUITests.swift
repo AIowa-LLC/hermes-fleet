@@ -6,7 +6,7 @@ import UIKit
 ///
 /// The defect: to add a gateway the user switches to another app to copy
 /// username/password (42+ char generated strings); on return the H1 biometric
-/// app lock engages and `FleetRootView` tears the whole navigation stack
+/// app lock engages and `FleetTabView` tears the whole navigation stack
 /// (sheet + form `@State`) down, discarding every typed field.
 ///
 /// FIX under test: the form binds to a root-owned `GatewayFormDraftStore`, so
@@ -78,8 +78,9 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
-        // Scripted Face ID success unlocks to the roster (DEBUG fleet's first
+        // Scripted Face ID success unlocks to the fleet (DEBUG fleet's first
         // gateway is MacBook M5).
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
                       "roster should render after scripted biometric unlock")
@@ -146,6 +147,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         // Lock disabled so the test focuses purely on paste affordances.
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
                       "roster should render (lock disabled)")

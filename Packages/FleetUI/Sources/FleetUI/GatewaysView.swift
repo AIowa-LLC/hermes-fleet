@@ -15,7 +15,6 @@ import FleetCore
 /// reinforcement only), per the semantic status map.
 public struct GatewaysView: View {
     private let environment: AppEnvironment
-    private let lockController: AppLockController
 
     /// Presentation-only sheet state (no secrets stored here).
     @State private var presentedSheet: PresentedSheet?
@@ -30,20 +29,17 @@ public struct GatewaysView: View {
         case add
         case edit(FleetGateway)
         case auth(GatewayID)
-        case settings
         var id: String {
             switch self {
             case .add: return "add"
             case .edit(let gateway): return "edit-\(gateway.id.rawValue)"
             case .auth(let id): return "auth-\(id.rawValue)"
-            case .settings: return "settings"
             }
         }
     }
 
-    public init(environment: AppEnvironment, lockController: AppLockController) {
+    public init(environment: AppEnvironment) {
         self.environment = environment
-        self.lockController = lockController
     }
 
     public var body: some View {
@@ -64,18 +60,6 @@ public struct GatewaysView: View {
                 }
                 .accessibilityIdentifier("fleet.gateways.add")
 
-                NavigationLink(value: FleetScreen.roster) {
-                    Label("Roster", systemImage: "cpu")
-                }
-                .accessibilityIdentifier("fleet.gateways.roster")
-
-                // H2: Connection health dashboard (per-gateway uptime /
-                // reconnects / last-disconnect / ping RTT).
-                NavigationLink(value: FleetScreen.health) {
-                    Label("Health", systemImage: "heart.text.square")
-                }
-                .accessibilityIdentifier("fleet.gateways.health")
-
                 Button {
                     Task { await environment.refreshRoster() }
                 } label: {
@@ -83,15 +67,8 @@ public struct GatewaysView: View {
                 }
                 .accessibilityIdentifier("fleet.gateways.refresh")
                 .disabled(environment.isRefreshing)
-
-                // H1 (R4): in-app Settings entry — hosts the App Lock toggle
-                // (default ON). UI-only gate; Keychain untouched.
-                Button {
-                    presentedSheet = .settings
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .accessibilityIdentifier("fleet.gateways.settings")
+                // U3: Roster / Health / Settings moved to their own tabs
+                // (Bots / Activity·Home / Settings) — no longer toolbar links.
             }
         }
         .sheet(item: $presentedSheet) { sheet in
@@ -135,8 +112,6 @@ public struct GatewaysView: View {
                 }
             case .auth(let id):
                 GatewayAuthSheet(environment: environment, gatewayID: id)
-            case .settings:
-                AppLockSettingsView(controller: lockController)
             }
         }
         .alert("Gateway Error", isPresented: .init(

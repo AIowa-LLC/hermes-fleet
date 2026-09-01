@@ -5,7 +5,7 @@ import FleetCore
 /// In-memory draft of an in-progress Add/Edit-Gateway form (P0-2).
 ///
 /// Owned by `AppEnvironment` at the composition root, so it survives the H1
-/// biometric lock and scenePhase teardown: `FleetRootView` swaps the entire
+/// biometric lock and scenePhase teardown: `FleetTabView` swaps the entire
 /// `NavigationStack` (including `GatewaysView` and the presented form sheet
 /// with all its `@State`) for `AppLockView` on background + re-lock. The form
 /// binds directly to this store, so every keystroke lands here first; when the

@@ -28,9 +28,13 @@ final class ModuleBoundaryTests: XCTestCase {
     }
 
     func testUIModelStartsEmpty() {
-        let model = FleetDashboardModel()
-        XCTAssertTrue(model.gateways.isEmpty)
-        XCTAssertFalse(model.isLoading)
+        // U3: FleetDashboardModel was retired with the tab shell; the fleet
+        // state lives in AppEnvironment (empty until load()). Keep the M0
+        // assertion on the live seam: a fresh scripted-free runtime has no
+        // gateways before load.
+        let roster = FleetRoster()
+        XCTAssertTrue(roster.allGateways.isEmpty)
+        XCTAssertTrue(roster.allBots.isEmpty)
     }
 
     // MARK: M3 — one-gateway connectivity seam usable from the app

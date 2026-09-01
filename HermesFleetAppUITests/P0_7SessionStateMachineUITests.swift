@@ -23,6 +23,7 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     func testExistingSessionReEntrySendsWithoutConnectFromOpen() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // Drill to Bot detail (MacBook M5 → Default).
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
@@ -77,6 +78,7 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     func testNewSessionAffordanceCreatesUsableConversation() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))

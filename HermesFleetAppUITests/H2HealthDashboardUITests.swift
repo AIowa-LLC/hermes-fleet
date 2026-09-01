@@ -51,8 +51,7 @@ final class H2HealthDashboardUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_PING_INTERVAL_SECONDS"] = "2"
         app.launch()
 
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
-                      "Gateways screen should be the root in Release")
+        UITabNavigation.openGatewaysTab(app)
         handleLocalNetworkPrompt()
         attachScreenshot(of: app, name: "h2-step0-open-gateways")
 
@@ -118,8 +117,7 @@ final class H2HealthDashboardUITests: XCTestCase {
         // ---- 5. Restart: stats survive via FleetPersistence ---------------
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
-                      "app should relaunch to the Gateways screen")
+        UITabNavigation.openGatewaysTab(app)
         handleLocalNetworkPrompt()
 
         // Registry is in-memory (only credentials + health stats persist), so
@@ -217,8 +215,12 @@ final class H2HealthDashboardUITests: XCTestCase {
     }
 
     private func openHealthDashboard(in app: XCUIApplication) {
-        // The Health toolbar button is a NavigationLink; tap the toolbar item.
-        let health = firstMatch(in: app, identifier: "fleet.gateways.health")
+        // U3: the Health dashboard lives on the Activity tab's stack (the
+        // Gateways toolbar entry moved with the tab shell).
+        let activityTab = app.tabBars.firstMatch.buttons["Activity"]
+        XCTAssertTrue(activityTab.waitForExistence(timeout: 10), "Activity tab should exist")
+        activityTab.tap()
+        let health = firstMatch(in: app, identifier: "fleet.activity.health")
         XCTAssertTrue(health.waitForExistence(timeout: 10), "Health toolbar entry should exist")
         health.tap()
     }

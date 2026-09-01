@@ -21,6 +21,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
     func testRemovalRequiresConfirmationAndCanUndo() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // Seed fleet present.
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
@@ -76,6 +77,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
     func testFormRejectsUserInfoEndpoint() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
         let nameField = app.textFields["fleet.gateways.form.name"]

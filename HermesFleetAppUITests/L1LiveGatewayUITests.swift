@@ -30,10 +30,9 @@ final class L1LiveGatewayUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
 
-        // Step 1: open the app — Release starts at the Gateways screen (empty
-        // registry, production graph).
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
-                      "Gateways screen should be the root in Release")
+        // Step 1: open the app — U3 tab shell; the registry cockpit is the
+        // Gateways tab (Release, empty registry, production graph).
+        UITabNavigation.openGatewaysTab(app)
         attachScreenshot(of: app, name: "l1-step1-open-gateways")
 
         // Step 2/Phase 2: add the REAL gateway via the U2 add-gateway sheet.
@@ -91,12 +90,14 @@ final class L1LiveGatewayUITests: XCTestCase {
         sleep(5)
         attachScreenshot(of: app, name: "l1-step3-test-connection-result")
 
-        // §32 step 2 — see which bots/machines are available: open the Roster.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.roster"))
+        // §32 step 2 — see which bots/machines are available: open the Roster
+        // (Bots tab under the U3 tab shell).
+        UITabNavigation.openBotsTab(app)
         sleep(4)
         attachScreenshot(of: app, name: "l1-step4-roster-live")
 
         // §32 step 3/4 — drill into the real gateway (Bots screen).
+        UITabNavigation.openGatewaysTab(app)
         if firstMatch(in: app, identifier: "fleet.gateways.row.127.0.0.1:9119").waitForExistence(timeout: 5) {
             firstMatch(in: app, identifier: "fleet.gateways.row.127.0.0.1:9119")
                 .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()

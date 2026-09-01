@@ -124,6 +124,7 @@ if xcodebuild "${XC[@]}" \
     -only-testing:HermesFleetAppUITests/SplashUITests \
     -only-testing:HermesFleetAppUITests/P2GatewayFormDraftUITests \
     -only-testing:HermesFleetAppUITests/F2QRPairingUITests \
+    -only-testing:HermesFleetAppUITests/U3TabNavigationUITests \
     build test >/tmp/c1_xctest_ui.log 2>&1; then
   TLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/c1_xctest_ui.log | tail -1)
   ok "xcodebuild DETERMINISTIC UI tests SUCCEEDED — $TLINE"

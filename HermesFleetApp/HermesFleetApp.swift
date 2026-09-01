@@ -25,7 +25,7 @@ struct HermesFleetApp: App {
             // U1 (Gold Fleet): the palette is dark-only; force the dark
             // appearance app-wide so system chrome matches the tokens.
             ZStack {
-                FleetRootView(environment: environment, lockController: lockController)
+                FleetTabView(environment: environment, lockController: lockController)
                     .task {
                         await environment.load()
                         await environment.refreshRoster()

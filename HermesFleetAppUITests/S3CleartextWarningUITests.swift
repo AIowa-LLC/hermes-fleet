@@ -21,6 +21,7 @@ final class S3CleartextWarningUITests: XCTestCase {
     func testPublicHTTPEndpointShowsWarningAndGatesSave() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // Open the add-gateway form.
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
@@ -66,6 +67,7 @@ final class S3CleartextWarningUITests: XCTestCase {
     func testPrivateHTTPEndpointShowsNoWarning() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
         let nameField = app.textFields["fleet.gateways.form.name"]
@@ -92,6 +94,7 @@ final class S3CleartextWarningUITests: XCTestCase {
     func testLoopbackHTTPEndpointShowsNoWarning() throws {
         let app = XCUIApplication()
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
         let nameField = app.textFields["fleet.gateways.form.name"]

@@ -64,8 +64,7 @@ final class P3FixLANGatewayUITests: XCTestCase {
         app.launch()
 
         // Release starts at the Gateways screen (empty registry).
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 10),
-                      "Gateways screen should be the root in Release")
+        UITabNavigation.openGatewaysTab(app)
         // iOS 14+ local-network permission: it can fire at first LAN access
         // (the permission prompt is a system alert).
         handleLocalNetworkPrompt()

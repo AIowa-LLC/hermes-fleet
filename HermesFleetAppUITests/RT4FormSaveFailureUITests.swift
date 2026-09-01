@@ -20,6 +20,7 @@ final class RT4FormSaveFailureUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_SAVE_FAIL"] = "1"
         app.launch()
+        UITabNavigation.openGatewaysTab(app)
 
         // With save-fail enabled, the scripted seed (registry.addGateway) also
         // throws, so the fleet is empty — the Add Gateway entry point must not
