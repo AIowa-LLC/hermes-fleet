@@ -33,7 +33,10 @@ echo "=== GATE: device binary must NOT contain the scripted fleet ==="
 FAILED=0
 for BIN in "$APP_PATH/HermesFleetApp" "$APP_PATH/HermesFleetApp.debug.dylib"; do
   [ -f "$BIN" ] || continue
-  for s in "Gaming 4090" "Hello from the scripted fleet" "Arch Lab" "<dev-workstation>"; do
+  # Markers must be scripted-fleet-EXCLUSIVE strings (only in FleetSimulator.swift).
+  # "<dev-workstation>" is NOT exclusive: it also ships in FleetUI's #Preview
+  # (ConversationView.swift) which compiles into DEBUG device builds → false FAIL.
+  for s in "Gaming 4090" "Hello from the scripted fleet" "Arch Lab" "Replay plan review" "default.s2"; do
     if strings "$BIN" | grep -qF "$s"; then
       echo "FAIL: scripted-fleet marker '$s' PRESENT in $BIN — fake fleet shipped to device"
       FAILED=1
