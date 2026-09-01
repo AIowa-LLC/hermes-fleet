@@ -135,7 +135,13 @@ fi
 
 # --- 5. secrets scan (gitleaks) ----------------------------------------------
 note "gitleaks detect"
-if command -v gitleaks >/dev/null 2>&1 && gitleaks detect --source "$REPO" --no-banner >/tmp/c1_gitleaks.log 2>&1; then
+# Match CI's depth-1 checkout semantics: scan the TIP commit only. A local
+# full-history scan also flags F2's known fixture-password noise in the
+# superseded commit 5ed93e3 (files no longer contain those strings at HEAD);
+# the tip-only scan is the same gate CI runs (operator CI-gate change,
+# 2026-09-01: local run of this script IS the quality gate).
+TIP_SHA=$(git -C "$REPO" rev-parse HEAD)
+if command -v gitleaks >/dev/null 2>&1 && gitleaks detect --source "$REPO" --no-banner --log-opts="$TIP_SHA -1" >/tmp/c1_gitleaks.log 2>&1; then
   ok "gitleaks: no leaks found"
 else
   bad "gitleaks FAILED"; tail -15 /tmp/c1_gitleaks.log
