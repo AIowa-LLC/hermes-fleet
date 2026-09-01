@@ -21,7 +21,7 @@ final class F2PairingApplyTests: XCTestCase {
         let payload = PairingPayload(
             url: "http://<lan-ip>:8642",
             username: "fleet-operator",
-            password: "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7"
+            password: "test-pairing-secret-00000000000000000000000000001"
         )
 
         try store.applyPairing(payload.encoded())
@@ -30,7 +30,7 @@ final class F2PairingApplyTests: XCTestCase {
         XCTAssertEqual(store.endpointText, "http://<lan-ip>:8642")
         XCTAssertEqual(store.strategy, .usernamePassword)
         XCTAssertEqual(store.usernameText, "fleet-operator")
-        XCTAssertEqual(store.passwordText, "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7")
+        XCTAssertEqual(store.passwordText, "test-pairing-secret-00000000000000000000000000001")
         XCTAssertEqual(store.tokenText, "", "token field unused by the pairing strategy")
         XCTAssertFalse(store.confirmsCleartextSend)
         XCTAssertNil(store.saveError)

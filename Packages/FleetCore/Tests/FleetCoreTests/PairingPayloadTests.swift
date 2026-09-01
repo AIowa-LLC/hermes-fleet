@@ -13,7 +13,7 @@ final class PairingPayloadTests: XCTestCase {
         let payload = PairingPayload(
             url: "http://<lan-ip>:8642",
             username: "pair-op",
-            password: "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c"
+            password: "test-pairing-secret-000000000001"
         )
         let encoded = payload.encoded()
         let decoded = try PairingPayload.decode(encoded)
@@ -85,7 +85,7 @@ final class PairingPayloadTests: XCTestCase {
         let payload = PairingPayload(
             url: "http://<tailnet-ip>:8642",
             username: "fleet-operator",
-            password: "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7"
+            password: "test-pairing-secret-00000000000000000000000000001"
         )
         XCTAssertLessThan(payload.encoded().utf8.count, 512)
     }
