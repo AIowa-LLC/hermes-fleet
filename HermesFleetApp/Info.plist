@@ -24,6 +24,20 @@
 				<key>NSIncludesSubdomains</key>
 				<false/>
 			</dict>
+			<key><tailnet-ip></key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+			</dict>
+			<key><private-host></key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<false/>
+			</dict>
 		</dict>
 	</dict>
 	<key>NSFaceIDUsageDescription</key>

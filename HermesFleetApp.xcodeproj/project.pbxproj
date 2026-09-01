@@ -16,6 +16,7 @@
 		184DF99410B6C818C8728DF1 /* U6ConversationSkinUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D87954F52997464C091EED /* U6ConversationSkinUITests.swift */; };
 		1B5563751D50E50C7B196921 /* U3TabNavigationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A4B24E61526D2294992BD2 /* U3TabNavigationUITests.swift */; };
 		1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4799DB925C4D9935D2DD7D21 /* InProcessWebSocketServer.swift */; };
+		200B95B272E00C8BB9E7A8BC /* ATSExceptionDriftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1493BE85176762EA67892033 /* ATSExceptionDriftTests.swift */; };
 		225FA7C42C7D6F474B3EA8AA /* FleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 8F4470D5B9599997A86EB24D /* FleetCore */; };
 		230ED173C2D04A96779776A2 /* FleetThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */; };
 		26780CF557EC175FB73356B9 /* U7GatewayQrLockSettingsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */; };
@@ -86,6 +87,7 @@
 		0A603A8D0B8049916523C335 /* AppLockProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockProviders.swift; sourceTree = "<group>"; };
 		0F3B4DCFA36A97723EE623AB /* FleetCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetCore; path = Packages/FleetCore; sourceTree = SOURCE_ROOT; };
 		10E6E3D880ED0ED902488681 /* U5BotDetailUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U5BotDetailUITests.swift; sourceTree = "<group>"; };
+		1493BE85176762EA67892033 /* ATSExceptionDriftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ATSExceptionDriftTests.swift; sourceTree = "<group>"; };
 		171DB809769D21B3E41B0561 /* SplashOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashOverlayView.swift; sourceTree = "<group>"; };
 		1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U4DashboardUITests.swift; sourceTree = "<group>"; };
 		2380AC190371692E170A3C23 /* FleetSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSimulator.swift; sourceTree = "<group>"; };
@@ -176,6 +178,7 @@
 				E7F6E782B2770F110FAB14A9 /* AppCompositionTests.swift */,
 				743944B9CB1507020C1B2A8C /* AppEnvironmentTests.swift */,
 				FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */,
+				1493BE85176762EA67892033 /* ATSExceptionDriftTests.swift */,
 				5BEEFC0BD1DC4133FB63310C /* ConversationFixtureLoopTests.swift */,
 				C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */,
 				C0AFEA3FBD054A724A5F5139 /* F2PairingApplyTests.swift */,
@@ -429,6 +432,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				200B95B272E00C8BB9E7A8BC /* ATSExceptionDriftTests.swift in Sources */,
 				A61B399EE4B0054EF82EA89C /* AppCompositionTests.swift in Sources */,
 				0F2A6454E506740BE84B1739 /* AppEnvironmentTests.swift in Sources */,
 				CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */,
@@ -532,7 +536,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -618,7 +622,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_NS_ASSERTIONS = NO;
