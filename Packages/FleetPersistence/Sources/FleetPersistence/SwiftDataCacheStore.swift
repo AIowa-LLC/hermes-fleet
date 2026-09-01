@@ -17,7 +17,7 @@ import FleetCore
 /// so a context is never shared across concurrency contexts (SwiftData
 /// requirement). The cache is intentionally small and bounded (transcripts +
 /// watermarks per registered gateway).
-public actor SwiftDataCacheStore: CacheStoring {
+public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     /// The SwiftData container backing this cache. In-memory in tests /
     /// previews; file-backed in the app with NSFileProtectionComplete +
     /// backup-exclusion applied to the store file.
@@ -215,6 +215,56 @@ extension SwiftDataCacheStore: HealthStatsStoring {
         }
         try ctx.save()
     }
+
+    // MARK: GatewayRecordStoring (P0-4 — durable gateway roster)
+
+    public func saveGatewayRecord(_ record: StoredGatewayRecord) async throws {
+        let ctx = ModelContext(container)
+        // Upsert semantics keyed by gateway id: delete-then-insert (the record
+        // is non-secret presentation data — atomicity loss on a crash between
+        // the two writes is a benign empty-slot re-add, not data corruption).
+        let rows = try ctx.fetch(FetchDescriptor<CachedGatewayRow>())
+        for row in rows where row.gatewayID == record.id {
+            ctx.delete(row)
+        }
+        ctx.insert(CachedGatewayRow(
+            gatewayID: record.id,
+            displayName: record.displayName,
+            endpoint: record.endpoint,
+            authStrategyRaw: record.authConfiguration.strategy.rawValue,
+            credentialStored: record.authConfiguration.credentialStored,
+            authConfigured: record.authConfigured
+        ))
+        try ctx.save()
+    }
+
+    public func deleteGatewayRecord(id: GatewayID) async throws {
+        let ctx = ModelContext(container)
+        let rows = try ctx.fetch(FetchDescriptor<CachedGatewayRow>())
+        for row in rows where row.gatewayID == id.rawValue {
+            ctx.delete(row)
+        }
+        try ctx.save()
+    }
+
+    public func loadGatewayRecords() async throws -> [StoredGatewayRecord] {
+        let ctx = ModelContext(container)
+        let rows = try ctx.fetch(FetchDescriptor<CachedGatewayRow>())
+        return rows
+            .sorted { $0.gatewayID < $1.gatewayID }
+            .map { row in
+                StoredGatewayRecord(
+                    id: row.gatewayID,
+                    displayName: row.displayName,
+                    endpoint: row.endpoint,
+                    authConfiguration: GatewayAuthConfiguration(
+                        strategy: GatewayAuthConfiguration.Strategy(rawValue: row.authStrategyRaw) ?? .none,
+                        credentialStored: row.credentialStored
+                    ),
+                    authConfigured: row.authConfigured
+                )
+            }
+    }
 }
 
 // MARK: - Factories
@@ -225,7 +275,7 @@ public extension SwiftDataCacheStore {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
-                 CachedHealthStatsRow.self,
+                 CachedHealthStatsRow.self, CachedGatewayRow.self,
             configurations: config
         )
         return SwiftDataCacheStore(container: container)
@@ -242,7 +292,7 @@ public extension SwiftDataCacheStore {
         let config = ModelConfiguration(url: storeURL)
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
-                 CachedHealthStatsRow.self,
+                 CachedHealthStatsRow.self, CachedGatewayRow.self,
             configurations: config
         )
         // The store file is created eagerly at container init (verified); apply

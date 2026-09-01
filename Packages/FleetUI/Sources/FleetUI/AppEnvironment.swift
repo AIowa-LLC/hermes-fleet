@@ -175,6 +175,19 @@ public final class AppEnvironment {
     /// known gateways (DEBUG simulator walkthrough) — never overrides a
     /// user-managed fleet.
     public func load() async {
+        // P0-4: FIRST rebuild the registry from the durable record store so a
+        // user-added gateway survives app close / relaunch (never-connected
+        /// entries included, restored disconnected). Restore runs BEFORE the
+        /// seeding check so a restored user fleet suppresses seeding.
+        do {
+            _ = try await registry.restorePersistedGateways()
+        } catch {
+            // A broken record store must not brick launch — log and continue
+            // with the (possibly empty) in-memory registry.
+            #if DEBUG
+            print("P0-4 gateway restore failed: \(error)")
+            #endif
+        }
         let existing = await registry.allGateways()
         if existing.isEmpty, !seedRegistrations.isEmpty {
             for registration in seedRegistrations {

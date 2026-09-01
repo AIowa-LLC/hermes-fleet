@@ -29,15 +29,21 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     private var registry: GatewayRegistry
     private let credentials: any CredentialStoring
     private let connectionFactory: GatewayConnectionFactory
+    /// P0-4: durable non-secret gateway-record store. Every durable mutation
+    /// writes through immediately; `nil` (scripted fleet / tests) keeps the
+    /// registry purely in-memory, exactly as before.
+    private let recordStore: (any GatewayRecordStoring)?
 
     public init(
         registry: GatewayRegistry = GatewayRegistry(),
         credentials: any CredentialStoring,
-        connectionFactory: @escaping GatewayConnectionFactory
+        connectionFactory: @escaping GatewayConnectionFactory,
+        recordStore: (any GatewayRecordStoring)? = nil
     ) {
         self.registry = registry
         self.credentials = credentials
         self.connectionFactory = connectionFactory
+        self.recordStore = recordStore
     }
 
     // MARK: GatewayRegistryManaging
@@ -77,6 +83,16 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             authConfiguration: registration.authConfiguration
         )
         registry.register(gateway)
+        // P0-4: persist IMMEDIATELY on Add — the record survives app close /
+        // relaunch regardless of connection state. A persistence failure must
+        // surface (never silently drop the user's entry); the in-memory
+        // registration is rolled back so the UI state and the store agree.
+        do {
+            try await persist(gateway)
+        } catch {
+            registry.remove(id)
+            throw GatewayRegistryError.recordStoreFailed(String(describing: error))
+        }
         return gateway
     }
 
@@ -102,6 +118,10 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard let updated = registry.gateway(for: id) else {
             throw GatewayRegistryError.notFound(id)
         }
+        // P0-4: edits write through so a rename/endpoint change survives
+        // relaunch. No rollback path needed — the in-memory edit already
+        // succeeded; a store failure surfaces to the UI.
+        try await persist(updated)
         return updated
     }
 
@@ -117,6 +137,15 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             try await credentials.deleteCredential(for: id)
         } catch {
             throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+        }
+        // P0-4: remove the durable record too — a removed gateway must not
+        // resurrect on relaunch.
+        if let recordStore {
+            do {
+                try await recordStore.deleteGatewayRecord(id: id)
+            } catch {
+                throw GatewayRegistryError.recordStoreFailed(String(describing: error))
+            }
         }
         registry.remove(id)
     }
@@ -141,6 +170,10 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
                 credentialStored: true
             )
         }
+        // P0-4: write the auth flag through to the durable record.
+        if let updated = registry.gateway(for: id) {
+            try await persist(updated)
+        }
     }
 
     public func clearCredential(for id: GatewayID) async throws {
@@ -157,6 +190,10 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         registry.update(id) { gateway in
             gateway.authConfigured = false
             gateway.authConfiguration = .none
+        }
+        // P0-4: write the cleared auth flag through to the durable record.
+        if let updated = registry.gateway(for: id) {
+            try await persist(updated)
         }
     }
 
@@ -210,5 +247,50 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         // abandoned after a successful test.
         await connection.disconnect()
         return result
+    }
+
+    // MARK: P0-4 — durable record persistence + launch restore
+
+    /// Rebuild the in-memory registry from the durable record store.
+    /// Idempotent: records whose ID is already registered are skipped, so a
+    /// re-run (or an overlap with seeding) never duplicates entries. Restored
+    /// gateways are marked `.disconnected` with auth flags re-derived from the
+    /// credential store — the record itself is presentation data only.
+    public func restorePersistedGateways() async throws -> [FleetGateway] {
+        guard let recordStore else { return [] }
+        let records = try await recordStore.loadGatewayRecords()
+        var restored: [FleetGateway] = []
+        for record in records {
+            let id = GatewayID(rawValue: record.id)
+            guard registry.gateway(for: id) == nil else { continue }
+            let hasCredential = (try? await credentials.loadCredential(for: id)) != nil
+            let gateway = FleetGateway(
+                id: id,
+                displayName: record.displayName,
+                endpoint: URL(string: record.endpoint),
+                connectionState: .disconnected,
+                authConfigured: hasCredential,
+                authConfiguration: GatewayAuthConfiguration(
+                    strategy: record.authConfiguration.strategy,
+                    credentialStored: hasCredential
+                )
+            )
+            registry.register(gateway)
+            restored.append(gateway)
+        }
+        return restored
+    }
+
+    /// Write one gateway's non-secret record through to the durable store.
+    /// No-op when no record store is wired (scripted fleet / tests).
+    private func persist(_ gateway: FleetGateway) async throws {
+        guard let recordStore else { return }
+        try await recordStore.saveGatewayRecord(StoredGatewayRecord(
+            id: gateway.id.rawValue,
+            displayName: gateway.displayName,
+            endpoint: gateway.endpoint?.absoluteString ?? "",
+            authConfiguration: gateway.authConfiguration,
+            authConfigured: gateway.authConfigured
+        ))
     }
 }

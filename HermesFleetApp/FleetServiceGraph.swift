@@ -114,9 +114,15 @@ enum FleetServiceGraph {
         // entered in the UI reaches the live gateway (L1 fix: store split).
         let credentialStore = KeychainCredentialStore()
 
+        // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
+        // health stats also backs the durable gateway-record store — a
+        // user-added gateway is persisted on Add and restored on launch.
+        let cacheStore = makeFileBackedCache()
+
         let registry: any GatewayRegistryManaging = GatewayRegistryService(
             credentials: credentialStore,
-            connectionFactory: makeProbeFactory(credentialStore: credentialStore)
+            connectionFactory: makeProbeFactory(credentialStore: credentialStore),
+            recordStore: cacheStore
         )
         let roster: any FleetRosterProviding = FleetRosterService(
             registry: registry,
@@ -130,7 +136,6 @@ enum FleetServiceGraph {
         )
         // The file-backed SwiftData cache doubles as the health-stats store
         // (H2): same non-secret persistence seam, one store file.
-        let cacheStore = makeFileBackedCache()
         let cache: any CacheStoring = cacheStore
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 

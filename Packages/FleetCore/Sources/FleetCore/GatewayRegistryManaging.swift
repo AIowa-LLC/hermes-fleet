@@ -47,6 +47,20 @@ public protocol GatewayRegistryManaging: Sendable {
     /// probe is `.offline` / `.authenticationRequired` / etc., not a thrown
     /// error — unless the gateway is absent).
     func testConnection(to id: GatewayID) async throws -> GatewayTestResult
+
+    /// P0-4: rebuild the in-memory registry from the durable record store on
+    /// launch (before seeding). A protocol REQUIREMENT (not just an extension
+    /// default) so the concrete production registry's implementation is
+    /// dynamically dispatched through the existential; the extension below
+    /// provides the no-op default for conformers without persistence.
+    func restorePersistedGateways() async throws -> [FleetGateway]
+}
+
+extension GatewayRegistryManaging {
+    /// P0-4 default: no persistence wired (scripted fleet, test doubles) —
+    /// restore nothing. Overridden by `GatewayRegistryService` when a
+    /// `GatewayRecordStoring` is injected.
+    public func restorePersistedGateways() async throws -> [FleetGateway] { [] }
 }
 
 /// Errors surfaced by a gateway registry manager. None carry secrets.
@@ -64,6 +78,9 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
     /// The registration supplied a gateway ID that is not a safe routing key
     /// (path traversal, `#`, separators) — fail closed (M9).
     case invalidGatewayID(String)
+    /// The durable gateway-record store operation failed (P0-4; detail is
+    /// non-secret).
+    case recordStoreFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -73,6 +90,7 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
         case .emptyDisplayName: return "gateway display name cannot be empty"
         case .credentialStoreFailed(let detail): return "credential store failed: \(detail)"
         case .invalidGatewayID(let detail): return "invalid gateway ID: \(detail)"
+        case .recordStoreFailed(let detail): return "gateway record store failed: \(detail)"
         }
     }
 }

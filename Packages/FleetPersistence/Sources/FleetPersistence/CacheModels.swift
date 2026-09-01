@@ -165,3 +165,46 @@ public final class CachedHealthStatsRow {
         self.pingSampleCount = pingSampleCount
     }
 }
+
+/// One persisted gateway-record row (P0-4, t_e32529e8): the durable, non-secret
+/// registration of a user-added gateway so the fleet roster survives app
+/// close / relaunch. Fields mirror `StoredGatewayRecord` exactly — the record
+/// is written IMMEDIATELY on Add regardless of connection state.
+///
+/// **Structural no-secret invariant:** like every cache model, there is NO
+/// token, ticket, credential, password, or key field here — the secret lives
+/// only in Keychain (`KeychainCredentialStore`); this row stores only the
+/// auth STRATEGY name + credential-stored flag (synthesis §12).
+@Model
+public final class CachedGatewayRow {
+    /// Canonical gateway identity (`GatewayID.rawValue`) — primary key.
+    public var gatewayID: String
+    /// User-facing display name (presentation-only).
+    public var displayName: String
+    /// Base `http(s)://` endpoint origin.
+    public var endpoint: String
+    /// Non-secret auth STRATEGY raw value ("none"/"sessionToken"/…) — never
+    /// secret material.
+    public var authStrategyRaw: String
+    /// Whether a credential was stored (Keychain) at persist time.
+    public var credentialStored: Bool
+    /// Whether auth was configured at persist time (informational; re-derived
+    /// from Keychain on restore).
+    public var authConfigured: Bool
+
+    public init(
+        gatewayID: String,
+        displayName: String,
+        endpoint: String,
+        authStrategyRaw: String,
+        credentialStored: Bool,
+        authConfigured: Bool
+    ) {
+        self.gatewayID = gatewayID
+        self.displayName = displayName
+        self.endpoint = endpoint
+        self.authStrategyRaw = authStrategyRaw
+        self.credentialStored = credentialStored
+        self.authConfigured = authConfigured
+    }
+}
