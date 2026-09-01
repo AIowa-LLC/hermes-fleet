@@ -91,6 +91,16 @@ public enum FleetTheme {
         status.opacity(0.2)
     }
 
+    /// U6 (Gold Fleet) — the magenta gradient fill for user message bubbles
+    /// and the circular send button (hero mock screen 2). Derived from the
+    /// single magenta accent token (no second hex value enters the palette):
+    /// full-strength magenta fading toward the dark ground at ~65%.
+    public static let accentMagentaGradient: LinearGradient = LinearGradient(
+        colors: [accentMagenta, accentMagenta.opacity(0.65)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
     // MARK: - Legacy aliases (pre-Gold-Fleet token names, still referenced
     // MARK:   by existing screens; re-skin cards U3–U7 migrate call sites)
 

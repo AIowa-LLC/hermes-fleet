@@ -53,9 +53,64 @@ public struct ConversationView: View {
 
     private func canvas(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
+            botHeader(model)
             bannerArea(model)
             transcriptList(model)
             composer(model)
+        }
+    }
+
+    // MARK: Bot header (U6 — hero mock screen 2)
+
+    /// Bot identity header: avatar, display name, canonical route, and a
+    /// status pill, on the surface color with a hairline bottom border.
+    /// The pill shows the roster bot's live activity when the route resolves;
+    /// otherwise it projects the conversation phase onto the four pill states
+    /// (never fabricates a livelier state than the connection has).
+    private func botHeader(_ model: ConversationViewModel) -> some View {
+        let bot = environment.bot(for: route)
+        let name = bot?.displayName ?? route.profileSlug.rawValue
+        return HStack(spacing: FleetTheme.spacingMd) {
+            BotAvatar(displayName: name)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(FleetTheme.textPrimary)
+                    .lineLimit(1)
+                Text(route.id)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            StatusPill(status: headerPillStatus(bot: bot, model: model))
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, FleetTheme.spacingSm)
+        .background(FleetTheme.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(FleetTheme.border)
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.header")
+    }
+
+    private func headerPillStatus(bot: FleetBot?, model: ConversationViewModel) -> FleetStatus {
+        if let bot {
+            return FleetStatus(activity: bot.activity)
+        }
+        switch model.phase {
+        case .ready, .streaming:
+            return .online
+        case .idle, .opening, .connecting, .reconnecting:
+            return .idle
+        case .authRequired, .failed:
+            return .degraded
+        case .disconnected:
+            return .offline
         }
     }
 
@@ -65,7 +120,7 @@ public struct ConversationView: View {
     private func bannerArea(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
             if let replayNotice = model.replayNotice, model.phase != .streaming {
-                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accentColdBlue)
+                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accentCyan)
             }
             switch model.phase {
             case .idle, .opening:
@@ -77,7 +132,7 @@ public struct ConversationView: View {
             case .disconnected:
                 HStack(spacing: 12) {
                     banner(text: "Connection lost — replayed history is shown. Reconnect to continue.",
-                           symbol: "wifi.slash", tint: FleetTheme.accent)
+                           symbol: "wifi.slash", tint: FleetTheme.statusDegraded)
                     Button("Reconnect") {
                         Task { await model.reconnect() }
                     }
@@ -88,23 +143,23 @@ public struct ConversationView: View {
             case .authRequired:
                 HStack(spacing: 12) {
                     banner(text: model.errorMessage ?? "Authentication required.",
-                           symbol: "exclamationmark.lock", tint: FleetTheme.accent)
+                           symbol: "exclamationmark.lock", tint: FleetTheme.statusDegraded)
                     Button("Re-authenticate") {
                         Task { await model.reauthenticate() }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(FleetTheme.accent)
+                    .tint(FleetTheme.accentMagenta)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
                 }
             case .failed(let detail):
-                banner(text: detail, symbol: "exclamationmark.triangle", tint: FleetTheme.accent)
+                banner(text: detail, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
             case .ready, .streaming:
                 if model.hydratedFromCache {
                     banner(text: "Showing saved history — connecting for live updates.",
                            symbol: "internaldrive", tint: FleetTheme.textSecondary)
                 } else if let errorMessage = model.errorMessage {
-                    banner(text: errorMessage, symbol: "exclamationmark.triangle", tint: FleetTheme.accent)
+                    banner(text: errorMessage, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
                 }
             }
         }
@@ -163,13 +218,25 @@ public struct ConversationView: View {
         .accessibilityIdentifier("fleet.conversation.transcript")
     }
 
-    // MARK: Composer
+    // MARK: Composer (U6 — surface bar, magenta circular send button)
 
     private func composer(_ model: ConversationViewModel) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: FleetTheme.spacingSm) {
             TextField("Message", text: $composerText, axis: .vertical)
                 .lineLimit(1...4)
-                .textFieldStyle(.roundedBorder)
+                .font(.body)
+                .foregroundStyle(FleetTheme.textPrimary)
+                .tint(FleetTheme.accentMagenta)
+                .padding(.horizontal, FleetTheme.spacingMd)
+                .padding(.vertical, FleetTheme.spacingSm)
+                .background(
+                    RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                        .fill(FleetTheme.background)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                        .strokeBorder(FleetTheme.border, lineWidth: 1)
+                )
                 .disabled(model.phase != .ready && model.phase != .streaming)
                 .accessibilityIdentifier("fleet.conversation.composer")
                 .onSubmit {
@@ -180,27 +247,42 @@ public struct ConversationView: View {
                 Button {
                     Task { await model.interrupt() }
                 } label: {
-                    Label("Stop", systemImage: "stop.fill")
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                        .background(Circle().fill(FleetTheme.surfaceElevated))
+                        .overlay(Circle().strokeBorder(FleetTheme.border, lineWidth: 1))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(FleetTheme.accent)
+                .accessibilityLabel("Stop")
                 .accessibilityIdentifier("fleet.conversation.stop")
             } else {
                 Button {
                     Task { await submit(model) }
                 } label: {
-                    Label("Send", systemImage: "arrow.up.circle.fill")
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                        .background(Circle().fill(FleetTheme.accentMagentaGradient))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(FleetTheme.accent)
-                .disabled(model.phase != .ready)
+                .disabled(model.phase != .ready || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Send")
                 .accessibilityIdentifier("fleet.conversation.send")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, FleetTheme.spacingSm)
         .background(FleetTheme.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(FleetTheme.border)
+                .frame(height: 1)
+        }
     }
+
+    /// Send/stop button side length (pt) — circular, per the hero mock.
+    private static let sendButtonSide: CGFloat = 40
 
     private func submit(_ model: ConversationViewModel) async {
         let text = composerText
@@ -214,7 +296,7 @@ public struct ConversationView: View {
                 Text("Conversation Unavailable")
             } icon: {
                 Image(systemName: "text.bubble")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(FleetTheme.accentMagenta)
             }
         } description: {
             Text("This gateway has no conversation session wired.")
@@ -223,16 +305,24 @@ public struct ConversationView: View {
     }
 }
 
-/// One transcript row: user/assistant/tool/status/system/error bubble.
+/// One transcript row (U6 Gold Fleet re-skin): user bubbles are right-aligned
+/// magenta-gradient capsules; assistant replies are left-aligned surface
+/// cards; timestamps render under each bubble (caption2 secondary) whenever
+/// the row carries one.
 private struct ConversationBubbleView: View {
     let row: ConversationRow
 
     var body: some View {
         HStack {
             if row.kind == .user { Spacer(minLength: 60) }
-            VStack(alignment: row.kind == .user ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: row.kind == .user ? .trailing : .leading, spacing: FleetTheme.spacingXs) {
                 bubbleContent
                     .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
+                if let timestampText {
+                    Text(timestampText)
+                        .font(.caption2)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
             }
             if row.kind != .user { Spacer(minLength: 60) }
         }
@@ -244,16 +334,29 @@ private struct ConversationBubbleView: View {
         .accessibilityIdentifier("fleet.conversation.row.\(row.id)")
     }
 
+    /// U6: timestamp under the bubble — rendered only when the gateway
+    /// stamped the row (persisted history); live unstamped rows omit it
+    /// rather than fabricate a time.
+    private var timestampText: String? {
+        guard row.kind == .user || row.kind == .assistant,
+              let timestamp = row.timestamp else { return nil }
+        return FleetSessionDateText.text(timestamp)
+    }
+
     @ViewBuilder
     private var bubbleContent: some View {
         switch row.kind {
         case .user:
+            // U6: magenta-gradient capsule, right-aligned (hero mock screen 2).
             Text(row.text)
                 .font(.body)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(FleetTheme.accent, in: RoundedRectangle(cornerRadius: 18))
+                .background(
+                    FleetTheme.accentMagentaGradient,
+                    in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
+                )
         case .assistant:
             VStack(alignment: .leading, spacing: 4) {
                 if let detail = row.detail, !detail.isEmpty {
@@ -264,7 +367,7 @@ private struct ConversationBubbleView: View {
                 }
                 Text(row.text.isEmpty ? (row.isStreaming ? "…" : "") : row.text)
                     .font(.body)
-                    .foregroundStyle(row.isFailed ? FleetTheme.accent : FleetTheme.textPrimary)
+                    .foregroundStyle(row.isFailed ? FleetTheme.statusDegraded : FleetTheme.textPrimary)
                     .textSelection(.enabled)
                 if row.isStreaming {
                     // P2-7: decorative streaming dots — hidden from assistive
@@ -273,7 +376,7 @@ private struct ConversationBubbleView: View {
                     HStack(spacing: 4) {
                         ForEach(0..<3, id: \.self) { i in
                             Circle()
-                                .fill(FleetTheme.textSecondary)
+                                .fill(FleetTheme.accentMagenta)
                                 .frame(width: 5, height: 5)
                                 .opacity(0.6)
                         }
@@ -283,21 +386,26 @@ private struct ConversationBubbleView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(FleetTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: 18))
+            .background(FleetTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble))
+            .overlay(
+                RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
+                    .strokeBorder(FleetTheme.border, lineWidth: 1)
+            )
         case .tool:
             Label {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.text).font(.caption.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textPrimary)
                     if let detail = row.detail, !detail.isEmpty {
                         Text(detail).font(.caption2).foregroundStyle(FleetTheme.textSecondary)
                     }
                 }
             } icon: {
                 Image(systemName: "wrench.and.screwdriver")
-                    .foregroundStyle(FleetTheme.accentColdBlue)
+                    .foregroundStyle(FleetTheme.accentCyan)
             }
             .padding(10)
-            .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+            .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         case .status, .system:
             Text(row.text)
                 .font(.caption)
@@ -306,7 +414,7 @@ private struct ConversationBubbleView: View {
         case .error:
             Label(row.text, systemImage: "exclamationmark.triangle")
                 .font(.caption)
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(FleetTheme.statusDegraded)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

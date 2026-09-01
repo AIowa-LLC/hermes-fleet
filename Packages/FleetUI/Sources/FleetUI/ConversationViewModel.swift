@@ -25,6 +25,11 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
     public var text: String
     /// Secondary detail (tool name/context, status kind, thinking text).
     public var detail: String?
+    /// Display-only authoring time (Unix seconds) carried through from the
+    /// persisted/streamed `SessionMessage` when the gateway stamped one
+    /// (U6: timestamp styling under the bubbles). Nil for live rows the
+    /// gateway has not stamped yet — no time is fabricated.
+    public var timestamp: Double?
     public var isStreaming: Bool
     public var isFailed: Bool
 
@@ -33,6 +38,7 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         kind: Kind,
         text: String,
         detail: String? = nil,
+        timestamp: Double? = nil,
         isStreaming: Bool = false,
         isFailed: Bool = false
     ) {
@@ -40,6 +46,7 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         self.kind = kind
         self.text = text
         self.detail = detail
+        self.timestamp = timestamp
         self.isStreaming = isStreaming
         self.isFailed = isFailed
     }
@@ -709,29 +716,31 @@ public final class ConversationViewModel {
     static func row(from message: SessionMessage, id: String) -> ConversationRow {
         switch message.role {
         case .user:
-            return .init(id: id, kind: .user, text: message.text)
+            return .init(id: id, kind: .user, text: message.text, timestamp: message.timestamp)
         case .assistant:
-            return .init(id: id, kind: .assistant, text: message.text, detail: message.reasoning)
+            return .init(id: id, kind: .assistant, text: message.text, detail: message.reasoning, timestamp: message.timestamp)
         case .tool:
-            return .init(id: id, kind: .tool, text: message.toolName ?? message.text, detail: message.toolContext)
+            return .init(id: id, kind: .tool, text: message.toolName ?? message.text, detail: message.toolContext, timestamp: message.timestamp)
         case .system:
-            return .init(id: id, kind: .system, text: message.text)
+            return .init(id: id, kind: .system, text: message.text, timestamp: message.timestamp)
         case .unknown:
-            return .init(id: id, kind: .system, text: message.text)
+            return .init(id: id, kind: .system, text: message.text, timestamp: message.timestamp)
         }
     }
 
     /// Reverse-map a rendered row onto a persisted `SessionMessage` (M10).
+    /// U6: the display-only timestamp round-trips so a cached transcript keeps
+    /// its stamped times across re-persists (rows without one stay unstamped).
     static func sessionMessage(from row: ConversationRow) -> SessionMessage? {
         switch row.kind {
         case .user:
-            return .init(role: .user, text: row.text)
+            return .init(role: .user, text: row.text, timestamp: row.timestamp)
         case .assistant:
-            return .init(role: .assistant, text: row.text, reasoning: row.detail)
+            return .init(role: .assistant, text: row.text, timestamp: row.timestamp, reasoning: row.detail)
         case .tool:
-            return .init(role: .tool, text: row.text, toolName: row.text, toolContext: row.detail)
+            return .init(role: .tool, text: row.text, timestamp: row.timestamp, toolName: row.text, toolContext: row.detail)
         case .status, .system:
-            return .init(role: .system, text: row.text, toolName: row.detail)
+            return .init(role: .system, text: row.text, timestamp: row.timestamp, toolName: row.detail)
         case .error:
             return nil // errors are transient UI state, not persisted history
         }
