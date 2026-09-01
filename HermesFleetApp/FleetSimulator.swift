@@ -5,9 +5,11 @@ import FleetSecurity
 import FleetPersistence
 import FleetUI
 
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
 
-/// Scripted fleet simulator — DEBUG builds ONLY.
+/// Scripted fleet simulator — DEBUG SIMULATOR builds ONLY (P0-5: a Debug
+/// build on a physical device is a live-dogfood lane and must never contain
+/// the fake fleet — see FleetServiceGraph.makeDefaultEnvironment).
 ///
 /// U1 acceptance requires the navigation skeleton to be walkable in the
 /// simulator: Gateways → Bots → Sessions → Conversation. Without a live Hermes

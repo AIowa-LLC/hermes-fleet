@@ -19,7 +19,14 @@ import FleetUI
 enum FleetServiceGraph {
 
     static func makeDefaultEnvironment() -> AppEnvironment {
-        #if DEBUG
+        // P0-5: the scripted fleet is for the SIMULATOR ONLY — a Debug build
+        // running on a physical device is Tony's live-dogfood lane and must
+        // get the REAL production graph (real Keychain + live transports).
+        // The old `#if DEBUG` alone silently shipped the fake fleet to the
+        // device: scripted connect was a no-op (no socket EVER opened) and a
+        // user-added gateway reported a healthy-but-empty roster — the app
+        // looked "Auth configured" yet never talked to the gateway.
+        #if DEBUG && targetEnvironment(simulator)
         return makeSimulatorEnvironment()
         #else
         return makeProductionEnvironment()
