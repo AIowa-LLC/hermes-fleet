@@ -84,7 +84,7 @@ extension FleetServiceGraph {
                 ScriptedConversationSession(gatewayID: gateway.id)
             },
             health: health,
-            seedRegistrations: ScriptedFleet.registrations
+            seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations
         )
     }
 }

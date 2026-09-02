@@ -104,6 +104,14 @@ enum FleetServiceGraph {
             return ScriptedLockAuth(biometricResult: .success, passcodeSucceeds: true)
         }
     }
+
+    /// F3 UI-test knob (DEBUG simulator only): `HERMES_FLEET_ZERO_GATEWAYS=1`
+    /// suppresses the scripted seed registrations so the app launches with an
+    /// EMPTY registry — the brand-new-user empty state with the F3 onboarding
+    /// CTA is then reachable in a deterministic UI test.
+    nonisolated static var zeroGatewaysEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_ZERO_GATEWAYS"] == "1"
+    }
     #endif
 
     // MARK: Production — real stores + live transports
