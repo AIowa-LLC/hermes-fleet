@@ -80,6 +80,45 @@ public struct FleetRosterSnapshot: Sendable, Equatable {
     public func bot(for route: Route) -> FleetBot? {
         roster.bot(for: route)
     }
+
+    /// P0-7 multiplexer presence: a bot is ONLINE (reachable) when the
+    /// gateway that listed it answered `profiles.list` this refresh — the
+    /// Hermes gateway is a profile MULTIPLEXER, so every profile it serves is
+    /// chat-reachable through that one connection (`/p/<profile>/` routes).
+    /// Presence therefore derives from the OWNING GATEWAY's roster outcome,
+    /// never from a per-bot signal: a gateway that failed to answer has no
+    /// reachable bots, and a gateway that answered has ALL its bots reachable.
+    ///
+    /// This is deliberately SEPARATE from `FleetBot.activity` (live bot work
+    /// state) and from `gateway_running` (own-process badge): connection
+    /// state, presence, and activity are three distinct concerns.
+    public func botPresence(on id: GatewayID) -> BotPresence {
+        guard roster.gateways[id] != nil else { return .unknown }
+        switch gatewayOutcomes[id] {
+        case .loaded: return .reachable
+        case .failed: return .unreachable
+        case nil: return .unknown
+        }
+    }
+
+    /// Presence for one exact bot route (fail closed: an unknown route is
+    /// `.unknown`, never guessed).
+    public func botPresence(for route: Route) -> BotPresence {
+        guard roster.bots[route] != nil else { return .unknown }
+        return botPresence(on: route.gatewayID)
+    }
+}
+
+/// P0-7: per-bot presence derived from the owning gateway's roster outcome
+/// (the multiplexer model — see `FleetRosterSnapshot.botPresence(on:)`).
+public enum BotPresence: String, Hashable, Sendable, Codable {
+    /// The owning gateway answered `profiles.list` this refresh — the bot is
+    /// chat-reachable through the multiplexer connection.
+    case reachable
+    /// The owning gateway failed to answer — the bot is not reachable.
+    case unreachable
+    /// No refresh has classified the owning gateway yet (fail closed).
+    case unknown
 }
 
 /// The per-gateway result of a fleet roster refresh (spec §13 states).

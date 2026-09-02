@@ -103,7 +103,15 @@ public struct BotDetailView: View {
                             .truncationMode(.middle)
                     }
                     Spacer()
-                    StatusPill(status: FleetStatus(activity: bot.activity))
+                    StatusPill(
+                        status: FleetStatus(
+                            activity: bot.activity,
+                            presence: environment.botPresence(for: bot.route)
+                        )
+                    )
+                }
+                if bot.gatewayRunning {
+                    GatewayRunningBadge(isRunning: true)
                 }
                 if let model = bot.model, let provider = bot.provider {
                     Text("\(model) · \(provider)")
@@ -231,6 +239,8 @@ public struct BotDetailView: View {
                         detailRow(label: "Model", value: modelText(bot))
                     }
                     detailRow(label: "Activity", value: activityText(bot.activity))
+                    detailRow(label: "Presence", value: presenceText(environment.botPresence(for: bot.route)))
+                    detailRow(label: "Own gateway process", value: bot.gatewayRunning ? "Running" : "No")
                     if let latest = bot.latestSession {
                         detailRow(label: "Latest session", value: latest.title)
                     }
@@ -296,6 +306,16 @@ public struct BotDetailView: View {
         case .offline: return "Offline"
         case .needsAttention: return "Needs attention"
         case .unknown: return "Unknown"
+        }
+    }
+
+    /// P0-7 presence labels — multiplexer model: reachable = online through
+    /// the owning gateway's connection.
+    private func presenceText(_ presence: BotPresence) -> String {
+        switch presence {
+        case .reachable: return "Online (gateway reachable)"
+        case .unreachable: return "Offline (gateway unreachable)"
+        case .unknown: return "Unknown (no roster yet)"
         }
     }
 }

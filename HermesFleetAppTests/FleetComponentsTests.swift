@@ -103,4 +103,37 @@ final class FleetComponentsTests: XCTestCase {
         XCTAssertEqual(FleetStatus(activity: .offline), .offline)
         XCTAssertEqual(FleetStatus(activity: .unknown), .offline, "unknown never fabricates activity")
     }
+
+    // MARK: - P0-7 presence-aware pill (multiplexer model)
+
+    /// The fix for "bots show offline despite server ONLINE": an unobserved
+    /// bot on a gateway that ANSWERED the roster refresh is Online — presence
+    /// (owning gateway outcome) is the primary signal, activity only refines.
+    func testFleetStatusReachablePresenceLiftsUnobservedActivityToOnline() {
+        XCTAssertEqual(FleetStatus(activity: .unknown, presence: .reachable), .online)
+        XCTAssertEqual(FleetStatus(activity: .offline, presence: .reachable), .online)
+    }
+
+    func testFleetStatusReachablePresenceRefinesWithRealActivity() {
+        XCTAssertEqual(FleetStatus(activity: .working, presence: .reachable), .online)
+        XCTAssertEqual(FleetStatus(activity: .thinking, presence: .reachable), .online)
+        XCTAssertEqual(FleetStatus(activity: .usingTool, presence: .reachable), .online)
+        XCTAssertEqual(FleetStatus(activity: .waiting, presence: .reachable), .idle)
+        XCTAssertEqual(FleetStatus(activity: .idle, presence: .reachable), .idle)
+        XCTAssertEqual(FleetStatus(activity: .needsAttention, presence: .reachable), .degraded)
+    }
+
+    func testFleetStatusUnreachableOrUnknownPresenceIsOfflineRegardlessOfActivity() {
+        for activity in [BotActivity.working, .thinking, .usingTool, .waiting, .idle, .needsAttention, .offline, .unknown] {
+            XCTAssertEqual(FleetStatus(activity: activity, presence: .unreachable), .offline)
+            XCTAssertEqual(FleetStatus(activity: activity, presence: .unknown), .offline)
+        }
+    }
+
+    func testGatewayRunningBadgeInit() {
+        // Badge renders (non-nil body) in both states; hidden-when-false is
+        // the design (empty view) — init must not crash either way.
+        XCTAssertNotNil(GatewayRunningBadge(isRunning: true).body)
+        XCTAssertNotNil(GatewayRunningBadge(isRunning: false).body)
+    }
 }

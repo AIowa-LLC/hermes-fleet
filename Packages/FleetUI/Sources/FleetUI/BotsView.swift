@@ -76,6 +76,9 @@ public struct BotsView: View {
     }
 
     /// U5 row spec: avatar + name + model/provider subtitle + status pill.
+    /// P0-7: pill derives from roster presence (owning gateway answered) with
+    /// live activity as refinement; the "own gateway process" badge is a
+    /// subtle secondary signal, never the primary online/offline.
     private func botRow(_ bot: FleetBot) -> some View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
@@ -97,9 +100,17 @@ public struct BotsView: View {
                             .foregroundStyle(FleetTheme.textSecondary)
                             .lineLimit(1)
                     }
+                    if bot.gatewayRunning {
+                        GatewayRunningBadge(isRunning: true)
+                    }
                 }
                 Spacer()
-                StatusPill(status: FleetStatus(activity: bot.activity))
+                StatusPill(
+                    status: FleetStatus(
+                        activity: bot.activity,
+                        presence: environment.botPresence(for: bot.route)
+                    )
+                )
             }
         }
         .accessibilityElement(children: .combine)

@@ -122,7 +122,10 @@ public struct FleetRosterView: View {
                 VStack(spacing: FleetTheme.spacingSm) {
                     ForEach(section.bots) { bot in
                         NavigationLink(value: FleetScreen.botDetail(bot.route)) {
-                            BotRowView(bot: bot)
+                            BotRowView(
+                                bot: bot,
+                                presence: environment.botPresence(for: bot.route)
+                            )
                         }
                         .buttonStyle(.plain)
                         .accessibilityElement(children: .combine)
@@ -250,8 +253,11 @@ public struct FleetRosterView: View {
 
 /// A bot row in the union roster (U5): avatar + name + canonical route
 /// identity + model/provider + status pill, on a FleetCard.
+/// P0-7: the pill derives from roster presence (owning gateway answered)
+/// with live activity as refinement — NOT from unobserved activity alone.
 private struct BotRowView: View {
     let bot: FleetBot
+    let presence: BotPresence
 
     var body: some View {
         FleetCard {
@@ -275,10 +281,13 @@ private struct BotRowView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
+                    if bot.gatewayRunning {
+                        GatewayRunningBadge(isRunning: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer()
-                StatusPill(status: FleetStatus(activity: bot.activity))
+                StatusPill(status: FleetStatus(activity: bot.activity, presence: presence))
             }
         }
         .accessibilityElement(children: .combine)

@@ -28,6 +28,11 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
     public var activity: BotActivity
     /// Latest human-facing session, when known.
     public var latestSession: SessionSummary?
+    /// Server truth (`profiles.list.gateway_running`): this profile runs its
+    /// own gateway process. Secondary badge ONLY — never primary presence
+    /// (P0-7 multiplexer scope: every listed profile is reachable through the
+    /// owning gateway's shared connection).
+    public var gatewayRunning: Bool
 
     public var id: Route { route }
 
@@ -38,7 +43,8 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
         provider: String? = nil,
         profileDescription: String? = nil,
         activity: BotActivity = .unknown,
-        latestSession: SessionSummary? = nil
+        latestSession: SessionSummary? = nil,
+        gatewayRunning: Bool = false
     ) {
         self.route = route
         self.displayName = displayName
@@ -47,6 +53,7 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
         self.profileDescription = profileDescription
         self.activity = activity
         self.latestSession = latestSession
+        self.gatewayRunning = gatewayRunning
     }
 
     /// Build a bot from a gateway-provided `ProfileDescriptor`.
@@ -63,7 +70,8 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
             model: descriptor.model,
             provider: descriptor.provider,
             profileDescription: descriptor.profileDescription,
-            latestSession: descriptor.lastSession
+            latestSession: descriptor.lastSession,
+            gatewayRunning: descriptor.gatewayRunning
         )
     }
 }

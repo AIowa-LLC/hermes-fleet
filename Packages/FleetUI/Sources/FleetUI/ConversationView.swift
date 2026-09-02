@@ -100,7 +100,12 @@ public struct ConversationView: View {
 
     private func headerPillStatus(bot: FleetBot?, model: ConversationViewModel) -> FleetStatus {
         if let bot {
-            return FleetStatus(activity: bot.activity)
+            // P0-7: presence (owning gateway's roster outcome) is the primary
+            // signal; live conversation phase refines only when no roster bot.
+            return FleetStatus(
+                activity: bot.activity,
+                presence: environment.botPresence(for: bot.route)
+            )
         }
         switch model.phase {
         case .ready, .streaming:

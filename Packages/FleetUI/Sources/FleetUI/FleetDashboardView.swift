@@ -215,7 +215,12 @@ public struct FleetDashboardView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                StatusPill(status: FleetStatus(activity: bot.activity))
+                StatusPill(
+                    status: FleetStatus(
+                        activity: bot.activity,
+                        presence: environment.botPresence(for: bot.route)
+                    )
+                )
             }
         }
         .accessibilityElement(children: .combine)

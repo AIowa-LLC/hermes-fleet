@@ -65,7 +65,8 @@ public struct GatewayRosterClient: RosterProviding {
             displayName: object["display_name"]?.stringValue,
             skillCount: object["skill_count"]?.numberValue.map(Int.init) ?? 0,
             hasAvatar: object["has_avatar"]?.boolValue ?? false,
-            lastSession: object["last_session"].flatMap(Self.decodeSession)
+            lastSession: object["last_session"].flatMap(Self.decodeSession),
+            gatewayRunning: object["gateway_running"]?.boolValue ?? false
         )
     }
 

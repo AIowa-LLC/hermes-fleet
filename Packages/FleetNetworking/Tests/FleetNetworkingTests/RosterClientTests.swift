@@ -203,6 +203,44 @@ final class RosterClientTests: XCTestCase {
         XCTAssertEqual(profiles[0].resolvedDisplayName, "Default")
     }
 
+    /// P0-7: the server sends `gateway_running` per profile; the client must
+    /// decode it (secondary "own gateway process" truth — never presence).
+    func testFetchProfilesDecodesGatewayRunning() async throws {
+        let script = rosterScript(profiles: [
+            [
+                "name": "default", "path": "/home/t/.hermes", "is_default": true,
+                "model": "deepseek-v4-flash", "provider": "nous",
+                "display_name": "Default", "skill_count": 3,
+                "gateway_running": true,
+            ],
+            [
+                "name": "researcher", "path": "/home/t/.hermes/profiles/researcher",
+                "is_default": false, "model": "hermes", "provider": "openrouter",
+                "gateway_running": false,
+            ],
+            [
+                // Older gateways omit the key entirely — must default false.
+                "name": "legacy", "path": "/home/t/.hermes/profiles/legacy",
+            ],
+        ])
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayRosterClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let profiles = try await client.fetchProfiles()
+        XCTAssertEqual(profiles.count, 3)
+        let byName = Dictionary(uniqueKeysWithValues: profiles.map { ($0.name, $0) })
+        XCTAssertEqual(byName["default"]?.gatewayRunning, true)
+        XCTAssertEqual(byName["researcher"]?.gatewayRunning, false)
+        XCTAssertEqual(byName["legacy"]?.gatewayRunning, false)
+    }
+
     func testFetchProfilesNotConnectedThrows() async {
         let transport = makeTransport(serverPort: 1)
         let client = GatewayRosterClient(

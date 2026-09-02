@@ -58,4 +58,29 @@ public enum FleetStatus: String, Hashable, Sendable, CaseIterable {
         case .offline, .unknown: self = .offline
         }
     }
+
+    /// P0-7 multiplexer presence: the pill's primary signal is whether the
+    /// OWNING GATEWAY answered the roster refresh (`presence`), because the
+    /// Hermes gateway is a profile multiplexer — every listed profile is
+    /// chat-reachable through that one connection. Live `activity` refines
+    /// the reachable case only (a reachable bot shows its real work state,
+    /// defaulting to online-idle when unobserved); an unreachable or unknown
+    /// bot renders offline-gray no matter what stale activity says. This is
+    /// what fixes "bots show offline despite server ONLINE": an unobserved
+    /// bot on an answering gateway is Online, not Offline.
+    public init(activity: BotActivity, presence: BotPresence) {
+        switch presence {
+        case .reachable:
+            switch activity {
+            case .working, .thinking, .usingTool: self = .online
+            case .waiting, .idle: self = .idle
+            case .needsAttention: self = .degraded
+            // No live activity signal observed — but the owning gateway just
+            // answered, so presence wins: the bot IS online (idle-ready).
+            case .offline, .unknown: self = .online
+            }
+        case .unreachable, .unknown:
+            self = .offline
+        }
+    }
 }

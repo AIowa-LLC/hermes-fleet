@@ -279,6 +279,13 @@ public final class AppEnvironment {
         rosterSnapshot?.bot(for: route)
     }
 
+    /// P0-7 multiplexer presence for one bot route, from the latest roster
+    /// snapshot (fail closed: no snapshot yet → `.unknown`, which renders
+    /// offline-gray — never a fabricated online).
+    public func botPresence(for route: Route) -> BotPresence {
+        rosterSnapshot?.botPresence(for: route) ?? .unknown
+    }
+
     /// The registered gateway for an ID, or nil.
     public func gateway(for id: GatewayID) -> FleetGateway? {
         gateways.first { $0.id == id }
