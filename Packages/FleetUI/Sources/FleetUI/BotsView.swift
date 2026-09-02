@@ -88,10 +88,10 @@ public struct BotsView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
                         .lineLimit(2)
+                    // V3: the canonical route is identity data — terminal mono.
                     Text(bot.route.id)
-                        .font(.caption)
+                        .font(FleetTheme.monoFont)
                         .foregroundStyle(FleetTheme.textSecondary)
-                        .monospaced()
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let model = bot.model, let provider = bot.provider {
@@ -122,7 +122,7 @@ public struct BotsView: View {
                 Text("No Bots")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.accentMagenta)
+                    .foregroundStyle(FleetTheme.textSecondary)
             }
         } description: {
             Text("No profiles reported for this gateway. Connect and refresh the roster.")
@@ -138,7 +138,7 @@ public struct BotsView: View {
                 Text(status)
             } icon: {
                 Image(systemName: "wifi.slash")
-                    .foregroundStyle(FleetTheme.accentMagenta)
+                    .foregroundStyle(FleetTheme.statusDegraded)
             }
         } description: {
             Text(detail)

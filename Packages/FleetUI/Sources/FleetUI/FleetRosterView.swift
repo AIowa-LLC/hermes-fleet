@@ -101,8 +101,11 @@ public struct FleetRosterView: View {
                     )
                     .fixedSize()
                     .accessibilityHidden(true)
+                // V3: the gateway name is DATA (UI-test landmark) — stays
+                // title-case + primary; the uppercase micro-label role is for
+                // generic section labels (see SectionHeader).
                 Text(section.gateway.displayName)
-                    .font(FleetTheme.sectionHeaderFont)
+                    .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
                     .foregroundStyle(FleetTheme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -173,7 +176,7 @@ public struct FleetRosterView: View {
                 Text("No Gateways")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.accentMagenta)
+                    .foregroundStyle(FleetTheme.textSecondary)
             }
         } description: {
             Text("Add a gateway to start building your fleet.")
@@ -187,7 +190,7 @@ public struct FleetRosterView: View {
                 Text("No Bots")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.accentMagenta)
+                    .foregroundStyle(FleetTheme.textSecondary)
             }
         } description: {
             Text("No profiles reported. Refresh to re-probe every gateway.")
@@ -269,14 +272,13 @@ private struct BotRowView: View {
                         .foregroundStyle(FleetTheme.textPrimary)
                         .lineLimit(2)
                     Text(bot.route.id)
-                        .font(.caption)
+                        .font(FleetTheme.monoFont)
                         .foregroundStyle(FleetTheme.textSecondary)
-                        .monospaced()
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let model = bot.model, let provider = bot.provider {
                         Text("\(model) · \(provider)")
-                            .font(.caption2)
+                            .font(FleetTheme.secondaryFont)
                             .foregroundStyle(FleetTheme.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)

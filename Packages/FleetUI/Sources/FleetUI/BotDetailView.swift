@@ -96,8 +96,7 @@ public struct BotDetailView: View {
                             .foregroundStyle(FleetTheme.textPrimary)
                             .lineLimit(2)
                         Text(bot.route.id)
-                            .font(.caption)
-                            .monospaced()
+                            .font(FleetTheme.monoFont)
                             .foregroundStyle(FleetTheme.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -159,7 +158,7 @@ public struct BotDetailView: View {
         NavigationLink(value: FleetScreen.conversation(route, sessionID: nil)) {
             Label("New Session", systemImage: "plus.circle.fill")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(FleetTheme.accentMagenta)
+                .foregroundStyle(FleetTheme.accent)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, FleetTheme.spacingSm)
         }
@@ -215,7 +214,7 @@ public struct BotDetailView: View {
         }
     }
 
-    // MARK: Details segment — the canonical Route (spec §7) + status
+    // MARK: Details segment — terminal KEY: VALUE rows (V3 Direction A)
 
     private func detailsSection(_ bot: FleetBot) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
@@ -223,9 +222,9 @@ public struct BotDetailView: View {
                 .accessibilityIdentifier("fleet.bot-detail.identity.header")
             FleetCard {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                    detailRow(label: "Route", value: bot.route.id, monospaced: true)
-                    detailRow(label: "Gateway", value: gatewayName)
-                    detailRow(label: "Profile", value: bot.profileSlug.rawValue, monospaced: true)
+                    FleetMetadataRow("Route", bot.route.id, showDivider: false)
+                    FleetMetadataRow("Gateway", gatewayName, showDivider: false)
+                    FleetMetadataRow("Profile", bot.profileSlug.rawValue, showDivider: false)
                 }
             }
             .accessibilityElement(children: .contain)
@@ -236,13 +235,13 @@ public struct BotDetailView: View {
             FleetCard {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                     if bot.model != nil {
-                        detailRow(label: "Model", value: modelText(bot))
+                        FleetMetadataRow("Model", modelText(bot), showDivider: false)
                     }
-                    detailRow(label: "Activity", value: activityText(bot.activity))
-                    detailRow(label: "Presence", value: presenceText(environment.botPresence(for: bot.route)))
-                    detailRow(label: "Own gateway process", value: bot.gatewayRunning ? "Running" : "No")
+                    FleetMetadataRow("Activity", activityText(bot.activity), showDivider: false)
+                    FleetMetadataRow("Presence", presenceText(environment.botPresence(for: bot.route)), showDivider: false)
+                    FleetMetadataRow("Own gateway process", bot.gatewayRunning ? "Running" : "No", showDivider: false)
                     if let latest = bot.latestSession {
-                        detailRow(label: "Latest session", value: latest.title)
+                        FleetMetadataRow("Latest session", latest.title, showDivider: false)
                     }
                 }
             }
@@ -267,28 +266,13 @@ public struct BotDetailView: View {
         return bot.model ?? "—"
     }
 
-    private func detailRow(label: String, value: String, monospaced: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
-            Spacer()
-            Text(value)
-                .font(monospaced ? .caption.monospaced() : .caption)
-                .foregroundStyle(FleetTheme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
     private var unknownRoute: some View {
         ContentUnavailableView {
             Label {
                 Text("Bot Unavailable")
             } icon: {
                 Image(systemName: "questionmark.circle")
-                    .foregroundStyle(FleetTheme.accentMagenta)
+                    .foregroundStyle(FleetTheme.textSecondary)
             }
         } description: {
             Text("This bot is not in the current roster. Refresh the fleet.")
@@ -348,7 +332,9 @@ private struct SessionRowView: View {
                         Text("· \(Self.dateText(session.startedAt))")
                     }
                 }
-                .font(.caption2)
+                // V3: session metadata (count · source · date) is telemetry —
+                // mono caption, the terminal voice.
+                .font(FleetTheme.monoCaptionFont)
                 .foregroundStyle(FleetTheme.textSecondary)
                 .lineLimit(1)
             }

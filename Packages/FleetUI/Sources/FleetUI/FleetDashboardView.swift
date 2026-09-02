@@ -130,8 +130,9 @@ public struct FleetDashboardView: View {
                     Text(gateway.displayName)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
+                    // V3: endpoints are machine data — mono, the terminal voice.
                     Text(gateway.endpoint.map(Redaction.redactedURL) ?? gateway.id.rawValue)
-                        .font(FleetTheme.secondaryFont)
+                        .font(FleetTheme.monoFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -234,7 +235,7 @@ public struct FleetDashboardView: View {
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Live Board")
-                                .font(FleetTheme.sectionHeaderFont)
+                                .font(.body.weight(.semibold))
                                 .foregroundStyle(FleetTheme.textPrimary)
                             Text("Cards by status, updating in real time")
                                 .font(FleetTheme.secondaryFont)
@@ -297,8 +298,9 @@ public struct FleetDashboardView: View {
                     .lineLimit(2)
                 Spacer()
                 if let at = entry.at {
+                    // V3: timestamps are telemetry — mono caption.
                     Text(FleetDashboardFormatting.relativeTime(from: at, since: now))
-                        .font(FleetTheme.secondaryFont)
+                        .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                 }
             }
