@@ -60,12 +60,31 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private let stateBox: TransportStateBox
     public nonisolated var state: TransportState { stateBox.current }
 
+    /// t_a07ca37e: heartbeat-freshness snapshot — when the last VALID
+    /// inbound frame (heartbeat pong or payload; junk never refreshes it,
+    /// P1-4) arrived. Nil when no connection has ever been established.
+    /// Consumers derive the tier at read time, so this never goes stale.
+    public nonisolated var liveness: ConnectionLivenessSnapshot? {
+        lastFrameBox.read()
+    }
+
     // MARK: lifecycle state (actor-isolated)
     private var connectionState: ConnectionState = .idle
     private var session: (any WebSocketSession)?
     private var receiveLoopTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var lastInbound: ContinuousClock.Instant
+    /// t_a07ca37e: lock-boxed mirror of `lastInbound` so a `nonisolated`
+    /// `liveness` accessor (consumed by the view model's status watcher on
+    /// the main actor) can read the last-frame instant without hopping to
+    /// the transport actor. Async-safe scoped locking, matching
+    /// `TransportStateBox`.
+    private let lastFrameBox: TransportLastFrameBox
+    /// t_a07ca37e: number of tool calls started but not yet completed on
+    /// this connection — a mid-flight tool call extends the reconnect window
+    /// (18s → 25s) because the gateway legitimately stays silent while a
+    /// tool executes server-side (Hermex #227 runningToolReconnectInterval).
+    private var inFlightToolCalls = 0
     /// P1-4: consecutive junk frames (binary, or text failing JSON-RPC decode).
     /// Reset on any valid protocol frame; teardown when the bounded limit is
     /// exceeded. Junk NEVER refreshes `lastInbound`.
@@ -147,6 +166,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         self.config = configuration
         self.stateBox = TransportStateBox(initialState)
         self.lastInbound = .now
+        self.lastFrameBox = TransportLastFrameBox()
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
@@ -171,6 +191,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         self.config = configuration
         self.stateBox = TransportStateBox(initialState)
         self.lastInbound = .now
+        self.lastFrameBox = TransportLastFrameBox()
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
@@ -231,7 +252,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
             self.session = session
 
             lastInbound = clock.now
+            lastFrameBox.setLastFrame(clock.now)
             malformedFrameCount = 0 // P1-4: fresh connection → fresh junk budget
+            inFlightToolCalls = 0 // t_a07ca37e: fresh connection → no tools in flight
+            lastPingAt = nil // fresh connection → first ping due after one interval
             // Receive-loop FIRST (matching M5): the loop's `receive()` blocks
             // until the socket delivers; opening then guarantees frames are
             // read once they arrive. A stale failure from a PREVIOUS loop is
@@ -486,6 +510,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     private func setLastInbound() {
         lastInbound = clock.now
+        lastFrameBox.setLastFrame(lastInbound)
     }
 
     /// P1-4: count a junk frame (binary data or text failing JSON-RPC decode).
@@ -538,6 +563,21 @@ public actor GatewayWebSocketTransport: HermesTransport {
             return
         }
         forward(event, advanceWatermark: true)
+        // t_a07ca37e: tool-in-flight accounting for the extended reconnect
+        // window (18s → 25s). Only STARTED-vs-COMPLETED pairing on this
+        // transport is tracked; a turn terminal frame is the backstop that
+        // drains any unpaired starts (a gateway that emits tool.complete
+        // for every tool.start makes the counter settle at 0 naturally).
+        switch event.type {
+        case .toolStart:
+            inFlightToolCalls += 1
+        case .toolComplete, .backgroundComplete:
+            inFlightToolCalls = max(0, inFlightToolCalls - 1)
+        case .messageComplete:
+            if inFlightToolCalls > 0 { inFlightToolCalls = 0 }
+        default:
+            break
+        }
         switch event.type {
         case .gatewayReady:
             let payload = event.ready ?? GatewayEvent.ReadyPayload(
@@ -596,22 +636,68 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private func startHeartbeat(_ session: any WebSocketSession) {
         heartbeatTask = Task { [weak self] in
             guard let self else { return }
-            let interval = self.config.pingInterval
+            let pingInterval = self.config.pingInterval
+            let checkingInterval = self.config.livenessTiming.checkingInterval
             while !Task.isCancelled {
+                // t_a07ca37e: the liveness check runs at `checkingInterval`
+                // (5s) cadence; pings still go out every `pingInterval`. With
+                // the default 15s ping this evaluates three times per ping
+                // cycle, so the tiered reconnect windows are honored at 5s
+                // granularity. A pingInterval SHORTER than the checking
+                // interval (tests) collapses to the ping cadence.
+                let tick = min(pingInterval, Duration.seconds(checkingInterval))
                 do {
-                    try await Task.sleep(for: interval)
+                    try await Task.sleep(for: tick)
                 } catch {
                     break
                 }
                 if Task.isCancelled { break }
-                await self.sendPing(session)
-                await self.checkInboundDeadline()
+                let dueForPing = await self.isPingDue(pingInterval: pingInterval)
+                if dueForPing {
+                    await self.sendPing(session)
+                }
+                await self.evaluateLiveness()
             }
+        }
+    }
+
+    /// Whether a ping is due on this tick (the loop may run faster than the
+    /// ping cadence now that liveness checks and pings are decoupled).
+    private var lastPingAt: ContinuousClock.Instant?
+
+    private func isPingDue(pingInterval: Duration) -> Bool {
+        let now = clock.now
+        if let lastPingAt {
+            return now - lastPingAt >= pingInterval
+        }
+        return true
+    }
+
+    private func evaluateLiveness() async {
+        // t_a07ca37e: ONE tiered liveness verdict folding heartbeat freshness
+        // into the same evaluation the malformed-frame counter feeds (P1-4:
+        // junk never refreshes `lastInbound`, so a junk-spamming peer goes
+        // stale exactly as before — unchanged semantics).
+        let snapshot = ConnectionLivenessSnapshot(lastFrameReceivedAt: lastInbound)
+        let tier = snapshot.tier(
+            now: clock.now,
+            toolInFlight: inFlightToolCalls > 0,
+            timing: config.livenessTiming
+        )
+        switch tier {
+        case .fresh, .checkDue:
+            // fresh (<12s): provably alive — nothing to do. checkDue
+            // (>12s, < reconnect window): escalation is the ACTIVE liveness
+            // probe itself — the ping sent on this same tick. No teardown.
+            break
+        case .stale:
+            await teardown(.abnormalClosure, error: TransportError.connectionClosed(.abnormalClosure))
         }
     }
 
     private func sendPing(_ session: any WebSocketSession) async {
         nextHeartbeatID += 1
+        lastPingAt = clock.now // t_a07ca37e: ping cadence tracking (decoupled from liveness checks)
         let id = JSONRPCID.string("heartbeat-\(nextHeartbeatID)")
         let frame = JSONRPCRequest(id: id, method: "gateway.ping", params: .object([:]))
         do {
@@ -637,14 +723,6 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// sample was already dropped).
     private func dropPingIfUnanswered(id: JSONRPCID) {
         pingStarts[id] = nil
-    }
-
-    private func checkInboundDeadline() async {
-        let deadline = config.inboundDeadline
-        let elapsed = clock.now - lastInbound
-        if elapsed > deadline {
-            await teardown(.abnormalClosure, error: TransportError.connectionClosed(.abnormalClosure))
-        }
     }
 
     // MARK: teardown
@@ -684,6 +762,11 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case .closed, .error: wasTerminal = true
         default: wasTerminal = false
         }
+        // t_a07ca37e: freshness is only proof of liveness for an OPEN
+        // transport — drop the snapshot on teardown so the status watcher's
+        // poll gate resumes immediately after a disconnect instead of
+        // trusting a last-frame timestamp from a dead connection.
+        lastFrameBox.clear()
         // Fail every in-flight RPC request so awaiters never hang: a dropped
         // socket is a classification, not an endless await.
         let pending = pendingRequests
@@ -780,6 +863,33 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let elapsed = end - start
         return max(0, Double(elapsed.components.seconds) * 1000
             + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000)
+    }
+}
+
+/// t_a07ca37e: lock-boxed mirror of the transport's last-valid-frame
+/// instant, so the `nonisolated` `liveness` accessor (consumed off-actor by
+/// the view model's status watcher) reads freshness without hopping to the
+/// transport actor. `OSAllocatedUnfairLock` is async-safe (scoped locking),
+/// matching `TransportStateBox`. Nil until the first connection opens.
+final class TransportLastFrameBox: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<ContinuousClock.Instant?>(initialState: nil)
+
+    func setLastFrame(_ instant: ContinuousClock.Instant) {
+        lock.withLock { $0 = instant }
+    }
+
+    /// Drop the freshness signal (teardown): a last-frame timestamp only
+    /// proves liveness of an OPEN transport — after a disconnect it must
+    /// not keep consumers (the status watcher's poll gate) trusting a
+    /// dead connection.
+    func clear() {
+        lock.withLock { $0 = nil }
+    }
+
+    func read() -> ConnectionLivenessSnapshot? {
+        lock.withLock { instant in
+            instant.map(ConnectionLivenessSnapshot.init)
+        }
     }
 }
 

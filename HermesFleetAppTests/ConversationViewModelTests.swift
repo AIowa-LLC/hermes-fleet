@@ -33,6 +33,7 @@ final class ConversationViewModelTests: XCTestCase {
 
         // connectivity
         var statusValue: GatewayStatus = .online
+        var livenessValue: ConnectionLivenessSnapshot?
         var connectError: GatewayConnectivityError?
         var connectCount = 0
         var reauthenticateCount = 0
@@ -64,6 +65,7 @@ final class ConversationViewModelTests: XCTestCase {
 
         // MARK: GatewayConnectivityProviding
         var status: GatewayStatus { statusValue }
+        var liveness: ConnectionLivenessSnapshot? { livenessValue }
         func adoptedReady() async -> GatewayReadyAdoption? {
             GatewayReadyAdoption(replayEpoch: "epoch-1", heartbeatEnabled: true, changeEventsEnabled: true)
         }
@@ -776,5 +778,46 @@ final class ConversationViewModelTests: XCTestCase {
                        "fresh-epoch tail must be contiguous — no spurious gap recovery")
         let completed = viewModel.transcript.last { $0.kind == .assistant }
         XCTAssertEqual(completed?.text, "post-restart turn")
+    }
+
+    // MARK: - t_a07ca37e heartbeat-freshness poll gate
+
+    /// Transport-fresh liveness (<12s silence) means PROVABLY alive: the
+    /// status watcher must SKIP its polls in that window, so a transient
+    /// offline status flip is not acted on while heartbeats just flowed.
+    /// Past the fresh window the poll resumes and the flip applies.
+    func testStatusPollSkippedWhileTransportFresh() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        // Fresh frame right now.
+        scripted.livenessValue = ConnectionLivenessSnapshot(lastFrameReceivedAt: .now)
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        // Offline flip while FRESH: poll gated — no disconnected transition.
+        scripted.statusValue = .offline
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(viewModel.phase, .ready,
+                       "fresh transport (<12s silence) must skip the status poll")
+
+        // Silence ages past the fresh window (30s): polls resume, flip applies.
+        scripted.livenessValue = ConnectionLivenessSnapshot(
+            lastFrameReceivedAt: .now - .seconds(30))
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(viewModel.phase, .disconnected,
+                       "non-fresh transport must resume status polling")
+    }
+
+    /// Nil liveness (no transport signal — doubles/previews) keeps the
+    /// previous always-poll behavior.
+    func testNilLivenessKeepsAlwaysPollBehavior() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        scripted.livenessValue = nil
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        scripted.statusValue = .offline
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(viewModel.phase, .disconnected,
+                       "nil liveness must not gate status polls")
     }
 }

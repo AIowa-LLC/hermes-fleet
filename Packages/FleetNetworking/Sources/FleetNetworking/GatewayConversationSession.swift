@@ -55,6 +55,9 @@ public actor GatewayConversationSession: ConversationSessionProviding {
 
     public nonisolated var status: GatewayStatus { connection.status }
 
+    /// t_a07ca37e: heartbeat-freshness snapshot via the underlying connection.
+    public nonisolated var liveness: ConnectionLivenessSnapshot? { connection.liveness }
+
     public func adoptedReady() async -> GatewayReadyAdoption? {
         await connection.adoptedReady()
     }

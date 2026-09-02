@@ -292,7 +292,7 @@ enum FleetServiceGraph {
         if let raw = env["HERMES_FLEET_PING_INTERVAL_SECONDS"], let seconds = Double(raw), seconds > 0 {
             return TransportConfiguration(
                 pingInterval: .milliseconds(Int64(seconds * 1000)),
-                inboundDeadline: .seconds(45),
+                livenessTiming: .standard,
                 connectTimeout: .seconds(15),
                 requestTimeout: .seconds(120)
             )

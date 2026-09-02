@@ -53,6 +53,12 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
         GatewayStatus(transportState: transport.state)
     }
 
+    /// t_a07ca37e: heartbeat-freshness snapshot straight off the transport
+    /// (nonisolated lock-box read — no actor hop for the status watcher).
+    public nonisolated var liveness: ConnectionLivenessSnapshot? {
+        transport.liveness
+    }
+
     public func connect() async throws {
         do {
             try await transport.connect()

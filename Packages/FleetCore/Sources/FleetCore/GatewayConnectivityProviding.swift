@@ -17,6 +17,14 @@ public protocol GatewayConnectivityProviding: Sendable {
     /// User-facing reachable/unreachable state (spec §13).
     var status: GatewayStatus { get }
 
+    /// Heartbeat-freshness liveness snapshot (t_a07ca37e): when the last
+    /// VALID inbound frame (heartbeat pong or payload — junk never refreshes
+    /// it, P1-4) arrived on the underlying transport. Nil when the provider
+    /// has no live transport (test doubles, preview connections) — consumers
+    /// treat nil as "no freshness signal" and fall back to `status`.
+    /// The default keeps protocol conformers without a transport compiling.
+    var liveness: ConnectionLivenessSnapshot? { get }
+
     /// The `gateway.ready` metadata adopted on the last successful connect.
     func adoptedReady() async -> GatewayReadyAdoption?
 
@@ -32,6 +40,11 @@ public protocol GatewayConnectivityProviding: Sendable {
     /// The registered gateway with adopted metadata (connection state,
     /// capabilities, replay epoch), for the registry / fleet model.
     func currentGateway() async -> FleetGateway
+}
+
+extension GatewayConnectivityProviding {
+    /// No freshness signal by default (no live transport backing).
+    public var liveness: ConnectionLivenessSnapshot? { nil }
 }
 
 /// Errors a single-gateway connection surfaces, classified for the UI.

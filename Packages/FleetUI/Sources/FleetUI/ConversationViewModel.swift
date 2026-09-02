@@ -685,6 +685,15 @@ public final class ConversationViewModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: self.statusInterval)
                 guard !Task.isCancelled else { break }
+                // t_a07ca37e: heartbeat-freshness gate — a transport whose
+                // last valid frame arrived <12s ago is PROVABLY alive, so the
+                // status poll is skipped entirely (Hermex #227: skip status
+                // polls while transport-fresh). Nil liveness (test doubles /
+                // preview connections) keeps the previous behavior.
+                if let snapshot = self.session.liveness,
+                   snapshot.tier(toolInFlight: self.isStreaming) == .fresh {
+                    continue
+                }
                 let status = self.session.status
                 await self.handleStatusChange(status)
             }
