@@ -36,6 +36,7 @@ public struct FleetDashboardView: View {
                 overviewStats
                 gatewaysSection
                 activeBotsSection
+                kanbanSection
                 recentActivitySection
             }
             .padding(.horizontal, FleetTheme.spacingLg)
@@ -233,6 +234,42 @@ public struct FleetDashboardView: View {
         let gatewayName = environment.gateway(for: bot.route.gatewayID)?.displayName
             ?? bot.route.gatewayID.rawValue
         return "\(gatewayName) · \(FleetDashboardFormatting.lastActiveLabel(bot: bot, now: now))"
+    }
+
+    // MARK: Kanban board entry (t_3b321b7b)
+
+    /// A single card linking into the live read-only Kanban board — only
+    /// when a watcher can be built (fail closed: no factory, no entry).
+    @ViewBuilder
+    private var kanbanSection: some View {
+        if environment.gateways.first(where: { environment.makeKanbanWatcher(for: $0) != nil }) != nil {
+            SectionHeader(title: "Kanban Board", destination: FleetScreen.kanban)
+                .accessibilityIdentifier("fleet.dashboard.kanban.header")
+            NavigationLink(value: FleetScreen.kanban) {
+                FleetCard {
+                    HStack(spacing: FleetTheme.spacingMd) {
+                        Image(systemName: "rectangle.stack")
+                            .foregroundStyle(FleetTheme.accentCyan)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Live Board")
+                                .font(FleetTheme.sectionHeaderFont)
+                                .foregroundStyle(FleetTheme.textPrimary)
+                            Text("Cards by status, updating in real time")
+                                .font(FleetTheme.secondaryFont)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("fleet.dashboard.kanban.entry")
+        }
     }
 
     // MARK: Recent Activity (real gateway events from the H2 accumulator)

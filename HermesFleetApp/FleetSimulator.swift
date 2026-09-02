@@ -83,9 +83,98 @@ extension FleetServiceGraph {
             conversationFactory: { gateway, _ in
                 ScriptedConversationSession(gatewayID: gateway.id)
             },
+            kanbanWatcherFactory: { _ in
+                ScriptedKanbanWatcher()
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations
         )
+    }
+}
+
+/// t_3b321b7b — scripted kanban board watcher (DEBUG simulator only): a
+/// small static board with a self-updating event stream so the read-only
+/// board view is walkable without a live gateway. Presentation data only.
+private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [UUID: AsyncStream<KanbanEventBatch>.Continuation] = [:]
+    /// UI-test knob: `HERMES_FLEET_KANBAN_LIVE_UPDATES=1` enables the scripted
+    /// live-update ticker (default off — deterministic walkthroughs).
+    private let liveUpdatesEnabled =
+        ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] == "1"
+
+    func snapshot() async throws -> KanbanBoardSnapshot {
+        KanbanBoardSnapshot(
+            columns: ["triage", "todo", "ready", "running", "blocked", "review", "done"],
+            cardsByColumn: [
+                "todo": [
+                    KanbanCard(id: "t_script01", title: "Scripted: port kanban stream client", status: "todo", assignee: "apple-dev", priority: 2, createdAt: 1_780_000_000, latestSummary: "Event-stream client pattern ported from the dashboard plugin contract."),
+                    KanbanCard(id: "t_script02", title: "Scripted: read-only board view", status: "todo", assignee: "apple-design", priority: 1, createdAt: 1_780_003_600, latestSummary: nil)
+                ],
+                "running": [
+                    KanbanCard(id: "t_script03", title: "Scripted: live reconnect coverage", status: "running", assignee: "apple-qa", priority: 3, createdAt: 1_780_007_200, latestSummary: "Reconnect resumes from the cursor — no events lost across the gap.")
+                ],
+                "review": [
+                    KanbanCard(id: "t_script04", title: "Scripted: design review pass", status: "review", assignee: "apple-design", priority: 2, createdAt: 1_780_010_800, latestSummary: "Gold Fleet tokens applied; columns as horizontal lanes.")
+                ],
+                "done": [
+                    KanbanCard(id: "t_script05", title: "Scripted: domain models", status: "done", assignee: "apple-dev", priority: 1, createdAt: 1_779_996_400, latestSummary: nil)
+                ]
+            ],
+            latestEventID: 41,
+            now: 1_780_014_400
+        )
+    }
+
+    func changeEvents() async -> AsyncStream<KanbanEventBatch> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            lock.lock()
+            continuations[id] = continuation
+            lock.unlock()
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                self.lock.lock()
+                self.continuations[id] = nil
+                self.lock.unlock()
+            }
+            if liveUpdatesEnabled {
+                // Ticker: one scripted event every 3s (capped ids so the
+                // activity strip stays small).
+                Task.detached { [weak self] in
+                    var n = 0
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(3))
+                        guard let self, !Task.isCancelled else { return }
+                        let batch = KanbanEventBatch(
+                            events: [KanbanChangeEvent(
+                                id: 100 + n, taskID: n % 2 == 0 ? "t_script03" : "t_script01",
+                                kind: "heartbeat", createdAt: nil)],
+                            cursor: 100 + n)
+                        n += 1
+                        let targets = self.unlocked { Array(self.continuations.values) }
+                        for target in targets { target.yield(batch) }
+                    }
+                }
+            }
+        }
+    }
+
+    func stop() async {
+        let targets = unlocked { () -> [AsyncStream<KanbanEventBatch>.Continuation] in
+            let targets = Array(continuations.values)
+            continuations.removeAll()
+            return targets
+        }
+        for target in targets { target.finish() }
+    }
+
+    /// Async-safe scoped lock helper (NSLock is unavailable in async
+    /// contexts on this toolchain).
+    private func unlocked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
     }
 }
 

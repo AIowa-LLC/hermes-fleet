@@ -160,8 +160,60 @@ enum FleetServiceGraph {
             connectionFactory: makeConnectionFactory(
                 credentialStore: credentialStore, health: health, pinStore: pinStore),
             conversationFactory: makeConversationFactory(credentialStore: credentialStore, pinStore: pinStore),
+            kanbanWatcherFactory: makeKanbanWatcherFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health
         )
+    }
+
+    /// t_3b321b7b: real per-gateway kanban board watcher — the
+    /// `KanbanEventStreamClient` over the dashboard's kanban plugin surface,
+    /// authenticating through the SAME per-gateway authenticator seam (WS
+    /// ticket/loopback token) plus the strategy-appropriate HTTP credential
+    /// for the board fetch. `nonisolated` for the same reason as the other
+    /// factory closures.
+    nonisolated private static func makeKanbanWatcherFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetKanbanWatcherFactory {
+        { gateway in
+            let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+            let authenticator = makeAuthenticator(gateway: gateway, credentialStore: credentialStore)
+            let strategy = gateway.authConfiguration.strategy
+            let httpCredential: @Sendable () async throws -> KanbanEventStreamClient.HTTPCredential = {
+                switch strategy {
+                case .none:
+                    return .none
+                case .loopbackToken, .sessionToken, .bearerToken:
+                    // The stored token authenticates HTTP plugin routes via
+                    // the X-Hermes-Session-Token header (loopback/legacy
+                    // token path; session/bearer deployments that gate HTTP
+                    // behind OAuth cookies surface as a 401 → the view's
+                    // error state, honestly).
+                    if let credential = try? await credentialStore.loadCredential(for: gateway.id) {
+                        return .sessionTokenHeader(credential.rawValue)
+                    }
+                    return .none
+                case .usernamePassword:
+                    // Fresh login per credential resolution (matches the
+                    // ticket-mint freshness discipline; snapshot fetches are
+                    // infrequent).
+                    guard let credential = try? await credentialStore.loadCredential(for: gateway.id),
+                          let username = credential.username else {
+                        throw KanbanBoardError.malformedResponse("no credential stored")
+                    }
+                    let cookie = try await PasswordLoginClient(baseURL: base).login(
+                        username: username, password: credential.rawValue)
+                    return .cookie(cookie)
+                }
+            }
+            return KanbanEventStreamClient(
+                gatewayID: gateway.id,
+                baseURL: base,
+                authenticator: authenticator,
+                httpCredential: httpCredential,
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore)
+            )
+        }
     }
 
     /// Real per-gateway conversation session (U3): connectivity + M5

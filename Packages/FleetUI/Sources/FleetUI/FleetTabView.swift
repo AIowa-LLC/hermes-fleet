@@ -169,6 +169,8 @@ public struct FleetTabView: View {
             GatewaysView(environment: environment)
         case .activity:
             FleetActivityView(environment: environment)
+        case .kanban:
+            KanbanBoardView(environment: environment)
         }
     }
 

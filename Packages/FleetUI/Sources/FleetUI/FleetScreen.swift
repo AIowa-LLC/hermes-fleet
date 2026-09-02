@@ -26,4 +26,7 @@ public enum FleetScreen: Hashable, Sendable {
     /// U4: the connection-activity feed, as a pushed destination (Home
     /// dashboard "View All" drill-in on the tab's own stack).
     case activity
+    /// t_3b321b7b: the live read-only Kanban board (pushed destination from
+    /// the Home dashboard).
+    case kanban
 }

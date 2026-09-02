@@ -60,11 +60,13 @@
 		CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */; };
 		CE2B614CC7652368415DA8C4 /* UITabNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E486750093968F32F0092 /* UITabNavigation.swift */; };
 		CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */; };
+		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
 		D82BFF6EBCBB2A7B6D1B0C11 /* U4DashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */; };
 		E966FB2E068DD8CF603A349B /* L1LiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4F9B97BE138E2E91D5F991 /* L1LiveGatewayUITests.swift */; };
 		EC633F89B6F3E540C837E1A2 /* RT4FormSaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16ABB40EB8195A89AAF2A6C /* RT4FormSaveFailureUITests.swift */; };
 		EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */; };
 		F14069A7319C17D2D0651D4F /* RT4VoiceOverUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84817A22FDC16B5FCACA9EC9 /* RT4VoiceOverUITests.swift */; };
+		F28C26E53888FB9210E67B8A /* KanbanBoardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C9936C1305F593BCAEC3276 /* KanbanBoardUITests.swift */; };
 		F37E76F893963CDB1E25D544 /* FleetServiceGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */; };
 /* End PBXBuildFile section */
 
@@ -93,6 +95,7 @@
 		0D4835804962F3C2C39A75BE /* F1TwoGatewayFleetLiveUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = F1TwoGatewayFleetLiveUITests.swift; sourceTree = "<group>"; };
 		0F3B4DCFA36A97723EE623AB /* FleetCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetCore; path = Packages/FleetCore; sourceTree = SOURCE_ROOT; };
 		10E6E3D880ED0ED902488681 /* U5BotDetailUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U5BotDetailUITests.swift; sourceTree = "<group>"; };
+		13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KanbanBoardViewModelTests.swift; sourceTree = "<group>"; };
 		1493BE85176762EA67892033 /* ATSExceptionDriftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ATSExceptionDriftTests.swift; sourceTree = "<group>"; };
 		171DB809769D21B3E41B0561 /* SplashOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashOverlayView.swift; sourceTree = "<group>"; };
 		1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U4DashboardUITests.swift; sourceTree = "<group>"; };
@@ -111,6 +114,7 @@
 		501E486750093968F32F0092 /* UITabNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITabNavigation.swift; sourceTree = "<group>"; };
 		5637DB7B24B46E1A35E0B3ED /* HermesFleetHappyPathUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesFleetHappyPathUITests.swift; sourceTree = "<group>"; };
 		5BEEFC0BD1DC4133FB63310C /* ConversationFixtureLoopTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationFixtureLoopTests.swift; sourceTree = "<group>"; };
+		5C9936C1305F593BCAEC3276 /* KanbanBoardUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KanbanBoardUITests.swift; sourceTree = "<group>"; };
 		5D495B5F007AFCD4FA441BD1 /* FleetSecurity */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetSecurity; path = Packages/FleetSecurity; sourceTree = SOURCE_ROOT; };
 		5EB7D7B5572E537B3CCA3553 /* U6ConversationSkinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U6ConversationSkinTests.swift; sourceTree = "<group>"; };
 		73276D7D335DD1FFAF4D238A /* P2GatewayFormDraftUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P2GatewayFormDraftUITests.swift; sourceTree = "<group>"; };
@@ -197,6 +201,7 @@
 				D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */,
 				CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */,
 				BD81D83119A185906F3FABB8 /* GatewayPersistenceRelaunchTests.swift */,
+				13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */,
 				D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */,
 				068164FABF60AF462ACB6CA2 /* OnboardingPromptTests.swift */,
 				3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */,
@@ -268,6 +273,7 @@
 				81A1A63C6F0F29A8454980F6 /* H2HealthDashboardUITests.swift */,
 				5637DB7B24B46E1A35E0B3ED /* HermesFleetHappyPathUITests.swift */,
 				07655520ABEDB2077F32D167 /* HermesFleetReconnectUITests.swift */,
+				5C9936C1305F593BCAEC3276 /* KanbanBoardUITests.swift */,
 				BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */,
 				7D4F9B97BE138E2E91D5F991 /* L1LiveGatewayUITests.swift */,
 				A6325589D12BB7792035231F /* P0_7LiveTailnetUITests.swift */,
@@ -459,6 +465,7 @@
 				0C26BBF27EF90EACF7C2DB65 /* GatewayFormDraftStoreTests.swift in Sources */,
 				568D3FC18BC8530AE3E7DA34 /* GatewayPersistenceRelaunchTests.swift in Sources */,
 				1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */,
+				D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */,
 				3BC9D5C1D9DB0AAA16B7E9E4 /* ModuleBoundaryTests.swift in Sources */,
 				969F20E6ACD338F23C39708D /* OnboardingPromptTests.swift in Sources */,
 				8D5D7A4794C4F5C1DEE340BD /* RT4LogicRegressionTests.swift in Sources */,
@@ -478,6 +485,7 @@
 				B1AB16A9F5EB927CD0BADA2C /* H2HealthDashboardUITests.swift in Sources */,
 				53AB0A9DB99780F8669D9A82 /* HermesFleetHappyPathUITests.swift in Sources */,
 				13F3F7A725F5265CD226E34D /* HermesFleetReconnectUITests.swift in Sources */,
+				F28C26E53888FB9210E67B8A /* KanbanBoardUITests.swift in Sources */,
 				CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */,
 				E966FB2E068DD8CF603A349B /* L1LiveGatewayUITests.swift in Sources */,
 				7CEC3E04BE1669A048732A54 /* P0_7LiveTailnetUITests.swift in Sources */,

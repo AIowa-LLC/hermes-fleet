@@ -28,6 +28,16 @@ public typealias FleetConversationFactory = @Sendable (
     _ credential: GatewayCredential?
 ) -> any ConversationSessionProviding
 
+/// Builds a per-gateway kanban board watcher (t_3b321b7b). Lives in FleetUI
+/// for the same M0-guard reason as the factories above: SwiftUI depends only
+/// on the FleetCore `KanbanBoardWatching` seam — never on the transport
+/// module. Injected at the composition root: production builds a
+/// `KanbanEventStreamClient`; DEBUG builds a scripted watcher; tests inject
+/// doubles.
+public typealias FleetKanbanWatcherFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any KanbanBoardWatching
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -136,6 +146,10 @@ public final class AppEnvironment {
     /// U3 conversation sessions per gateway (injected concrete:
     /// `GatewayConversationSession` in production, scripted in DEBUG/tests).
     private let conversationFactory: FleetConversationFactory?
+    /// t_3b321b7b: kanban board watcher factory — one watcher per gateway
+    /// (the concrete `KanbanEventStreamClient` in production, scripted in
+    /// DEBUG/tests).
+    private let kanbanWatcherFactory: FleetKanbanWatcherFactory?
     /// Gateways to register on first launch (empty registry) so the U1
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
@@ -162,6 +176,7 @@ public final class AppEnvironment {
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
+        kanbanWatcherFactory: FleetKanbanWatcherFactory? = nil,
         health: any ConnectionHealthAccumulating,
         seedRegistrations: [GatewayRegistration] = []
     ) {
@@ -171,6 +186,7 @@ public final class AppEnvironment {
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
+        self.kanbanWatcherFactory = kanbanWatcherFactory
         self.health = health
         self.seedRegistrations = seedRegistrations
     }
@@ -453,5 +469,14 @@ public final class AppEnvironment {
     public func makeConversationViewModel(route: Route, sessionID: String?) -> ConversationViewModel? {
         guard let session = conversationSession(for: route.gatewayID) else { return nil }
         return ConversationViewModel(session: session, cache: cache, route: route, sessionID: sessionID)
+    }
+
+    // MARK: Kanban board (t_3b321b7b)
+
+    /// Build the read-only kanban board watcher for a gateway. Nil when no
+    /// factory is wired (the screen renders its unavailable state, fail
+    /// closed).
+    public func makeKanbanWatcher(for gateway: FleetGateway) -> (any KanbanBoardWatching)? {
+        kanbanWatcherFactory?(gateway)
     }
 }
