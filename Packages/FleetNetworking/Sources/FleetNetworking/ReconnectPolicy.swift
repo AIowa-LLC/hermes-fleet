@@ -31,6 +31,11 @@ public enum ReconnectPolicy {
         case .invalidChannel, .hostMismatch, .chatDisabled, .peerNotAllowed:
             // Endpoint answered but is not a usable surface — permanent.
             return .doNotReconnect
+        case .tlsPinMismatch:
+            // T3: possible MITM / replaced certificate — NEVER auto-retry.
+            // The user must explicitly re-trust the new pin (warn-on-change
+            // flow); hammering the endpoint would only mask the attack.
+            return .doNotReconnect
         case .goingAway, .abnormalClosure, .serverError, .tlsHandshakeFailure,
              .unknown:
             // Transient — reconnect + replay.

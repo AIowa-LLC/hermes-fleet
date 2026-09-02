@@ -147,7 +147,7 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
             return .unsupported(reason.debugDescription)
         case .abnormalClosure:
             return .unreachable
-        case .normalClosure, .goingAway, .serverError, .tlsHandshakeFailure:
+        case .normalClosure, .goingAway, .serverError, .tlsHandshakeFailure, .tlsPinMismatch:
             return .connectionFailed(reason.debugDescription)
         case .unknown(let code, let detail):
             return .connectionFailed("unknown close \(code): \(detail)")

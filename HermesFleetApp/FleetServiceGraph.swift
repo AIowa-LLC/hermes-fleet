@@ -113,6 +113,10 @@ enum FleetServiceGraph {
         // and every authenticator reads from THIS SAME store, so a credential
         // entered in the UI reaches the live gateway (L1 fix: store split).
         let credentialStore = KeychainCredentialStore()
+        // T3: per-gateway TLS pin store (TOFU SPKI pinning). Shared by every
+        // transport the graph builds so all four connection surfaces (probe,
+        // roster, lifecycle, conversation) enforce the SAME pin per gateway.
+        let pinStore = KeychainPinStore()
 
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
@@ -121,18 +125,19 @@ enum FleetServiceGraph {
 
         let registry: any GatewayRegistryManaging = GatewayRegistryService(
             credentials: credentialStore,
-            connectionFactory: makeProbeFactory(credentialStore: credentialStore),
-            recordStore: cacheStore
+            connectionFactory: makeProbeFactory(credentialStore: credentialStore, pinStore: pinStore),
+            recordStore: cacheStore,
+            pinStore: pinStore
         )
         let roster: any FleetRosterProviding = FleetRosterService(
             registry: registry,
             credentials: credentialStore,
-            sessionFactory: makeSessionFactory(credentialStore: credentialStore)
+            sessionFactory: makeSessionFactory(credentialStore: credentialStore, pinStore: pinStore)
         )
         let sessionList: any SessionListProviding = GatewaySessionListService(
             registry: registry,
             credentials: credentialStore,
-            sessionFactory: makeSessionFactory(credentialStore: credentialStore)
+            sessionFactory: makeSessionFactory(credentialStore: credentialStore, pinStore: pinStore)
         )
         // The file-backed SwiftData cache doubles as the health-stats store
         // (H2): same non-secret persistence seam, one store file.
@@ -145,8 +150,8 @@ enum FleetServiceGraph {
             cache: cache,
             sessionList: sessionList,
             connectionFactory: makeConnectionFactory(
-                credentialStore: credentialStore, health: health),
-            conversationFactory: makeConversationFactory(credentialStore: credentialStore),
+                credentialStore: credentialStore, health: health, pinStore: pinStore),
+            conversationFactory: makeConversationFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health
         )
     }
@@ -156,13 +161,15 @@ enum FleetServiceGraph {
     /// connection factory; `nonisolated` so the `@Sendable` closure can build
     /// transports off the main actor.
     nonisolated private static func makeConversationFactory(
-        credentialStore: any CredentialStoring
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
     ) -> FleetConversationFactory {
         { gateway, _ in
             let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
                 authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
             return GatewayConversationSession(
@@ -184,40 +191,68 @@ enum FleetServiceGraph {
     /// off the main actor (only `AppEnvironment` construction is main-isolated).
     nonisolated private static func makeConnectionFactory(
         credentialStore: any CredentialStoring,
-        health: any ConnectionHealthAccumulating
+        health: any ConnectionHealthAccumulating,
+        pinStore: any SynchronousPinStoring
     ) -> FleetConnectionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, credentialStore: credentialStore, health: health)
+            makeConnection(gateway: gateway, credentialStore: credentialStore, health: health, pinStore: pinStore)
         }
     }
 
     /// Real probe connection used by the registry's `testConnection`.
     nonisolated private static func makeProbeFactory(
-        credentialStore: any CredentialStoring
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
     ) -> GatewayConnectionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, credentialStore: credentialStore)
+            makeConnection(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore)
         }
     }
 
     /// Real roster session factory used by the union roster aggregation.
     nonisolated private static func makeSessionFactory(
-        credentialStore: any CredentialStoring
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
     ) -> GatewayRosterSessionFactory {
         { gateway, _ in
-            makeConnection(gateway: gateway, credentialStore: credentialStore)
+            makeConnection(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore)
         }
+    }
+
+    /// T3: the session factory enforcing TOFU pinning for a gateway. For
+    /// https/wss endpoints the trust handler decides server-trust challenges
+    /// (first use pins, later connects must match). For http/ws endpoints
+    /// there is no TLS and thus no server-trust challenge — the factory is
+    /// the plain one (B2's cleartext warning stays the honest signal there).
+    nonisolated private static func makeSessionFactory(
+        gateway: FleetGateway,
+        pinStore: any SynchronousPinStoring
+    ) -> any WebSocketSessionFactory {
+        let scheme = gateway.endpoint?.scheme?.lowercased() ?? "http"
+        guard scheme == "https" else {
+            return URLSessionWebSocketSessionFactory()
+        }
+        return URLSessionWebSocketSessionFactory(
+            trustHandler: PinningTrustHandler(gatewayID: gateway.id, pinStore: pinStore))
     }
 
     nonisolated private static func makeConnection(
         gateway: FleetGateway,
         credentialStore: any CredentialStoring,
-        health: (any ConnectionHealthAccumulating)? = nil
+        health: (any ConnectionHealthAccumulating)? = nil,
+        pinStore: (any SynchronousPinStoring)? = nil
     ) -> SingleGatewayConnection {
         let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+        let sessionFactory: any WebSocketSessionFactory
+        if let pinStore {
+            sessionFactory = makeSessionFactory(gateway: gateway, pinStore: pinStore)
+        } else {
+            sessionFactory = URLSessionWebSocketSessionFactory()
+        }
         let transport = GatewayWebSocketTransport(
             baseURL: base,
             authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+            sessionFactory: sessionFactory,
             configuration: makeTransportConfiguration()
         )
         if let health {

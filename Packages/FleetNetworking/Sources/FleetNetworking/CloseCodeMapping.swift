@@ -14,6 +14,10 @@ public enum DisconnectReason: Sendable, Hashable, Equatable {
     case serverError
     /// TLS handshake failure (1015).
     case tlsHandshakeFailure
+    /// T3: the presented certificate's SPKI differs from the TOFU pin —
+    /// possible MITM / replaced certificate. REJECTED by policy; the user
+    /// must explicitly re-trust (never auto-reconnect).
+    case tlsPinMismatch
 
     /// 4400 — invalid/absent `?channel=` (event/subscription surfaces).
     case invalidChannel
@@ -41,6 +45,7 @@ public enum DisconnectReason: Sendable, Hashable, Equatable {
         case .abnormalClosure: return "abnormal closure"
         case .serverError: return "server error (1011)"
         case .tlsHandshakeFailure: return "TLS handshake failure"
+        case .tlsPinMismatch: return "gateway certificate changed (possible interception) — connection blocked"
         case .invalidChannel: return "invalid channel (4400)"
         case .reauthenticationRequired: return "reauthentication required (4401)"
         case .hostMismatch: return "host mismatch (4403)"
@@ -80,6 +85,11 @@ public enum CloseCodeMapping {
     /// Map a transport/URLError into a disconnect reason when no close frame
     /// was observed (e.g. abnormal teardown).
     public static func reason(for error: any Error) -> DisconnectReason {
+        // T3: the typed pin-rejection error from the trust handler — the
+        // presented key differs from the TOFU pin.
+        if let pinError = error as? TLSPinRejectedError {
+            return .tlsPinMismatch
+        }
         let nsError = error as NSError
         // POSIX ENOTCONN (57): socket dropped without a close frame — the
         // network-switch / abnormal-loss signal. Classify as abnormal closure

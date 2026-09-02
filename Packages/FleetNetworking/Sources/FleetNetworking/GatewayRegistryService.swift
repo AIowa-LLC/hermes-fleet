@@ -33,17 +33,22 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// writes through immediately; `nil` (scripted fleet / tests) keeps the
     /// registry purely in-memory, exactly as before.
     private let recordStore: (any GatewayRecordStoring)?
+    /// T3: per-gateway TLS pin store (TOFU SPKI pinning). `nil` keeps the
+    /// registry pin-unaware (scripted fleet / legacy tests).
+    private let pinStore: (any TLSPinStoring)?
 
     public init(
         registry: GatewayRegistry = GatewayRegistry(),
         credentials: any CredentialStoring,
         connectionFactory: @escaping GatewayConnectionFactory,
-        recordStore: (any GatewayRecordStoring)? = nil
+        recordStore: (any GatewayRecordStoring)? = nil,
+        pinStore: (any TLSPinStoring)? = nil
     ) {
         self.registry = registry
         self.credentials = credentials
         self.connectionFactory = connectionFactory
         self.recordStore = recordStore
+        self.pinStore = pinStore
     }
 
     // MARK: GatewayRegistryManaging
@@ -137,6 +142,16 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             try await credentials.deleteCredential(for: id)
         } catch {
             throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+        }
+        // T3: retire the TLS pin with the credential — a removed gateway
+        // must leave no orphaned trust material. Failures surface (same
+        // P1-8 contract); missing pin is a no-op at the store level.
+        if let pinStore {
+            do {
+                try await pinStore.deletePin(for: id)
+            } catch {
+                throw GatewayRegistryError.pinStoreFailed(String(describing: error))
+            }
         }
         // P0-4: remove the durable record too — a removed gateway must not
         // resurrect on relaunch.

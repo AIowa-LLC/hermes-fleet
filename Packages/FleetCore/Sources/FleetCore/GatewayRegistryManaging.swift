@@ -81,6 +81,9 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
     /// The durable gateway-record store operation failed (P0-4; detail is
     /// non-secret).
     case recordStoreFailed(String)
+    /// The TLS pin-store operation failed (T3; detail is non-secret — pins
+    /// are public key material anyway).
+    case pinStoreFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -91,6 +94,7 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
         case .credentialStoreFailed(let detail): return "credential store failed: \(detail)"
         case .invalidGatewayID(let detail): return "invalid gateway ID: \(detail)"
         case .recordStoreFailed(let detail): return "gateway record store failed: \(detail)"
+        case .pinStoreFailed(let detail): return "TLS pin store failed: \(detail)"
         }
     }
 }
