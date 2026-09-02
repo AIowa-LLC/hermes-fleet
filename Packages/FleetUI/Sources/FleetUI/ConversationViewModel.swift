@@ -188,6 +188,12 @@ public final class ConversationViewModel {
     /// `nonisolated(unsafe)`: same pattern — only canceled in `deinit`.
     nonisolated(unsafe) private var statusWatcher: Task<Void, Never>?
     private var hasStarted = false
+    /// Generation of the newest conversation recovery operation
+    /// (t_e77c614c). Bumped when `reconnect()` / `reauthenticate()` /
+    /// `recoverGap()` starts; an in-flight operation whose captured token no
+    /// longer matches is STALE and its completion is dropped (the
+    /// `OnboardingViewModel.beginOperation()` fencing pattern).
+    @ObservationIgnored private var operationGeneration = 0
     /// Status poll cadence (short in tests; production uses the default).
     private let statusInterval: Duration
     /// Authoritative transcript history — unbounded, persisted to the cache
@@ -298,7 +304,12 @@ public final class ConversationViewModel {
     /// Idempotent open + subscribe: open (create/resume) the session if none
     /// is open, and start the event + status subscriptions. Returns true only
     /// when both are live; on failure classifies and returns false.
-    private func ensureOpenAndSubscribed() async -> Bool {
+    ///
+    /// t_e77c614c: when fenced by a recovery operation's token, a superseded
+    /// open never applies its session result or flips `.ready` — the newer
+    /// operation owns the screen state. `nil` (initial `start()`) fences
+    /// nothing, matching the pre-existing behavior.
+    private func ensureOpenAndSubscribed(fencedBy token: Int? = nil) async -> Bool {
         if openedSessionID == nil {
             phase = .opening
             do {
@@ -310,6 +321,7 @@ public final class ConversationViewModel {
                         sessionID: sessionID,
                         lastEventID: lastAppliedEventID
                     )
+                    guard isCurrent(token) else { return false }
                     openedSessionID = resumed.sessionID
                     applyOpenedSession(resumed)
                 } else {
@@ -320,10 +332,12 @@ public final class ConversationViewModel {
                         provider: nil,
                         cols: nil
                     )
+                    guard isCurrent(token) else { return false }
                     openedSessionID = created.sessionID
                     applyOpenedSession(created)
                 }
             } catch {
+                guard isCurrent(token) else { return false }
                 classifyOpenFailure(error)
                 return false
             }
@@ -334,6 +348,23 @@ public final class ConversationViewModel {
         return true
     }
 
+    /// t_e77c614c — whether `token` still names the newest operation. A `nil`
+    /// token (unfenced caller, e.g. the initial `start()`) is always current.
+    private func isCurrent(_ token: Int?) -> Bool {
+        guard let token else { return true }
+        return token == operationGeneration
+    }
+
+    // MARK: Operation fencing (t_e77c614c)
+
+    /// Begins a tracked async recovery operation and returns its generation
+    /// token used to fence settlement against newer overlapping operations.
+    /// Mirrors `OnboardingViewModel.beginOperation()`.
+    private func beginOperation() -> Int {
+        operationGeneration += 1
+        return operationGeneration
+    }
+
     /// Explicit user action: reconnect after a transient drop, then run the M6
     /// replay hydration. The UI calls this from the reconnect banner.
     ///
@@ -342,11 +373,17 @@ public final class ConversationViewModel {
     /// ready — never set `.ready` with no session and a dead composer. When a
     /// session IS already open (mid-stream drop), it is left as-is: reconnect
     /// + replay only (the live event/status tasks keep running).
+    ///
+    /// t_e77c614c: generation-fenced — a superseded recovery (user retapped
+    /// reconnect, or re-auth started while a reconnect was in flight) never
+    /// settles observable state; its stale completion is silently dropped.
     public func reconnect() async {
+        let token = beginOperation()
         phase = .reconnecting
         do {
             try await session.connect()
         } catch {
+            guard token == operationGeneration else { return }
             phase = .disconnected
             errorMessage = Self.nonSecret(error)
             return
@@ -355,27 +392,33 @@ public final class ConversationViewModel {
             // Initial connect/open failure recovery (P1-5): the session was
             // never opened and subscriptions never started — open + subscribe
             // before the connection can be called ready.
-            guard await ensureOpenAndSubscribed() else { return }
+            guard await ensureOpenAndSubscribed(fencedBy: token) else { return }
         }
-        await runReplayHydration()
+        await runReplayHydration(fencedBy: token)
+        guard token == operationGeneration else { return }
         phase = .ready
     }
 
     /// Explicit user action after a 4401 close (M11 — NEVER silent retry).
     /// Re-authenticates with a fresh ticket, then replays hydration.
+    ///
+    /// t_e77c614c: generation-fenced (same semantics as `reconnect()`).
     public func reauthenticate() async {
+        let token = beginOperation()
         phase = .reconnecting
         do {
             try await session.reauthenticate()
         } catch {
+            guard token == operationGeneration else { return }
             phase = .authRequired
             errorMessage = Self.nonSecret(error)
             return
         }
         if openedSessionID == nil {
-            guard await ensureOpenAndSubscribed() else { return }
+            guard await ensureOpenAndSubscribed(fencedBy: token) else { return }
         }
-        await runReplayHydration()
+        await runReplayHydration(fencedBy: token)
+        guard token == operationGeneration else { return }
         phase = .ready
     }
 
@@ -539,10 +582,21 @@ public final class ConversationViewModel {
     /// re-apply it in order, then let the live tail resume contiguously.
     /// Unrecoverable gaps (ring evicted / replay failed) surface an explicit
     /// integrity notice and refetch authoritative history — never silent loss.
+    ///
+    /// t_e77c614c: generation-fenced — the recovery captures the CURRENT
+    /// generation at start (without bumping), so a reconnect / re-auth that
+    /// starts while the replay fetch is in flight supersedes it; the stale
+    /// recovery never re-applies events, surfaces a notice, or overwrites the
+    /// transcript. It deliberately does NOT bump the counter: a background
+    /// recovery must never supersede a user recovery (that would drop the
+    /// reconnect's `phase = .ready` settlement and strand the screen in
+    /// `.reconnecting`).
     private func recoverGap(after: Int, before: Int, triggering: ConversationEvent) async {
+        let token = operationGeneration
         guard let sid = openedSessionID else { return }
         do {
             let missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
+            guard isCurrent(token) else { return }
             // Re-apply in seq order, cursor-gated: replayed overlap drops,
             // the missed events + triggering event apply contiguously.
             for event in missed {
@@ -556,21 +610,29 @@ public final class ConversationViewModel {
             }
             integrityNotice = "Stream gap recovered — \(before - after - 1) missed event\(before - after - 1 == 1 ? "" : "s") replayed."
         } catch ConversationError.gapUnrecoverable(let gsid, let gAfter) {
+            guard isCurrent(token) else { return }
             integrityNotice = "Some events after #\(gAfter) are no longer retained — reloading full history."
-            await refetchAuthoritativeHistory(sessionID: gsid)
+            await refetchAuthoritativeHistory(sessionID: gsid, fencedBy: token)
         } catch {
+            guard isCurrent(token) else { return }
             // Replay attempt failed (transport-level): surface it explicitly
             // and rehydrate from history rather than rendering a hole.
             integrityNotice = "Stream gap could not be recovered — reloading full history."
-            await refetchAuthoritativeHistory(sessionID: sid)
+            await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
         }
     }
 
     /// Authoritative transcript refetch (already the M6 truncation path).
-    private func refetchAuthoritativeHistory(sessionID: String) async {
+    ///
+    /// t_e77c614c: when fenced, a superseded refetch (a newer reconnect /
+    /// re-auth / gap recovery already refetched or owns the screen) never
+    /// replaces the transcript. `nil` keeps the pre-existing unconditional
+    /// behavior for unfenced callers.
+    private func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async {
         guard let history = try? await session.history.fetchSessionHistory(sessionID: sessionID) else {
             return
         }
+        guard isCurrent(token) else { return }
         allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
         hydratedFromCache = false
         // History is snapshot-authoritative, not event-id tagged: drop the
@@ -725,9 +787,13 @@ public final class ConversationViewModel {
 
     // MARK: Replay hydration (M6)
 
-    private func runReplayHydration() async {
+    /// t_e77c614c: when fenced by a recovery token, a superseded hydration
+    /// (a newer reconnect / re-auth owns the screen) never surfaces its
+    /// notice, refetches history, or settles state.
+    private func runReplayHydration(fencedBy token: Int) async {
         do {
             let outcomes = try await session.replay.replayAfterReconnect()
+            guard isCurrent(token) else { return }
             replayNotice = Self.replayNotice(outcomes)
             // If the epoch changed or replay was truncated, the authoritative
             // transcript must be refetched (spec §9.5/§9.6). All three paths
@@ -741,16 +807,17 @@ public final class ConversationViewModel {
             for outcome in outcomes {
                 switch outcome {
                 case .truncated(let sid), .failed(let sid, _):
-                    await refetchAuthoritativeHistory(sessionID: sid)
+                    await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
                 case .epochChanged:
                     if let sid = openedSessionID {
-                        await refetchAuthoritativeHistory(sessionID: sid)
+                        await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
                     }
                 default:
                     break
                 }
             }
         } catch {
+            guard isCurrent(token) else { return }
             replayNotice = "Replay unavailable after reconnect."
         }
     }

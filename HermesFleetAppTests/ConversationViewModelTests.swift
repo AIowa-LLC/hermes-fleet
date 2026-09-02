@@ -54,10 +54,25 @@ final class ConversationViewModelTests: XCTestCase {
 
         // replay
         var replayOutcomes: Result<[ReplayOutcome], ReplayError> = .success([.nothingToReplay])
+        /// t_e77c614c — one-shot gate for holding the replay RPC in flight.
+        var replayGate: OneShotGate?
+        var replayCallCount = 0
+        /// Incremented when a call PARKS on the gate (its scripted result is
+        /// already captured) — lets tests deterministically observe that an
+        /// RPC is truly held in flight.
+        var replayParkedCount = 0
 
         // history
         var historyResult: Result<SessionHistory, SessionHistoryError> =
             .success(SessionHistory(sessionID: "s-1", count: 0, messages: []))
+        /// t_e77c614c — one-shot gate: when armed, the FIRST history fetch
+        /// suspends until `open()` (subsequent fetches pass through). Lets a
+        /// test hold one in-flight refetch while a newer operation runs.
+        var historyGate: OneShotGate?
+        var historyCallCount = 0
+        /// Incremented when a fetch PARKS on the gate — deterministic
+        /// in-flight observation (see replayParkedCount).
+        var historyParkedCount = 0
 
         init() {
             self.streamPair = AsyncStream.makeStream()
@@ -117,12 +132,29 @@ final class ConversationViewModelTests: XCTestCase {
         // MARK: ReplayProviding
         func watermarks() async -> [SessionEventWatermark] { [] }
         func replayAfterReconnect() async throws -> [ReplayOutcome] {
-            try replayOutcomes.get()
+            replayCallCount += 1
+            // Capture the scripted result at CALL time: a gated (in-flight)
+            // RPC must return the state it was issued against, not whatever
+            // the test scripted later — otherwise stale-result tests can't
+            // distinguish stale from new.
+            let result = replayOutcomes
+            if let replayGate {
+                replayParkedCount += 1
+                await replayGate.wait()
+            }
+            return try result.get()
         }
 
         // MARK: SessionHistoryProviding
         func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
-            try historyResult.get()
+            historyCallCount += 1
+            // Captured at CALL time — see replayAfterReconnect.
+            let result = historyResult
+            if let historyGate {
+                historyParkedCount += 1
+                await historyGate.wait()
+            }
+            return try result.get()
         }
         func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
             SessionStatus.parse(output: "Session ID: \(sessionID)")
@@ -137,6 +169,35 @@ final class ConversationViewModelTests: XCTestCase {
     /// Let the (MainActor) event/status tasks consume yields before asserting.
     private func flush() async {
         try? await Task.sleep(for: .milliseconds(25))
+    }
+
+    /// t_e77c614c — one-shot async gate for holding a scripted call in flight.
+    final class OneShotGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var opened = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if opened {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    waiters.append(continuation)
+                    lock.unlock()
+                }
+            }
+        }
+
+        func open() {
+            lock.lock()
+            opened = true
+            let resumed = waiters
+            waiters = []
+            lock.unlock()
+            resumed.forEach { $0.resume() }
+        }
     }
 
     // MARK: - Fixture
@@ -819,5 +880,106 @@ final class ConversationViewModelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(60))
         XCTAssertEqual(viewModel.phase, .disconnected,
                        "nil liveness must not gate status polls")
+    }
+
+    // MARK: - t_e77c614c generation-token fencing
+
+    /// Superseded recovery's history refetch (epoch-change path) must not
+    /// overwrite the transcript a NEWER reconnect already established.
+    ///
+    /// Race: reconnect #1 in flight, its replay hydration hits an
+    /// epoch-changed outcome and refetches history; before that fetch lands,
+    /// reconnect #2 (the user retapped) completes with a DIFFERENT (newer)
+    /// authoritative history. The stale refetch landing last must be dropped
+    /// — the transcript keeps the newest reconnect's state.
+    func testSupersededReconnectRefetchDoesNotOverwriteNewerState() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        // Hold reconnect #1's history refetch in flight.
+        let gate = OneShotGate()
+        scripted.historyGate = gate
+        scripted.replayOutcomes = .success([.epochChanged(from: "e1", to: "e2")])
+        // Stale history the OLD refetch will eventually return.
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 1, messages: [
+            SessionMessage(role: .assistant, text: "STALE old refetch"),
+        ]))
+        async let staleReconnect: Void = viewModel.reconnect()
+
+        // Deterministically wait until #1's history refetch has PARKED (the
+        // stale result is captured, the fetch held) before starting the
+        // newer operation which must supersede it.
+        while scripted.historyParkedCount == 0 { await flush() }
+        XCTAssertEqual(viewModel.phase, .reconnecting)
+
+        // Reconnect #2 supersedes; it must complete fully and settle state
+        // (its own epoch-change outcome refetches the NEW history ungated).
+        scripted.replayOutcomes = .success([.epochChanged(from: "e2", to: "e3")])
+        scripted.historyGate = nil // subsequent fetches pass straight through
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 1, messages: [
+            SessionMessage(role: .assistant, text: "NEW authoritative history"),
+        ]))
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · gateway restarted — history refreshed")
+
+        // Release the stale refetch AFTER the newer state settled.
+        gate.open()
+        _ = await staleReconnect
+
+        let assistant = viewModel.transcript.last { $0.kind == .assistant }
+        XCTAssertEqual(assistant?.text, "NEW authoritative history",
+                       "stale (superseded) refetch must be dropped, not overwrite newer state")
+        XCTAssertEqual(viewModel.phase, .ready,
+                       "stale completion must not flip the phase either")
+    }
+
+    /// Superseded reconnect's replay notice must not overwrite the newer
+    /// operation's notice (observable UI state, same fence).
+    func testSupersededReconnectDoesNotOverwriteNewerNotice() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        let parkedBaseline = scripted.replayParkedCount
+
+        // Reconnect #1 in flight, holding the replay RPC.
+        let gate = OneShotGate()
+        scripted.replayGate = gate
+        scripted.replayOutcomes = .success([.replayed(sessionID: "s-1", count: 9)])
+        async let staleReconnect: Void = viewModel.reconnect()
+
+        // Deterministically wait until #1 has PARKED on the gate (its token
+        // is captured and its RPC is held) before starting the newer op.
+        while scripted.replayParkedCount == parkedBaseline { await flush() }
+
+        // Reconnect #2 supersedes and settles a different notice.
+        scripted.replayGate = nil
+        scripted.replayOutcomes = .success([.nothingToReplay])
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · nothing new")
+
+        // Stale replay lands now — its notice must be dropped.
+        gate.open()
+        _ = await staleReconnect
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · nothing new",
+                       "stale replay notice must not overwrite the newer operation's")
+    }
+
+    /// In-order (non-raced) reconnect behaves exactly as before: notice set,
+    /// phase ready, transcript refetched on epoch change.
+    func testInOrderReconnectUnchanged() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        scripted.replayOutcomes = .success([.epochChanged(from: "e1", to: "e2")])
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 1, messages: [
+            SessionMessage(role: .assistant, text: "in-order history"),
+        ]))
+        await viewModel.reconnect()
+
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · gateway restarted — history refreshed")
+        let assistant = viewModel.transcript.last { $0.kind == .assistant }
+        XCTAssertEqual(assistant?.text, "in-order history")
     }
 }

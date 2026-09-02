@@ -735,4 +735,158 @@ final class AppEnvironmentTests: XCTestCase {
             XCTFail("expected arch classified failed")
         }
     }
+
+    // MARK: t_e77c614c — roster refresh generation fencing
+
+    /// A `FleetRosterProviding` double whose refresh can be held in flight
+    /// (until `release()`) and returns the snapshot scripted at CALL time, so
+    /// a test can distinguish a stale refresh's result from a newer one.
+    private final class GatedRoster: FleetRosterProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _snapshot: FleetRosterSnapshot
+        private var _gated = false
+        private var opened = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        init(snapshot: FleetRosterSnapshot, gated: Bool) {
+            self._snapshot = snapshot
+            self._gated = gated
+        }
+
+        // NSLock is unavailable from async contexts — confine it to these
+        // synchronous helpers.
+        private func captureSnapshot() -> FleetRosterSnapshot {
+            lock.lock()
+            defer { lock.unlock() }
+            return _snapshot
+        }
+
+        private func shouldWait() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return _gated && !opened
+        }
+
+        private func park(_ continuation: CheckedContinuation<Void, Never>) {
+            lock.lock()
+            if opened {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+
+        func refreshRoster() async -> FleetRosterSnapshot {
+            let snapshot = captureSnapshot()
+            if shouldWait() {
+                await withCheckedContinuation { continuation in
+                    park(continuation)
+                }
+            }
+            return snapshot
+        }
+
+        func update(_ snapshot: FleetRosterSnapshot) {
+            lock.lock()
+            _snapshot = snapshot
+            lock.unlock()
+        }
+
+        func release() {
+            lock.lock()
+            opened = true
+            let resumed = waiters
+            waiters = []
+            lock.unlock()
+            resumed.forEach { $0.resume() }
+        }
+    }
+
+    /// Rapid retaps: an older in-flight refresh completing AFTER a newer one
+    /// must NOT overwrite `rosterSnapshot` — observable state reflects only
+    /// the most recent refresh, and `isRefreshing` settles false when the
+    /// newest completes.
+    func testStaleRosterRefreshDoesNotOverwriteNewerSnapshot() async {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        let staleSnapshot = FleetRosterSnapshot(
+            roster: FleetRoster(gateways: [
+                FleetGateway(
+                    id: GatewayID(rawValue: "<dev-workstation>"),
+                    displayName: "STALE-display-name"
+                ),
+            ]),
+            gatewayOutcomes: [
+                GatewayID(rawValue: "<dev-workstation>"): .loaded(profileCount: 1)
+            ]
+        )
+        let freshSnapshot = FleetRosterSnapshot(
+            roster: FleetRoster(gateways: [
+                FleetGateway(
+                    id: GatewayID(rawValue: "<dev-workstation>"),
+                    displayName: "FRESH-display-name"
+                ),
+            ]),
+            gatewayOutcomes: [
+                GatewayID(rawValue: "<dev-workstation>"): .loaded(profileCount: 2)
+            ]
+        )
+        let gated = GatedRoster(snapshot: staleSnapshot, gated: true)
+        let cache = try! SwiftDataCacheStore.makeInMemory()
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: gated,
+            cache: cache,
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            health: TestHealthAccumulator()
+        )
+        await environment.load()
+
+        // Refresh #1 (held in flight) captured the STALE snapshot at call time.
+        gated.update(staleSnapshot)
+        async let staleRefresh: Void = environment.refreshRoster()
+        // Give refresh #1 a hop to enter the roster seam.
+        try? await Task.sleep(for: .milliseconds(10))
+
+        // Refresh #2 starts and completes with the FRESH snapshot — it
+        // supersedes #1.
+        gated.update(freshSnapshot)
+        gated.release() // refresh #2 (and any later) pass through ungated
+        await environment.refreshRoster()
+
+        XCTAssertEqual(environment.rosterSnapshot?.roster.allGateways.first?.displayName,
+                       "FRESH-display-name",
+                       "the newest refresh must own observable state")
+        XCTAssertFalse(environment.isRefreshing,
+                       "isRefreshing settles false when the newest refresh completes")
+
+        // The stale refresh lands now — must be dropped.
+        // (release() above already opened the gate for it; give it a hop.)
+        _ = await staleRefresh
+        XCTAssertEqual(environment.rosterSnapshot?.roster.allGateways.first?.displayName,
+                       "FRESH-display-name",
+                       "stale (superseded) refresh must not overwrite newer state")
+    }
+
+    /// In-order (non-raced) refresh behaves exactly as before: snapshot
+    /// applied, `isRefreshing` false after.
+    func testInOrderRosterRefreshUnchanged() async {
+        let (environment, _) = await makeEnvironment(gateways: [
+            registration("<dev-workstation>", name: "MacBook M5"),
+        ])
+        await environment.refreshRoster()
+        XCTAssertNotNil(environment.rosterSnapshot)
+        XCTAssertFalse(environment.isRefreshing)
+    }
 }

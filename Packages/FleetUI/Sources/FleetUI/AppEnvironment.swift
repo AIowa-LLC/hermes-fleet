@@ -149,6 +149,12 @@ public final class AppEnvironment {
     /// created on first conversation screen use).
     private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
 
+    /// Generation of the newest roster refresh (t_e77c614c). Bumped each time
+    /// `refreshRoster()` starts; an in-flight refresh whose captured token no
+    /// longer matches is STALE and must not settle observable state (the
+    /// `OnboardingViewModel.beginOperation()` fencing pattern).
+    @ObservationIgnored private var rosterGeneration = 0
+
     public init(
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
@@ -211,12 +217,30 @@ public final class AppEnvironment {
         healthStats = await health.snapshot()
     }
 
+    /// Begins a tracked roster refresh and returns its generation token used
+    /// to fence settlement against newer overlapping refreshes (the
+    /// `OnboardingViewModel.beginOperation()` reference pattern).
+    private func beginRosterRefresh() -> Int {
+        rosterGeneration += 1
+        return rosterGeneration
+    }
+
     /// Refresh the union fleet roster (M8). Never throws for a single-gateway
     /// outage (partial-availability contract).
+    ///
+    /// t_e77c614c: generation-fenced — a rapid retap starts a newer refresh
+    /// whose token supersedes any still-in-flight older one; the stale
+    /// completion is silently dropped so observable state always reflects
+    /// only the most recent refresh.
     public func refreshRoster() async {
+        let token = beginRosterRefresh()
         isRefreshing = true
-        defer { isRefreshing = false }
-        rosterSnapshot = await roster.refreshRoster()
+        let snapshot = await roster.refreshRoster()
+        // Stale completion: a newer refresh owns settlement — silently drop
+        // the result (observable state stays what the newest refresh set).
+        guard token == rosterGeneration else { return }
+        rosterSnapshot = snapshot
+        isRefreshing = false
     }
 
     /// H2: copy the latest connection-health snapshots into the observable
