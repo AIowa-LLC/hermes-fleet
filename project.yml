@@ -98,3 +98,14 @@ schemes:
       targets:
         - HermesFleetAppTests
         - HermesFleetAppUITests
+  # F1: device-hosted unit tests without the UI-test bundle — the xctrunner
+  # target needs an Xcode account session to mint its profile, which is not
+  # always available headless. Unit tests sign with the app's profile.
+  HermesFleetAppUnitTests:
+    build:
+      targets:
+        HermesFleetApp: all
+        HermesFleetAppTests: [test]
+    test:
+      targets:
+        - HermesFleetAppTests
