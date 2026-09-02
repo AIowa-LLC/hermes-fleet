@@ -1,10 +1,10 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "FleetCore",
     platforms: [
-        .iOS(.v17),
+        .iOS(.v26),
         .macOS(.v14) // host-side `swift test` convenience only; the product targets iOS
     ],
     products: [

@@ -79,7 +79,7 @@ public struct FleetDashboardView: View {
                 )
                 StatCard(
                     icon: "server.rack",
-                    tint: FleetTheme.accentCyan,
+                    tint: FleetTheme.accent,
                     value: "\(environment.gateways.count)",
                     label: "Gateways"
                 )
@@ -143,7 +143,7 @@ public struct FleetDashboardView: View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: "server.rack")
-                    .foregroundStyle(FleetTheme.accentCyan)
+                    .foregroundStyle(FleetTheme.accent)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(gateway.displayName)
@@ -249,7 +249,7 @@ public struct FleetDashboardView: View {
                 FleetCard {
                     HStack(spacing: FleetTheme.spacingMd) {
                         Image(systemName: "rectangle.stack")
-                            .foregroundStyle(FleetTheme.accentCyan)
+                            .foregroundStyle(FleetTheme.accent)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Live Board")

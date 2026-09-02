@@ -168,7 +168,7 @@ public struct GatewayOnboardingView: View {
                     .font(.subheadline)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(FleetTheme.accentCyan)
+                .foregroundStyle(FleetTheme.accent)
                 .accessibilityIdentifier("fleet.onboarding.toggle-prompt")
             }
         }
@@ -254,7 +254,7 @@ public struct GatewayOnboardingView: View {
                     .font(.subheadline)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(FleetTheme.accentCyan)
+            .foregroundStyle(FleetTheme.accent)
             .accessibilityIdentifier("fleet.onboarding.docs")
             .frame(maxWidth: .infinity, alignment: .center)
         }

@@ -1,10 +1,10 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "FleetUI",
     platforms: [
-        .iOS(.v17),
+        .iOS(.v26),
         .macOS(.v14) // host-side build convenience only; the product targets iOS
     ],
     products: [
@@ -27,6 +27,12 @@ let package = Package(
             // and is wired by the composition root only.
             "FleetSecurity",
             "FleetPersistence"
+        ], resources: [
+            // V1 (Nous direction): Courier Prime under the SIL Open Font
+            // License (OFL.txt alongside) — the mono display typeface for
+            // titles / stats / IDs. SF Mono is the runtime fallback when the
+            // custom face is unavailable.
+            .process("Resources")
         ])
     ]
 )

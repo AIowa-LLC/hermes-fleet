@@ -128,7 +128,7 @@ public struct ConversationView: View {
                 banner(text: integrityNotice, symbol: "checkmark.shield", tint: FleetTheme.statusDegraded)
             }
             if let replayNotice = model.replayNotice, model.phase != .streaming {
-                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accentCyan)
+                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accent)
             }
             switch model.phase {
             case .idle, .opening:
@@ -464,7 +464,7 @@ private struct ConversationBubbleView: View {
                 }
             } icon: {
                 Image(systemName: "wrench.and.screwdriver")
-                    .foregroundStyle(FleetTheme.accentCyan)
+                    .foregroundStyle(FleetTheme.accent)
             }
             .padding(10)
             .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))

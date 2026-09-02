@@ -535,7 +535,7 @@ private struct GatewayRowView: View {
         case .failed(let status):
             switch status {
             case .authenticationRequired, .degraded, .unsupported:
-                return FleetTheme.accent
+                return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
                 return FleetTheme.textSecondary
             }
@@ -615,7 +615,7 @@ private struct ConnectionStateBadge: View {
         case .failed(let status):
             switch status {
             case .authenticationRequired, .degraded, .unsupported:
-                return FleetTheme.accent
+                return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
                 return FleetTheme.textSecondary
             }

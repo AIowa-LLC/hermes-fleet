@@ -59,7 +59,7 @@ public struct FleetActivityView: View {
                 Text("No Gateways")
             } icon: {
                 Image(systemName: "clock.arrow.circlepath")
-                    .foregroundStyle(FleetTheme.accentCyan)
+                    .foregroundStyle(FleetTheme.accent)
             }
         } description: {
             Text("Add a gateway to see its connection activity.")

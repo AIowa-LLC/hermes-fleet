@@ -192,7 +192,7 @@ public struct BotDetailView: View {
                         Task { await environment.loadSessions(for: route) }
                     }
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accentCyan)
+                    .foregroundStyle(FleetTheme.accent)
                 }
             }
             .accessibilityElement(children: .contain)

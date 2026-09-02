@@ -53,7 +53,7 @@ public struct StatCard: View {
 #Preview("StatCard") {
     HStack(spacing: FleetTheme.spacingMd) {
         StatCard(icon: "cpu", tint: FleetTheme.accentMagenta, value: "3", label: "Active Bots")
-        StatCard(icon: "antenna.radiowaves.left.and.right", tint: FleetTheme.accentCyan, value: "2", label: "Gateways")
+        StatCard(icon: "antenna.radiowaves.left.and.right", tint: FleetTheme.accent, value: "2", label: "Gateways")
         StatCard(icon: "heart", tint: FleetTheme.statusOnline, value: "100%", label: "Fleet Health")
     }
     .padding()

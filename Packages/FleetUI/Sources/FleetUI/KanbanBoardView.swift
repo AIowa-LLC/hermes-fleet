@@ -174,7 +174,7 @@ public struct KanbanBoardView: View {
                     Task { await model.refresh() }
                 }
                 .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
-                .foregroundStyle(FleetTheme.accentCyan)
+                .foregroundStyle(FleetTheme.accent)
             }
         }
         .accessibilityIdentifier("kanban.board.error")
@@ -206,7 +206,7 @@ public struct KanbanBoardView: View {
             ForEach(model.recentEvents.prefix(5)) { event in
                 HStack(spacing: FleetTheme.spacingSm) {
                     Circle()
-                        .fill(FleetTheme.accentCyan)
+                        .fill(FleetTheme.accent)
                         .frame(width: 6, height: 6)
                     Text("\(event.taskID) · \(event.kind)")
                         .font(FleetTheme.secondaryFont)

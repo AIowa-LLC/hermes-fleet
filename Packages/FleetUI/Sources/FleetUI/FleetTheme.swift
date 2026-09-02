@@ -1,9 +1,13 @@
 import SwiftUI
+import CoreText
+#if canImport(UIKit)
+import UIKit
+#endif
 
-/// U1 (Gold Fleet design tokens) — solid sRGB color from a 0xRRGGBB value.
+/// Solid sRGB color from a 0xRRGGBB value.
 ///
-/// Gold Fleet is a DARK-ONLY flat design (see the hero mock,
-/// `assets/hero/hermes-fleet-hero-source.png`): tokens are fixed values, not
+/// V1 (Nous direction): Fleet stays DARK-ONLY — stark near-black canvas,
+/// off-white text, one pale-cyan accent. Tokens are fixed values, not
 /// light/dark adaptive pairs. The app forces the dark appearance at the root
 /// (`.preferredColorScheme(.dark)` in HermesFleetApp); tokens still resolve
 /// identically under light trait collections so nothing shifts or crashes if
@@ -21,37 +25,47 @@ extension Color {
     }
 }
 
-/// Raw Gold Fleet palette — the single source of truth for every hex value.
+/// Raw palette — the single source of truth for every hex value.
 ///
-/// Drift guard: `FleetThemeTests.testPaletteHexValuesMatchSpecExactly` pins
-/// these to the plan-of-record token table. Change a value here ONLY with a
-/// matching design decision (plan: 2026-09-01 Gold Fleet UI overhaul).
+/// V1 design pivot (2026-09-02, plan: gold-fleet-v2 "Direction A — Nous
+/// terminal minimalism", Tony-approved): the Gold Fleet blue-gray/gold table
+/// is REPLACED, not extended. Nous DNA (from nousresearch.com): near-black
+/// canvas, off-white text, pale-cyan accent, #32373C-family grays. Semantic
+/// status colors are unchanged.
+///
+/// Drift guard: `FleetThemeTests` pins this table. Change a value here ONLY
+/// with a matching design decision.
 public enum FleetColors {
-    // MARK: Neutrals
-    public static let background: UInt32 = 0x0A0A0F      // screen background
-    public static let surface: UInt32 = 0x1A1A24         // cards, list rows
-    public static let surfaceElevated: UInt32 = 0x1E1E2A // elevated surface (range #1A1A24–#1E1E2A)
-    public static let border: UInt32 = 0x2A2A3A          // 1px card borders (use @ ~8%)
-    public static let textPrimary: UInt32 = 0xFFFFFF     // titles, numbers
-    public static let textSecondary: UInt32 = 0x8A8A9A   // labels, subtitles
+    // MARK: Neutrals (Nous #32373C family on stark near-black)
+    public static let background: UInt32 = 0x0A0A0A      // screen canvas
+    public static let surface: UInt32 = 0x16161A         // cards, list rows
+    public static let surfaceElevated: UInt32 = 0x1D1E22 // elevated surface
+    public static let border: UInt32 = 0x32373C          // hairline strokes (full opacity)
+    public static let textPrimary: UInt32 = 0xEDEDED     // titles, values (off-white)
+    public static let textSecondary: UInt32 = 0x9BA1A6   // labels, metadata keys
 
-    // MARK: Accents
-    public static let accentGold: UInt32 = 0xFFD700      // brand: app title, key numbers
-    public static let accentMagenta: UInt32 = 0xFF1F6A   // primary action, active tab, send
-    public static let accentCyan: UInt32 = 0x00E5FF      // links, "View All", network detail
+    // MARK: Accent — ONE accent: pale cyan (links, active states, key numbers)
+    public static let accent: UInt32 = 0x98F3F9
 
-    // MARK: Status
+    // MARK: Legacy Gold Fleet accents (V1 keeps the tokens so unmigrated
+    // MARK: screens compile; V2/V3 migrate call sites. Gold survives only as
+    // MARK: the artwork/wordmark tie; magenta is demoted to send/action.)
+    public static let accentGold: UInt32 = 0xFFD700
+    public static let accentMagenta: UInt32 = 0xFF1F6A
+
+    // MARK: Status (semantic — unchanged by the design pivot)
     public static let statusOnline: UInt32 = 0x00C853    // Running/Online pills
     public static let statusIdle: UInt32 = 0xFFC107      // Idle pills
     public static let statusDegraded: UInt32 = 0xFF5252  // Degraded/error pills
     public static let statusOffline: UInt32 = 0x6A6A7A   // Offline pills
 }
 
-/// The Hermes Fleet design system — Gold Fleet foundation (U1).
+/// The Hermes Fleet design system — V1 "Nous terminal minimalism".
 ///
-/// Dark blue-gray surfaces on near-black, gold brand accents, magenta/cyan
-/// functional accents, semantic status colors. FLAT design: no glass, no
-/// neumorphism, no in-app shadows. Type is SF Pro (system).
+/// Stark #0A0A0A canvas, monospace as identity (Courier Prime with SF Mono
+/// fallback) for titles/stats/IDs, UPPERCASE micro-labels with wide tracking,
+/// one pale-cyan accent, hairline structure, terminal artifacts as brand.
+/// FLAT design: no glass soup, no gradients on surfaces, no shadows.
 ///
 /// Radii: cards 16, rows 12, bubbles 18, pills fully-rounded (Capsule).
 /// Spacing scale: 4 / 8 / 12 / 16 / 24 / 32.
@@ -65,56 +79,47 @@ public enum FleetTheme {
     public static let textPrimary: Color = Color(hex: FleetColors.textPrimary)
     public static let textSecondary: Color = Color(hex: FleetColors.textSecondary)
 
-    /// 1px card borders: #2A2A3A at ~8% opacity.
-    public static let border: Color = Color(hex: FleetColors.border).opacity(0.08)
+    /// 1px hairline card borders: #32373C at full opacity (a hairline IS the
+    /// restraint — no soft translucency).
+    public static let border: Color = Color(hex: FleetColors.border)
 
-    // MARK: - Accents
+    // MARK: - Accent (ONE accent: pale cyan)
 
-    /// Gold — the brand accent: app title, key numbers.
+    /// Pale cyan — links, active states, key numbers, primary tint.
+    public static let accent: Color = Color(hex: FleetColors.accent)
+
+    // MARK: - Legacy Gold Fleet aliases (V2/V3 migrate remaining call sites)
+
+    /// Legacy cyan accent — same semantic role as the new accent, now pale
+    /// cyan. Kept so existing "link/action" call sites compile and already
+    /// read Nous; screens migrate to `FleetTheme.accent` in the V3 sweep.
+    @available(*, deprecated, renamed: "accent")
+    public static var accentCyan: Color { accent }
+
+    /// Gold — retained for the artwork/wordmark tie only.
     public static let accentGold: Color = Color(hex: FleetColors.accentGold)
-    /// Magenta — primary actions, active tab, send button.
+    /// Magenta — send button / primary action only until V2 restyles it.
     public static let accentMagenta: Color = Color(hex: FleetColors.accentMagenta)
-    /// Cyan — links, "View All", network detail.
-    public static let accentCyan: Color = Color(hex: FleetColors.accentCyan)
 
-    // MARK: - Status
+    // MARK: - Status (semantic, unchanged)
 
     public static let statusOnline: Color = Color(hex: FleetColors.statusOnline)
     public static let statusIdle: Color = Color(hex: FleetColors.statusIdle)
     public static let statusDegraded: Color = Color(hex: FleetColors.statusDegraded)
     public static let statusOffline: Color = Color(hex: FleetColors.statusOffline)
 
-    /// Tinted pill background derived from a status color (~20%, per mock).
-    /// Every status pill computes its background through this token so the
-    /// tint stays uniform when U2 introduces `StatusPill`.
+    /// Tinted pill background derived from a status color (~20%).
     public static func statusPillTint(_ status: Color) -> Color {
         status.opacity(0.2)
     }
 
-    /// U6 (Gold Fleet) — the magenta gradient fill for user message bubbles
-    /// and the circular send button (hero mock screen 2). Derived from the
-    /// single magenta accent token (no second hex value enters the palette):
-    /// full-strength magenta fading toward the dark ground at ~65%.
+    /// The magenta gradient fill for user message bubbles and the circular
+    /// send button (legacy Gold Fleet role, pending the V2 component pass).
     public static let accentMagentaGradient: LinearGradient = LinearGradient(
         colors: [accentMagenta, accentMagenta.opacity(0.65)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-
-    // MARK: - Legacy aliases (pre-Gold-Fleet token names, still referenced
-    // MARK:   by existing screens; re-skin cards U3–U7 migrate call sites)
-
-    /// Primary interactive accent — now Magenta (was Signal Red).
-    @available(*, deprecated, renamed: "accentMagenta")
-    public static var accent: Color { accentMagenta }
-
-    /// Cold categorical accent — now Cyan (was Electric Blue).
-    @available(*, deprecated, renamed: "accentCyan")
-    public static var accentColdBlue: Color { accentCyan }
-
-    /// Hairline separator — now the border token.
-    @available(*, deprecated, renamed: "border")
-    public static var separator: Color { border }
 
     // MARK: - Radii
 
@@ -137,25 +142,113 @@ public enum FleetTheme {
     public static let spacingXl: CGFloat = 24
     public static let spacingXxl: CGFloat = 32
 
-    // MARK: - Typography (SF Pro / system)
+    // MARK: - Typography (mono as identity; body stays SF Pro)
 
-    /// Gold app title — 28pt bold.
-    public static let titleFont: Font = .system(size: titleFontSize, weight: titleFontWeight)
+    /// Screen titles / hero numbers — 28pt bold MONO (Courier Prime).
+    public static let titleFont: Font = FleetFonts.monoDisplay(size: titleFontSize, weight: titleFontWeight)
     public static let titleFontSize: CGFloat = 28
     public static let titleFontWeight: Font.Weight = .bold
 
-    /// Section headers — 17pt semibold (white).
+    /// Section headers — now the UPPERCASE micro-label role: 11pt semibold,
+    /// callers apply `.textCase(.uppercase)` + `microLabelTracking`.
     public static let sectionHeaderFont: Font = .system(size: sectionHeaderFontSize, weight: sectionHeaderFontWeight)
-    public static let sectionHeaderFontSize: CGFloat = 17
+    public static let sectionHeaderFontSize: CGFloat = FleetTheme.microLabelFontSize
     public static let sectionHeaderFontWeight: Font.Weight = .semibold
 
-    /// Stat numbers — 28pt bold.
-    public static let statFont: Font = .system(size: statFontSize, weight: statFontWeight)
+    /// Stat numbers — 28pt bold MONO with tabular figures (dashboards line up).
+    public static let statFont: Font = FleetFonts.monoDisplay(size: statFontSize, weight: statFontWeight).monospacedDigit()
     public static let statFontSize: CGFloat = 28
     public static let statFontWeight: Font.Weight = .bold
 
-    /// Secondary text — 13pt regular.
+    /// Secondary text — 13pt regular SF Pro (readability role).
     public static let secondaryFont: Font = .system(size: secondaryFontSize, weight: secondaryFontWeight)
     public static let secondaryFontSize: CGFloat = 13
     public static let secondaryFontWeight: Font.Weight = .regular
+
+    /// UPPERCASE micro-label — 11pt semibold caps with wide tracking
+    /// ("GATEWAYS", "ACTIVE BOTS"). Apply `.textCase(.uppercase)` and
+    /// `.tracking(microLabelTracking)` at the call site (Font cannot encode
+    /// either). ~0.13em at 11pt.
+    public static let microLabelFont: Font = .system(size: microLabelFontSize, weight: .semibold)
+    public static let microLabelFontSize: CGFloat = 11
+    public static let microLabelTracking: CGFloat = 1.4
+
+    /// Mono body role — 13pt regular MONO for IDs, uptime, telemetry, and
+    /// terminal `KEY:` metadata rows (see FleetMetadataRow).
+    public static let monoFont: Font = FleetFonts.monoDisplay(size: monoFontSize, weight: .regular)
+    public static let monoFontSize: CGFloat = 13
+
+    /// Mono caption — 11pt regular MONO for tight metadata (timestamps).
+    public static let monoCaptionFont: Font = FleetFonts.monoDisplay(size: monoCaptionFontSize, weight: .regular)
+    public static let monoCaptionFontSize: CGFloat = 11
+}
+
+/// Courier Prime (OFL, bundled in FleetUI Resources) with SF Mono fallback.
+///
+/// Registration is a process-scoped one-shot (lazy `static let` init is
+/// swift_once, hence thread-safe without extra locking). If the custom face
+/// is unavailable for ANY reason the `mono*` factories fall back to
+/// `.system(design: .monospaced)` so the mono identity never breaks — it
+/// degrades to SF Mono.
+public enum FleetFonts {
+
+    /// PostScript names of the bundled faces (verified against the TTFs).
+    public static let courierPrimeRegular = "CourierPrime-Regular"
+    public static let courierPrimeBold = "CourierPrime-Bold"
+
+    /// One-shot registration of the bundled faces. Returns true when the
+    /// Courier Prime faces are usable (registered now or already present).
+    private static let registrationSucceeded: Bool = {
+        var succeeded = false
+        for name in [courierPrimeRegular, courierPrimeBold] {
+            guard let url = Bundle.module.url(forResource: name, withExtension: "ttf") else {
+                continue
+            }
+            var error: Unmanaged<CFError>?
+            if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
+                succeeded = true
+            } else if let cfError = error?.takeRetainedValue(),
+                CFErrorGetCode(cfError) == CTFontManagerError.alreadyRegistered.rawValue {
+                succeeded = true
+            }
+        }
+        return succeeded
+    }()
+
+    /// Whether the bundled Courier Prime faces resolve through the platform
+    /// font API. Pinned by FleetThemeTests (fonts must actually ship).
+    public static var courierPrimeAvailable: Bool {
+        guard registrationSucceeded else { return false }
+        return Self.faceResolves(faceName: courierPrimeRegular)
+            && Self.faceResolves(faceName: courierPrimeBold)
+    }
+
+    #if canImport(UIKit)
+    private static func faceResolves(faceName name: String) -> Bool {
+        UIFont(name: name, size: 12) != nil
+    }
+    #else
+    // macOS host-side build convenience (the product targets iOS): treat
+    // bundle presence + registration success as availability.
+    private static func faceResolves(faceName name: String) -> Bool {
+        Bundle.module.url(forResource: name, withExtension: "ttf") != nil
+    }
+    #endif
+
+    /// Mono display font: Courier Prime when bundled, SF Mono otherwise.
+    ///
+    /// Weight mapping: `.bold` and heavier use the Bold face; everything
+    /// lighter uses Regular (the two bundled weights are the whole family).
+    public static func monoDisplay(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let useBold: Bool
+        switch weight {
+        case .bold, .heavy, .black: useBold = true
+        default: useBold = false
+        }
+        let face = useBold ? courierPrimeBold : courierPrimeRegular
+        if Self.faceResolves(faceName: face) {
+            return .custom(face, size: size)
+        }
+        return .system(size: size, weight: weight, design: .monospaced)
+    }
 }
