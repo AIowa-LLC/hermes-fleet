@@ -61,7 +61,7 @@ public struct AppLockView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accentMagenta)
+            .tint(FleetTheme.accent)
             .controlSize(.large)
             .disabled(controller.state == .authenticating)
             .accessibilityIdentifier("fleet.app-lock.unlock")
@@ -89,7 +89,7 @@ public struct AppLockView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accentMagenta)
+            .tint(FleetTheme.accent)
             .controlSize(.large)
             .disabled(controller.state == .authenticating)
             .accessibilityIdentifier("fleet.app-lock.passcode.unlock")

@@ -112,20 +112,21 @@ public struct KanbanBoardView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             switch model.streamPhase {
             case .streaming:
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .foregroundStyle(FleetTheme.statusOnline)
+                Circle().fill(FleetTheme.statusOnline).frame(width: 7, height: 7)
                 Text("Live")
             case .reconnecting:
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .foregroundStyle(FleetTheme.statusDegraded)
+                Circle().fill(FleetTheme.statusDegraded).frame(width: 7, height: 7)
                 Text("Reconnecting…")
             case .idle:
-                Image(systemName: "pause.circle")
-                    .foregroundStyle(FleetTheme.statusOffline)
+                Circle().fill(FleetTheme.statusOffline).frame(width: 7, height: 7)
                 Text("Stream idle")
             }
         }
-        .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+        // V3: the stream banner reads like a process-table status line —
+        // uppercase micro-label voice, semantic status dot (no icon soup).
+        .font(FleetTheme.microLabelFont)
+        .textCase(.uppercase)
+        .tracking(FleetTheme.microLabelTracking)
         .foregroundStyle(FleetTheme.textSecondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(for: model.streamPhase))
@@ -146,7 +147,7 @@ public struct KanbanBoardView: View {
         FleetCard {
             VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 ProgressView()
-                    .tint(FleetTheme.accentGold)
+                    .tint(FleetTheme.accent)
                 Text("Loading board…")
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(FleetTheme.textSecondary)
@@ -186,7 +187,7 @@ public struct KanbanBoardView: View {
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(FleetTheme.textSecondary)
             Text("No gateways registered.")
-                .font(FleetTheme.sectionHeaderFont)
+                .font(.body.weight(.semibold))
                 .foregroundStyle(FleetTheme.textPrimary)
             Text("Add a gateway to see its Kanban board.")
                 .font(FleetTheme.secondaryFont)
@@ -198,18 +199,21 @@ public struct KanbanBoardView: View {
     }
 
     /// Recent activity strip — the last few change events (task + kind).
+    /// V3: uppercase micro-label header + terminal event lines (dot + mono).
     private func activityStrip(_ model: KanbanBoardViewModel) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text("Recent Activity")
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .textCase(.uppercase)
+                .tracking(FleetTheme.microLabelTracking)
+                .foregroundStyle(FleetTheme.textSecondary)
             ForEach(model.recentEvents.prefix(5)) { event in
                 HStack(spacing: FleetTheme.spacingSm) {
                     Circle()
                         .fill(FleetTheme.accent)
                         .frame(width: 6, height: 6)
                     Text("\(event.taskID) · \(event.kind)")
-                        .font(FleetTheme.secondaryFont)
+                        .font(FleetTheme.monoFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                         .lineLimit(1)
                 }
@@ -229,20 +233,30 @@ struct KanbanColumnSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            // V3 showcase: uppercase column label + MONO count chip + a
+            // hairline divider structuring the lane (terminal process-table
+            // voice). The column title itself is DATA (UI-test landmark) —
+            // no forced case on the title text.
             HStack(spacing: FleetTheme.spacingSm) {
                 Text(title.capitalized)
                     .font(FleetTheme.sectionHeaderFont)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .textCase(.uppercase)
+                    .tracking(FleetTheme.microLabelTracking)
+                    .foregroundStyle(FleetTheme.textSecondary)
                 Text("\(cards.count)")
-                    .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+                    .font(FleetTheme.monoCaptionFont.monospacedDigit())
                     .foregroundStyle(FleetTheme.textSecondary)
                     .padding(.horizontal, FleetTheme.spacingSm)
                     .padding(.vertical, 2)
                     .background(FleetTheme.surface)
                     .clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(FleetTheme.border, lineWidth: 1))
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(title.capitalized), \(cards.count) cards")
+            Rectangle()
+                .fill(FleetTheme.border)
+                .frame(height: 0.5)
 
             if cards.isEmpty {
                 Text("No cards")
@@ -293,13 +307,15 @@ struct KanbanCardView: View {
                 }
                 HStack(spacing: FleetTheme.spacingSm) {
                     if let createdAt = card.createdAt {
+                        // V3: relative age is telemetry — mono caption.
                         Text(Self.relativeAge(createdAt))
-                            .font(FleetTheme.secondaryFont)
+                            .font(FleetTheme.monoCaptionFont)
                             .foregroundStyle(FleetTheme.textSecondary)
                     }
                     Spacer()
+                    // V3: the card ID is machine data — mono, muted.
                     Text(card.id)
-                        .font(FleetTheme.secondaryFont)
+                        .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(FleetTheme.textSecondary.opacity(0.7))
                         .lineLimit(1)
                 }

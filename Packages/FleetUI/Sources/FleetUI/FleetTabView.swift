@@ -43,8 +43,8 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable {
 ///
 /// Tabs: Home (dashboard) / Bots (fleet roster) / Gateways (registry) /
 /// Activity (connection event feed) / Settings (App Lock), SF Symbols, active
-/// tab magenta (`.tint(FleetTheme.accentMagenta)` on the TabView; the lock
-/// gate keeps the app-wide tint). Each tab hosts its OWN `NavigationStack`
+/// tab tinted the pale-cyan accent (`.tint(FleetTheme.accent)` on the
+/// TabView; the lock gate keeps the app-wide tint). Each tab hosts its OWN `NavigationStack`
 /// with the typed `FleetScreen` destinations registered, so per-tab push
 /// navigation (bots → detail → conversation) works from every tab root and
 /// switching tabs preserves each stack.
@@ -146,7 +146,7 @@ public struct FleetTabView: View {
         .task {
             await performAutoNavIfNeeded()
         }
-        .tint(FleetTheme.accentMagenta)
+        .tint(FleetTheme.accent)
     }
 
     /// Shared typed-destination renderer (every tab stack registers the same

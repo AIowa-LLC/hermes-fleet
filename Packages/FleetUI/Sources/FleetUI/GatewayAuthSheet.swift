@@ -112,7 +112,7 @@ struct GatewayAuthSheet: View {
                 Task { await saveStrategy(newValue) }
             }
         }
-        .tint(FleetTheme.accentMagenta)
+        .tint(FleetTheme.accent)
         .interactiveDismissDisabled(isBusy)
     }
 

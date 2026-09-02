@@ -80,7 +80,7 @@ struct GatewayFormSheet: View {
                         isShowingScanner = true
                     } label: {
                         Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
-                            .foregroundStyle(FleetTheme.accentMagenta)
+                            .foregroundStyle(FleetTheme.accent)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.scan")
                 } header: {
@@ -189,12 +189,12 @@ struct GatewayFormSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saveButton) { save() }
                         .disabled(!isValid || isSaving)
-                        .foregroundStyle(FleetTheme.accentMagenta)
+                        .foregroundStyle(FleetTheme.accent)
                         .accessibilityIdentifier("fleet.gateways.form.save")
                 }
             }
         }
-        .tint(FleetTheme.accentMagenta)
+        .tint(FleetTheme.accent)
         // F2: camera pairing scanner — successful scan fills the draft and
         // returns here for Save.
         .sheet(isPresented: $isShowingScanner) {

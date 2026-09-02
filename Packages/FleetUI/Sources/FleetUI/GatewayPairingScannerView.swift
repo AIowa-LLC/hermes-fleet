@@ -98,11 +98,11 @@ struct GatewayPairingScannerView: View {
                     systemImage: "qrcode.viewfinder"
                 )
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(FleetTheme.accentGold)
+                .foregroundStyle(FleetTheme.accent)
                 .padding(.horizontal, FleetTheme.spacingLg)
                 .padding(.vertical, 10)
                 .background(.black.opacity(0.6), in: Capsule())
-                .overlay(Capsule().strokeBorder(FleetTheme.accentGold.opacity(0.4), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(FleetTheme.accent.opacity(0.4), lineWidth: 1))
                 .accessibilityIdentifier("fleet.gateways.scan.hint")
             }
         }
@@ -119,7 +119,7 @@ struct GatewayPairingScannerView: View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "qrcode.viewfinder")
                 .font(.system(size: 44))
-                .foregroundStyle(FleetTheme.accentGold)
+                .foregroundStyle(FleetTheme.accent)
                 .accessibilityHidden(true)
             Text("Live camera scanning isn't available on this device.\nUse a device with a camera, or enter the gateway details manually.")
                 .font(.callout)
@@ -150,7 +150,7 @@ struct GatewayPairingScannerView: View {
                         Label("Simulate Scanned Code", systemImage: "wand.and.stars")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(FleetTheme.accentMagenta)
+                    .tint(FleetTheme.accent)
                     .accessibilityIdentifier("fleet.gateways.scan.simulate")
                 }
                 .padding(.top, FleetTheme.spacingSm)

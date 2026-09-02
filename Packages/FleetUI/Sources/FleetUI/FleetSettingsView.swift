@@ -58,7 +58,7 @@ public struct FleetSettingsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(FleetTheme.background.ignoresSafeArea())
-        .tint(FleetTheme.accentMagenta)
+        .tint(FleetTheme.accent)
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
     }

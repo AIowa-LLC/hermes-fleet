@@ -107,7 +107,7 @@ public struct GatewayOnboardingView: View {
                 }
             }
         }
-        .tint(FleetTheme.accentMagenta)
+        .tint(FleetTheme.accent)
         .preferredColorScheme(.dark)
     }
 
@@ -187,7 +187,7 @@ public struct GatewayOnboardingView: View {
                         HStack(alignment: .top, spacing: FleetTheme.spacingMd) {
                             Image(systemName: step.symbol)
                                 .font(.body)
-                                .foregroundStyle(FleetTheme.accentMagenta)
+                                .foregroundStyle(FleetTheme.accent)
                                 .frame(width: 24)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {

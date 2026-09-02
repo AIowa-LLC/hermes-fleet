@@ -101,7 +101,7 @@ private struct HealthRowView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
                     Text(gateway.endpoint?.absoluteString ?? gateway.id.rawValue)
-                        .font(.caption)
+                        .font(FleetTheme.monoFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -135,12 +135,14 @@ private struct HealthRowView: View {
 
     private func metricRow(label: String, value: String, identifier: String) -> some View {
         GridRow {
-            Text(label)
-                .font(.caption)
+            // V3: terminal KEY: VALUE metadata — muted mono key, bright mono
+            // value (the process-table voice; per-metric identifiers kept).
+            Text(label.uppercased() + ":")
+                .font(FleetTheme.monoFont)
                 .foregroundStyle(FleetTheme.textSecondary)
                 .gridColumnAlignment(.leading)
             Text(value)
-                .font(.caption.monospacedDigit())
+                .font(FleetTheme.monoFont.monospacedDigit())
                 .foregroundStyle(FleetTheme.textPrimary)
                 .gridColumnAlignment(.leading)
                 .accessibilityIdentifier(identifier)

@@ -179,8 +179,9 @@ private struct ActivityRowView: View {
                 .font(.caption)
                 .foregroundStyle(FleetTheme.textSecondary)
                 .accessibilityHidden(true)
+            // V3: reconnect/ping lines are telemetry — mono, terminal voice.
             Text(text)
-                .font(FleetTheme.secondaryFont)
+                .font(FleetTheme.monoCaptionFont)
                 .foregroundStyle(FleetTheme.textSecondary)
         }
     }
