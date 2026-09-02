@@ -721,21 +721,21 @@ public final class ConversationViewModel {
             let outcomes = try await session.replay.replayAfterReconnect()
             replayNotice = Self.replayNotice(outcomes)
             // If the epoch changed or replay was truncated, the authoritative
-            // transcript must be refetched (spec §9.5/§9.6).
+            // transcript must be refetched (spec §9.5/§9.6). All three paths
+            // route through refetchAuthoritativeHistory so the conversation
+            // cursor is DROPPED with the snapshot (t_8401d3c3 round 1): the
+            // gateway's per-session seq is in-memory, so after a process
+            // restart (epoch change) live events restart at seq 1 while the
+            // client may hold a high-watermark cursor — a kept cursor would
+            // classify the entire next turn as duplicates and drop it
+            // silently (the exact loss this card forbids).
             for outcome in outcomes {
                 switch outcome {
                 case .truncated(let sid), .failed(let sid, _):
-                    if let history = try? await session.history.fetchSessionHistory(sessionID: sid) {
-                        allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
-                        hydratedFromCache = false
-                        Task { await persistTranscript() }
-                    }
+                    await refetchAuthoritativeHistory(sessionID: sid)
                 case .epochChanged:
-                    if let sid = openedSessionID,
-                       let history = try? await session.history.fetchSessionHistory(sessionID: sid) {
-                        allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
-                        hydratedFromCache = false
-                        Task { await persistTranscript() }
+                    if let sid = openedSessionID {
+                        await refetchAuthoritativeHistory(sessionID: sid)
                     }
                 default:
                     break

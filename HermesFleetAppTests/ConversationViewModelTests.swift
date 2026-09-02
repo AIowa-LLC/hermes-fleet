@@ -726,4 +726,55 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(assistant?.text, "partial recovered from history",
                        "authoritative history replaces the gapped stream")
     }
+
+    /// t_8401d3c3 review round 1 (apple-qa) — gateway PROCESS restart (epoch
+    /// change) resets the gateway's per-session seq to 1 while the client may
+    /// still hold a high-watermark cursor. The epoch-change history refetch
+    /// must DROP the cursor, so the first post-restart stamped event (seq 1)
+    /// is APPLIED and re-establishes continuity instead of being classified
+    /// `.duplicate` and silently dropped.
+    func testEpochChangeRefetchDropsStaleCursor() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        await viewModel.send("hello")
+
+        // Establish a HIGH client cursor (seq 1-3) against the old epoch.
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "old", rendered: nil, seq: 2))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "old", status: nil, error: nil, seq: 3))
+        await flush()
+        let before = viewModel.transcript.first { $0.kind == .assistant }
+        XCTAssertEqual(before?.text, "old", "pre-restart cursor established at seq 3")
+
+        // Gateway restarts: epoch change → authoritative history refetch
+        // (history survives restarts; seq does not — it restarts at 1).
+        scripted.replayOutcomes = .success([.epochChanged(from: "epoch-1", to: "epoch-2")])
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 2, messages: [
+            SessionMessage(role: .user, text: "hello", timestamp: nil, rowID: nil, displayKind: nil, reasoning: nil, toolName: nil, toolContext: nil),
+            SessionMessage(role: .assistant, text: "old", timestamp: nil, rowID: nil, displayKind: nil, reasoning: nil, toolName: nil, toolContext: nil),
+        ]))
+        await viewModel.reconnect()
+        XCTAssertEqual(viewModel.replayNotice, "Reconnected · gateway restarted — history refreshed")
+
+        // Post-restart live turn: events arrive with seq 1, 2 — all ≤ the
+        // stale cursor 3. They MUST render (cursor dropped with the refetch),
+        // never drop silently as duplicates.
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "post-restart ", rendered: nil, seq: 2))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "turn", rendered: nil, seq: 3))
+        await flush()
+
+        let assistant = viewModel.transcript.last { $0.kind == .assistant }
+        XCTAssertEqual(assistant?.text, "post-restart turn",
+                       "post-restart low-seq events must APPLY (cursor dropped), not drop as duplicates")
+
+        // The applied tail is contiguous from the fresh epoch: the next live
+        // event (seq 4) renders without firing a spurious gap recovery.
+        scripted.push(.messageComplete(sessionID: "s-1", text: "post-restart turn", status: nil, error: nil, seq: 4))
+        await flush()
+        XCTAssertEqual(scripted.resumeEventsRequests.count, 0,
+                       "fresh-epoch tail must be contiguous — no spurious gap recovery")
+        let completed = viewModel.transcript.last { $0.kind == .assistant }
+        XCTAssertEqual(completed?.text, "post-restart turn")
+    }
 }
