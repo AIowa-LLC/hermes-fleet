@@ -1,7 +1,11 @@
 import SwiftUI
 
-/// U2 (Gold Fleet) — status pill: colored dot + label on the status color's
-/// ~20% tinted background, fully rounded (Capsule), per the hero mock.
+/// V2 (Nous Direction A) — status pill: leading semantic dot + label, on a
+/// subtle tint of the status color, with a hairline stroke of the same color
+/// for definition on the near-black canvas. Fully rounded (Capsule).
+///
+/// The dot + semantic tint IS the status read (process-table voice); text
+/// stays title-case (FleetStatus.label) — it is data, not a micro-label.
 public struct StatusPill: View {
     private let status: FleetStatus
 
@@ -20,14 +24,18 @@ public struct StatusPill: View {
         }
         .padding(.horizontal, FleetTheme.spacingSm)
         .padding(.vertical, FleetTheme.spacingXs)
-        .background(FleetTheme.statusPillTint(status.color))
-        .clipShape(Capsule())
+        .background(Capsule().fill(FleetTheme.statusPillTint(status.color)))
+        .overlay(
+            Capsule().strokeBorder(status.color.opacity(Self.strokeOpacity), lineWidth: 1)
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Status: \(status.label)")
     }
 
     /// Pill dot diameter (pt).
     static let dotDiameter: CGFloat = 8
+    /// Hairline status-color stroke opacity (subtle definition on #0A0A0A).
+    static let strokeOpacity: Double = 0.25
 }
 
 #Preview("StatusPill — all states") {

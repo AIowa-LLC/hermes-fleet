@@ -72,20 +72,14 @@ public struct FleetDashboardView: View {
             SectionHeader(title: "Fleet Overview")
             HStack(spacing: FleetTheme.spacingMd) {
                 StatCard(
-                    icon: "cpu",
-                    tint: FleetTheme.accentMagenta,
                     value: "\(environment.rosterSnapshot?.roster.allBots.count ?? 0)",
                     label: "Active Bots"
                 )
                 StatCard(
-                    icon: "server.rack",
-                    tint: FleetTheme.accent,
                     value: "\(environment.gateways.count)",
                     label: "Gateways"
                 )
                 StatCard(
-                    icon: "antenna.radiowaves.left.and.right",
-                    tint: fleetHealthTint,
                     value: connectedFractionText,
                     label: "Fleet Health"
                 )
@@ -98,19 +92,6 @@ public struct FleetDashboardView: View {
     private var connectedFractionText: String {
         FleetDashboardFormatting.connectedFraction(gateways: environment.gateways) { gateway in
             environment.connectionStates[gateway.id] == .connected
-        }
-    }
-
-    /// Tint by real fleet connectivity (any connected → online green, any
-    /// connecting → idle amber, else offline gray — no fabrication).
-    private var fleetHealthTint: Color {
-        switch FleetDashboardFormatting.connectivity(
-            gateways: environment.gateways,
-            state: { environment.connectionStates[$0.id] }
-        ) {
-        case .online: FleetTheme.statusOnline
-        case .connecting: FleetTheme.statusIdle
-        case .offline, .empty: FleetTheme.statusOffline
         }
     }
 

@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// U2 (Gold Fleet) — the base card surface: token surface color, 1px border
-/// at ~8%, corner radius 16. Flat design: no shadow, no material.
+/// V2 (Nous Direction A) — the base card surface: flat #16161A token surface
+/// with a 1px #32373C hairline border, corner radius 16. Deliberately FLAT:
+/// no shadow, no material, no glass, no gradient — the hairline IS the
+/// structure (stark-canvas restraint is the design).
 ///
-/// All re-skin cards (U3–U7) build screen surfaces on this component so the
-/// card treatment stays uniform.
+/// All screens build surfaces on this component so the card treatment stays
+/// uniform.
 public struct FleetCard<Content: View>: View {
     private let content: Content
 

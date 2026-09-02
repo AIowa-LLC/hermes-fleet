@@ -226,7 +226,7 @@ public struct ConversationView: View {
         .accessibilityIdentifier("fleet.conversation.transcript")
     }
 
-    // MARK: Composer (U6 — surface bar, magenta circular send button)
+    // MARK: Composer (V2 — surface bar, flat pale-cyan circular send button)
 
     private func composer(_ model: ConversationViewModel) -> some View {
         HStack(spacing: FleetTheme.spacingSm) {
@@ -234,7 +234,7 @@ public struct ConversationView: View {
                 .lineLimit(1...4)
                 .font(.body)
                 .foregroundStyle(FleetTheme.textPrimary)
-                .tint(FleetTheme.accentMagenta)
+                .tint(FleetTheme.accent)
                 .padding(.horizontal, FleetTheme.spacingMd)
                 .padding(.vertical, FleetTheme.spacingSm)
                 .background(
@@ -268,11 +268,13 @@ public struct ConversationView: View {
                 Button {
                     Task { await submit(model) }
                 } label: {
+                    // V2 (Nous Direction A): FLAT pale-cyan circle, dark
+                    // glyph — the one accent, no glow, no gradient.
                     Image(systemName: "arrow.up")
                         .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(FleetTheme.background)
                         .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                        .background(Circle().fill(FleetTheme.accentMagentaGradient))
+                        .background(Circle().fill(FleetTheme.accent))
                 }
                 .disabled(model.phase != .ready || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Send")

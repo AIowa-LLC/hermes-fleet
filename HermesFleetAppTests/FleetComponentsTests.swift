@@ -29,9 +29,9 @@ final class FleetComponentsTests: XCTestCase {
     }
 
     func testStatCardInit() {
+        // V2 (Nous Direction A): icon/tint params removed — mono number tile
+        // with uppercase micro-label.
         let stat = StatCard(
-            icon: "cpu",
-            tint: FleetTheme.accentMagenta,
             value: "3",
             label: "Active Bots"
         )

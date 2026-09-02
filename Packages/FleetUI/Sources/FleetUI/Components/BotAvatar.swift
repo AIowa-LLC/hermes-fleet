@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// U5 (Gold Fleet) — shared bot avatar: initials in a magenta-tinted rounded
-/// square (the hero mock's bot avatar slot).
+/// V2 (Nous Direction A) — shared bot avatar: mono initials on a flat
+/// hairline-bordered square. No tinted fill, no shadow, no gradient — the
+/// avatar reads as a terminal identity chip, not a sticker.
 ///
 /// Extracted from the U4 dashboard row so the dashboard, the per-gateway bot
 /// list, the union roster, and bot detail render IDENTICAL avatars from one
 /// component. Initials derive from the real display name via
-/// `FleetDashboardFormatting.avatarInitials` (letters only, "?\" fallback —
+/// `FleetDashboardFormatting.avatarInitials` (letters only, "?\"" fallback —
 /// never fabricated imagery). Decorative: hidden from VoiceOver.
 public struct BotAvatar: View {
     private let initials: String
@@ -17,13 +18,24 @@ public struct BotAvatar: View {
 
     public var body: some View {
         Text(initials)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(FleetTheme.accentMagenta)
-            .frame(width: 34, height: 34)
-            .background(FleetTheme.accentMagenta.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .font(FleetFonts.monoDisplay(size: Self.fontSize, weight: .semibold))
+            .foregroundStyle(FleetTheme.textSecondary)
+            .frame(width: Self.side, height: Self.side)
+            .background(FleetTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: Self.cornerRadius)
+                    .strokeBorder(FleetTheme.border, lineWidth: 1)
+            )
             .accessibilityHidden(true)
     }
+
+    /// Avatar square side (pt).
+    static let side: CGFloat = 34
+    /// Initials point size (mono).
+    static let fontSize: CGFloat = 13
+    /// Corner radius (softer than the 16pt card radius).
+    static let cornerRadius: CGFloat = 10
 }
 
 #Preview("BotAvatar") {

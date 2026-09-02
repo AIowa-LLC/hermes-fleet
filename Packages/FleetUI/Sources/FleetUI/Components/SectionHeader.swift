@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// U2 (Gold Fleet) — section header: white 17pt semibold title with an
-/// optional cyan "View All" action trailing (closure- or value-based).
+/// V2 (Nous Direction A) — section header: the UPPERCASE micro-label role —
+/// 11pt semibold caps with wide tracking, muted secondary color ("GATEWAYS",
+/// "ACTIVE BOTS"). Trailing action stays the pale-cyan accent (optional
+/// closure- or value-based).
 ///
 /// Generic over the pushed destination's type `D` (defaults to `Never` for
 /// the closure flavor): the value-based `NavigationLink` MUST carry the
@@ -14,8 +16,9 @@ public struct SectionHeader<D: Hashable>: View {
     private let linkDestination: D?
 
     /// - Parameters:
-    ///   - title: section title (white, 17pt semibold).
-    ///   - viewAllAction: when non-nil, a cyan action button is shown
+    ///   - title: section title, rendered as an UPPERCASE micro-label
+    ///     (muted secondary, 11pt semibold, wide tracking).
+    ///   - viewAllAction: when non-nil, a pale-cyan action button is shown
     ///     trailing; pass nil for sections without an action.
     ///   - actionTitle: action label; defaults to "View All".
     public init(
@@ -46,7 +49,9 @@ public struct SectionHeader<D: Hashable>: View {
         HStack {
             Text(title)
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .textCase(.uppercase)
+                .tracking(FleetTheme.microLabelTracking)
+                .foregroundStyle(FleetTheme.textSecondary)
             Spacer()
             if let linkDestination {
                 NavigationLink(value: linkDestination) {
