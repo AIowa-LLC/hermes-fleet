@@ -164,6 +164,12 @@ public final class ConversationViewModel {
 
     private var openedSessionID: String?
     private var rowCounter = 0
+    /// P0-8: reasoning/thinking deltas that arrive BEFORE this turn's
+    /// `message.start` (live wire order: reasoning streams first). Buffered
+    /// here instead of attaching to the PREVIOUS turn's completed assistant
+    /// row, and flushed into the row when this turn's assistant row is
+    /// created (`message.start`, or the first `message.delta` minting one).
+    private var pendingReasoning: String?
     /// `nonisolated(unsafe)`: the event task is only ever CANCELED from
     /// `deinit` (a nonisolated context); cancel is thread-safe. All mutation
     /// (creation, nil-out) happens on the main actor.
@@ -461,6 +467,7 @@ public final class ConversationViewModel {
         switch event {
         case .messageStart:
             appendRow(.init(id: nextRowID(), kind: .assistant, text: "", isStreaming: true))
+            flushPendingReasoning()
             isStreaming = true
             phase = .streaming
 
@@ -485,6 +492,9 @@ public final class ConversationViewModel {
             }
             isStreaming = false
             phase = .ready
+            // P0-8: a completed turn must not carry buffered reasoning into
+            // the next one (e.g. an errored turn that never minted a row).
+            pendingReasoning = nil
             if isError, let error {
                 errorMessage = error
             }
@@ -499,7 +509,20 @@ public final class ConversationViewModel {
             appendRow(.init(id: nextRowID(), kind: .status, text: text, detail: kind))
 
         case .toolStart(_, _, let name, let context, _):
-            appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context))
+            // P0-8: on the live wire `tool.generating` can arrive BEFORE
+            // `tool.start` (probe seq 66 vs 68) and mints a placeholder tool
+            // row via updateLastTool. Adopt that row instead of appending a
+            // second one — tool names must render as a single chip, never
+            // duplicated inline. (Search scoped to the current turn, matching
+            // updateLastTool's geometry.)
+            let lowerBound = (lastAssistantIndex ?? -1) + 1
+            if let idx = allRows[lowerBound...].lastIndex(where: { $0.kind == .tool && $0.text == name }) {
+                if let context, !context.isEmpty {
+                    allRows[idx].detail = context
+                }
+            } else {
+                appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context))
+            }
 
         case .toolGenerating(_, let name):
             updateLastTool(name, generating: true)
@@ -616,12 +639,30 @@ public final class ConversationViewModel {
             allRows[idx].isStreaming = true
         } else {
             appendRow(.init(id: nextRowID(), kind: .assistant, text: text, isStreaming: true))
+            flushPendingReasoning()
         }
     }
 
+    /// P0-8: reasoning/thinking text accumulates in `pendingReasoning` until
+    /// THIS turn's assistant row exists. It is never appended to a previous,
+    /// completed assistant row — that leaked the previous turn's reasoning
+    /// into the new turn's bubble (and, across a resume, foreign session
+    /// content into the transcript).
     private func appendThinking(_ text: String) {
+        if lastAssistantIndex != nil, isStreaming {
+            allRows[lastAssistantIndex!].detail = (allRows[lastAssistantIndex!].detail ?? "") + text
+        } else {
+            pendingReasoning = (pendingReasoning ?? "") + text
+        }
+    }
+
+    /// Attach any buffered pre-start reasoning to the freshly created
+    /// assistant row and clear the buffer.
+    private func flushPendingReasoning() {
+        guard let buffered = pendingReasoning, !buffered.isEmpty else { return }
+        pendingReasoning = nil
         if let idx = lastAssistantIndex {
-            allRows[idx].detail = (allRows[idx].detail ?? "") + text
+            allRows[idx].detail = (allRows[idx].detail ?? "") + buffered
         }
     }
 
@@ -631,7 +672,14 @@ public final class ConversationViewModel {
     }
 
     private func updateLastTool(_ name: String, generating: Bool, progress: String? = nil) {
-        if let idx = allRows.lastIndex(where: { $0.kind == .tool && $0.text == name }) {
+        // P0-8: match within the CURRENT turn only. A turn's tool rows arrive
+        // AFTER the previous assistant reply (user → reasoning → tools →
+        // message.start), so the search range starts past the last assistant
+        // row; before any assistant row exists, the whole transcript is the
+        // current turn. Without this, a repeated tool name in a later turn
+        // resurrected a finished chip in an earlier one.
+        let lowerBound = (lastAssistantIndex ?? -1) + 1
+        if let idx = allRows[lowerBound...].lastIndex(where: { $0.kind == .tool && $0.text == name }) {
             if let progress, !progress.isEmpty {
                 allRows[idx].detail = progress
             } else {

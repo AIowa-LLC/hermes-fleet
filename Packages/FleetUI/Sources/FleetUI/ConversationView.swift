@@ -305,6 +305,61 @@ public struct ConversationView: View {
     }
 }
 
+/// P0-8: collapsible, dimmed reasoning block for assistant rows. The summary
+/// header (chevron + "Reasoning") is always visible; the reasoning text is
+/// expanded while its turn is streaming so live reasoning stays visible, and
+/// collapsed by default for completed turns (it is auxiliary, not the reply).
+private struct ReasoningDisclosure: View {
+    let text: String
+    let isStreaming: Bool
+
+    init(text: String, isStreaming: Bool = false) {
+        self.text = text
+        self.isStreaming = isStreaming
+    }
+
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            Button {
+                expanded.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textSecondary)
+                    Text("Reasoning")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reasoning, \(expanded ? "expanded" : "collapsed")")
+            .accessibilityHint("Double tap to \(expanded ? "collapse" : "expand") reasoning")
+            .accessibilityIdentifier("fleet.conversation.reasoning.toggle")
+            if expanded {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(FleetTheme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+        .onChange(of: isStreaming) { _, nowStreaming in
+            // Keep live reasoning visible while the turn streams; auto-
+            // collapse when the turn completes.
+            expanded = nowStreaming
+        }
+        .onAppear {
+            expanded = isStreaming
+        }
+    }
+}
+
 /// One transcript row (U6 Gold Fleet re-skin): user bubbles are right-aligned
 /// magenta-gradient capsules; assistant replies are left-aligned surface
 /// cards; timestamps render under each bubble (caption2 secondary) whenever
@@ -360,10 +415,9 @@ private struct ConversationBubbleView: View {
         case .assistant:
             VStack(alignment: .leading, spacing: 4) {
                 if let detail = row.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
-                        .textSelection(.enabled)
+                    // P0-8: reasoning renders as a DISTINCT collapsible,
+                    // dimmed block — never merged into the assistant text.
+                    ReasoningDisclosure(text: detail, isStreaming: row.isStreaming)
                 }
                 Text(row.text.isEmpty ? (row.isStreaming ? "…" : "") : row.text)
                     .font(.body)

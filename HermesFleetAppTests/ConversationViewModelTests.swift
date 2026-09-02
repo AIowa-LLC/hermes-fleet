@@ -42,6 +42,9 @@ final class ConversationViewModelTests: XCTestCase {
             .success(ConversationSession(sessionID: "s-1", profileName: "default"))
         var resumeResult: Result<ConversationSession, ConversationError> =
             .success(ConversationSession(sessionID: "s-1", profileName: "default"))
+        var createCallCount = 0
+        var resumeCallCount = 0
+        var submittedTexts: [String] = []
         var submitError: ConversationError?
         var interruptError: ConversationError?
 
@@ -84,12 +87,15 @@ final class ConversationViewModelTests: XCTestCase {
 
         // MARK: ConversationProviding
         func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
-            try createResult.get()
+            createCallCount += 1
+            return try createResult.get()
         }
         func resumeSession(sessionID: String) async throws -> ConversationSession {
-            try resumeResult.get()
+            resumeCallCount += 1
+            return try resumeResult.get()
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            submittedTexts.append(text)
             if let submitError { throw submitError }
             return PromptSubmission(status: "streaming")
         }
@@ -229,6 +235,106 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.transcript.last?.kind, .assistant)
         XCTAssertTrue(viewModel.transcript.last?.isFailed == true)
         XCTAssertEqual(viewModel.errorMessage, "provider rejected")
+    }
+
+    // MARK: - P0-8 event taxonomy + turn isolation
+
+    /// P0-8 (2)/(3): live wire order is reasoning deltas FIRST, then
+    /// tool.generating (seq 66) BEFORE tool.start (seq 68), then the assistant
+    /// message. Reasoning must land on THIS turn's assistant row (not the
+    /// previous turn's), and a tool name must render as exactly ONE row —
+    /// never a duplicated chip.
+    func testReasoningBeforeMessageStartAttachesToNewTurnNotPrevious() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+
+        // Turn 1 completes normally.
+        await viewModel.send("first")
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "one", rendered: nil))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "one", status: nil, error: nil))
+        await flush()
+        XCTAssertEqual(viewModel.transcript.last?.kind, .assistant)
+        XCTAssertEqual(viewModel.transcript.last?.text, "one")
+        XCTAssertNil(viewModel.transcript.last?.detail)
+
+        // Turn 2: reasoning arrives BEFORE message.start (live wire order).
+        await viewModel.send("second")
+        scripted.push(.reasoningDelta(sessionID: "s-1", text: "thinking "))
+        scripted.push(.reasoningDelta(sessionID: "s-1", text: "hard"))
+        await flush()
+        // No assistant row exists yet — reasoning is buffered, NOT attached to
+        // turn 1's completed row.
+        XCTAssertEqual(viewModel.transcript.last?.kind, .user)
+        XCTAssertNil(viewModel.transcript.first { $0.kind == .assistant }?.detail)
+
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "two", rendered: nil))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "two", status: nil, error: nil))
+        await flush()
+
+        // Turn 2's assistant row carries the reasoning; turn 1's does not.
+        let assistants = viewModel.transcript.filter { $0.kind == .assistant }
+        XCTAssertEqual(assistants.count, 2)
+        XCTAssertEqual(assistants[0].text, "one")
+        XCTAssertNil(assistants[0].detail, "turn 1 must not inherit turn 2's reasoning")
+        XCTAssertEqual(assistants[1].text, "two")
+        XCTAssertEqual(assistants[1].detail, "thinking hard")
+    }
+
+    /// P0-8 (3): tool.generating arriving BEFORE tool.start must not mint a
+    /// duplicate tool row — one tool name, one chip.
+    func testToolGeneratingBeforeToolStartDoesNotDuplicateChip() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+
+        await viewModel.send("use a tool")
+        // Live wire order (probe seq 66 < 68): generating first, then start.
+        scripted.push(.toolGenerating(sessionID: "s-1", name: "web_search"))
+        await flush()
+        scripted.push(.toolStart(sessionID: "s-1", toolID: "t1", name: "web_search", context: "query", argsText: nil))
+        await flush()
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil))
+        await flush()
+
+        let toolRows = viewModel.transcript.filter { $0.kind == .tool }
+        XCTAssertEqual(toolRows.count, 1, "tool name must render as exactly one chip, got \(toolRows.count)")
+        XCTAssertEqual(toolRows.first?.text, "web_search")
+        XCTAssertEqual(toolRows.first?.detail, "query")
+    }
+
+    /// P0-8: a repeated tool name in a LATER turn updates that turn's chip,
+    /// never resurrects the earlier turn's finished chip.
+    func testRepeatedToolNameAcrossTurnsDoesNotResurrectOldChip() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+
+        // Turn 1: tool + reply.
+        await viewModel.send("one")
+        scripted.push(.toolStart(sessionID: "s-1", toolID: "t1", name: "read_file", context: "a.swift", argsText: nil))
+        scripted.push(.toolComplete(sessionID: "s-1", toolID: "t1", name: "read_file", summary: "read a.swift"))
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "one done", status: nil, error: nil))
+        await flush()
+
+        // Turn 2: same tool name.
+        await viewModel.send("two")
+        scripted.push(.toolGenerating(sessionID: "s-1", name: "read_file"))
+        await flush()
+
+        let toolRows = viewModel.transcript.filter { $0.kind == .tool }
+        XCTAssertEqual(toolRows.count, 2, "each turn gets its own chip")
+        XCTAssertEqual(toolRows[0].detail, "read a.swift", "turn 1's finished chip must keep its final context")
+    }
+
+    /// P0-8 (1): entering chat with sessionID nil CREATES a fresh session —
+    /// the app never silently resumes the profile's most recent session.
+    func testNilSessionIDCreatesFreshSessionNeverResumes() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: nil)
+        await viewModel.start()
+        XCTAssertEqual(scripted.createCallCount, 1, "nil sessionID must take the createSession path")
+        XCTAssertEqual(scripted.resumeCallCount, 0, "nil sessionID must NEVER call resumeSession")
     }
 
     // MARK: - Interrupt
