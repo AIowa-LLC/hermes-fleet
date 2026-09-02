@@ -124,6 +124,9 @@ public struct ConversationView: View {
     @ViewBuilder
     private func bannerArea(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
+            if let integrityNotice = model.integrityNotice, model.phase != .streaming {
+                banner(text: integrityNotice, symbol: "checkmark.shield", tint: FleetTheme.statusDegraded)
+            }
             if let replayNotice = model.replayNotice, model.phase != .streaming {
                 banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accentCyan)
             }
@@ -578,7 +581,7 @@ private struct PreviewConversation: ConversationProviding {
     func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
         ConversationSession(sessionID: "preview")
     }
-    func resumeSession(sessionID: String) async throws -> ConversationSession {
+    func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
         ConversationSession(sessionID: sessionID)
     }
     func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
@@ -589,6 +592,9 @@ private struct PreviewConversation: ConversationProviding {
     }
     var events: AsyncStream<ConversationEvent> {
         AsyncStream { _ in }
+    }
+    func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] {
+        [] // preview never gaps
     }
 }
 

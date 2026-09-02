@@ -178,7 +178,7 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
         )
     }
 
-    func resumeSession(sessionID: String) async throws -> ConversationSession {
+    func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
         ConversationSession(
             sessionID: sessionID,
             storedSessionID: "stored-\\(sessionID)",
@@ -188,6 +188,11 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             provider: "simulator",
             profileName: nil
         )
+    }
+
+    /// t_8401d3c3: the scripted simulator never gaps — nothing to resume.
+    func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] {
+        []
     }
 
     func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

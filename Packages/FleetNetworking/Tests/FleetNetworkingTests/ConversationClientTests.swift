@@ -425,33 +425,33 @@ final class ConversationClientTests: XCTestCase {
         let events = collector.all
         XCTAssertEqual(events.count, 9)
 
-        guard case .messageStart(let sid) = events[0] else { return XCTFail("expected messageStart") }
+        guard case .messageStart(let sid, _) = events[0] else { return XCTFail("expected messageStart") }
         XCTAssertEqual(sid, "sess-001")
 
-        guard case .messageDelta(_, let t1, _) = events[1] else { return XCTFail("expected messageDelta") }
+        guard case .messageDelta(_, let t1, _, _) = events[1] else { return XCTFail("expected messageDelta") }
         XCTAssertEqual(t1, "The ")
-        guard case .messageDelta(_, let t2, _) = events[2] else { return XCTFail("expected messageDelta") }
+        guard case .messageDelta(_, let t2, _, _) = events[2] else { return XCTFail("expected messageDelta") }
         XCTAssertEqual(t2, "plan is:")
 
-        guard case .statusUpdate(_, let kind, let stext) = events[3] else { return XCTFail("expected statusUpdate") }
+        guard case .statusUpdate(_, let kind, let stext, _) = events[3] else { return XCTFail("expected statusUpdate") }
         XCTAssertEqual(kind, "process")
         XCTAssertEqual(stext, "thinking…")
 
-        guard case .thinkingDelta(_, let th) = events[4] else { return XCTFail("expected thinkingDelta") }
+        guard case .thinkingDelta(_, let th, _) = events[4] else { return XCTFail("expected thinkingDelta") }
         XCTAssertEqual(th, "hmm")
-        guard case .reasoningDelta(_, let rd) = events[5] else { return XCTFail("expected reasoningDelta") }
+        guard case .reasoningDelta(_, let rd, _) = events[5] else { return XCTFail("expected reasoningDelta") }
         XCTAssertEqual(rd, "deep")
 
-        guard case .toolStart(_, let tid, let tname, let ctx, _) = events[6] else { return XCTFail("expected toolStart") }
+        guard case .toolStart(_, let tid, let tname, let ctx, _, _) = events[6] else { return XCTFail("expected toolStart") }
         XCTAssertEqual(tid, "t1")
         XCTAssertEqual(tname, "web_search")
         XCTAssertEqual(ctx, "search(x)")
-        guard case .toolComplete(_, let cid, let cname, let summary) = events[7] else { return XCTFail("expected toolComplete") }
+        guard case .toolComplete(_, let cid, let cname, let summary, _) = events[7] else { return XCTFail("expected toolComplete") }
         XCTAssertEqual(cid, "t1")
         XCTAssertEqual(cname, "web_search")
         XCTAssertEqual(summary, "3 results")
 
-        guard case .messageComplete(_, let finalText, let status, _) = events[8] else { return XCTFail("expected messageComplete") }
+        guard case .messageComplete(_, let finalText, let status, _, _) = events[8] else { return XCTFail("expected messageComplete") }
         XCTAssertEqual(finalText, "The plan is: search.")
         XCTAssertNil(status)
     }
@@ -494,13 +494,13 @@ final class ConversationClientTests: XCTestCase {
         _ = await collector.waitForTerminal(timeout: .seconds(3))
         subscription.cancel()
 
-        guard case .messageComplete(_, let text, let status, let error) = collector.all[1] else {
+        guard case .messageComplete(_, let text, let status, let error, _) = collector.all[1] else {
             return XCTFail("expected messageComplete, got \\(collector.all)")
         }
         XCTAssertEqual(status, "error")
         XCTAssertEqual(error, "provider rejected")
         XCTAssertTrue(text.contains("Error"))
-        guard case .error(_, let message) = collector.all[2] else {
+        guard case .error(_, let message, _) = collector.all[2] else {
             return XCTFail("expected error event, got \\(collector.all)")
         }
         XCTAssertEqual(message, "provider rejected")
@@ -542,7 +542,7 @@ final class ConversationClientTests: XCTestCase {
         subscription.cancel()
 
         XCTAssertEqual(collector.all.count, 3)
-        guard case .unknown(_, let rawType) = collector.all[1] else {
+        guard case .unknown(_, let rawType, _) = collector.all[1] else {
             return XCTFail("expected unknown event preserved, got \\(collector.all)")
         }
         XCTAssertEqual(rawType, "moa.reference")

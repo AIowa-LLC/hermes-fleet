@@ -151,6 +151,10 @@ public final class ConversationViewModel {
     public private(set) var isStreaming = false
     /// Non-secret replay hydration notice shown after a reconnect (M6).
     public private(set) var replayNotice: String?
+    /// t_8401d3c3 — non-secret stream-integrity notice shown when a gap was
+    /// detected on the live event stream (recovered via targeted replay, or
+    /// unrecoverable → authoritative history refetch). Never silent loss.
+    public private(set) var integrityNotice: String?
     /// Non-secret error / auth surface text.
     public private(set) var errorMessage: String?
     /// True when the current transcript was hydrated from the persisted cache
@@ -163,6 +167,13 @@ public final class ConversationViewModel {
     // MARK: Internal state
 
     private var openedSessionID: String?
+    /// t_8401d3c3 — the client's last APPLIED event id for the open session's
+    /// stream (the "last event id" of Last-Event-ID semantics). Advances only
+    /// when an event is actually rendered into the transcript; sent as
+    /// `last_seen` on session.resume (subscribe) and used as the resume
+    /// cursor for targeted gap replay. Distinct from the transport watermark
+    /// (highest observed): applying is what matters for lossless rendering.
+    private var lastAppliedEventID: Int?
     private var rowCounter = 0
     /// P0-8: reasoning/thinking deltas that arrive BEFORE this turn's
     /// `message.start` (live wire order: reasoning streams first). Buffered
@@ -292,7 +303,13 @@ public final class ConversationViewModel {
             phase = .opening
             do {
                 if let sessionID {
-                    let resumed = try await session.conversation.resumeSession(sessionID: sessionID)
+                    // t_8401d3c3: declare the client's last applied event id on
+                    // every (re)subscribe so the resume point travels with the
+                    // subscription itself.
+                    let resumed = try await session.conversation.resumeSession(
+                        sessionID: sessionID,
+                        lastEventID: lastAppliedEventID
+                    )
                     openedSessionID = resumed.sessionID
                     applyOpenedSession(resumed)
                 } else {
@@ -464,6 +481,108 @@ public final class ConversationViewModel {
         // sessions' events on the same gateway).
         if let sid = event.sessionID, sid != openedSessionID { return }
 
+        // t_8401d3c3 — Last-Event-ID continuity gate: classify the inbound
+        // event against the client's own last APPLIED event id before
+        // rendering anything. This is the client-side no-gap validation that
+        // composes with (not replaces) the transport watermark / RT1
+        // replay-hold: it sees exactly what reaches the transcript.
+        switch classifyContinuity(event) {
+        case .duplicate:
+            // Already applied (replayed overlap / duplicate frame) — drop.
+            // This is what makes RT1's injected replay batches and the live
+            // tail compose without double renders.
+            return
+        case .gap(let after, let before):
+            // Events after `after` and before `before` were never applied.
+            // Recover them via targeted last-event-id replay; if the ring no
+            // longer holds them, surface the loss explicitly (never silent).
+            Task { await recoverGap(after: after, before: before, triggering: event) }
+            // Do NOT apply the triggering event yet — recovery re-applies it
+            // in order (it will be contiguous then). If recovery fails, the
+            // unrecoverable path refetches authoritative history instead.
+            return
+        case .contiguous, .unknown:
+            break
+        }
+
+        applyRendered(event)
+    }
+
+    /// Continuity classification for one inbound event (t_8401d3c3).
+    /// Unstamped events (no seq) and pre-cursor events are `.unknown` — they
+    /// apply unconditionally, matching the pre-gate behavior for fixtures
+    /// and session-less events; a stamped event after the first establishes
+    /// the cursor.
+    @MainActor
+    private func classifyContinuity(_ event: ConversationEvent) -> EventContinuity {
+        guard let sid = event.sessionID, sid == openedSessionID,
+              let eventSeq = event.seq else { return .unknown }
+        guard let cursor = lastAppliedEventID else {
+            return .unknown // first stamped event — establishes the cursor
+        }
+        if eventSeq <= cursor { return .duplicate }
+        if eventSeq == cursor + 1 { return .contiguous }
+        return .gap(after: cursor, before: eventSeq)
+    }
+
+    /// Apply one event to the transcript and advance the last-applied cursor.
+    @MainActor
+    private func applyRendered(_ event: ConversationEvent) {
+        if let seq = event.seq, event.sessionID == openedSessionID {
+            lastAppliedEventID = max(lastAppliedEventID ?? 0, seq)
+        }
+        render(event)
+    }
+
+    /// t_8401d3c3 — gap recovery: fetch the missed tail from the gateway's
+    /// replay ring starting at the client's cursor (`session.events.since`),
+    /// re-apply it in order, then let the live tail resume contiguously.
+    /// Unrecoverable gaps (ring evicted / replay failed) surface an explicit
+    /// integrity notice and refetch authoritative history — never silent loss.
+    private func recoverGap(after: Int, before: Int, triggering: ConversationEvent) async {
+        guard let sid = openedSessionID else { return }
+        do {
+            let missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
+            // Re-apply in seq order, cursor-gated: replayed overlap drops,
+            // the missed events + triggering event apply contiguously.
+            for event in missed {
+                await apply(event)
+            }
+            // The triggering event was fetched too (seq < before ⇒ replayed);
+            // if the ring somehow omitted it, apply it now so the live tail
+            // stays contiguous.
+            if let tseq = triggering.seq, (lastAppliedEventID ?? 0) < tseq {
+                applyRendered(triggering)
+            }
+            integrityNotice = "Stream gap recovered — \(before - after - 1) missed event\(before - after - 1 == 1 ? "" : "s") replayed."
+        } catch ConversationError.gapUnrecoverable(let gsid, let gAfter) {
+            integrityNotice = "Some events after #\(gAfter) are no longer retained — reloading full history."
+            await refetchAuthoritativeHistory(sessionID: gsid)
+        } catch {
+            // Replay attempt failed (transport-level): surface it explicitly
+            // and rehydrate from history rather than rendering a hole.
+            integrityNotice = "Stream gap could not be recovered — reloading full history."
+            await refetchAuthoritativeHistory(sessionID: sid)
+        }
+    }
+
+    /// Authoritative transcript refetch (already the M6 truncation path).
+    private func refetchAuthoritativeHistory(sessionID: String) async {
+        guard let history = try? await session.history.fetchSessionHistory(sessionID: sessionID) else {
+            return
+        }
+        allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
+        hydratedFromCache = false
+        // History is snapshot-authoritative, not event-id tagged: drop the
+        // cursor so the next stamped live event re-establishes continuity
+        // from the freshest server state instead of false-gap-firing against
+        // a stale cursor.
+        lastAppliedEventID = nil
+        Task { await persistTranscript() }
+    }
+
+    /// The transcript-mutating rendering switch (the former `apply` body).
+    private func render(_ event: ConversationEvent) {
         switch event {
         case .messageStart:
             appendRow(.init(id: nextRowID(), kind: .assistant, text: "", isStreaming: true))
@@ -471,19 +590,19 @@ public final class ConversationViewModel {
             isStreaming = true
             phase = .streaming
 
-        case .messageDelta(_, let text, _):
+        case .messageDelta(_, let text, _, _):
             appendToAssistant(text)
             if !isStreaming {
                 isStreaming = true
                 phase = .streaming
             }
 
-        case .messageInterim(_, let text, let alreadyStreamed):
+        case .messageInterim(_, let text, let alreadyStreamed, _):
             if !alreadyStreamed {
                 appendToAssistant(text)
             }
 
-        case .messageComplete(_, let text, let status, let error):
+        case .messageComplete(_, let text, let status, let error, _):
             let isError = status == "error" || error != nil
             if let idx = lastAssistantIndex {
                 allRows[idx].text = text.isEmpty ? allRows[idx].text : text
@@ -500,15 +619,15 @@ public final class ConversationViewModel {
             }
             Task { await persistTranscript() }
 
-        case .thinkingDelta(_, let text),
-             .reasoningDelta(_, let text),
-             .reasoningAvailable(_, let text):
+        case .thinkingDelta(_, let text, _),
+             .reasoningDelta(_, let text, _),
+             .reasoningAvailable(_, let text, _):
             appendThinking(text)
 
-        case .statusUpdate(_, let kind, let text):
+        case .statusUpdate(_, let kind, let text, _):
             appendRow(.init(id: nextRowID(), kind: .status, text: text, detail: kind))
 
-        case .toolStart(_, _, let name, let context, _):
+        case .toolStart(_, _, let name, let context, _, _):
             // P0-8: on the live wire `tool.generating` can arrive BEFORE
             // `tool.start` (probe seq 66 vs 68) and mints a placeholder tool
             // row via updateLastTool. Adopt that row instead of appending a
@@ -524,21 +643,21 @@ public final class ConversationViewModel {
                 appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context))
             }
 
-        case .toolGenerating(_, let name):
+        case .toolGenerating(_, let name, _):
             updateLastTool(name, generating: true)
 
-        case .toolProgress(_, _, let name, let text):
+        case .toolProgress(_, _, let name, let text, _):
             if let name {
                 updateLastTool(name, generating: true, progress: text)
             }
 
-        case .toolComplete(_, _, let name, let summary):
+        case .toolComplete(_, _, let name, let summary, _):
             updateLastTool(name, generating: false, progress: summary)
 
-        case .backgroundComplete(_, _, let text):
+        case .backgroundComplete(_, _, let text, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: text ?? "Background task complete"))
 
-        case .sessionInfo(_, let model, let provider, let title, _, _):
+        case .sessionInfo(_, let model, let provider, let title, _, _, _):
             if let model, let provider {
                 sessionModel = "\(model) · \(provider)"
             } else if let model {
@@ -546,13 +665,13 @@ public final class ConversationViewModel {
             }
             sessionTitle = title ?? sessionTitle
 
-        case .error(_, let message):
+        case .error(_, let message, _):
             appendRow(.init(id: nextRowID(), kind: .error, text: message, isFailed: true))
             isStreaming = false
             phase = .ready
             errorMessage = message
 
-        case .unknown(_, let rawType):
+        case .unknown(_, let rawType, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: "Unknown event: \(rawType)"))
         }
     }

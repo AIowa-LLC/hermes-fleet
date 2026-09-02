@@ -23,7 +23,7 @@ final class ConversationDomainTests: XCTestCase {
 
     func testMessageDeltaCarriesTextAndRendered() {
         let e = ConversationEvent.messageDelta(sessionID: "s1", text: "Hello", rendered: "<p>Hello</p>")
-        guard case .messageDelta(let sid, let text, let rendered) = e else {
+        guard case .messageDelta(let sid, let text, let rendered, _) = e else {
             return XCTFail("expected messageDelta")
         }
         XCTAssertEqual(sid, "s1")
@@ -36,13 +36,13 @@ final class ConversationDomainTests: XCTestCase {
         let ok = ConversationEvent.messageComplete(sessionID: "s1", text: "done", status: nil, error: nil)
         let failed = ConversationEvent.messageComplete(
             sessionID: "s1", text: "Error: boom", status: "error", error: "boom")
-        guard case .messageComplete(_, let okText, let okStatus, let okError) = ok else {
+        guard case .messageComplete(_, let okText, let okStatus, let okError, _) = ok else {
             return XCTFail("expected messageComplete")
         }
         XCTAssertEqual(okText, "done")
         XCTAssertNil(okStatus)
         XCTAssertNil(okError)
-        guard case .messageComplete(_, let fText, let fStatus, let fError) = failed else {
+        guard case .messageComplete(_, let fText, let fStatus, let fError, _) = failed else {
             return XCTFail("expected messageComplete")
         }
         XCTAssertEqual(fText, "Error: boom")
@@ -52,26 +52,26 @@ final class ConversationDomainTests: XCTestCase {
 
     func testThinkingReasoningAndStatusEvents() {
         let thinking = ConversationEvent.thinkingDelta(sessionID: "s1", text: "hmm")
-        guard case .thinkingDelta(_, let t) = thinking else { return XCTFail() }
+        guard case .thinkingDelta(_, let t, _) = thinking else { return XCTFail() }
         XCTAssertEqual(t, "hmm")
 
         let reasoning = ConversationEvent.reasoningDelta(sessionID: "s1", text: "deep")
-        guard case .reasoningDelta(_, let r) = reasoning else { return XCTFail() }
+        guard case .reasoningDelta(_, let r, _) = reasoning else { return XCTFail() }
         XCTAssertEqual(r, "deep")
 
         let available = ConversationEvent.reasoningAvailable(sessionID: "s1", text: "ready")
-        guard case .reasoningAvailable(_, let a) = available else { return XCTFail() }
+        guard case .reasoningAvailable(_, let a, _) = available else { return XCTFail() }
         XCTAssertEqual(a, "ready")
 
         let status = ConversationEvent.statusUpdate(sessionID: "s1", kind: "process", text: "working…")
-        guard case .statusUpdate(_, let kind, let text) = status else { return XCTFail() }
+        guard case .statusUpdate(_, let kind, let text, _) = status else { return XCTFail() }
         XCTAssertEqual(kind, "process")
         XCTAssertEqual(text, "working…")
     }
 
     func testToolEventsCarryIdentityAndName() {
         let start = ConversationEvent.toolStart(sessionID: "s1", toolID: "t1", name: "web_search", context: "search(x)", argsText: nil)
-        guard case .toolStart(_, let id, let name, let ctx, let args) = start else {
+        guard case .toolStart(_, let id, let name, let ctx, let args, _) = start else {
             return XCTFail("expected toolStart")
         }
         XCTAssertEqual(id, "t1")
@@ -80,11 +80,11 @@ final class ConversationDomainTests: XCTestCase {
         XCTAssertNil(args)
 
         let generating = ConversationEvent.toolGenerating(sessionID: "s1", name: "read_file")
-        guard case .toolGenerating(_, let gname) = generating else { return XCTFail() }
+        guard case .toolGenerating(_, let gname, _) = generating else { return XCTFail() }
         XCTAssertEqual(gname, "read_file")
 
         let progress = ConversationEvent.toolProgress(sessionID: "s1", toolID: "t1", name: "web_search", text: "fetching…")
-        guard case .toolProgress(_, let pid, let pname, let ptext) = progress else {
+        guard case .toolProgress(_, let pid, let pname, let ptext, _) = progress else {
             return XCTFail("expected toolProgress")
         }
         XCTAssertEqual(pid, "t1")
@@ -92,7 +92,7 @@ final class ConversationDomainTests: XCTestCase {
         XCTAssertEqual(ptext, "fetching…")
 
         let complete = ConversationEvent.toolComplete(sessionID: "s1", toolID: "t1", name: "web_search", summary: "3 results")
-        guard case .toolComplete(_, let cid, let cname, let summary) = complete else {
+        guard case .toolComplete(_, let cid, let cname, let summary, _) = complete else {
             return XCTFail("expected toolComplete")
         }
         XCTAssertEqual(cid, "t1")
@@ -102,12 +102,12 @@ final class ConversationDomainTests: XCTestCase {
 
     func testBackgroundCompleteAndErrorEvents() {
         let bg = ConversationEvent.backgroundComplete(sessionID: "s1", taskID: "bg_1", text: "result")
-        guard case .backgroundComplete(_, let taskID, let text) = bg else { return XCTFail() }
+        guard case .backgroundComplete(_, let taskID, let text, _) = bg else { return XCTFail() }
         XCTAssertEqual(taskID, "bg_1")
         XCTAssertEqual(text, "result")
 
         let err = ConversationEvent.error(sessionID: "s1", message: "turn failed")
-        guard case .error(_, let message) = err else { return XCTFail() }
+        guard case .error(_, let message, _) = err else { return XCTFail() }
         XCTAssertEqual(message, "turn failed")
     }
 
@@ -115,7 +115,7 @@ final class ConversationDomainTests: XCTestCase {
         let info = ConversationEvent.sessionInfo(
             sessionID: "s1", model: "deepseek-v4-flash", provider: "nous",
             title: "Research", cwd: "/Users/t", profileName: "default")
-        guard case .sessionInfo(_, let model, let provider, let title, let cwd, let profile) = info else {
+        guard case .sessionInfo(_, let model, let provider, let title, let cwd, let profile, _) = info else {
             return XCTFail("expected sessionInfo")
         }
         XCTAssertEqual(model, "deepseek-v4-flash")
@@ -128,7 +128,7 @@ final class ConversationDomainTests: XCTestCase {
     func testUnknownEventIsPreserved() {
         // spec §5.5: an unknown event type must be preserved, never fatal.
         let unknown = ConversationEvent.unknown(sessionID: "s1", rawType: "moa.reference")
-        guard case .unknown(_, let raw) = unknown else { return XCTFail("expected unknown") }
+        guard case .unknown(_, let raw, _) = unknown else { return XCTFail("expected unknown") }
         XCTAssertEqual(raw, "moa.reference")
     }
 
@@ -193,5 +193,60 @@ final class ConversationDomainTests: XCTestCase {
         XCTAssertTrue((ConversationError.sessionNotFound("s1").errorDescription ?? "").contains("s1"))
         XCTAssertTrue((ConversationError.rpcFailed("boom").errorDescription ?? "").contains("boom"))
         XCTAssertTrue((ConversationError.invalidRequest("session_id required").errorDescription ?? "").contains("session_id"))
+    }
+
+    // MARK: t_8401d3c3 — Last-Event-ID resume semantics
+
+    /// Every conversation event case carries (and exposes) the gateway
+    /// per-stream seq; the default is nil (unstamped).
+    func testEventSeqRoundTrip() {
+        XCTAssertEqual(ConversationEvent.messageStart(sessionID: "s1", seq: 4).seq, 4)
+        XCTAssertEqual(ConversationEvent.messageStart(sessionID: "s1").seq, nil)
+        XCTAssertEqual(
+            ConversationEvent.messageDelta(sessionID: "s1", text: "hi", rendered: nil, seq: 7).seq, 7)
+        XCTAssertEqual(
+            ConversationEvent.messageComplete(sessionID: "s1", text: "t", status: nil, error: nil, seq: 9).seq, 9)
+        XCTAssertEqual(
+            ConversationEvent.toolStart(sessionID: "s1", toolID: "t1", name: "n", context: nil, argsText: nil, seq: 11).seq, 11)
+        XCTAssertEqual(ConversationEvent.error(sessionID: "s1", message: "x", seq: 12).seq, 12)
+        XCTAssertEqual(ConversationEvent.unknown(sessionID: "s1", rawType: "future.thing", seq: 13).seq, 13)
+        // Equality includes seq (a re-delivered event at the same seq is the
+        // SAME event — this is what the dedupe gate relies on).
+        XCTAssertNotEqual(
+            ConversationEvent.messageDelta(sessionID: "s1", text: "a", rendered: nil, seq: 1),
+            ConversationEvent.messageDelta(sessionID: "s1", text: "a", rendered: nil, seq: 2))
+    }
+
+    /// The client cursor classifies contiguous / duplicate / gap / unknown.
+    func testCursorContinuityClassification() {
+        let cursor = ConversationEventCursor(sessionID: "s1", lastEventID: 3)
+        // contiguous: seq == cursor + 1
+        XCTAssertEqual(cursor.classify(.messageStart(sessionID: "s1", seq: 4)), .contiguous)
+        // duplicate: seq ≤ cursor
+        XCTAssertEqual(cursor.classify(.messageStart(sessionID: "s1", seq: 3)), .duplicate)
+        XCTAssertEqual(cursor.classify(.messageStart(sessionID: "s1", seq: 1)), .duplicate)
+        // gap: seq > cursor + 1
+        XCTAssertEqual(cursor.classify(.messageStart(sessionID: "s1", seq: 6)), .gap(after: 3, before: 6))
+        // unknown: unstamped / foreign session / no cursor
+        XCTAssertEqual(cursor.classify(.messageStart(sessionID: "s1")), .unknown)
+        XCTAssertEqual(cursor.classify(.messageStart(sessionID: "s2", seq: 4)), .unknown)
+        XCTAssertEqual(
+            ConversationEventCursor(sessionID: "s1", lastEventID: nil)
+                .classify(.messageStart(sessionID: "s1", seq: 1)), .unknown)
+        // gap verdict reports the exact missing range
+        if case .gap(let after, let before) = cursor.classify(.messageStart(sessionID: "s1", seq: 6)) {
+            XCTAssertEqual(after, 3)
+            XCTAssertEqual(before, 6)
+        } else {
+            XCTFail("expected gap")
+        }
+    }
+
+    func testGapUnrecoverableErrorVocabulary() {
+        let err = ConversationError.gapUnrecoverable(sessionID: "s1", afterEventID: 40)
+        XCTAssertEqual(err, .gapUnrecoverable(sessionID: "s1", afterEventID: 40))
+        XCTAssertNotEqual(err, .gapUnrecoverable(sessionID: "s1", afterEventID: 41))
+        XCTAssertTrue((err.errorDescription ?? "").contains("s1"))
+        XCTAssertTrue((err.errorDescription ?? "").contains("40"))
     }
 }

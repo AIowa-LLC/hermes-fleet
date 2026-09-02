@@ -90,9 +90,16 @@ final class ConversationViewModelTests: XCTestCase {
             createCallCount += 1
             return try createResult.get()
         }
-        func resumeSession(sessionID: String) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
             resumeCallCount += 1
             return try resumeResult.get()
+        }
+        /// t_8401d3c3 — captured gap-recovery requests + scripted responses.
+        var resumeEventsResult: Result<[ConversationEvent], ConversationError> = .success([])
+        var resumeEventsRequests: [(lastEventID: Int, sessionID: String)] = []
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] {
+            resumeEventsRequests.append((lastEventID, sessionID))
+            return try resumeEventsResult.get()
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             submittedTexts.append(text)
@@ -609,5 +616,114 @@ final class ConversationViewModelTests: XCTestCase {
         let cached = try await cache.loadHistory(sessionID: "s-1", for: GatewayID(rawValue: "<dev-workstation>"))
         XCTAssertEqual(cached?.messages.count, 240,
                        "P2-8: authoritative history must survive the display cap (cache holds all rows)")
+    }
+
+    // MARK: - t_8401d3c3 — Last-Event-ID resume semantics
+
+    /// Gap on the live stream (seq jumps 3 → 6): the missed events 4-5 are
+    /// recovered via targeted `resumeEvents(since: cursor)` and the result is
+    /// EXACT — every token rendered exactly once, in order, and the explicit
+    /// integrity notice surfaces the recovery.
+    func testLiveStreamGapRecoveredExactly() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        await viewModel.send("hello")
+
+        // Stamped live prefix: seq 1-3 (start + "Hel" + "lo").
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "Hel", rendered: nil, seq: 2))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "lo", rendered: nil, seq: 3))
+        await flush()
+
+        // The recovery tail the gateway ring will return: seq 4-5 + the
+        // triggering live event 6 arrives with the gap.
+        scripted.resumeEventsResult = .success([
+            .messageDelta(sessionID: "s-1", text: " wo", rendered: nil, seq: 4),
+            .messageDelta(sessionID: "s-1", text: "rl", rendered: nil, seq: 5),
+        ])
+        // Live frame jumps to seq 6 — events 4,5 were missed.
+        scripted.push(.messageDelta(sessionID: "s-1", text: "d", rendered: nil, seq: 6))
+        // Let the recovery task run to completion.
+        for _ in 0..<50 where viewModel.integrityNotice == nil {
+            await flush()
+        }
+
+        // Recovery requested from the CLIENT cursor (last applied = 3).
+        XCTAssertEqual(scripted.resumeEventsRequests.count, 1)
+        XCTAssertEqual(scripted.resumeEventsRequests.first?.lastEventID, 3,
+                       "gap recovery must resume from the client's last applied event id")
+        XCTAssertEqual(scripted.resumeEventsRequests.first?.sessionID, "s-1")
+
+        // EXACT resumption: all six events applied, none duplicated.
+        let assistant = viewModel.transcript.first { $0.kind == .assistant }
+        XCTAssertEqual(assistant?.text, "Hello world",
+                       "recovered tokens concatenate in order — zero lost, zero duplicated")
+        XCTAssertNotNil(viewModel.integrityNotice, "recovery must be surfaced, never silent")
+        XCTAssertTrue(viewModel.integrityNotice?.contains("recovered") ?? false)
+
+        // The live tail continues contiguously after recovery.
+        scripted.push(.messageComplete(sessionID: "s-1", text: "Hello world", status: nil, error: nil, seq: 7))
+        await flush()
+        let completed = viewModel.transcript.first { $0.kind == .assistant }
+        XCTAssertEqual(completed?.text, "Hello world")
+        XCTAssertEqual(viewModel.phase, .ready)
+    }
+
+    /// Duplicates after recovery (a re-delivered overlap) are dropped by the
+    /// cursor gate — the RT1 replay-hold composition guarantee at the layer
+    /// that renders.
+    func testDuplicateEventsAfterRecoveryAreDropped() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        await viewModel.send("hello")
+
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "a", rendered: nil, seq: 2))
+        await flush()
+
+        // The SAME event re-delivered (replay overlap / duplicate frame).
+        scripted.push(.messageDelta(sessionID: "s-1", text: "a", rendered: nil, seq: 2))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "a", status: nil, error: nil, seq: 3))
+        await flush()
+
+        let assistant = viewModel.transcript.first { $0.kind == .assistant }
+        XCTAssertEqual(assistant?.text, "a", "duplicate seq must not double-render")
+        XCTAssertEqual(scripted.resumeEventsRequests.count, 0,
+                       "duplicates are NOT gaps — no recovery request fires")
+    }
+
+    /// Unrecoverable gap (ring evicted): the explicit signal surfaces, the
+    /// authoritative history is refetched, and the stale cursor is discarded
+    /// — never silent loss.
+    func testUnrecoverableGapSurfacesSignalAndRefetchesHistory() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        await viewModel.send("hello")
+
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "par", rendered: nil, seq: 2))
+        await flush()
+
+        // The ring no longer retains the tail after 2.
+        scripted.resumeEventsResult = .failure(.gapUnrecoverable(sessionID: "s-1", afterEventID: 2))
+        // Authoritative history has the full turn.
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 2, messages: [
+            SessionMessage(role: .user, text: "hello", timestamp: nil, rowID: nil, displayKind: nil, reasoning: nil, toolName: nil, toolContext: nil),
+            SessionMessage(role: .assistant, text: "partial recovered from history", timestamp: nil, rowID: nil, displayKind: nil, reasoning: nil, toolName: nil, toolContext: nil),
+        ]))
+        // Live frame jumps to seq 9 — gap.
+        scripted.push(.messageDelta(sessionID: "s-1", text: "tail", rendered: nil, seq: 9))
+        for _ in 0..<50 where viewModel.integrityNotice == nil {
+            await flush()
+        }
+
+        XCTAssertNotNil(viewModel.integrityNotice)
+        XCTAssertTrue(viewModel.integrityNotice?.contains("no longer retained") ?? false,
+                      "the unrecoverable-gap signal must be explicit")
+        // Transcript was replaced by the authoritative history (2 rows:
+        // user + assistant) — no partial hole, no silent loss.
+        let assistant = viewModel.transcript.first { $0.kind == .assistant }
+        XCTAssertEqual(assistant?.text, "partial recovered from history",
+                       "authoritative history replaces the gapped stream")
     }
 }

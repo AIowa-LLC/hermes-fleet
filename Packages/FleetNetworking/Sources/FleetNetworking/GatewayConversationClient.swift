@@ -66,15 +66,24 @@ public struct GatewayConversationClient: ConversationProviding {
         }
     }
 
-    public func resumeSession(sessionID: String) async throws -> ConversationSession {
+    public func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
         // M9 fail-closed guard (precedes the connected-state check on purpose).
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
-        let params: JSONValue = .object(["session_id": .string(sessionID)])
+        var params: [String: JSONValue] = ["session_id": .string(sessionID)]
+        // t_8401d3c3 (Last-Event-ID subscribe): declare the resume point on
+        // every subscribe/reconnect. The gateway reads only known keys on
+        // `session.resume` and ignores extras (verified methods_session.py),
+        // so this is wire-safe today; when the server adopts `last_seen` on
+        // resume it becomes the server-side resume filter.
+        if let lastEventID {
+            params["last_seen"] = .number(Double(lastEventID))
+        }
+        let paramsValue = JSONValue.object(params)
         do {
-            let result = try await transport.request(method: "session.resume", params: params)
+            let result = try await transport.request(method: "session.resume", params: paramsValue)
             return try Self.decodeSession(result)
         } catch let error as JSONRPCError {
             throw Self.mapRPCError(error)
@@ -136,6 +145,44 @@ public struct GatewayConversationClient: ConversationProviding {
         }
     }
 
+    /// t_8401d3c3 (Last-Event-ID resume): recover the missed tail of one
+    /// session's stream from the gateway's replay ring. Issues the existing
+    /// read-only `session.events.since(session_id, last_seen)` RPC with the
+    /// CLIENT's last applied event id, decodes the bare replay events, and
+    /// maps them onto the conversation domain.
+    ///
+    /// Fail-closed on unrecoverable gaps: `truncated == true` means the ring
+    /// no longer retains everything after `lastEventID` — throwing
+    /// `.gapUnrecoverable` (instead of returning a partial batch) guarantees
+    /// the caller refetches authoritative history rather than silently
+    /// losing the evicted events.
+    public func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] {
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
+        }
+        guard case .connected = transport.state else { throw ConversationError.notConnected }
+        let params: JSONValue = .object([
+            "session_id": .string(sessionID),
+            "last_seen": .number(Double(lastEventID)),
+        ])
+        do {
+            let result = try await transport.request(method: "session.events.since", params: params)
+            let batch = try GatewayReplayClient.decode(sessionID: sessionID, result)
+            if batch.truncated {
+                throw ConversationError.gapUnrecoverable(sessionID: sessionID, afterEventID: lastEventID)
+            }
+            return batch.events.compactMap(Self.decodeEvent)
+        } catch let error as ConversationError {
+            throw error
+        } catch let error as JSONRPCError {
+            throw Self.mapRPCError(error)
+        } catch let error as TransportError {
+            throw Self.mapTransportError(error)
+        } catch {
+            throw ConversationError.rpcFailed(String(describing: error))
+        }
+    }
+
     // MARK: decoding (wire → domain)
 
     /// `session.create` / `session.resume` →
@@ -164,9 +211,14 @@ public struct GatewayConversationClient: ConversationProviding {
     /// `nil` for non-conversation handshake events (`gateway.ready` — consumed
     /// by the transport's own ready handshake, not a turn event). Unknown
     /// conversation event types are preserved as `.unknown` (spec §5.5).
+    ///
+    /// t_8401d3c3: the gateway-stamped per-session `seq` (`event_replay.py`)
+    /// rides at the TOP level of the event params (sibling of `payload`), so
+    /// it is threaded into every case for client-side continuity tracking.
     static func decodeEvent(_ event: GatewayEvent) -> ConversationEvent? {
         let sid = event.sessionID ?? ""
         let payload = event.payload?.objectValue ?? [:]
+        let seq = event.seq
 
         switch event.type {
         case .gatewayReady:
@@ -179,40 +231,45 @@ public struct GatewayConversationClient: ConversationProviding {
                 provider: payload["provider"]?.stringValue,
                 title: payload["title"]?.stringValue,
                 cwd: payload["cwd"]?.stringValue,
-                profileName: payload["profile_name"]?.stringValue
+                profileName: payload["profile_name"]?.stringValue,
+                seq: seq
             )
         case .messageStart:
-            return .messageStart(sessionID: sid)
+            return .messageStart(sessionID: sid, seq: seq)
         case .messageDelta:
             return .messageDelta(
                 sessionID: sid,
                 text: payload["text"]?.stringValue ?? "",
-                rendered: payload["rendered"]?.stringValue
+                rendered: payload["rendered"]?.stringValue,
+                seq: seq
             )
         case .messageInterim:
             return .messageInterim(
                 sessionID: sid,
                 text: payload["text"]?.stringValue ?? "",
-                alreadyStreamed: payload["already_streamed"]?.boolValue ?? false
+                alreadyStreamed: payload["already_streamed"]?.boolValue ?? false,
+                seq: seq
             )
         case .messageComplete:
             return .messageComplete(
                 sessionID: sid,
                 text: payload["text"]?.stringValue ?? "",
                 status: payload["status"]?.stringValue,
-                error: payload["error"]?.stringValue
+                error: payload["error"]?.stringValue,
+                seq: seq
             )
         case .thinkingDelta:
-            return .thinkingDelta(sessionID: sid, text: payload["text"]?.stringValue ?? "")
+            return .thinkingDelta(sessionID: sid, text: payload["text"]?.stringValue ?? "", seq: seq)
         case .reasoningDelta:
-            return .reasoningDelta(sessionID: sid, text: payload["text"]?.stringValue ?? "")
+            return .reasoningDelta(sessionID: sid, text: payload["text"]?.stringValue ?? "", seq: seq)
         case .reasoningAvailable:
-            return .reasoningAvailable(sessionID: sid, text: payload["text"]?.stringValue ?? "")
+            return .reasoningAvailable(sessionID: sid, text: payload["text"]?.stringValue ?? "", seq: seq)
         case .statusUpdate:
             return .statusUpdate(
                 sessionID: sid,
                 kind: payload["kind"]?.stringValue ?? "",
-                text: payload["text"]?.stringValue ?? ""
+                text: payload["text"]?.stringValue ?? "",
+                seq: seq
             )
         case .toolStart:
             return .toolStart(
@@ -220,34 +277,38 @@ public struct GatewayConversationClient: ConversationProviding {
                 toolID: payload["tool_id"]?.stringValue ?? "",
                 name: payload["name"]?.stringValue ?? "",
                 context: payload["context"]?.stringValue,
-                argsText: Self.compactJSON(payload["args"])
+                argsText: Self.compactJSON(payload["args"]),
+                seq: seq
             )
         case .toolGenerating:
-            return .toolGenerating(sessionID: sid, name: payload["name"]?.stringValue ?? "")
+            return .toolGenerating(sessionID: sid, name: payload["name"]?.stringValue ?? "", seq: seq)
         case .toolProgress:
             return .toolProgress(
                 sessionID: sid,
                 toolID: payload["tool_id"]?.stringValue,
                 name: payload["name"]?.stringValue,
-                text: payload["text"]?.stringValue ?? payload["preview"]?.stringValue
+                text: payload["text"]?.stringValue ?? payload["preview"]?.stringValue,
+                seq: seq
             )
         case .toolComplete:
             return .toolComplete(
                 sessionID: sid,
                 toolID: payload["tool_id"]?.stringValue ?? "",
                 name: payload["name"]?.stringValue ?? "",
-                summary: payload["summary"]?.stringValue
+                summary: payload["summary"]?.stringValue,
+                seq: seq
             )
         case .backgroundComplete:
             return .backgroundComplete(
                 sessionID: sid,
                 taskID: payload["task_id"]?.stringValue,
-                text: payload["text"]?.stringValue
+                text: payload["text"]?.stringValue,
+                seq: seq
             )
         case .error:
-            return .error(sessionID: sid, message: payload["message"]?.stringValue ?? "")
+            return .error(sessionID: sid, message: payload["message"]?.stringValue ?? "", seq: seq)
         case .unknown:
-            return .unknown(sessionID: sid, rawType: event.rawType)
+            return .unknown(sessionID: sid, rawType: event.rawType, seq: seq)
         }
     }
 
