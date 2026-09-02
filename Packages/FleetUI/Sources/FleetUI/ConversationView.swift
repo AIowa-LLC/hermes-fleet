@@ -78,7 +78,7 @@ public struct ConversationView: View {
                     .foregroundStyle(FleetTheme.textPrimary)
                     .lineLimit(1)
                 Text(route.id)
-                    .font(.caption.monospaced())
+                    .font(FleetTheme.monoFont)
                     .foregroundStyle(FleetTheme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -156,7 +156,7 @@ public struct ConversationView: View {
                         Task { await model.reauthenticate() }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(FleetTheme.accentMagenta)
+                    .tint(FleetTheme.accent)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
                 }
@@ -306,7 +306,7 @@ public struct ConversationView: View {
                 Text("Conversation Unavailable")
             } icon: {
                 Image(systemName: "text.bubble")
-                    .foregroundStyle(FleetTheme.accentMagenta)
+                    .foregroundStyle(FleetTheme.textSecondary)
             }
         } description: {
             Text("This gateway has no conversation session wired.")
@@ -384,8 +384,9 @@ private struct ConversationBubbleView: View {
                 bubbleContent
                     .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
                 if let timestampText {
+                    // V3: timestamps are telemetry — mono caption.
                     Text(timestampText)
-                        .font(.caption2)
+                        .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                 }
             }
@@ -412,15 +413,21 @@ private struct ConversationBubbleView: View {
     private var bubbleContent: some View {
         switch row.kind {
         case .user:
-            // U6: magenta-gradient capsule, right-aligned (hero mock screen 2).
+            // V3 (Nous Direction A): FLAT elevated-surface capsule with the
+            // pale-cyan accent text — right-aligned, hairline-bordered, no
+            // gradient (accent discipline: one pale-cyan accent).
             Text(row.text)
                 .font(.body)
-                .foregroundStyle(.white)
+                .foregroundStyle(FleetTheme.accent)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
-                    FleetTheme.accentMagentaGradient,
+                    FleetTheme.surfaceElevated,
                     in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
+                        .strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1)
                 )
         case .assistant:
             VStack(alignment: .leading, spacing: 4) {
@@ -440,7 +447,7 @@ private struct ConversationBubbleView: View {
                     HStack(spacing: 4) {
                         ForEach(0..<3, id: \.self) { i in
                             Circle()
-                                .fill(FleetTheme.accentMagenta)
+                                .fill(FleetTheme.accent)
                                 .frame(width: 5, height: 5)
                                 .opacity(0.6)
                         }

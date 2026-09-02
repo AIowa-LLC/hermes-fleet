@@ -113,14 +113,6 @@ public enum FleetTheme {
         status.opacity(0.2)
     }
 
-    /// The magenta gradient fill for user message bubbles and the circular
-    /// send button (legacy Gold Fleet role, pending the V2 component pass).
-    public static let accentMagentaGradient: LinearGradient = LinearGradient(
-        colors: [accentMagenta, accentMagenta.opacity(0.65)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-
     // MARK: - Radii
 
     /// Cards.
