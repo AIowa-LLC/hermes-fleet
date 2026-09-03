@@ -174,7 +174,7 @@ public struct KanbanBoardView: View {
                 Button("Retry") {
                     Task { await model.refresh() }
                 }
-                .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(FleetTheme.accent)
             }
         }
@@ -228,6 +228,7 @@ public struct KanbanBoardView: View {
 
 /// One status column: header (name + count) + horizontal lane of cards.
 struct KanbanColumnSection: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let title: String
     let cards: [KanbanCard]
 
@@ -252,7 +253,7 @@ struct KanbanColumnSection: View {
                     .padding(.vertical, 2)
                     .background(FleetTheme.surface)
                     .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(FleetTheme.border, lineWidth: 1))
+                    .overlay(Capsule().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(title.capitalized), \(cards.count) cards")
@@ -260,14 +261,13 @@ struct KanbanColumnSection: View {
             // transition (fires when the live snapshot re-counts the lane).
             .animation(.easeOut(duration: 0.18), value: cards.count)
             Rectangle()
-                .fill(FleetTheme.border)
+                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
                 .frame(height: 0.5)
 
             if cards.isEmpty {
                 Text("No cards")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .opacity(0.6)
+                    .foregroundStyle(FleetTheme.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(FleetTheme.spacingSm)
             } else {
@@ -321,7 +321,7 @@ struct KanbanCardView: View {
                     // V3: the card ID is machine data — mono, muted.
                     Text(card.id)
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary.opacity(0.7))
+                        .foregroundStyle(FleetTheme.textMuted)
                         .lineLimit(1)
                 }
             }

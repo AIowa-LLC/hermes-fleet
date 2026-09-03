@@ -14,14 +14,16 @@ public struct FleetCard<Content: View>: View {
         self.content = content()
     }
 
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     public var body: some View {
         content
             .padding(FleetTheme.spacingLg)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FleetTheme.surface)
+            .background(colorSchemeContrast == .increased ? FleetTheme.surfaceIncreased : FleetTheme.surface)
             .overlay(
                 RoundedRectangle(cornerRadius: FleetTheme.radiusCard)
-                    .strokeBorder(FleetTheme.border, lineWidth: 1)
+                    .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusCard))
     }

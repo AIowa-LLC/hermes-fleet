@@ -105,13 +105,13 @@ public struct FleetRosterView: View {
                 // title-case + primary; the uppercase micro-label role is for
                 // generic section labels (see SectionHeader).
                 Text(section.gateway.displayName)
-                    .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(FleetTheme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let outage = section.outage {
                     Text(statusText(outage.0))
-                        .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(FleetTheme.statusDegraded)
                         .lineLimit(1)
                 }

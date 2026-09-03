@@ -23,7 +23,7 @@ public struct GatewayRunningBadge: View {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 9, weight: .semibold))
                 Text("Own gateway")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
             }
             .foregroundStyle(FleetTheme.textSecondary)
             .padding(.horizontal, 6)

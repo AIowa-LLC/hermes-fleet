@@ -154,8 +154,12 @@ final class H2HealthDashboardUITests: XCTestCase {
     // MARK: Helpers
 
     private func reconnectCount(_ label: String) -> Int {
-        // The label is exactly the count (e.g. "1"); tolerate whitespace.
-        Int(label.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+        // V5 (t_b2628d33): metrics are combined FleetMetadataRow elements —
+        // the label reads "Reconnects: 2" (KEY: VALUE), not the bare count.
+        let value = label.split(separator: ":", maxSplits: 1)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .last ?? label
+        return Int(value) ?? -1
     }
 
     private func addGateway(in app: XCUIApplication, name: String, endpoint: String) {

@@ -24,6 +24,8 @@ public struct FleetMetadataRow: View {
     private let value: String
     private var showDivider: Bool = true
 
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     /// - Parameters:
     ///   - key: metadata key, rendered `KEY:` — muted secondary mono,
     ///     automatically uppercased.
@@ -50,7 +52,7 @@ public struct FleetMetadataRow: View {
             }
             if showDivider {
                 Rectangle()
-                    .fill(FleetTheme.border)
+                    .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
                     .frame(height: hairlineHeight)
             }
         }

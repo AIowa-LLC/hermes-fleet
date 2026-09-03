@@ -16,6 +16,8 @@ public struct BotAvatar: View {
         self.initials = FleetDashboardFormatting.avatarInitials(from: displayName)
     }
 
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     public var body: some View {
         Text(initials)
             .font(FleetFonts.monoDisplay(size: Self.fontSize, weight: .semibold))
@@ -25,7 +27,7 @@ public struct BotAvatar: View {
             .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
             .overlay(
                 RoundedRectangle(cornerRadius: Self.cornerRadius)
-                    .strokeBorder(FleetTheme.border, lineWidth: 1)
+                    .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
             )
             .accessibilityHidden(true)
     }

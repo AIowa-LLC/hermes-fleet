@@ -44,6 +44,19 @@ public enum FleetColors {
     public static let textPrimary: UInt32 = 0xEDEDED     // titles, values (off-white)
     public static let textSecondary: UInt32 = 0x9BA1A6   // labels, metadata keys
 
+    // MARK: V5 accessibility tokens (design review t_b2628d33)
+    /// Muted foreground — the FIXED replacement for opacity-dimmed
+    /// textSecondary (0.6–0.7 alpha blends landed at 3.27–4.0:1, below AA).
+    /// 5.24:1 on surface, 4.84:1 on elevated, 4.72:1 on surfaceIncreased —
+    /// AA on every surface it renders on.
+    public static let textMuted: UInt32 = 0x858B91
+    /// Increase Contrast: stronger hairline (1.65:1 → 3.28:1 vs canvas).
+    public static let borderIncreased: UInt32 = 0x5A646D
+    /// Increase Contrast: lifted card surface (1.1:1 → 1.22:1 vs canvas;
+    /// every text token GAINS contrast on it — textPrimary 13.89:1,
+    /// textSecondary 6.23:1, textMuted 4.19:1, accent 12.79:1).
+    public static let surfaceIncreased: UInt32 = 0x1F2025
+
     // MARK: Accent — ONE accent: pale cyan (links, active states, key numbers)
     public static let accent: UInt32 = 0x98F3F9
 
@@ -57,7 +70,12 @@ public enum FleetColors {
     public static let statusOnline: UInt32 = 0x00C853    // Running/Online pills
     public static let statusIdle: UInt32 = 0xFFC107      // Idle pills
     public static let statusDegraded: UInt32 = 0xFF5252  // Degraded/error pills
-    public static let statusOffline: UInt32 = 0x6A6A7A   // Offline pills
+    /// V5 accessibility fix (t_b2628d33): was 0x6A6A7A (3.4:1 on surface —
+    /// below WCAG AA). 0x8A8A9A is 5.31:1 on surface / 4.9:1 on elevated.
+    /// The OFFLINE PILL LABEL renders in textPrimary (13:1+); this token is
+    /// the dot/tint/grays (it is also textSecondary-adjacent metadata gray
+    /// elsewhere, where 5.31:1 clears AA on its own).
+    public static let statusOffline: UInt32 = 0x8A8A9A   // Offline pills
 }
 
 /// The Hermes Fleet design system — V1 "Nous terminal minimalism".
@@ -78,6 +96,14 @@ public enum FleetTheme {
     public static let surfaceElevated: Color = Color(hex: FleetColors.surfaceElevated)
     public static let textPrimary: Color = Color(hex: FleetColors.textPrimary)
     public static let textSecondary: Color = Color(hex: FleetColors.textSecondary)
+
+    /// V5: muted foreground — the fixed-contrast replacement for opacity
+    /// dimming of secondary text (card IDs, empty-lane placeholders).
+    public static let textMuted: Color = Color(hex: FleetColors.textMuted)
+
+    /// V5: Increase Contrast card surface — resolves to the base surface
+    /// token elsewhere (views pick via `.colorSchemeContrast`).
+    public static let surfaceIncreased: Color = Color(hex: FleetColors.surfaceIncreased)
 
     /// 1px hairline card borders: #32373C at full opacity (a hairline IS the
     /// restraint — no soft translucency).
@@ -113,6 +139,18 @@ public enum FleetTheme {
         status.opacity(0.2)
     }
 
+    // MARK: - Increase Contrast (V5 accessibility, t_b2628d33)
+
+    /// Contrast-aware hairline: the standard #32373C token, strengthened to
+    /// borderIncreased (#5A646D, 1.65:1 → 3.28:1 vs canvas) when the user
+    /// enables iOS Increase Contrast. Custom fixed hex colors are not remapped
+    /// by the system, so the theme adapts them itself.
+    public static func borderColor(colorSchemeContrast: ColorSchemeContrast) -> Color {
+        colorSchemeContrast == .increased
+            ? Color(hex: FleetColors.borderIncreased)
+            : border
+    }
+
     // MARK: - Radii
 
     /// Cards.
@@ -135,43 +173,58 @@ public enum FleetTheme {
     public static let spacingXxl: CGFloat = 32
 
     // MARK: - Typography (mono as identity; body stays SF Pro)
+    //
+    // V5 accessibility (t_b2628d33): every role below is Dynamic-Type aware.
+    // Mono faces scale via `Font.custom(_:size:relativeTo:)` (see
+    // FleetFonts.monoDisplay) and the SF roles via `.custom-scaled` system
+    // text styles, so Courier Prime keeps its identity while tracking the
+    // user's text size like body text does.
 
-    /// Screen titles / hero numbers — 28pt bold MONO (Courier Prime).
-    public static let titleFont: Font = FleetFonts.monoDisplay(size: titleFontSize, weight: titleFontWeight)
+    /// Screen titles / hero numbers — 28pt bold MONO (Courier Prime),
+    /// scaling with the user's text size (relative to .title2).
+    public static let titleFont: Font = FleetFonts.monoDisplay(size: titleFontSize, weight: titleFontWeight, relativeTo: .title2)
     public static let titleFontSize: CGFloat = 28
     public static let titleFontWeight: Font.Weight = .bold
 
-    /// Section headers — now the UPPERCASE micro-label role: 11pt semibold,
+    /// Section headers — the UPPERCASE micro-label role: 11pt semibold,
     /// callers apply `.textCase(.uppercase)` + `microLabelTracking`.
-    public static let sectionHeaderFont: Font = .system(size: sectionHeaderFontSize, weight: sectionHeaderFontWeight)
+    /// Scales with Dynamic Type via the .caption2 text style (11pt at the
+    /// default content size — an exact base-size match).
+    public static let sectionHeaderFont: Font = .caption2.weight(sectionHeaderFontWeight)
     public static let sectionHeaderFontSize: CGFloat = FleetTheme.microLabelFontSize
     public static let sectionHeaderFontWeight: Font.Weight = .semibold
 
-    /// Stat numbers — 28pt bold MONO with tabular figures (dashboards line up).
-    public static let statFont: Font = FleetFonts.monoDisplay(size: statFontSize, weight: statFontWeight).monospacedDigit()
+    /// Stat numbers — 28pt bold MONO with tabular figures (dashboards line
+    /// up), scaling with Dynamic Type (relative to .title2).
+    public static let statFont: Font = FleetFonts.monoDisplay(size: statFontSize, weight: statFontWeight, relativeTo: .title2).monospacedDigit()
     public static let statFontSize: CGFloat = 28
     public static let statFontWeight: Font.Weight = .bold
 
-    /// Secondary text — 13pt regular SF Pro (readability role).
-    public static let secondaryFont: Font = .system(size: secondaryFontSize, weight: secondaryFontWeight)
+    /// Secondary text — 13pt regular SF Pro (readability role), scaling with
+    /// Dynamic Type via the .footnote text style (13pt at the default content
+    /// size — an exact base-size match).
+    public static let secondaryFont: Font = .footnote.weight(secondaryFontWeight)
     public static let secondaryFontSize: CGFloat = 13
     public static let secondaryFontWeight: Font.Weight = .regular
 
     /// UPPERCASE micro-label — 11pt semibold caps with wide tracking
     /// ("GATEWAYS", "ACTIVE BOTS"). Apply `.textCase(.uppercase)` and
     /// `.tracking(microLabelTracking)` at the call site (Font cannot encode
-    /// either). ~0.13em at 11pt.
-    public static let microLabelFont: Font = .system(size: microLabelFontSize, weight: .semibold)
+    /// either). ~0.13em at 11pt. Scales with Dynamic Type via .caption2
+    /// (11pt at the default content size — an exact base-size match).
+    public static let microLabelFont: Font = .caption2.weight(.semibold)
     public static let microLabelFontSize: CGFloat = 11
     public static let microLabelTracking: CGFloat = 1.4
 
     /// Mono body role — 13pt regular MONO for IDs, uptime, telemetry, and
-    /// terminal `KEY:` metadata rows (see FleetMetadataRow).
-    public static let monoFont: Font = FleetFonts.monoDisplay(size: monoFontSize, weight: .regular)
+    /// terminal `KEY:` metadata rows (see FleetMetadataRow). Scales with
+    /// Dynamic Type (footnote-class).
+    public static let monoFont: Font = FleetFonts.monoDisplay(size: monoFontSize, weight: .regular, relativeTo: .footnote)
     public static let monoFontSize: CGFloat = 13
 
     /// Mono caption — 11pt regular MONO for tight metadata (timestamps).
-    public static let monoCaptionFont: Font = FleetFonts.monoDisplay(size: monoCaptionFontSize, weight: .regular)
+    /// Scales with Dynamic Type (caption2-class: 11pt base, exact match).
+    public static let monoCaptionFont: Font = FleetFonts.monoDisplay(size: monoCaptionFontSize, weight: .regular, relativeTo: .caption2)
     public static let monoCaptionFontSize: CGFloat = 11
 }
 
@@ -231,7 +284,13 @@ public enum FleetFonts {
     ///
     /// Weight mapping: `.bold` and heavier use the Bold face; everything
     /// lighter uses Regular (the two bundled weights are the whole family).
-    public static func monoDisplay(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+    ///
+    /// V5 accessibility (t_b2628d33): `relativeTo:` makes the custom face
+    /// track Dynamic Type — the point size is the base at the default (`.large`)
+    /// content size and scales with the user's text-size setting while the
+    /// Courier Prime identity is preserved. The SF Mono fallback branch is
+    /// scaled the same way (the `.monospaced` design on a scaled size).
+    public static func monoDisplay(size: CGFloat, weight: Font.Weight = .regular, relativeTo style: Font.TextStyle? = nil) -> Font {
         let useBold: Bool
         switch weight {
         case .bold, .heavy, .black: useBold = true
@@ -239,7 +298,16 @@ public enum FleetFonts {
         }
         let face = useBold ? courierPrimeBold : courierPrimeRegular
         if Self.faceResolves(faceName: face) {
+            if let style {
+                return .custom(face, size: size, relativeTo: style)
+            }
             return .custom(face, size: size)
+        }
+        if let style {
+            // SF Mono fallback: the text-style system font with the
+            // monospaced design scales with Dynamic Type natively (Courier
+            // Prime resolving is pinned by tests, so this is a safety net).
+            return .system(style, design: .monospaced, weight: weight)
         }
         return .system(size: size, weight: weight, design: .monospaced)
     }

@@ -15,6 +15,7 @@ import FleetPersistence
 /// FleetUI depends only on FleetCore seams; the transport module is wired by
 /// the app composition root (M0 hard guard).
 public struct ConversationView: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     private let environment: AppEnvironment
     private let route: Route
     private let sessionID: String?
@@ -95,7 +96,7 @@ public struct ConversationView: View {
         .background(FleetTheme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(FleetTheme.border)
+                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
                 .frame(height: 1)
         }
         .accessibilityElement(children: .combine)
@@ -252,7 +253,7 @@ public struct ConversationView: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                        .strokeBorder(FleetTheme.border, lineWidth: 1)
+                        .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
                 )
                 .disabled(model.phase != .ready && model.phase != .streaming)
                 .accessibilityIdentifier("fleet.conversation.composer")
@@ -269,7 +270,7 @@ public struct ConversationView: View {
                         .foregroundStyle(.white)
                         .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
                         .background(Circle().fill(FleetTheme.surfaceElevated))
-                        .overlay(Circle().strokeBorder(FleetTheme.border, lineWidth: 1))
+                        .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
                 }
                 .buttonStyle(.fleetPressable)
                 .accessibilityLabel("Stop")
@@ -297,7 +298,7 @@ public struct ConversationView: View {
         .background(FleetTheme.surface)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(FleetTheme.border)
+                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
                 .frame(height: 1)
         }
     }
@@ -387,6 +388,7 @@ private struct ReasoningDisclosure: View {
 /// cards; timestamps render under each bubble (caption2 secondary) whenever
 /// the row carries one.
 private struct ConversationBubbleView: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let row: ConversationRow
 
     /// V4 motion budget: subtle entrance for user bubbles — opacity + a
@@ -487,7 +489,7 @@ private struct ConversationBubbleView: View {
             .background(FleetTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble))
             .overlay(
                 RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
-                    .strokeBorder(FleetTheme.border, lineWidth: 1)
+                    .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
             )
         case .tool:
             Label {

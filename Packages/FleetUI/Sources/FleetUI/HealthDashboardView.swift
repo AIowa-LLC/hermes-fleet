@@ -133,20 +133,14 @@ private struct HealthRowView: View {
         .accessibilityIdentifier("fleet.health.row.\(gateway.id.rawValue)")
     }
 
+    /// V5 accessibility (t_b2628d33): metrics render via FleetMetadataRow —
+    /// ONE combined VoiceOver element announcing "UPTIME: 99.9%" instead of
+    /// two separate KEY / VALUE reads. The per-metric accessibilityIdentifier
+    /// lives on the combined element. Values keep tabular figures (monospaced
+    /// digits on the mono font).
     private func metricRow(label: String, value: String, identifier: String) -> some View {
-        GridRow {
-            // V3: terminal KEY: VALUE metadata — muted mono key, bright mono
-            // value (the process-table voice; per-metric identifiers kept).
-            Text(label.uppercased() + ":")
-                .font(FleetTheme.monoFont)
-                .foregroundStyle(FleetTheme.textSecondary)
-                .gridColumnAlignment(.leading)
-            Text(value)
-                .font(FleetTheme.monoFont.monospacedDigit())
-                .foregroundStyle(FleetTheme.textPrimary)
-                .gridColumnAlignment(.leading)
-                .accessibilityIdentifier(identifier)
-        }
+        FleetMetadataRow(label, value, showDivider: false)
+            .accessibilityIdentifier(identifier)
     }
 
     private func lastDisconnectText(_ stats: GatewayHealthStats?) -> String {

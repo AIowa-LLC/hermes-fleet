@@ -18,9 +18,17 @@ public struct StatusPill: View {
             Circle()
                 .fill(status.color)
                 .frame(width: Self.dotDiameter, height: Self.dotDiameter)
+            // V5 Differentiate Without Color: when the user enables it, a
+            // decorative SF Symbol reinforces the state beyond color+dot.
+            if differentiateWithoutColor {
+                Image(systemName: status.symbolName)
+                    .font(.system(size: Self.symbolFontSize, weight: .semibold))
+                    .foregroundStyle(status.labelColor)
+                    .accessibilityHidden(true)
+            }
             Text(status.label)
-                .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
-                .foregroundStyle(status.color)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(status.labelColor)
         }
         .padding(.horizontal, FleetTheme.spacingSm)
         .padding(.vertical, FleetTheme.spacingXs)
@@ -32,10 +40,15 @@ public struct StatusPill: View {
         .accessibilityLabel("Status: \(status.label)")
     }
 
+    @Environment(\.accessibilityDifferentiateWithoutColor)
+    private var differentiateWithoutColor
+
     /// Pill dot diameter (pt).
     static let dotDiameter: CGFloat = 8
     /// Hairline status-color stroke opacity (subtle definition on #0A0A0A).
     static let strokeOpacity: Double = 0.25
+    /// Differentiate-Without-Color reinforcement glyph size (pt).
+    static let symbolFontSize: CGFloat = 10
 }
 
 #Preview("StatusPill — all states") {

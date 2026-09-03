@@ -27,6 +27,10 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetColors.border, 0x32373C)
         XCTAssertEqual(FleetColors.textPrimary, 0xEDEDED)
         XCTAssertEqual(FleetColors.textSecondary, 0x9BA1A6)
+        // V5 accessibility tokens (design review t_b2628d33)
+        XCTAssertEqual(FleetColors.textMuted, 0x858B91)
+        XCTAssertEqual(FleetColors.borderIncreased, 0x5A646D)
+        XCTAssertEqual(FleetColors.surfaceIncreased, 0x1F2025)
         // ONE accent: pale cyan
         XCTAssertEqual(FleetColors.accent, 0x98F3F9)
         // Legacy Gold Fleet accents (retained until V2/V3 migrate call sites)
@@ -36,7 +40,11 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetColors.statusOnline, 0x00C853)
         XCTAssertEqual(FleetColors.statusIdle, 0xFFC107)
         XCTAssertEqual(FleetColors.statusDegraded, 0xFF5252)
-        XCTAssertEqual(FleetColors.statusOffline, 0x6A6A7A)
+        // DELIBERATE V5 accessibility decision (t_b2628d33 design review):
+        // statusOffline was raised 0x6A6A7A → 0x8A8A9A (3.4:1 → 5.31:1 on
+        // surface) to clear WCAG AA; the offline PILL LABEL additionally
+        // renders in textPrimary (see FleetStatus.labelColor).
+        XCTAssertEqual(FleetColors.statusOffline, 0x8A8A9A)
     }
 
     // MARK: - Resolved color values (what actually renders)
@@ -55,7 +63,89 @@ final class FleetThemeTests: XCTestCase {
         assertResolved(FleetTheme.statusOnline, hex: 0x00C853, alpha: 1, traits: dark, name: "statusOnline")
         assertResolved(FleetTheme.statusIdle, hex: 0xFFC107, alpha: 1, traits: dark, name: "statusIdle")
         assertResolved(FleetTheme.statusDegraded, hex: 0xFF5252, alpha: 1, traits: dark, name: "statusDegraded")
-        assertResolved(FleetTheme.statusOffline, hex: 0x6A6A7A, alpha: 1, traits: dark, name: "statusOffline")
+        assertResolved(FleetTheme.statusOffline, hex: 0x8A8A9A, alpha: 1, traits: dark, name: "statusOffline")
+        assertResolved(FleetTheme.textMuted, hex: 0x858B91, alpha: 1, traits: dark, name: "textMuted")
+        assertResolved(Color(hex: FleetColors.borderIncreased), hex: 0x5A646D, alpha: 1, traits: dark, name: "borderIncreased")
+        assertResolved(Color(hex: FleetColors.surfaceIncreased), hex: 0x1F2025, alpha: 1, traits: dark, name: "surfaceIncreased")
+    }
+
+    /// V5 (t_b2628d33): WCAG AA contrast guard — every text-bearing token
+    /// must clear 4.5:1 against the surface it renders on. Computed with the
+    /// WCAG relative-luminance formula (sRGB linearization + 2.4 gamma), so a
+    /// future token change that drops below AA fails HERE instead of in
+    /// design review. Note: statusOffline gray is used for text only where it
+    /// clears AA on its own (5.31:1 on surface); the offline pill label
+    /// renders textPrimary (11.7:1 on its own tint) via
+    /// FleetStatus.labelColor.
+    func testTextTokensClearWCAGAAOnTheirSurfaces() {
+        typealias Pair = (name: String, foreground: UInt32, background: UInt32)
+        let checks: [Pair] = [
+            ("textPrimary on background", FleetColors.textPrimary, FleetColors.background),
+            ("textPrimary on surface", FleetColors.textPrimary, FleetColors.surface),
+            ("textPrimary on surfaceElevated", FleetColors.textPrimary, FleetColors.surfaceElevated),
+            ("textPrimary on surfaceIncreased", FleetColors.textPrimary, FleetColors.surfaceIncreased),
+            ("textSecondary on background", FleetColors.textSecondary, FleetColors.background),
+            ("textSecondary on surface", FleetColors.textSecondary, FleetColors.surface),
+            ("textSecondary on surfaceElevated", FleetColors.textSecondary, FleetColors.surfaceElevated),
+            ("textSecondary on surfaceIncreased", FleetColors.textSecondary, FleetColors.surfaceIncreased),
+            ("textMuted on background", FleetColors.textMuted, FleetColors.background),
+            ("textMuted on surface", FleetColors.textMuted, FleetColors.surface),
+            ("textMuted on surfaceElevated", FleetColors.textMuted, FleetColors.surfaceElevated),
+            ("accent on background", FleetColors.accent, FleetColors.background),
+            ("accent on surface", FleetColors.accent, FleetColors.surface),
+            ("statusOffline (dot/tint gray) on surface", FleetColors.statusOffline, FleetColors.surface),
+            ("statusOffline (dot/tint gray) on surfaceElevated", FleetColors.statusOffline, FleetColors.surfaceElevated),
+        ]
+        for check in checks {
+            XCTAssertGreaterThanOrEqual(
+                Self.wcagContrastRatio(check.foreground, check.background),
+                4.5,
+                "\(check.name) must clear WCAG AA (4.5:1)"
+            )
+        }
+    }
+
+    /// V5 (t_b2628d33): Increase Contrast tokens — the hairline must gain
+    /// contrast and every text token must KEEP at least AA on the lifted
+    /// surface (the strengthened tokens may not trade one failure for
+    /// another).
+    func testIncreaseContrastTokensStrengthenWithoutBreakingAA() {
+        let standardBorder = Self.wcagContrastRatio(FleetColors.border, FleetColors.background)
+        let increasedBorder = Self.wcagContrastRatio(FleetColors.borderIncreased, FleetColors.background)
+        XCTAssertGreaterThan(increasedBorder, standardBorder, "borderIncreased must beat the standard hairline vs canvas")
+
+        let standardSurface = Self.wcagContrastRatio(FleetColors.surface, FleetColors.background)
+        let increasedSurface = Self.wcagContrastRatio(FleetColors.surfaceIncreased, FleetColors.background)
+        XCTAssertGreaterThan(increasedSurface, standardSurface, "surfaceIncreased must separate more from canvas than surface")
+
+        for (name, fg) in [
+            ("textPrimary", FleetColors.textPrimary),
+            ("textSecondary", FleetColors.textSecondary),
+            ("textMuted", FleetColors.textMuted),
+            ("accent", FleetColors.accent),
+        ] {
+            XCTAssertGreaterThanOrEqual(
+                Self.wcagContrastRatio(fg, FleetColors.surfaceIncreased),
+                4.5,
+                "\(name) must keep WCAG AA on surfaceIncreased"
+            )
+        }
+    }
+
+    /// WCAG 2.x relative luminance + contrast ratio over solid sRGB hex
+    /// tokens (fixed hex — no alpha, no dynamic remap, so this is exact).
+    private static func wcagContrastRatio(_ a: UInt32, _ b: UInt32) -> Double {
+        func linear(_ channel: UInt32) -> Double {
+            let c = Double(channel) / 255
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        func luminance(_ hex: UInt32) -> Double {
+            0.2126 * linear((hex >> 16) & 0xFF)
+                + 0.7152 * linear((hex >> 8) & 0xFF)
+                + 0.0722 * linear(hex & 0xFF)
+        }
+        let l1 = luminance(a), l2 = luminance(b)
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
     }
 
     /// Policy: dark-only palette. The app forces dark at the root
@@ -107,6 +197,35 @@ final class FleetThemeTests: XCTestCase {
         assertResolved(
             FleetTheme.statusPillTint(FleetTheme.statusOnline),
             hex: 0x00C853, alpha: 0.2, traits: dark, name: "statusPillTint(online)"
+        )
+    }
+
+    /// V5 (t_b2628d33): the OFFLINE pill label renders textPrimary (the
+    /// statusOffline gray is ~4:1 on its own 20% tint, below AA for text).
+    /// Colored states keep their status color on the label.
+    func testStatusPillLabelColorPolicy() {
+        XCTAssertEqual(FleetStatus.offline.labelColor, FleetTheme.textPrimary)
+        XCTAssertEqual(FleetStatus.online.labelColor, FleetTheme.statusOnline)
+        XCTAssertEqual(FleetStatus.idle.labelColor, FleetTheme.statusIdle)
+        XCTAssertEqual(FleetStatus.degraded.labelColor, FleetTheme.statusDegraded)
+        // Differentiate-Without-Color reinforcement symbols exist per state.
+        for status in FleetStatus.allCases {
+            XCTAssertFalse(status.symbolName.isEmpty, "\(status.rawValue) needs a reinforcement symbol")
+        }
+    }
+
+    /// V5 (t_b2628d33): the Increase Contrast hairline helper — standard
+    /// contrast resolves the base token, increased resolves the strengthened
+    /// one. (Resolved as static tokens; the adaptivity itself is view-layer.)
+    func testBorderColorHelperPicksStrengthenedTokenUnderIncreasedContrast() {
+        let dark = UITraitCollection(userInterfaceStyle: .dark)
+        assertResolved(
+            FleetTheme.borderColor(colorSchemeContrast: .standard),
+            hex: 0x32373C, alpha: 1, traits: dark, name: "border(standard)"
+        )
+        assertResolved(
+            FleetTheme.borderColor(colorSchemeContrast: .increased),
+            hex: 0x5A646D, alpha: 1, traits: dark, name: "border(increased)"
         )
     }
 

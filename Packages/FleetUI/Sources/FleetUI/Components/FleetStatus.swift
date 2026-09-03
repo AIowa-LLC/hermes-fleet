@@ -38,6 +38,30 @@ public enum FleetStatus: String, Hashable, Sendable, CaseIterable {
         }
     }
 
+    /// V5 accessibility (t_b2628d33): the offline gray is 5.31:1 on surface
+    /// but only ~4:1 on its own 20% pill tint, so the OFFLINE label renders
+    /// in textPrimary (11.7:1 on the tint) — the gray stays on the dot,
+    /// tint, and stroke where it is not body copy. Colored states keep
+    /// their status color on the label (all AAA on their tints).
+    public var labelColor: Color {
+        switch self {
+        case .online, .idle, .degraded: color
+        case .offline: FleetTheme.textPrimary
+        }
+    }
+
+    /// V5 Differentiate Without Color: SF Symbol reinforcement so status is
+    /// never carried by color + dot alone. Decorative — VoiceOver reads the
+    /// combined "Status: <label>" (the word is already in the label).
+    public var symbolName: String {
+        switch self {
+        case .online: "checkmark.circle.fill"
+        case .idle: "circle.dotted"
+        case .degraded: "exclamationmark.triangle.fill"
+        case .offline: "wifi.slash"
+        }
+    }
+
     /// Collapse a gateway connection state onto the four pill states.
     public init(gatewayStatus: GatewayStatus) {
         switch gatewayStatus {

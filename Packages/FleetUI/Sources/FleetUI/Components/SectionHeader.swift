@@ -56,14 +56,14 @@ public struct SectionHeader<D: Hashable>: View {
             if let linkDestination {
                 NavigationLink(value: linkDestination) {
                     Text(actionTitle)
-                        .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(FleetTheme.accent)
                 }
                 .accessibilityLabel("\(actionTitle) \(title)")
             } else if let action {
                 Button(action: action) {
                     Text(actionTitle)
-                        .font(.system(size: FleetTheme.secondaryFontSize, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(FleetTheme.accent)
                 }
                 .accessibilityLabel("\(actionTitle) \(title)")
