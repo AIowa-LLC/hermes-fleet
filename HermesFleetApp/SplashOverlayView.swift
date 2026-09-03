@@ -43,21 +43,21 @@ struct SplashOverlayView: View {
     var body: some View {
         ZStack {
             if !isRemoved {
-                // P0-6: the splash must be geometrically IDENTICAL to the
-                // native LaunchScreen at the handoff frame, or the artwork
-                // visibly jumps when the system launch screen is dismissed
-                // (the dogfooded "jitter"). Both layers now use the same
-                // recipe: full-bleed dark background + aspect-FIT artwork
-                // centered on the FULL screen. aspectFit (not fill) because
-                // the artwork is ~9:16 (941x1672) — on a ~19.5:9 phone a
-                // fill crops ~18% of its width. The artwork's edges are
-                // near-black, so the letterbox bars are imperceptible against
-                // the matching background.
-                Color(red: 10 / 255, green: 10 / 255, blue: 11 / 255)
+                // D3: the splash must be geometrically IDENTICAL to the native
+                // LaunchScreen at the handoff frame, or the artwork visibly
+                // jumps when the system launch screen is dismissed (the
+                // dogfooded "jitter"). Both layers now use the same recipe:
+                // full-bleed V6 #0A0E0D background + aspect-FILL artwork.
+                // The art is a flat #0A0E0D field with a centered gold brand
+                // mark (no wordmark — HIG), so aspect-fill crops only empty
+                // teal and the mark survives every phone aspect. Fill (not
+                // fit) is the D3 fix for Tony's "flat at the top / cuts off"
+                // defect: no letterbox band above the Dynamic Island.
+                Color(red: 10 / 255, green: 14 / 255, blue: 13 / 255) // #0A0E0D
                     .ignoresSafeArea()
                 Image("LaunchArtwork")
                     .resizable()
-                    .scaledToFit()
+                    .scaledToFill()
                     .ignoresSafeArea()
                     // Opacity only — never animate layout, so the frame is
                     // identical from the very first rendered pass.
@@ -78,9 +78,9 @@ struct SplashOverlayView: View {
             }
         }
         // Full-screen container from the first frame: both the background and
-        // the aspect-fit image center on the FULL screen — exactly the native
+        // the aspect-FILL image span the FULL screen — exactly the native
         // LaunchScreen's geometry (imageView pinned to all four superview
-        // edges, scaleAspectFit) — with no safe-area-dependent re-layout.
+        // edges, scaleAspectFill) — with no safe-area-dependent re-layout.
         .ignoresSafeArea()
     }
 
