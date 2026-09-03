@@ -385,7 +385,7 @@
 					};
 					9A6AD1F4D6B0B207E73A83F6 = {
 						DevelopmentTeam = 3JS22HX92T;
-						ProvisioningStyle = Automatic;
+						ProvisioningStyle = Manual;
 					};
 					B3003DEB5DBA7762041D9FA5 = {
 						DevelopmentTeam = 3JS22HX92T;
@@ -677,7 +677,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution: AIowa LLC (3JS22HX92T)";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HermesFleetApp/Info.plist;
@@ -690,6 +692,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.hermesfleet;
 				PRODUCT_NAME = HermesFleetApp;
+				PROVISIONING_PROFILE_SPECIFIER = "HermesFleetApp App Store v2 (com.aiowa.hermesfleet)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -716,7 +719,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution: AIowa LLC (3JS22HX92T)";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HermesFleetApp/Info.plist;
@@ -729,6 +734,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.hermesfleet;
 				PRODUCT_NAME = HermesFleetApp;
+				PROVISIONING_PROFILE_SPECIFIER = "HermesFleetApp App Store v2 (com.aiowa.hermesfleet)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
