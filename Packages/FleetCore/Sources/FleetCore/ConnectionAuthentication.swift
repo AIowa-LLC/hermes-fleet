@@ -49,6 +49,12 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
     case notConfigured
     /// Ticket mint failed (detail is non-secret, e.g. an HTTP status).
     case ticketMintFailed(String)
+    /// The auth REST surface (`/api/auth/providers`,
+    /// `/auth/password-login`, `/api/auth/ws-ticket`) answered with this
+    /// HTTP status. 401/403 → the credential was rejected; 404/405/410 →
+    /// the endpoint answered but is NOT serving the gateway API (wrong
+    /// port/surface — the F1 wrong-endpoint case). Non-secret.
+    case httpStatus(Int)
     /// The minted ticket's TTL has already elapsed — never connect with a
     /// stale ticket (synthesis §11: single-use, 30s TTL).
     case ticketExpired
@@ -66,6 +72,8 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
             return "no authentication strategy configured"
         case .ticketMintFailed(let detail):
             return "ticket mint failed: \(detail)"
+        case .httpStatus(let code):
+            return "auth endpoint returned HTTP \(code)"
         case .ticketExpired:
             return "WebSocket ticket expired before connect"
         case .missingLoopbackToken:

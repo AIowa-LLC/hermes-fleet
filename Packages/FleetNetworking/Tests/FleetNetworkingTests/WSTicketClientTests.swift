@@ -1,4 +1,5 @@
 import XCTest
+import FleetCore
 import FleetNetworking
 
 /// URLProtocol mock that answers `POST /api/auth/ws-ticket` from a scripted
@@ -73,7 +74,9 @@ final class WSTicketClientTests: XCTestCase {
         do {
             _ = try await client.mintTicket()
             XCTFail("expected HTTP error")
-        } catch let error as WSTicketClient.TicketMintError {
+        } catch let error as AuthenticationError {
+            // F1: HTTP statuses surface as the typed auth error so the
+            // transport can classify 401 (re-auth) vs 404 (wrong surface).
             XCTAssertEqual(error, .httpStatus(401))
         } catch {
             XCTFail("unexpected error \(error)")

@@ -89,6 +89,10 @@ public actor GatewaySessionListService: SessionListProviding {
             return .notConnected
         case .authenticationRequired:
             return .rpcFailed("authentication required (4401)")
+        case .authSurfaceHTTP(let code) where code == 401 || code == 403:
+            return .rpcFailed("authentication required (HTTP \(code))")
+        case .authSurfaceHTTP(let code):
+            return .rpcFailed("endpoint answered but is not the gateway API (HTTP \(code))")
         case .unsupported(let detail):
             return .rpcFailed("unsupported gateway: \(detail)")
         case .connectionFailed(let detail), .invalidState(let detail):

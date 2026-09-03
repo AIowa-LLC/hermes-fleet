@@ -46,6 +46,12 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
         switch connectivityError {
         case .authenticationRequired:
             self = .authenticationRequired
+        case .authSurfaceHTTP(let code) where code == 401 || code == 403:
+            self = .authenticationRequired
+        case .authSurfaceHTTP:
+            // The endpoint ANSWERED — it is reachable — but it is not the
+            // gateway API surface (wrong port; the F1 8642-vs-9119 case).
+            self = .unsupported
         case .unsupported:
             self = .unsupported
         case .unreachable, .timeout:

@@ -145,7 +145,7 @@ public struct FleetRosterView: View {
                 Label(statusText(status), systemImage: "wifi.slash")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(FleetTheme.textPrimary)
-                Text(detailNonEmpty(detail))
+                Text(detailNonEmpty(detail, status: status))
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(FleetTheme.textSecondary)
             }
@@ -211,11 +211,11 @@ public struct FleetRosterView: View {
         }
     }
 
-    private func detailNonEmpty(_ detail: String?) -> String {
-        guard let detail, !detail.isEmpty else {
-            return "This gateway did not report its roster this refresh."
-        }
-        return detail
+    private func detailNonEmpty(_ detail: String?, status: GatewayStatus = .offline) -> String {
+        // F1: the outage line is cause copy (what happened + what to do),
+        // not raw transport detail — the classified status drives it, with
+        // the non-secret detail used only to sharpen the cause.
+        GatewayFailureCopy.detail(status: status, detail: detail)
     }
 
     /// One per-gateway roster section (healthy bots or an outage).

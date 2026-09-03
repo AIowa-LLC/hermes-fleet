@@ -163,8 +163,8 @@ public struct BotsView: View {
     }
 
     private func detailText(_ outcome: GatewayRosterOutcome?) -> String {
-        if case .failed(_, let detail) = outcome, let detail, !detail.isEmpty {
-            return "This gateway did not report its roster. \(detail)"
+        if case .failed(let status, let detail) = outcome {
+            return GatewayFailureCopy.detail(status: status, detail: detail)
         }
         return "This gateway did not report its roster. Refresh to retry."
     }

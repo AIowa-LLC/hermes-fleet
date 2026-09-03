@@ -53,6 +53,11 @@ public enum GatewayConnectivityError: Error, Sendable, Equatable, LocalizedError
     case unreachable
     /// Close 4401 — the credential/ticket was rejected.
     case authenticationRequired
+    /// F1: the auth REST surface answered with this HTTP status before the
+    /// socket opened. 401/403 → `authenticationRequired` (credential
+    /// rejected); anything else means the endpoint answered but is not the
+    /// gateway API surface (wrong port) — `unsupported`.
+    case authSurfaceHTTP(Int)
     /// The endpoint answered but is not a usable gateway surface.
     case unsupported(String)
     /// Connect or `gateway.ready` handshake timed out.
@@ -66,6 +71,7 @@ public enum GatewayConnectivityError: Error, Sendable, Equatable, LocalizedError
         switch self {
         case .unreachable: return "gateway unreachable"
         case .authenticationRequired: return "authentication required"
+        case .authSurfaceHTTP(let code): return "auth endpoint returned HTTP \(code)"
         case .unsupported(let detail): return "unsupported gateway: \(detail)"
         case .timeout: return "gateway connect timed out"
         case .connectionFailed(let detail): return "gateway connection failed: \(detail)"

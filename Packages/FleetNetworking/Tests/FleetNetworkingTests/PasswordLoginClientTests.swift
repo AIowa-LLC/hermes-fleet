@@ -132,7 +132,9 @@ final class PasswordLoginClientTests: XCTestCase {
         do {
             _ = try await client.login(username: "tony", password: "wrong")
             XCTFail("expected login failure")
-        } catch let error as PasswordLoginError {
+        } catch let error as AuthenticationError {
+            // F1: HTTP statuses surface as the typed auth error (401 →
+            // re-auth classification, not "unreachable").
             XCTAssertEqual(error, .httpStatus(401))
         } catch {
             XCTFail("unexpected error \(error)")

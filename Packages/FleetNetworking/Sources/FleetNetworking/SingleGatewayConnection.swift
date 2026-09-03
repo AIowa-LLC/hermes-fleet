@@ -130,6 +130,8 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
             return .timeout
         case .connectionClosed(let reason):
             return map(reason)
+        case .authSurfaceStatus(let code):
+            return .authSurfaceHTTP(code)
         case .ticketMintFailed(let detail):
             return .connectionFailed("ticket mint failed: \(detail)")
         case .authenticationFailed:

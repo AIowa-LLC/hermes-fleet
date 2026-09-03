@@ -2,6 +2,19 @@ import Foundation
 import os
 import FleetCore
 
+/// F1: shared fast-fail behavior for the gateway auth REST clients. The
+/// default 60s URLRequest timeout makes a dead/filtered endpoint feel like a
+/// hang; an honest failure must arrive within seconds.
+enum AuthREST {
+    /// Bound on any single auth REST call (connect + response).
+    static let timeoutSeconds: TimeInterval = 8
+
+    /// A request with the F1 timeout bound applied.
+    static func bounded(_ request: inout URLRequest) {
+        request.timeoutInterval = min(request.timeoutInterval, timeoutSeconds)
+    }
+}
+
 /// A short-lived, single-use WebSocket upgrade ticket minted by the gateway.
 ///
 /// Wire contract (verified in `hermes_cli/dashboard_auth/routes.py:932` and
@@ -102,11 +115,12 @@ public struct WSTicketClient: WSTicketMinting {
         if let sessionCookie {
             request.setValue(sessionCookie.headerValue, forHTTPHeaderField: "Cookie")
         }
+        AuthREST.bounded(&request)
 
         let (data, response) = try await urlSession.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("ws-ticket: HTTP \(http.statusCode)")
-            throw TicketMintError.httpStatus(http.statusCode)
+            throw AuthenticationError.httpStatus(http.statusCode)
         }
         Self.log.info("ws-ticket: minted ok (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         let envelope: TicketEnvelope

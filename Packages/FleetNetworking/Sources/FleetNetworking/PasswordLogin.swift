@@ -102,13 +102,14 @@ public struct PasswordLoginClient: Sendable {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/auth/providers"))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        AuthREST.bounded(&request)
 
         Self.log.info("password-login: GET /api/auth/providers (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         do {
             let (data, response) = try await urlSession.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 Self.log.error("password-login: providers HTTP \(http.statusCode)")
-                throw PasswordLoginError.httpStatus(http.statusCode)
+                throw AuthenticationError.httpStatus(http.statusCode)
             }
             let envelope: ProvidersEnvelope
             do {
@@ -146,6 +147,7 @@ public struct PasswordLoginClient: Sendable {
             "password": password,
         ]
         request.httpBody = try JSONEncoder().encode(body)
+        AuthREST.bounded(&request)
 
         Self.log.info("password-login: POST /auth/password-login (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         let (_, response) = try await urlSession.data(for: request)
@@ -154,7 +156,7 @@ public struct PasswordLoginClient: Sendable {
         }
         Self.log.info("password-login: login HTTP \(http.statusCode)")
         guard (200..<300).contains(http.statusCode) else {
-            throw PasswordLoginError.httpStatus(http.statusCode)
+            throw AuthenticationError.httpStatus(http.statusCode)
         }
         guard let cookie = Self.parseSessionCookie(from: http) else {
             throw PasswordLoginError.missingSessionCookie

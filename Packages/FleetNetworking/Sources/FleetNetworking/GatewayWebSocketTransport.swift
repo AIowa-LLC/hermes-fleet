@@ -16,6 +16,9 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
     /// Authentication (ticket mint / loopback token lookup) failed before the
     /// socket opened. Never carries secret material (spec §29).
     case authenticationFailed(String)
+    /// F1: the auth REST surface answered this HTTP status (401/403 → the
+    /// credential was rejected; other statuses → wrong surface/port).
+    case authSurfaceStatus(Int)
 
     public var errorDescription: String? {
         switch self {
@@ -28,6 +31,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
         case .connectionClosed(let r): return "connection closed: \(r.debugDescription)"
         case .transportFailure(let s): return "transport failure: \(s)"
         case .authenticationFailed(let s): return "authentication failed: \(s)"
+        case .authSurfaceStatus(let code): return "auth endpoint returned HTTP \(code)"
         }
     }
 }
@@ -278,9 +282,18 @@ public actor GatewayWebSocketTransport: HermesTransport {
             await teardown(connectionState == .open ? .normalClosure : .abnormalClosure, error: error)
             throw error
         } catch let error as AuthenticationError {
-            // Auth material could not be produced (ticket mint failed / TTL
-            // expired / loopback token missing). Classify explicitly; never
+            // Auth material could not be produced. Classify explicitly; never
             // echo the raw credential (spec §29).
+            // F1: an HTTP status from the auth REST surface is its own class —
+            // 401/403 means "credential rejected" (re-auth), anything else
+            // means "the endpoint answered but is not the gateway API"
+            // (wrong port — do NOT misreport that as an auth problem).
+            if case .httpStatus(let code) = error {
+                let wrapped = TransportError.authSurfaceStatus(code)
+                await teardown(code == 401 || code == 403
+                    ? .reauthenticationRequired : .abnormalClosure, error: wrapped)
+                throw wrapped
+            }
             let wrapped = TransportError.authenticationFailed(error.localizedDescription)
             await teardown(.reauthenticationRequired, error: wrapped)
             throw wrapped
