@@ -8,38 +8,15 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key><tailnet-ip></key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<false/>
-			</dict>
-			<key><lan-ip></key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<false/>
-			</dict>
-			<key><tailnet-ip></key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<false/>
-			</dict>
-			<key><private-host></key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<false/>
-			</dict>
-		</dict>
 	</dict>
+	<!-- F2 (t_b678fb38): raw-IP / tailnet NSExceptionDomains stripped — the
+	     fleet converges on the public HTTPS tunnel. NSAllowsLocalNetworking
+	     stays for true-LAN http:// gateways (ATS permits loopback/local
+	     net ranges without per-domain exceptions). The converged default
+	     endpoint ships as CONFIGURATION DATA below, not as Swift topology
+	     and not as an ATS exception. -->
+	<key>FleetDefaultEndpoint</key>
+	<string>https://<legacy-fleet-endpoint></string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Hermes Fleet uses Face ID to unlock the app and protect your fleet conversations.</string>
 	<key>NSLocalNetworkUsageDescription</key>

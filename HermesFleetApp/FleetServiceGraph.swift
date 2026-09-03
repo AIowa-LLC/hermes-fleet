@@ -176,7 +176,13 @@ enum FleetServiceGraph {
         pinStore: any SynchronousPinStoring
     ) -> FleetKanbanWatcherFactory {
         { gateway in
-            let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+            // F2: no compiled loopback default. A gateway row with no
+            // endpoint gets an honest not-configured stub — the UI surfaces
+            // "add a gateway" instead of silently probing a phantom
+            // localhost.
+            guard let base = gateway.endpoint else {
+                return UnconfiguredKanbanWatcher()
+            }
             let authenticator = makeAuthenticator(gateway: gateway, credentialStore: credentialStore)
             let strategy = gateway.authConfiguration.strategy
             let httpCredential: @Sendable () async throws -> KanbanEventStreamClient.HTTPCredential = {
@@ -225,7 +231,10 @@ enum FleetServiceGraph {
         pinStore: any SynchronousPinStoring
     ) -> FleetConversationFactory {
         { gateway, _ in
-            let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+            // F2: no compiled loopback default — see makeKanbanWatcherFactory.
+            guard let base = gateway.endpoint else {
+                return UnconfiguredConversationSession(gateway: gateway)
+            }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
                 authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
@@ -301,8 +310,15 @@ enum FleetServiceGraph {
         credentialStore: any CredentialStoring,
         health: (any ConnectionHealthAccumulating)? = nil,
         pinStore: (any SynchronousPinStoring)? = nil
-    ) -> SingleGatewayConnection {
-        let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+    ) -> any GatewayRosterSession {
+        // F2: no compiled loopback default. A gateway row with no endpoint
+        // gets the honest not-configured roster-session stub — every caller
+        // (probe, union-roster, lifecycle factories) consumes the same
+        // seam, and connect()/reads fail closed with a not-configured
+        // classification instead of probing a phantom localhost.
+        guard let base = gateway.endpoint else {
+            return UnconfiguredRosterSession(gateway: gateway)
+        }
         let sessionFactory: any WebSocketSessionFactory
         if let pinStore {
             sessionFactory = makeSessionFactory(gateway: gateway, pinStore: pinStore)
@@ -361,7 +377,10 @@ enum FleetServiceGraph {
         gateway: FleetGateway,
         credentialStore: any CredentialStoring
     ) -> any AuthenticationProviding {
-        let base = gateway.endpoint ?? URL(string: "http://127.0.0.1:8642")!
+        // F2: no compiled loopback default — a nil endpoint flows through as
+        // a nil baseURL and the authenticator fails closed with
+        // `.notConfigured` (never a phantom loopback mint).
+        let base = gateway.endpoint
         switch gateway.authConfiguration.strategy {
         case .none:
             return GatewayAuthenticator(gatewayID: gateway.id, strategy: .none)

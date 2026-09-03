@@ -266,6 +266,24 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
 
     // MARK: P0-4 — durable record persistence + launch restore
 
+    /// F2 (t_b678fb38): the fleet's converged default endpoint, supplied as
+    /// DATA, never compiled Swift topology. Resolution order:
+    /// 1. `HERMES_FLEET_DEFAULT_ENDPOINT` launch environment (QA / deploy
+    ///    lane override);
+    /// 2. the `FleetDefaultEndpoint` key in the app's Info.plist — shipped
+    ///    configuration, editable per build config, and a PUBLIC hostname
+    ///    (not private topology, not an ATS exception).
+    /// Nil/blank at both layers means "no migration configured" and the
+    /// restore proceeds with rows exactly as persisted.
+    nonisolated static var endpointMigrationDefault: String? {
+        let env = ProcessInfo.processInfo.environment["HERMES_FLEET_DEFAULT_ENDPOINT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !env.isEmpty { return env }
+        let plist = (Bundle.main.object(forInfoDictionaryKey: "FleetDefaultEndpoint")
+            as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return plist.isEmpty ? nil : plist
+    }
+
     /// Rebuild the in-memory registry from the durable record store.
     /// Idempotent: records whose ID is already registered are skipped, so a
     /// re-run (or an overlap with seeding) never duplicates entries. Restored
@@ -273,6 +291,17 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// credential store — the record itself is presentation data only.
     public func restorePersistedGateways() async throws -> [FleetGateway] {
         guard let recordStore else { return [] }
+        // F2 (t_b678fb38): one-time endpoint convergence BEFORE the rebuild —
+        // persisted rows still pointing at a dead private-network spelling
+        // (LAN IP / tailnet IP / MagicDNS host / loopback) are re-pointed to
+        // the configured default endpoint. The address arrives as DATA from
+        // the composition root (launch environment), never compiled topology.
+        // Idempotent; a store failure here must NOT brick launch (same
+        // tolerance as the restore itself).
+        if let defaultEndpoint = Self.endpointMigrationDefault {
+            _ = try? await GatewayEndpointMigrationService(recordStore: recordStore)
+                .migrateAll(defaultEndpoint: defaultEndpoint)
+        }
         let records = try await recordStore.loadGatewayRecords()
         var restored: [FleetGateway] = []
         for record in records {

@@ -1,60 +1,63 @@
 import XCTest
+import FleetCore
 @testable import HermesFleetApp
 
-/// F1 (t_10831eec) — ATS exception drift guard for the two-gateway fleet.
+/// F2 (t_b678fb38) — ATS convergence drift guard for the HTTPS tunnel.
 ///
-/// P0-5 history: the app connects to private Hermes gateways over cleartext
-/// `http://` (basic-auth session flow). ATS silently blocks such connections
-/// unless the host is listed under `NSAppTransportSecurity.NSExceptionDomains`
-/// in the app's Info.plist — the failure mode is an invisible "connect fails
-/// with no error surfaced". This suite locks the required exception entries so
-/// a future project regeneration or plist rewrite cannot silently drop them.
+/// F1 history: the app connected to private Hermes gateways over cleartext
+/// `http://` and needed per-host `NSExceptionDomains` entries — raw private
+/// IPs and the tailnet hostname compiled into every shipped binary, leaking
+/// Tony's home network topology into the IPA. F2 converges the fleet on the
+/// public HTTPS tunnel (https://<legacy-fleet-endpoint>) and strips every
+/// raw-IP/private-host exception.
+///
+/// This suite locks the converged state so a future plist rewrite cannot
+/// silently reintroduce private topology:
+/// - `NSExceptionDomains` must be ABSENT (zero raw-IP / private entries);
+/// - `NSAllowsLocalNetworking` must remain (true-LAN `http://` gateways);
+/// - the `FleetDefaultEndpoint` migration value must be a PUBLIC https
+///   origin (scheme https, a host that is not private/loopback, no port).
 final class ATSExceptionDriftTests: XCTestCase {
 
-    /// The parsed ATS dictionary from the app target's Info.plist.
-    private var ats: [String: Any] {
+    private var info: [String: Any] {
         let bundle = Bundle(for: type(of: self))
         // Hosted tests run in the app process: the app's Info.plist is the
         // main bundle. (Bundle.main == the installed app under test.)
-        guard let info = Bundle.main.infoDictionary,
-              let dict = info["NSAppTransportSecurity"] as? [String: Any] else {
-            XCTFail("NSAppTransportSecurity missing from app Info.plist")
+        guard let dict = Bundle.main.infoDictionary ?? bundle.infoDictionary else {
+            XCTFail("app Info.plist missing")
             return [:]
         }
         return dict
     }
 
-    private func exceptionAllowsInsecureHTTP(_ host: String) -> Bool {
-        guard let domains = ats["NSExceptionDomains"] as? [String: Any] else {
-            return false
-        }
-        guard let entry = domains[host] as? [String: Any] else { return false }
-        let allows = entry["NSExceptionAllowsInsecureHTTPLoads"] as? Bool ?? false
-        return allows
+    /// Zero per-domain exceptions — the QA gate-3 contract (extracted binary
+    /// Info.plist carries no raw-IP exceptions / private topology).
+    func testNoExceptionDomains() {
+        XCTAssertNil(info["NSAppTransportSecurity"].flatMap { ($0 as? [String: Any])?["NSExceptionDomains"] },
+                     "NSExceptionDomains must stay stripped — raw-IP/private-host ATS exceptions leak fleet topology into the shipped binary")
     }
 
-    /// Mac gateway #1 — tailnet surface (P0-5/T2). Must stay excepted.
-    func testMacTailnetHostException() {
-        XCTAssertTrue(exceptionAllowsInsecureHTTP("<tailnet-ip>"),
-                      "ATS exception for Mac tailnet <tailnet-ip> drifted — gateway #1 cleartext connect would silently fail")
+    /// Local networking stays allowed for true-LAN http:// gateways.
+    func testLocalNetworkingRemainsAllowed() throws {
+        let ats = try XCTUnwrap(info["NSAppTransportSecurity"] as? [String: Any],
+                                "NSAppTransportSecurity missing from app Info.plist")
+        XCTAssertEqual(ats["NSAllowsLocalNetworking"] as? Bool, true,
+                       "NSAllowsLocalNetworking must stay true for true-LAN gateway connects")
     }
 
-    /// Mac gateway #1 — LAN surface.
-    func testMacLANHostException() {
-        XCTAssertTrue(exceptionAllowsInsecureHTTP("<lan-ip>"),
-                      "ATS exception for Mac LAN <lan-ip> drifted")
-    }
-
-    /// Arch gateway #2 — tailnet IP surface (F1). Must stay excepted or the
-    /// multi-gateway bring-up fails exactly like P0-5 did.
-    func testArchTailnetIPException() {
-        XCTAssertTrue(exceptionAllowsInsecureHTTP("<tailnet-ip>"),
-                      "ATS exception for Arch tailnet <tailnet-ip> missing — gateway #2 cleartext connect would silently fail")
-    }
-
-    /// Arch gateway #2 — tailnet MagicDNS hostname surface (F1).
-    func testArchTailnetHostnameException() {
-        XCTAssertTrue(exceptionAllowsInsecureHTTP("<private-host>"),
-                      "ATS exception for Arch MagicDNS host missing — hostname-form endpoint would silently fail")
+    /// The converged default endpoint must be a public HTTPS origin — never
+    /// a private IP, loopback, or tailnet host, and never cleartext.
+    func testDefaultEndpointIsPublicHTTPS() throws {
+        let raw = try XCTUnwrap(info["FleetDefaultEndpoint"] as? String,
+                                "FleetDefaultEndpoint (F2 migration data) missing from Info.plist")
+        let url = try XCTUnwrap(URL(string: raw), "FleetDefaultEndpoint is not a URL: \(raw)")
+        XCTAssertEqual(url.scheme?.lowercased(), "https",
+                       "FleetDefaultEndpoint must be HTTPS (cleartext defaults are forbidden)")
+        let host = try XCTUnwrap(url.host, "FleetDefaultEndpoint has no host")
+        XCTAssertFalse(PrivateNetwork.isPrivateOrLoopbackHost(host),
+                       "FleetDefaultEndpoint must be a PUBLIC host — private topology is forbidden in shipped configuration")
+        XCTAssertFalse(host.hasSuffix(".ts.net"),
+                       "tailnet hostnames are private topology and must not ship")
+        XCTAssertNil(url.port, "FleetDefaultEndpoint should be a standard-port origin")
     }
 }
