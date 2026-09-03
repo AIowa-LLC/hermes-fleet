@@ -39,6 +39,32 @@ final class F1FailureCopyTests: XCTestCase {
         XCTAssertTrue(copy.contains("Re-authenticate"), copy)
     }
 
+    // MARK: P0-9 (t_635bbf99) — strategy-mismatch copy is cause-specific
+
+    func testAuthStrategyMismatchCopySaysUsernamePasswordNotToken() {
+        // The exact tunnel defect: ws-ticket 401 {"reason":"no_cookie"} —
+        // the saved sign-in method is a token, but this gateway only accepts
+        // username & password. Generic "Re-authenticate" guidance would loop
+        // the same failure, so the copy must name the fix.
+        let copy = GatewayFailureCopy.detail(
+            status: .authenticationRequired,
+            detail: "auth rejected: no_cookie")
+        XCTAssertTrue(copy.contains("username & password"), copy)
+        XCTAssertTrue(copy.contains("sign-in"), copy)
+        XCTAssertFalse(copy.contains("Re-authenticate"),
+                       "a strategy mismatch must not tell the user to re-authenticate the same token: \(copy)")
+    }
+
+    func testAuthStrategyMismatchCopyNeverEchoesSecrets() {
+        let copy = GatewayFailureCopy.detail(
+            status: .authenticationRequired,
+            detail: "auth rejected: no_cookie")
+        XCTAssertFalse(copy.lowercased().contains("password="), copy)
+        XCTAssertFalse(copy.lowercased().contains("token="), copy)
+        XCTAssertFalse(copy.contains("no_cookie"),
+                       "raw server vocabulary stays out of user copy: \(copy)")
+    }
+
     func testDegradedCopyMentionsServerError() {
         let copy = GatewayFailureCopy.detail(
             status: .degraded,

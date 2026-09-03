@@ -132,6 +132,8 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
             return map(reason)
         case .authSurfaceStatus(let code):
             return .authSurfaceHTTP(code)
+        case .authStrategyRejected(let reason):
+            return .authStrategyRejected(reason)
         case .ticketMintFailed(let detail):
             return .connectionFailed("ticket mint failed: \(detail)")
         case .authenticationFailed:

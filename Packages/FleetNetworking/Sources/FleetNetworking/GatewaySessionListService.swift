@@ -89,6 +89,11 @@ public actor GatewaySessionListService: SessionListProviding {
             return .notConnected
         case .authenticationRequired:
             return .rpcFailed("authentication required (4401)")
+        case .authStrategyRejected(let reason):
+            // P0-9: the gateway rejected the STRATEGY itself (401
+            // "no_cookie" — a token mint against a cookie-only gateway).
+            // Non-secret: the server-echoed reason word only.
+            return .rpcFailed("auth strategy rejected (\(reason.rawValue))")
         case .authSurfaceHTTP(let code) where code == 401 || code == 403:
             return .rpcFailed("authentication required (HTTP \(code))")
         case .authSurfaceHTTP(let code):

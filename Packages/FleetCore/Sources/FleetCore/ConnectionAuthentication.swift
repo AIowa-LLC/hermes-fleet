@@ -55,6 +55,13 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
     /// the endpoint answered but is NOT serving the gateway API (wrong
     /// port/surface — the F1 wrong-endpoint case). Non-secret.
     case httpStatus(Int)
+    /// P0-9: the auth REST surface rejected the request for a CAUSE it named
+    /// in its JSON body (e.g. the tunnel's 401 `{"reason":"no_cookie"}`).
+    /// The reason discriminates a wrong-STRATEGY attempt (this gateway wants
+    /// username & password sign-in, not a token) from a bad credential, so
+    /// the UI can say what to actually do instead of a generic
+    /// "re-authenticate". Non-secret (a server-echoed classification word).
+    case rejected(reason: AuthRejectionReason)
     /// The minted ticket's TTL has already elapsed — never connect with a
     /// stale ticket (synthesis §11: single-use, 30s TTL).
     case ticketExpired
@@ -74,6 +81,8 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
             return "ticket mint failed: \(detail)"
         case .httpStatus(let code):
             return "auth endpoint returned HTTP \(code)"
+        case .rejected(let reason):
+            return "auth rejected: \(reason.rawValue)"
         case .ticketExpired:
             return "WebSocket ticket expired before connect"
         case .missingLoopbackToken:
@@ -84,4 +93,21 @@ public enum AuthenticationError: Error, Sendable, Equatable, LocalizedError {
             return "authentication store unavailable: \(detail)"
         }
     }
+}
+
+/// P0-9 — the cause the auth surface NAMED for its rejection, parsed from
+/// the JSON body it returned (`{"reason": "..."}`). These are the
+/// classification words the Hermes gateway actually emits (verified against
+/// the live tunnel: ws-ticket 401 → `no_cookie` when no session cookie
+/// accompanies a token-header mint; 403 for a `?token=` loopback attempt).
+/// A reason the client does not know decodes to `.unknown` — vocabulary is
+/// additive and never a hard failure.
+public enum AuthRejectionReason: String, Sendable, Hashable, Codable {
+    /// 401 from ws-ticket: no session cookie on the mint request — the
+    /// gateway authenticates ONLY via the username/password cookie flow.
+    /// A session-token-header attempt gets exactly this (live-wire
+    /// verified): the stored strategy is wrong for this gateway.
+    case noCookie = "no_cookie"
+    /// The rejection named a reason the client has no vocabulary for.
+    case unknown
 }

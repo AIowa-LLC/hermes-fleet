@@ -46,6 +46,12 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
         switch connectivityError {
         case .authenticationRequired:
             self = .authenticationRequired
+        case .authStrategyRejected:
+            // P0-9: the gateway rejected the STRATEGY (401 "no_cookie" — a
+            // token mint against a cookie-only gateway). Still an auth
+            // problem the user must fix (sign in with username & password);
+            // the cause-specific guidance lives in the failure copy.
+            self = .authenticationRequired
         case .authSurfaceHTTP(let code) where code == 401 || code == 403:
             self = .authenticationRequired
         case .authSurfaceHTTP:

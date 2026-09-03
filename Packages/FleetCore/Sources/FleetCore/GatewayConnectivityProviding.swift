@@ -58,6 +58,12 @@ public enum GatewayConnectivityError: Error, Sendable, Equatable, LocalizedError
     /// rejected); anything else means the endpoint answered but is not the
     /// gateway API surface (wrong port) — `unsupported`.
     case authSurfaceHTTP(Int)
+    /// P0-9: the auth surface rejected the request and NAMED its cause (the
+    /// tunnel's 401 `no_cookie`) — the configured strategy cannot work
+    /// against this gateway. Classifies as `authenticationRequired` (the
+    /// user must fix auth) with cause-specific guidance via the detail
+    /// string, distinct from a bad credential.
+    case authStrategyRejected(AuthRejectionReason)
     /// The endpoint answered but is not a usable gateway surface.
     case unsupported(String)
     /// Connect or `gateway.ready` handshake timed out.
@@ -72,6 +78,7 @@ public enum GatewayConnectivityError: Error, Sendable, Equatable, LocalizedError
         case .unreachable: return "gateway unreachable"
         case .authenticationRequired: return "authentication required"
         case .authSurfaceHTTP(let code): return "auth endpoint returned HTTP \(code)"
+        case .authStrategyRejected(let reason): return "auth rejected: \(reason.rawValue)"
         case .unsupported(let detail): return "unsupported gateway: \(detail)"
         case .timeout: return "gateway connect timed out"
         case .connectionFailed(let detail): return "gateway connection failed: \(detail)"

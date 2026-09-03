@@ -21,6 +21,13 @@ public enum GatewayFailureCopy {
         case .degraded:
             return "The gateway answered but reported a server error. Retry, or check the gateway's health."
         case .authenticationRequired:
+            // P0-9: a rejection the gateway EXPLAINED gets cause-specific
+            // guidance. "no_cookie" from ws-ticket means the saved sign-in
+            // method is a token, but this gateway only accepts username &
+            // password — "re-authenticate" would loop the same failure.
+            if let detail, detail.contains("no_cookie") {
+                return "The gateway is reachable, but its saved sign-in method isn't accepted here. This gateway needs username & password sign-in — update it in the gateway's settings, not a token."
+            }
             return "The gateway is reachable but needs you to sign in. Re-authenticate to continue."
         case .unsupported:
             if let detail, detail.contains("HTTP 404") {

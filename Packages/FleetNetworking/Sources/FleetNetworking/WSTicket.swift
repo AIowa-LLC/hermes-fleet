@@ -105,6 +105,25 @@ public struct WSTicketClient: WSTicketMinting {
         let ttl_seconds: Int?
     }
 
+    /// P0-9: the rejection envelope the Hermes gateway returns on non-2xx
+    /// (`{"reason": "no_cookie"}` from the cookie-only tunnel). `reason` is a
+    /// server-echoed classification word — non-secret by construction.
+    private struct RejectionEnvelope: Codable, Sendable {
+        let reason: String?
+    }
+
+    /// Parse the rejection reason out of a non-2xx body. Never fails — an
+    /// empty/malformed body yields nil and the caller falls back to the bare
+    /// HTTP status (F1 behavior).
+    public static func rejectionReason(in data: Data?) -> AuthRejectionReason? {
+        guard let data,
+              let envelope = try? JSONDecoder().decode(RejectionEnvelope.self, from: data),
+              let word = envelope.reason?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !word.isEmpty
+        else { return nil }
+        return AuthRejectionReason(rawValue: word) ?? .unknown
+    }
+
     public func mintTicket() async throws -> WSTicket {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/auth/ws-ticket"))
         request.httpMethod = "POST"
@@ -120,6 +139,13 @@ public struct WSTicketClient: WSTicketMinting {
         let (data, response) = try await urlSession.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("ws-ticket: HTTP \(http.statusCode)")
+            // P0-9: a rejection the server EXPLAINED (e.g. 401 "no_cookie"
+            // — this gateway wants username & password sign-in, not a token)
+            // carries its named cause so the UI can say what to actually do.
+            // The body never carries secret material.
+            if let reason = Self.rejectionReason(in: data) {
+                throw AuthenticationError.rejected(reason: reason)
+            }
             throw AuthenticationError.httpStatus(http.statusCode)
         }
         Self.log.info("ws-ticket: minted ok (\(Redaction.redactedURL(self.baseURL), privacy: .public))")

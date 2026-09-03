@@ -19,6 +19,11 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
     /// F1: the auth REST surface answered this HTTP status (401/403 → the
     /// credential was rejected; other statuses → wrong surface/port).
     case authSurfaceStatus(Int)
+    /// P0-9: the auth REST surface rejected the request and NAMED its cause
+    /// in the JSON body (the tunnel's 401 `{"reason":"no_cookie"}` — a
+    /// token-strategy mint against a cookie-only gateway). Carries the
+    /// server-echoed classification word, never secret material.
+    case authStrategyRejected(AuthRejectionReason)
 
     public var errorDescription: String? {
         switch self {
@@ -32,6 +37,7 @@ public enum TransportError: Error, Sendable, Equatable, LocalizedError {
         case .transportFailure(let s): return "transport failure: \(s)"
         case .authenticationFailed(let s): return "authentication failed: \(s)"
         case .authSurfaceStatus(let code): return "auth endpoint returned HTTP \(code)"
+        case .authStrategyRejected(let reason): return "auth rejected: \(reason.rawValue)"
         }
     }
 }
@@ -284,6 +290,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
         } catch let error as AuthenticationError {
             // Auth material could not be produced. Classify explicitly; never
             // echo the raw credential (spec §29).
+            // P0-9: a rejection the server EXPLAINED is its own class — the
+            // tunnel's 401 "no_cookie" means the stored strategy is wrong for
+            // this gateway (cookie-only), NOT a bad credential; the UI must
+            // say "use username & password sign-in", not "re-authenticate".
+            if case .rejected(let reason) = error {
+                let wrapped = TransportError.authStrategyRejected(reason)
+                await teardown(.reauthenticationRequired, error: wrapped)
+                throw wrapped
+            }
             // F1: an HTTP status from the auth REST surface is its own class —
             // 401/403 means "credential rejected" (re-auth), anything else
             // means "the endpoint answered but is not the gateway API"

@@ -72,8 +72,19 @@ public enum EndpointMigration {
     /// every row whose host matches a dead spelling. The written endpoint is
     /// the trimmed `defaultEndpoint` verbatim (single canonical spelling).
     /// Idempotent (rows already on the default are unchanged); rows with
-    /// unrecognized endpoints pass through verbatim; identity (`id`), display
-    /// name, and auth configuration are always preserved.
+    /// unrecognized endpoints pass through verbatim; identity (`id`) and
+    /// display name are always preserved.
+    ///
+    /// P0-9 strategy alignment: a `.loopbackToken` row being re-pointed onto
+    /// the public tunnel gets its strategy migrated to `.usernamePassword`.
+    /// Loopback-token auth is a trusted-private-network strategy — `?token=`
+    /// on the socket — and the converged tunnel rejects it outright (403,
+    /// QA-verified live). Leaving it would strand the row in a strategy that
+    /// can never authenticate; the tunnel's only working path is the
+    /// username/password cookie flow. Token strategies (`.sessionToken` /
+    /// `.bearerToken`) are left to their honest failure copy — a future
+    /// gateway may legitimately accept them, and the ws-ticket 401
+    /// "no_cookie" rejection now surfaces cause-specific guidance.
     public static func migrateEndpoints(
         in records: [StoredGatewayRecord],
         defaultEndpoint: String
@@ -85,6 +96,9 @@ public enum EndpointMigration {
             case .migrated:
                 var updated = record
                 updated.endpoint = trimmed
+                if updated.authConfiguration.strategy == .loopbackToken {
+                    updated.authConfiguration.strategy = .usernamePassword
+                }
                 return updated
             case .alreadyCurrent, .untouched:
                 return record
