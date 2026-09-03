@@ -130,7 +130,7 @@ public struct FleetRosterView: View {
                                 presence: environment.botPresence(for: bot.route)
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.fleetPressable)
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
                     }

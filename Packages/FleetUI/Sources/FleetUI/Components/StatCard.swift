@@ -27,6 +27,9 @@ public struct StatCard: View {
                 Text(value)
                     .font(FleetTheme.statFont)
                     .foregroundStyle(FleetTheme.textPrimary)
+                    // V4 motion: numeric values slide/settle instead of
+                    // hard-swapping when counts refresh.
+                    .contentTransition(.numericText())
                 Text(label)
                     .font(FleetTheme.microLabelFont)
                     .textCase(.uppercase)
@@ -34,6 +37,7 @@ public struct StatCard: View {
                     .foregroundStyle(FleetTheme.textSecondary)
             }
         }
+        .animation(.easeOut(duration: 0.18), value: value)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label): \(value)")
     }

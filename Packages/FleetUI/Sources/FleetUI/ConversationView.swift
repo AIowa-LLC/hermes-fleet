@@ -21,6 +21,9 @@ public struct ConversationView: View {
 
     @State private var viewModel: ConversationViewModel?
     @State private var composerText = ""
+    /// V4 motion: bumped on every composer submit so `.sensoryFeedback`
+    /// fires the send haptic (trigger-based; not on initial appearance).
+    @State private var sendPulse = 0
 
     public init(environment: AppEnvironment, route: Route, sessionID: String?) {
         self.environment = environment
@@ -46,6 +49,7 @@ public struct ConversationView: View {
         .onDisappear {
             viewModel?.teardown()
         }
+        .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .background(FleetTheme.background.ignoresSafeArea())
     }
 
@@ -212,6 +216,11 @@ public struct ConversationView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                // V4 motion: gives the user-bubble entrance transition its
+                // ease-out context. Keyed to the LAST ROW IDENTITY (not
+                // count — the display window caps, P2-8) so it only fires
+                // when rows actually arrive.
+                .animation(.easeOut(duration: 0.18), value: model.transcript.last?.id)
             }
             // P2-8: key auto-scroll off the last row's identity, not the count —
             // the display window is capped, so count stops changing once full
@@ -262,6 +271,7 @@ public struct ConversationView: View {
                         .background(Circle().fill(FleetTheme.surfaceElevated))
                         .overlay(Circle().strokeBorder(FleetTheme.border, lineWidth: 1))
                 }
+                .buttonStyle(.fleetPressable)
                 .accessibilityLabel("Stop")
                 .accessibilityIdentifier("fleet.conversation.stop")
             } else {
@@ -276,6 +286,7 @@ public struct ConversationView: View {
                         .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
                         .background(Circle().fill(FleetTheme.accent))
                 }
+                .buttonStyle(.fleetPressable)
                 .disabled(model.phase != .ready || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("Send")
                 .accessibilityIdentifier("fleet.conversation.send")
@@ -297,6 +308,7 @@ public struct ConversationView: View {
     private func submit(_ model: ConversationViewModel) async {
         let text = composerText
         composerText = ""
+        sendPulse += 1
         await model.send(text)
     }
 
@@ -377,6 +389,20 @@ private struct ReasoningDisclosure: View {
 private struct ConversationBubbleView: View {
     let row: ConversationRow
 
+    /// V4 motion budget: subtle entrance for user bubbles — opacity + a
+    /// 0.97 scale settle, ease-out 0.18s. Under Reduce Motion the scale is
+    /// dropped (plain opacity cross-fade). Assistant rows stream in text
+    /// (their content animates already) — no extra entrance.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var entrance: AnyTransition {
+        if reduceMotion {
+            AnyTransition.opacity
+        } else {
+            AnyTransition.opacity.combined(with: .scale(scale: 0.97))
+        }
+    }
+
     var body: some View {
         HStack {
             if row.kind == .user { Spacer(minLength: 60) }
@@ -392,6 +418,7 @@ private struct ConversationBubbleView: View {
             }
             if row.kind != .user { Spacer(minLength: 60) }
         }
+        .transition(row.kind == .user ? entrance : .identity)
         .accessibilityElement(children: .combine)
         // P2-7: expose speaker + content semantics and live turn state to
         // assistive tech — the combined bubble text alone hides who spoke.

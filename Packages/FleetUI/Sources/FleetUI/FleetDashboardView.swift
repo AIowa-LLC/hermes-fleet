@@ -249,7 +249,7 @@ public struct FleetDashboardView: View {
                     }
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("fleet.dashboard.kanban.entry")
         }
     }

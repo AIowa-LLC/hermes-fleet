@@ -246,6 +246,8 @@ struct KanbanColumnSection: View {
                 Text("\(cards.count)")
                     .font(FleetTheme.monoCaptionFont.monospacedDigit())
                     .foregroundStyle(FleetTheme.textSecondary)
+                    // V4 motion: live board counts settle instead of swap.
+                    .contentTransition(.numericText())
                     .padding(.horizontal, FleetTheme.spacingSm)
                     .padding(.vertical, 2)
                     .background(FleetTheme.surface)
@@ -254,6 +256,9 @@ struct KanbanColumnSection: View {
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(title.capitalized), \(cards.count) cards")
+            // V4 motion: animation context for the count chip's numeric
+            // transition (fires when the live snapshot re-counts the lane).
+            .animation(.easeOut(duration: 0.18), value: cards.count)
             Rectangle()
                 .fill(FleetTheme.border)
                 .frame(height: 0.5)

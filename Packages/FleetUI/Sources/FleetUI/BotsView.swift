@@ -64,7 +64,7 @@ public struct BotsView: View {
                     NavigationLink(value: FleetScreen.botDetail(bot.route)) {
                         botRow(bot)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.fleetPressable)
                     .accessibilityIdentifier("fleet.bots.row.\(bot.route.id)")
                 }
             }

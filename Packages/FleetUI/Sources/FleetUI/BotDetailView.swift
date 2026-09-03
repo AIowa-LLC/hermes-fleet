@@ -162,6 +162,7 @@ public struct BotDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, FleetTheme.spacingSm)
         }
+        .buttonStyle(.fleetPressable)
         .accessibilityIdentifier("fleet.bot-detail.sessions.new")
 
         let sessions = environment.sessions(for: route)
@@ -207,7 +208,7 @@ public struct BotDetailView: View {
                     NavigationLink(value: FleetScreen.conversation(route, sessionID: session.id)) {
                         SessionRowView(session: session)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.fleetPressable)
                     .accessibilityIdentifier("fleet.bot-detail.sessions.row.\(session.id)")
                 }
             }
