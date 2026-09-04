@@ -171,6 +171,10 @@ public struct FleetTabView: View {
             FleetActivityView(environment: environment)
         case .kanban:
             KanbanBoardView(environment: environment)
+        case .cron(let gatewayID):
+            CronView(environment: environment, gatewayID: gatewayID)
+        case .skills(let gatewayID):
+            SkillsView(environment: environment, gatewayID: gatewayID)
         }
     }
 

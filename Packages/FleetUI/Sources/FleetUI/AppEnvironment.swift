@@ -38,6 +38,16 @@ public typealias FleetKanbanWatcherFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any KanbanBoardWatching
 
+/// Builds a per-gateway management seam (R9-T5/T6 — cron + skills). Lives in
+/// FleetUI for the same M0-guard reason as the factories above: SwiftUI
+/// depends only on the FleetCore `GatewayManagementProviding` seam — never on
+/// the transport module. Injected at the composition root: production builds
+/// a `GatewayManagementClient` over the gateway's transport; DEBUG builds a
+/// scripted seam; tests inject doubles.
+public typealias FleetManagementSeamFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any GatewayManagementProviding
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -154,6 +164,10 @@ public final class AppEnvironment {
     /// (the concrete `KanbanEventStreamClient` in production, scripted in
     /// DEBUG/tests).
     private let kanbanWatcherFactory: FleetKanbanWatcherFactory?
+    /// R9-T5/T6: management seam factory (cron + skills) — one per gateway
+    /// (the concrete `GatewayManagementClient` in production, scripted in
+    /// DEBUG/tests).
+    private let managementSeamFactory: FleetManagementSeamFactory?
     /// Gateways to register on first launch (empty registry) so the U1
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
@@ -166,6 +180,11 @@ public final class AppEnvironment {
     /// Lazily-built U3 conversation sessions per gateway (one per gateway;
     /// created on first conversation screen use).
     private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
+
+    /// R9-T5/T6: lazily-built management seams per gateway (one per
+    /// gateway; created on first Cron/Skills pane use — the pane's
+    /// transport survives view teardowns like a conversation session's).
+    private var managementSeams: [GatewayID: any GatewayManagementProviding] = [:]
 
     /// Generation of the newest roster refresh (t_e77c614c). Bumped each time
     /// `refreshRoster()` starts; an in-flight refresh whose captured token no
@@ -181,6 +200,7 @@ public final class AppEnvironment {
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
         kanbanWatcherFactory: FleetKanbanWatcherFactory? = nil,
+        managementSeamFactory: FleetManagementSeamFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = []
@@ -192,6 +212,7 @@ public final class AppEnvironment {
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
         self.kanbanWatcherFactory = kanbanWatcherFactory
+        self.managementSeamFactory = managementSeamFactory
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
@@ -379,6 +400,7 @@ public final class AppEnvironment {
         }
         activeConnections[id] = nil
         conversationSessions[id] = nil
+        managementSeams[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
         // H2: drop the gateway's accumulated + persisted health stats.
@@ -490,5 +512,18 @@ public final class AppEnvironment {
     /// closed).
     public func makeKanbanWatcher(for gateway: FleetGateway) -> (any KanbanBoardWatching)? {
         kanbanWatcherFactory?(gateway)
+    }
+
+    // MARK: Management panes (R9-T5/T6 — cron + skills)
+
+    /// Build the management seam for a gateway. Nil when no factory is
+    /// wired (the panes render their unavailable state, fail closed).
+    public func makeManagementSeam(for gatewayID: GatewayID) -> (any GatewayManagementProviding)? {
+        if let existing = managementSeams[gatewayID] { return existing }
+        guard let factory = managementSeamFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let seam = factory(gateway)
+        managementSeams[gatewayID] = seam
+        return seam
     }
 }

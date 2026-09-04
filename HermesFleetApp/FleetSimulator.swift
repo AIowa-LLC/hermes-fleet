@@ -86,6 +86,9 @@ extension FleetServiceGraph {
             kanbanWatcherFactory: { _ in
                 ScriptedKanbanWatcher()
             },
+            managementSeamFactory: { gateway in
+                ScriptedManagementSeam(gatewayID: gateway.id)
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations
         )
@@ -186,6 +189,117 @@ private struct ScriptedSessionListService: SessionListProviding {
     }
 }
 
+/// R9-T5/T6: scripted management seam (DEBUG simulator only) — fixture
+/// cron jobs + skills catalog with in-memory mutations so both panes are
+/// fully walkable without a live gateway. Presentation data only.
+final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var jobs: [CronJob]
+    private var disabled: Set<String>
+
+    init(gatewayID: GatewayID) {
+        // The outage gateway gets no jobs (honest partial-fleet state);
+        // healthy gateways get the fixture set.
+        if gatewayID.rawValue == "arch" {
+            jobs = []
+            disabled = []
+        } else {
+            jobs = [
+                CronJob(
+                    jobID: "script-cron-1", name: "Fleet morning briefing",
+                    schedule: "every day at 07:00",
+                    nextRunAt: "2026-09-05T07:00:00", lastRunAt: "2026-09-04T07:00:03",
+                    lastStatus: "ok", isEnabled: true, state: "enabled",
+                    promptPreview: "Summarize fleet activity since yesterday and flag stuck cards."),
+                CronJob(
+                    jobID: "script-cron-2", name: "Weekly digest",
+                    schedule: "every monday at 09:00",
+                    nextRunAt: nil, lastRunAt: nil, lastStatus: nil,
+                    isEnabled: false, state: "paused", promptPreview: nil),
+            ]
+            disabled = ["test-driven-development"]
+        }
+    }
+
+    /// Async-safe scoped lock helper (NSLock is unavailable in async
+    /// contexts on this toolchain — same helper as ScriptedKanbanWatcher).
+    private func unlocked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    func listCronJobs(profile: String?) async throws -> [CronJob] {
+        unlocked { jobs }
+    }
+
+    func createCronJob(draft: CronJobDraft, profile: String?) async throws -> CronJob {
+        let job = CronJob(
+            jobID: "script-cron-\(UUID().uuidString.prefix(6))",
+            name: draft.name, schedule: draft.schedule,
+            nextRunAt: "2026-09-05T07:00:00", isEnabled: true, state: "enabled",
+            promptPreview: String(draft.prompt.prefix(80)))
+        return unlocked {
+            jobs.append(job)
+            return job
+        }
+    }
+
+    func setCronJob(_ jobID: String, enabled: Bool, profile: String?) async throws -> CronJob {
+        // Two-phase so the throwing guard runs OUTSIDE the scoped helper
+        // (unlocked's body is non-throwing).
+        let index = unlocked { jobs.firstIndex { $0.jobID == jobID } }
+        guard let index else {
+            throw GatewayManagementError.rpcFailed("no such job")
+        }
+        return unlocked {
+            let old = jobs[index]
+            let updated = CronJob(
+                jobID: old.jobID, name: old.name, schedule: old.schedule,
+                nextRunAt: enabled ? "2026-09-05T07:00:00" : nil,
+                lastRunAt: old.lastRunAt, lastStatus: old.lastStatus,
+                isEnabled: enabled, state: enabled ? "enabled" : "paused",
+                promptPreview: old.promptPreview)
+            jobs[index] = updated
+            return updated
+        }
+    }
+
+    func deleteCronJob(_ jobID: String, profile: String?) async throws {
+        unlocked { jobs.removeAll { $0.jobID == jobID } }
+    }
+
+    func fireCronJob(_ jobID: String, profile: String?) async throws {
+        // Scripted success — the fixture gateway "supports" run-over-WS.
+    }
+
+    func skillsCatalog(profile: String) async throws -> SkillsCatalog {
+        let disabledNow = unlocked { disabled }
+        let categories: [(category: String, skills: [String])] = [
+            ("dev", ["codex", "systematic-debugging", "test-driven-development"]),
+            ("github", ["github-code-review", "github-pr-workflow", "github-auth"]),
+            ("hermes", ["hermes-agent"]),
+        ]
+        let enabledByName = Dictionary(
+            uniqueKeysWithValues: categories.flatMap { category in
+                category.skills.map { name in
+                    (name.lowercased(), !disabledNow.contains(name.lowercased()))
+                }
+            })
+        return SkillsCatalog(categories: categories, enabledByName: enabledByName)
+    }
+
+    func setSkill(_ name: String, enabled: Bool, profile: String) async throws -> Bool {
+        unlocked {
+            if enabled {
+                disabled.remove(name.lowercased())
+            } else {
+                disabled.insert(name.lowercased())
+            }
+            return enabled
+        }
+    }
+}
 /// Scripted per-gateway conversation session (DEBUG only): a scripted
 /// connection + a scripted conversation client that streams a canned turn
 /// (message.start → deltas → message.complete) after each prompt.submit, a

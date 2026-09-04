@@ -37,6 +37,7 @@ public struct FleetDashboardView: View {
                 gatewaysSection
                 activeBotsSection
                 kanbanSection
+                managementSection
                 recentActivitySection
             }
             .padding(.horizontal, FleetTheme.spacingLg)
@@ -252,6 +253,82 @@ public struct FleetDashboardView: View {
             .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("fleet.dashboard.kanban.entry")
         }
+    }
+
+    // MARK: Management panes (R9-T5 cron + R9-T6 skills)
+
+    /// Entry cards for the Cron and Skills panes on the pane's gateway —
+    /// the first connected gateway (the board's selection rule), else the
+    /// first registered. Only when a management seam can be built (fail
+    /// closed: no factory, no entry).
+    @ViewBuilder
+    private var managementSection: some View {
+        if let gateway = managementGateway {
+            SectionHeader(title: "Management", destination: FleetScreen.cron(gateway.id))
+                .accessibilityIdentifier("fleet.dashboard.management.header")
+            NavigationLink(value: FleetScreen.cron(gateway.id)) {
+                FleetCard {
+                    managementRowLabel(
+                        icon: "clock.badge.checkmark",
+                        title: "Cron Jobs",
+                        subtitle: "Schedules on \(gateway.displayName)")
+                }
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityIdentifier("fleet.dashboard.cron.entry")
+            NavigationLink(value: FleetScreen.skills(gateway.id)) {
+                FleetCard {
+                    managementRowLabel(
+                        icon: "wrench.and.screwdriver",
+                        title: "Skills",
+                        subtitle: "Installed skills on \(gateway.displayName)")
+                }
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityIdentifier("fleet.dashboard.skills.entry")
+        }
+    }
+
+    private func managementRowLabel(icon: String, title: String, subtitle: String) -> some View {
+        HStack(spacing: FleetTheme.spacingMd) {
+            Image(systemName: icon)
+                .foregroundStyle(FleetTheme.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(FleetTheme.textPrimary)
+                Text(subtitle)
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(FleetTheme.textSecondary)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The gateway the management panes target: the first CONNECTED
+    /// gateway, else the first gateway that reported profiles in the
+    /// latest roster (an unreachable gateway has no profile scope to
+    /// manage). Fail closed: no candidate with a seam, no entry.
+    private var managementGateway: FleetGateway? {
+        let connected = environment.gateways.first { gateway in
+            if case .connected = environment.connectionStates[gateway.id] ?? .idle {
+                return true
+            }
+            return false
+        }
+        if let connected { return connected }
+        // Roster-reported order: any gateway whose bots made the snapshot.
+        let rosterGateways = environment.rosterSnapshot?.roster.allBots
+            .map { $0.route.gatewayID } ?? []
+        let firstReported = rosterGateways.first
+        let target = environment.gateways.first { $0.id == firstReported }
+        guard let target, environment.makeManagementSeam(for: target.id) != nil else { return nil }
+        return target
     }
 
     // MARK: Recent Activity (real gateway events from the H2 accumulator)

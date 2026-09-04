@@ -29,4 +29,8 @@ public enum FleetScreen: Hashable, Sendable {
     /// t_3b321b7b: the live read-only Kanban board (pushed destination from
     /// the Home dashboard).
     case kanban
+    /// R9-T5: the per-gateway Cron management pane.
+    case cron(GatewayID)
+    /// R9-T6: the per-gateway Skills management pane.
+    case skills(GatewayID)
 }
