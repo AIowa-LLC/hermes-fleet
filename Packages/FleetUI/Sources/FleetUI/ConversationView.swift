@@ -495,6 +495,18 @@ public struct ConversationView: View {
                         } label: {
                             Label("File or PDF…", systemImage: "doc")
                         }
+                        // R10-T4: voice-mode toggle rides the "+" menu. ON =
+                        // assistant replies spoken via local TTS; turning
+                        // OFF cuts speech immediately.
+                        Button {
+                            Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
+                        } label: {
+                            Label(
+                                model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
+                                systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
+                            )
+                        }
+                        .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 20, weight: .semibold))
@@ -506,21 +518,6 @@ public struct ConversationView: View {
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Attach")
                     .accessibilityIdentifier("fleet.conversation.attach")
-                    // R10-T4: voice-mode toggle rides the "+" menu (speaker
-                    // icon). ON = assistant replies spoken via local TTS;
-                    // turning OFF cuts speech immediately.
-                    Toggle(isOn: Binding(
-                        get: { model.isVoiceModeEnabled },
-                        set: { enabled in
-                            Task { await model.setVoiceMode(enabled) }
-                        }
-                    )) {
-                        Label(
-                            model.isVoiceModeEnabled ? "Speak Replies On" : "Speak Replies",
-                            systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
-                        )
-                    }
-                    .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
                 }
 
                 // R10-T4: mic button — on-device transcription (Speech
