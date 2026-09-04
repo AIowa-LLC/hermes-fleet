@@ -50,8 +50,37 @@ final class H1AppLockUITests: XCTestCase {
                        "roster content must not render while the app is locked")
 
         // Use Passcode → scripted passcode success → content renders.
+        //
+        // De-flake (t_6c35ed56 forensics, QA run 469 xcresult + screen
+        // recording): the cold-launch biometric→passcode branch swap has a
+        // window where the AX hierarchy ALREADY reports the passcode button
+        // but the view is not yet painted/hit-testable (the recording shows
+        // a fully blank screen below the status bar at the tap instant —
+        // the tap's coordinates were exact, button center). A tap synthesized
+        // in that window is swallowed and the app stays on the passcode
+        // screen forever, so NO roster timeout would ever fix it. Wait for
+        // hittability first, then VERIFY the unlock actually happened and
+        // re-tap (bounded) while the lock screen is still presenting.
+        let hittable = expectation(for: NSPredicate(format: "isHittable == true"),
+                                   evaluatedWith: passcodeButton)
+        wait(for: [hittable], timeout: 10)
+
         passcodeButton.tap()
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        // Total budget 20s: covers BOTH the re-tap path (swallowed first tap,
+        // button still exists) and a slow post-unlock roster render (button
+        // already gone — keep waiting, never re-tap a vanished lock screen).
+        let retryDeadline = Date().addingTimeInterval(20)
+        var rosterVisible = app.staticTexts["MacBook M5"].waitForExistence(timeout: 5)
+        while !rosterVisible, Date() < retryDeadline {
+            if passcodeButton.exists {
+                // First tap raced the transition — the passcode view is still
+                // up, so the unlock never ran. Tap again now that the view
+                // has settled (bounded retries keep this deterministic).
+                passcodeButton.tap()
+            }
+            rosterVisible = app.staticTexts["MacBook M5"].waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(rosterVisible,
                       "roster should render after a successful passcode unlock")
         attachScreenshot(of: app, name: "h1-cold-launch-unlocked")
     }
