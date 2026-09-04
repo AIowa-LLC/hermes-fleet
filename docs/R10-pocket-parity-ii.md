@@ -219,3 +219,75 @@ No wire was invented; nothing here claims gateway-side voice.
   deterministic UI 69 tests / 23 suites (incl. 2 R10VoiceUITests);
   PASS gitleaks.
 - Pushed to origin/main (`54f51e7..007b6c9`).
+
+## T5 — Memory-graph edit/delete (`learning.edit` / `learning.delete`)
+
+Unlocks the R9 read-only limitation (docs/R9-pocket-desktop.md:114).
+
+### Wire truth (hermes-agent 0.21.0, installed source)
+
+- Handlers registered in `tui_gateway/methods_tools.py:1079-1082`: all
+  three learning mutations dispatch to `agent/learning_mutations.py`
+  with str-coerced params — `learning.detail {id}`, `learning.delete
+  {id}`, `learning.edit {id, content}`.
+- `edit_node` (learning_mutations.py:136-157): success
+  `{ok: true, message: "updated …"}`; refusals are RESULT data
+  `{ok: false, message}` — empty memory body → "empty memory — use
+  delete to remove it" (:152-153); stale id → "memory node id is
+  stale — refresh the graph".
+- `delete_node` (:108-131): deleting a SKILL archives it — the success
+  message carries the restore recipe ("archived 'x' — restore with:
+  hermes curator restore x", :124); deleting a memory rewrites its
+  file; PINNED skills refuse ("'x' is pinned — unpin it first
+  (hermes curator unpin x)", :119-120).
+- No numeric RPC error codes distinguish refusals — they ride the
+  `{ok: false}` envelope exactly like `learning.detail`.
+
+### Implementation
+
+- `FleetNetworking/GatewayLearningClient` — typed `editNode(id:content:)`
+  and `deleteNode(id:)` returning the gateway message; shared
+  `decodeMutation` maps `{ok:false}` → new
+  `GatewayLearningError.mutationFailed` (message surfaces VERBATIM —
+  gateway messages name the remedy).
+- `FleetCore/LearningGraph.swift` — seam grows `editNode`/`deleteNode`;
+  `UnsupportedGatewayLearning` fails closed on all four.
+- `FleetUI/MemoryGraphViewModel` — `performEdit`/`performDelete`:
+  mutate → RELOAD the graph from the server (no optimistic patching;
+  labels change with content) → snapshot refresh removes deleted nodes
+  from the offline store. Refusals set `mutationError` and leave the
+  graph untouched; delete closes the drill-in sheet only on success.
+- `FleetUI/MemoryGraphView` — drill-in sheet gains an ellipsis menu
+  with Edit (TextEditor prefilled from `learning.detail`, Save/Cancel,
+  refusal shown INLINE in the editor) and Delete (confirmation alert;
+  skill deletes say "archived, restorable"); a mutation banner on the
+  map surfaces the gateway message after the sheet closes.
+- `HermesFleetApp/FleetSimulator` — scripted seam is now MUTABLE
+  (delete removes the node from the fixture graph; edit refuses empty
+  memory bodies with the real wire message), so the UI walkthrough is
+  honest without a live gateway.
+
+### Tests (RED observed first at each layer)
+
+- `GatewayLearningClientTests` — 4 new wire tests: edit ask
+  `{id, content}` + message decode; edit empty-body refusal →
+  `.mutationFailed`; delete ask `{id}` + archive-message decode;
+  pinned refusal verbatim. Suite 12/12.
+- `MemoryGraphTests` — 4 new VM tests: edit reloads + message; edit
+  refusal verbatim without reload; delete removes node from graph AND
+  snapshot, closes sheet; delete refusal keeps the map intact.
+  Suite 16/16.
+- `R10MemoryGraphEditUITests` — 3 deterministic tests (scripted fleet,
+  no live gateway): edit → save → success banner; delete → confirm
+  alert → node count drops (server-truth reload); empty-body edit →
+  verbatim refusal inline, editor stays open, node count unchanged.
+  Registered in `scripts/c1_ci_validate.sh` (R10-T7 QA rule).
+
+### Honest deviation note (T4 follow-up folded here)
+
+QA noted (t_703c65a6, non-blocking): the T4 wire-truth sentence "The
+WS registry exposes no audio-in method" was overbroad — `wake.feed`
+(server.py:17861) accepts base64 client PCM, but ONLY to feed the
+armed openWakeWord wake-word detector (wake.start capture:"client");
+there is no remote-audio transcription path. The T4 design conclusion
+(client-side STT, no wire invented) is unaffected.

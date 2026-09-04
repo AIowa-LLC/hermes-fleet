@@ -216,29 +216,154 @@ final class MemoryGraphTests: XCTestCase {
         XCTAssertEqual(vm.detail?.id, "skill-0-0")
         XCTAssertEqual(vm.detail?.content, "SKILL.md fixture body")
     }
+
+    // MARK: edit / delete (R10-T5)
+
+    func testEditNodeReloadsGraphAndSurfacesMessage() async throws {
+        let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
+        let vm = MemoryGraphViewModel(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            learning: seam,
+            snapshotStore: nil)
+        await vm.start(profile: nil)
+
+        await vm.performEdit(nodeID: "memory:profile:0-0", content: "# rewritten")
+
+        XCTAssertEqual(seam.edited?.id, "memory:profile:0-0")
+        XCTAssertEqual(seam.edited?.content, "# rewritten")
+        XCTAssertEqual(vm.mutationMessage, "updated memory in MEMORY.md")
+        XCTAssertNil(vm.mutationError)
+        XCTAssertEqual(vm.mutationInFlight, false)
+        // The graph reloaded after the successful mutation (fresh buckets).
+        XCTAssertEqual(vm.source, .live)
+    }
+
+    func testEditNodeSurfacesRefusalVerbatimWithoutReload() async throws {
+        let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
+        seam.editRefusal = "empty memory — use delete to remove it"
+        let vm = MemoryGraphViewModel(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            learning: seam,
+            snapshotStore: nil)
+        await vm.start(profile: nil)
+
+        await vm.performEdit(nodeID: "memory:profile:0-0", content: "  ")
+
+        XCTAssertEqual(
+            vm.mutationError,
+            "empty memory — use delete to remove it",
+            "the gateway's remedy message must surface verbatim")
+        XCTAssertNil(vm.mutationMessage)
+    }
+
+    func testDeleteNodeReloadsGraphWithoutDeletedNode() async throws {
+        let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
+        let store = InMemorySnapshotStore()
+        let vm = MemoryGraphViewModel(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            learning: seam,
+            snapshotStore: store)
+        await vm.start(profile: nil)
+        let before = vm.layout?.positions.count ?? 0
+        XCTAssertEqual(before, 12)
+
+        await vm.performDelete(nodeID: "memory:profile:0-0", profile: nil)
+
+        XCTAssertEqual(seam.deletedID, "memory:profile:0-0")
+        XCTAssertEqual(vm.mutationMessage, "deleted memory from MEMORY.md")
+        XCTAssertNil(vm.detail, "the drill-in sheet closes after delete")
+        XCTAssertNil(
+            vm.graph?.nodes.first { $0.id == "memory:profile:0-0" },
+            "the deleted node must vanish from the reloaded graph")
+        XCTAssertEqual(vm.layout?.positions.count ?? 0, 11)
+        // The snapshot reflects the post-delete graph (no zombie offline).
+        let saved = await store.saved
+        XCTAssertNil(saved?.graph.nodes.first { $0.id == "memory:profile:0-0" })
+    }
+
+    func testDeleteNodeSurfacesRefusalVerbatim() async throws {
+        let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
+        seam.deleteRefusal =
+            "'apple-product-factory' is pinned — unpin it first (hermes curator unpin apple-product-factory)"
+        let vm = MemoryGraphViewModel(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            learning: seam,
+            snapshotStore: nil)
+        await vm.start(profile: nil)
+
+        await vm.performDelete(nodeID: "apple-product-factory", profile: nil)
+
+        XCTAssertEqual(
+            vm.mutationError,
+            "'apple-product-factory' is pinned — unpin it first (hermes curator unpin apple-product-factory)")
+        XCTAssertNil(vm.mutationMessage)
+        XCTAssertEqual(vm.layout?.positions.count ?? 0, 12,
+                       "a refused delete must not change the rendered graph")
+    }
 }
 
 // MARK: - test doubles
 
 final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable {
-    private let graph: LearningGraph
-    private let box = MutexBox<String?>(nil as String?)
+    private let graphBox: MutexBox<LearningGraph>
+    private let profileBox = MutexBox<String?>(nil as String?)
+    private let editBox = MutexBox<(id: String, content: String)?>(nil as (id: String, content: String)?)
+    private let deleteBox = MutexBox<String?>(nil as String?)
+    /// Set before a call to make the next edit/delete refuse (mirrors the
+    /// gateway's `{ok: false, message}` refusal shape).
+    var editRefusal: String?
+    var deleteRefusal: String?
 
     init(graph: LearningGraph) {
-        self.graph = graph
+        self.graphBox = MutexBox(graph)
     }
 
     var requestedProfile: String? {
-        box.read()
+        profileBox.read()
+    }
+
+    var edited: (id: String, content: String)? {
+        editBox.read()
+    }
+
+    var deletedID: String? {
+        deleteBox.read()
     }
 
     func learningGraph(profile: String?) async throws -> LearningGraph {
-        box.write(profile)
-        return graph
+        profileBox.write(profile)
+        return graphBox.read()
     }
 
     func nodeDetail(id: String) async throws -> LearningNodeDetail {
         LearningNodeDetail(id: id, kind: "skill", label: id, content: "SKILL.md fixture body")
+    }
+
+    func editNode(id: String, content: String) async throws -> String {
+        editBox.write((id, content))
+        if let editRefusal {
+            throw GatewayLearningError.mutationFailed(editRefusal)
+        }
+        return "updated memory in MEMORY.md"
+    }
+
+    func deleteNode(id: String) async throws -> String {
+        deleteBox.write(id)
+        if let deleteRefusal {
+            throw GatewayLearningError.mutationFailed(deleteRefusal)
+        }
+        // Mirror the live gateway: the deleted node vanishes from the graph.
+        let old = graphBox.read()
+        let next = LearningGraph(
+            buckets: old.buckets.map { bucket in
+                LearningGraphBucket(
+                    index: bucket.index, label: bucket.label, date: bucket.date,
+                    category: bucket.category,
+                    nodes: bucket.nodes.filter { $0.id != id })
+            },
+            summary: old.summary)
+        graphBox.write(next)
+        return "deleted memory from MEMORY.md"
     }
 }
 
@@ -248,6 +373,14 @@ final class FailingLearningSeam: GatewayLearningProviding, @unchecked Sendable {
     }
 
     func nodeDetail(id: String) async throws -> LearningNodeDetail {
+        throw GatewayLearningError.rpcFailed("gateway unreachable")
+    }
+
+    func editNode(id: String, content: String) async throws -> String {
+        throw GatewayLearningError.rpcFailed("gateway unreachable")
+    }
+
+    func deleteNode(id: String) async throws -> String {
         throw GatewayLearningError.rpcFailed("gateway unreachable")
     }
 }

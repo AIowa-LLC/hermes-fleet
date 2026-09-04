@@ -184,6 +184,11 @@ public enum GatewayLearningError: Error, Sendable, Equatable, LocalizedError {
     case malformedResponse(String)
     /// `learning.detail` came back `{ok: false, message}`.
     case nodeNotFound(String)
+    /// A mutation (`learning.edit` / `learning.delete`) was refused by the
+    /// gateway: `{ok: false, message}` (R10-T5). The message names the
+    /// remedy (e.g. the curator unpin/restore recipe) and must reach the
+    /// user verbatim.
+    case mutationFailed(String)
     /// A transport/RPC failure (classified detail, non-secret).
     case rpcFailed(String)
 
@@ -193,6 +198,8 @@ public enum GatewayLearningError: Error, Sendable, Equatable, LocalizedError {
             return "malformed gateway response (\(detail))"
         case .nodeNotFound(let detail):
             return "node not found (\(detail))"
+        case .mutationFailed(let detail):
+            return detail
         case .rpcFailed(let detail):
             return detail
         }
@@ -211,6 +218,16 @@ public protocol GatewayLearningProviding: Sendable {
 
     /// `learning.detail {id}` — full node content for the drill-in sheet.
     func nodeDetail(id: String) async throws -> LearningNodeDetail
+
+    /// `learning.edit {id, content}` (R10-T5) — rewrite a node's content
+    /// (full SKILL.md or raw memory chunk). Returns the gateway's success
+    /// message ("updated …"); refusals throw `mutationFailed`.
+    func editNode(id: String, content: String) async throws -> String
+
+    /// `learning.delete {id}` (R10-T5) — remove a node. Skills are
+    /// ARCHIVED server-side (the success message carries the curator
+    /// restore recipe — surface it); refusals throw `mutationFailed`.
+    func deleteNode(id: String) async throws -> String
 }
 
 /// Persistence seam for the offline snapshot (R9-T7): the VM depends on
@@ -232,6 +249,14 @@ public struct UnsupportedGatewayLearning: GatewayLearningProviding {
     }
 
     public func nodeDetail(id: String) async throws -> LearningNodeDetail {
+        throw GatewayLearningError.rpcFailed("gateway not configured")
+    }
+
+    public func editNode(id: String, content: String) async throws -> String {
+        throw GatewayLearningError.rpcFailed("gateway not configured")
+    }
+
+    public func deleteNode(id: String) async throws -> String {
         throw GatewayLearningError.rpcFailed("gateway not configured")
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import FleetCore
 import FleetNetworking
 import FleetSecurity
@@ -409,10 +410,12 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
 /// fully walkable without a live gateway. Presentation data only.
 final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable {
 
+    private let state = OSAllocatedUnfairLock(initialState: ScriptedLearningSeam.fixtureGraph())
+
     init(gatewayID: GatewayID) {}
 
     func learningGraph(profile: String?) async throws -> LearningGraph {
-        Self.fixtureGraph()
+        state.withLock { $0 }
     }
 
     func nodeDetail(id: String) async throws -> LearningNodeDetail {
@@ -421,9 +424,41 @@ final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable 
             id: id,
             kind: isMemory ? "memory" : "skill",
             label: id,
+            // Single-word memory body: a double-tap selects the whole
+            // chunk, which keeps the UI-test edit-clearing deterministic.
             content: isMemory
-                ? "# apple-dev profile memory\n\nVerified Xcode/Swift/repo/toolchain lessons only, no secrets.\n\n(fixture memory chunk for the simulator walkthrough)"
+                ? "fixturechunk"
                 : "---\nname: \(id)\ndescription: Fixture skill for the simulator walkthrough.\n---\n\n(fixture SKILL.md body)")
+    }
+
+    func editNode(id: String, content: String) async throws -> String {
+        // Wire-truth refusal (learning_mutations.py:150-153): an empty
+        // memory body is refused with the real message — the honest UI
+        // walkthrough of a gateway refusal, no env hook needed.
+        if id.hasPrefix("memory:"), content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw GatewayLearningError.mutationFailed("empty memory — use delete to remove it")
+        }
+        // The fixture graph does not track chunk content; a real reload
+        // after edit still succeeds and keeps node count stable.
+        return id.hasPrefix("memory:")
+            ? "updated memory in MEMORY.md"
+            : "updated '\(id)'"
+    }
+
+    func deleteNode(id: String) async throws -> String {
+        state.withLock { state in
+            state = LearningGraph(
+                buckets: state.buckets.map { bucket in
+                    LearningGraphBucket(
+                        index: bucket.index, label: bucket.label, date: bucket.date,
+                        category: bucket.category,
+                        nodes: bucket.nodes.filter { $0.id != id })
+                },
+                summary: state.summary)
+        }
+        return id.hasPrefix("memory:")
+            ? "deleted memory from MEMORY.md"
+            : "archived '\(id)' — restore with: hermes curator restore \(id)"
     }
 
     /// A fixture journey shaped like the live payload (buckets with skills

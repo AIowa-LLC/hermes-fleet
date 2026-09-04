@@ -491,4 +491,158 @@ final class GatewayLearningClientTests: XCTestCase {
         XCTAssertEqual(graph.summary.totalCount, 0)
         defer { Task { await transport.disconnect() } }
     }
+
+    // MARK: 3. learning.edit / learning.delete (R10-T5)
+
+    /// edit handler (methods_tools.py:1079-1082) → `edit_node`
+    /// (learning_mutations.py:136-157): params `{id, content}` (both
+    /// str-coerced); success `{ok: true, message: "updated …"}`.
+    func testEditNodeSendsIdAndContentAndDecodesMessage() async throws {
+        let captured = ManagementParamCapture()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frameText in
+                guard let (id, method, params) = Self.extractRequest(frameText) else { return [] }
+                if method == "learning.edit" {
+                    captured.record(method, params)
+                    return [Self.responseFrame(id: id, result: [
+                        "ok": true,
+                        "message": "updated memory in MEMORY.md",
+                    ])]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayLearningClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let message = try await client.editNode(
+            id: "memory:memory:3", content: "# chunk\n\nedited body")
+
+        XCTAssertEqual(message, "updated memory in MEMORY.md")
+        let (method, params) = await captured.last
+        XCTAssertEqual(method, "learning.edit")
+        XCTAssertEqual(params["id"] as? String, "memory:memory:3")
+        XCTAssertEqual(params["content"] as? String, "# chunk\n\nedited body")
+    }
+
+    /// edit refusal (empty body, learning_mutations.py:152-153): the
+    /// refusal is RESULT data `{ok: false, message}`, not an RPC error.
+    func testEditNodeMapsEmptyBodyRefusalToMutationFailed() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frameText in
+                guard let (id, method, _) = Self.extractRequest(frameText) else { return [] }
+                if method == "learning.edit" {
+                    return [Self.responseFrame(id: id, result: [
+                        "ok": false,
+                        "message": "empty memory — use delete to remove it",
+                    ])]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayLearningClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        do {
+            _ = try await client.editNode(id: "memory:memory:3", content: "  ")
+            XCTFail("ok:false must throw mutationFailed")
+        } catch let error as GatewayLearningError {
+            XCTAssertEqual(error, .mutationFailed("empty memory — use delete to remove it"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
+    /// delete handler (methods_tools.py:1079-1082) → `delete_node`
+    /// (learning_mutations.py:108-131): params `{id}`; skill success
+    /// message carries the restore recipe (archive, not erase).
+    func testDeleteNodeSendsIdAndDecodesArchiveMessage() async throws {
+        let captured = ManagementParamCapture()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frameText in
+                guard let (id, method, params) = Self.extractRequest(frameText) else { return [] }
+                if method == "learning.delete" {
+                    captured.record(method, params)
+                    return [Self.responseFrame(id: id, result: [
+                        "ok": true,
+                        "message": "archived 'test-driven-development' — restore with: hermes curator restore test-driven-development",
+                    ])]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayLearningClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let message = try await client.deleteNode(id: "test-driven-development")
+
+        XCTAssertEqual(
+            message,
+            "archived 'test-driven-development' — restore with: hermes curator restore test-driven-development")
+        let (method, params) = await captured.last
+        XCTAssertEqual(method, "learning.delete")
+        XCTAssertEqual(params["id"] as? String, "test-driven-development")
+    }
+
+    /// delete refusal (pinned skill, learning_mutations.py:119-120): the
+    /// pin message must reach the user verbatim — it names the remedy.
+    func testDeleteNodeMapsPinnedRefusalToMutationFailed() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frameText in
+                guard let (id, method, _) = Self.extractRequest(frameText) else { return [] }
+                if method == "learning.delete" {
+                    return [Self.responseFrame(id: id, result: [
+                        "ok": false,
+                        "message": "'apple-product-factory' is pinned — unpin it first (hermes curator unpin apple-product-factory)",
+                    ])]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayLearningClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        do {
+            _ = try await client.deleteNode(id: "apple-product-factory")
+            XCTFail("ok:false must throw mutationFailed")
+        } catch let error as GatewayLearningError {
+            XCTAssertEqual(
+                error,
+                .mutationFailed("'apple-product-factory' is pinned — unpin it first (hermes curator unpin apple-product-factory)"))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
 }

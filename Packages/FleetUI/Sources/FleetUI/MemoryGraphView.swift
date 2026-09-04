@@ -75,7 +75,10 @@ public struct MemoryGraphView: View {
         }
         .sheet(item: detailBinding(model)) { box in
             if let detail = box.detail {
-                LearningNodeDetailSheet(detail: detail)
+                LearningNodeDetailSheet(
+                    detail: detail,
+                    model: model,
+                    profile: profileScope)
             } else if let errorText = box.errorText {
                 LearningNodeDetailErrorSheet(errorText: errorText)
             }
@@ -104,6 +107,7 @@ public struct MemoryGraphView: View {
                 // banner, not a pane error.
                 offlineBanner(error, capturedAt: model.offlineCapturedAt, model: model)
             }
+            mutationBanner(model)
             summaryHeader(model)
             filterChips(model)
             MemoryGraphCanvas(model: model) { nodeID in
@@ -116,6 +120,39 @@ public struct MemoryGraphView: View {
         .refreshable {
             await model.reload(profile: profileScope)
         }
+    }
+
+    /// R10-T5 — outcome of the last edit/delete: the gateway's message
+    /// (success "updated …" or a verbatim refusal naming the remedy).
+    private func mutationBanner(_ model: MemoryGraphViewModel) -> some View {
+        Group {
+            if model.mutationInFlight {
+                ProgressView()
+                    .controlSize(.small)
+            } else if let message = model.mutationMessage {
+                Label(message, systemImage: "checkmark.circle")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.accent)
+                    .lineLimit(3)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("memorygraph.mutation-banner")
+            } else if let refusal = model.mutationError {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Text(refusal)
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.statusDegraded)
+                        .lineLimit(4)
+                        .accessibilityIdentifier("memorygraph.mutation-banner.text")
+                    Spacer()
+                    Button("Dismiss") { model.clearMutationFeedback() }
+                        .font(FleetTheme.secondaryFont.weight(.semibold))
+                        .foregroundStyle(FleetTheme.accent)
+                        .buttonStyle(.fleetPressable)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("memorygraph.mutation-banner")
     }
 
     private func summaryHeader(_ model: MemoryGraphViewModel) -> some View {
@@ -427,40 +464,162 @@ struct LearningNodeDetailErrorSheet: View {
     }
 }
 
-/// Read-only node drill-in: full SKILL.md or memory chunk (learning.detail).
+/// Node drill-in: full SKILL.md or memory chunk (learning.detail) with
+/// R10-T5 edit (learning.edit) and delete (learning.delete) affordances.
 struct LearningNodeDetailSheet: View {
     let detail: LearningNodeDetail
+    // @Observable model — plain reference; body tracks reads automatically.
+    let model: MemoryGraphViewModel
+    let profile: String?
+
+    @State private var isEditing = false
+    @State private var draft = ""
+    @State private var confirmDelete = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                    HStack(spacing: FleetTheme.spacingSm) {
-                        Image(systemName: detail.kind == "memory" ? "diamond" : "circle")
-                            .font(.caption)
-                            .foregroundStyle(FleetTheme.accent)
-                            .accessibilityHidden(true)
-                        Text(detail.kind.uppercased())
-                            .font(FleetTheme.sectionHeaderFont)
-                            .tracking(FleetTheme.microLabelTracking)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                    }
-                    Text(detail.label)
-                        .font(.system(.title3, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
-                        .accessibilityIdentifier("memorygraph.detail.label")
-                    Text(detail.content)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(FleetTheme.textSecondary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("memorygraph.detail.content")
+            Group {
+                if isEditing {
+                    editorContent
+                } else {
+                    readContent
                 }
-                .padding(FleetTheme.spacingLg)
             }
             .background(FleetTheme.background)
-            .navigationTitle("Node")
+            .navigationTitle(isEditing ? "Edit Node" : "Node")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    if isEditing {
+                        Button("Cancel") {
+                            isEditing = false
+                            draft = ""
+                        }
+                        .accessibilityIdentifier("memorygraph.detail.edit.cancel")
+                    } else {
+                        Button("Done") { dismiss() }
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isEditing {
+                        Button("Save") {
+                            let content = draft
+                            Task {
+                                await model.performEdit(
+                                    nodeID: detail.id, content: content, profile: profile)
+                                if model.mutationError == nil {
+                                    isEditing = false
+                                    draft = ""
+                                    dismiss()
+                                }
+                                // Refusal: stay in the editor — the inline
+                                // error carries the gateway's remedy.
+                            }
+                        }
+                        .font(.body.weight(.semibold))
+                        .disabled(model.mutationInFlight)
+                        .accessibilityIdentifier("memorygraph.detail.edit.save")
+                    } else {
+                        menu
+                    }
+                }
+            }
+            .alert("Delete this node?", isPresented: $confirmDelete) {
+                Button("Delete", role: .destructive) {
+                    Task {
+                        await model.performDelete(nodeID: detail.id, profile: profile)
+                        if model.mutationError == nil { dismiss() }
+                    }
+                }
+                .accessibilityIdentifier("memorygraph.detail.delete.confirm")
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                if detail.kind == "skill" {
+                    Text("The skill is archived (restorable with `hermes curator restore`).")
+                } else {
+                    Text("The memory chunk is removed from its file.")
+                }
+            }
         }
+    }
+
+    private var menu: some View {
+        Menu {
+            Button {
+                draft = detail.content
+                isEditing = true
+            } label: {
+                Label("Edit", systemImage: "square.and.pencil")
+            }
+            .accessibilityIdentifier("memorygraph.detail.edit")
+            Button(role: .destructive) {
+                confirmDelete = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .accessibilityIdentifier("memorygraph.detail.delete")
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityIdentifier("memorygraph.detail.menu")
+    }
+
+    private var readContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Image(systemName: detail.kind == "memory" ? "diamond" : "circle")
+                        .font(.caption)
+                        .foregroundStyle(FleetTheme.accent)
+                        .accessibilityHidden(true)
+                    Text(detail.kind.uppercased())
+                        .font(FleetTheme.sectionHeaderFont)
+                        .tracking(FleetTheme.microLabelTracking)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+                Text(detail.label)
+                    .font(.system(.title3, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(FleetTheme.textPrimary)
+                    .accessibilityIdentifier("memorygraph.detail.label")
+                Text(detail.content)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("memorygraph.detail.content")
+            }
+            .padding(FleetTheme.spacingLg)
+        }
+    }
+
+    private var editorContent: some View {
+        VStack(spacing: FleetTheme.spacingSm) {
+            Text("Content")
+                .font(FleetTheme.sectionHeaderFont)
+                .tracking(FleetTheme.microLabelTracking)
+                .foregroundStyle(FleetTheme.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let refusal = model.mutationError {
+                // Verbatim gateway refusal (names the remedy) — inline in
+                // the editor so the user can fix the content and retry.
+                Text(refusal)
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("memorygraph.detail.edit.refusal")
+            }
+            TextEditor(text: $draft)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(FleetTheme.textPrimary)
+                .scrollContentBackground(.hidden)
+                .background(FleetTheme.background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(FleetTheme.accent.opacity(0.4), lineWidth: 1))
+                .accessibilityIdentifier("memorygraph.detail.edit.field")
+        }
+        .padding(FleetTheme.spacingLg)
     }
 }

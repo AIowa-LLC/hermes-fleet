@@ -80,6 +80,45 @@ public struct GatewayLearningClient: GatewayLearningProviding {
             content: o["content"]?.stringValue ?? "")
     }
 
+    // MARK: - learning.edit / learning.delete (R10-T5)
+
+    /// `learning.edit {id, content}` → `edit_node`
+    /// (learning_mutations.py:136-157): success `{ok: true, message}`,
+    /// refusal `{ok: false, message}` → `.mutationFailed` (the message
+    /// names the remedy and must reach the user verbatim).
+    public func editNode(id: String, content: String) async throws -> String {
+        let result = try await request(
+            method: "learning.edit",
+            params: .object(["id": .string(id), "content": .string(content)]))
+        return try Self.decodeMutation(result, method: "learning.edit")
+    }
+
+    /// `learning.delete {id}` → `delete_node`
+    /// (learning_mutations.py:108-131): skills are ARCHIVED (the success
+    /// message carries the `hermes curator restore` recipe), memories are
+    /// removed. Refusal `{ok: false, message}` → `.mutationFailed`.
+    public func deleteNode(id: String) async throws -> String {
+        let result = try await request(
+            method: "learning.delete",
+            params: .object(["id": .string(id)]))
+        return try Self.decodeMutation(result, method: "learning.delete")
+    }
+
+    /// Shared `{ok, message}` envelope for the learning mutations.
+    static func decodeMutation(_ result: JSONValue, method: String) throws -> String {
+        guard let o = result.objectValue else {
+            throw GatewayLearningError.malformedResponse("\(method) result was not an object")
+        }
+        if o["ok"]?.boolValue == false {
+            throw GatewayLearningError.mutationFailed(
+                o["message"]?.stringValue ?? "\(method) refused")
+        }
+        guard let message = o["message"]?.stringValue, !message.isEmpty else {
+            throw GatewayLearningError.malformedResponse("\(method) result missing 'message'")
+        }
+        return message
+    }
+
     // MARK: - decode
 
     /// `render_frames` result envelope → `LearningGraph` (grid `frames`

@@ -169,6 +169,16 @@ public final class MemoryGraphViewModel {
     public private(set) var isLoadingDetail = false
     public private(set) var detailError: String?
 
+    // MARK: Mutations (R10-T5 — learning.edit / learning.delete)
+
+    /// Gateway message from the last successful edit/delete ("updated …" /
+    /// the curator restore recipe). Cleared when a new mutation starts.
+    public private(set) var mutationMessage: String?
+    /// Refusal/transport failure from the last edit/delete (verbatim —
+    /// gateway messages name the remedy).
+    public private(set) var mutationError: String?
+    public private(set) var mutationInFlight = false
+
     // MARK: Dependencies
 
     public let gatewayID: GatewayID
@@ -241,6 +251,46 @@ public final class MemoryGraphViewModel {
     public func dismissDetail() {
         detail = nil
         detailError = nil
+    }
+
+    /// Clear the last mutation outcome (message or refusal).
+    public func clearMutationFeedback() {
+        mutationMessage = nil
+        mutationError = nil
+    }
+
+    /// `learning.edit {id, content}` then a graph reload — the map must
+    /// reflect the server's truth (labels can change with content), not a
+    /// locally-optimistic patch.
+    public func performEdit(nodeID: String, content: String, profile: String? = nil) async {
+        mutationInFlight = true
+        mutationMessage = nil
+        mutationError = nil
+        defer { mutationInFlight = false }
+        do {
+            mutationMessage = try await learning.editNode(id: nodeID, content: content)
+            await reload(profile: profile)
+        } catch {
+            mutationError = Self.describe(error)
+        }
+    }
+
+    /// `learning.delete {id}` then a graph reload + snapshot refresh —
+    /// the node must not linger in the map or the offline snapshot.
+    /// Closes the drill-in sheet either way (refusal keeps the graph
+    /// intact and shows the gateway's message).
+    public func performDelete(nodeID: String, profile: String? = nil) async {
+        mutationInFlight = true
+        mutationMessage = nil
+        mutationError = nil
+        defer { mutationInFlight = false }
+        do {
+            mutationMessage = try await learning.deleteNode(id: nodeID)
+            await reload(profile: profile)
+            dismissDetail()
+        } catch {
+            mutationError = Self.describe(error)
+        }
     }
 
     private func rebuildLayout() {
