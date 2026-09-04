@@ -27,6 +27,7 @@ public struct GatewayEvent: Sendable, Hashable {
         case toolComplete = "tool.complete"
         case backgroundComplete = "background.complete"
         case approvalRequest = "approval.request"
+        case usageUpdate = "session.usage"
         case error = "error"
 
         /// Unknown event types are preserved for forward compatibility and

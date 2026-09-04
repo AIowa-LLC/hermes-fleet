@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -37,6 +37,11 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
     /// down), matching every other seam on this session.
     public let approvals: any ApprovalsProviding
 
+    /// R9-T2/T3/T4 conversation-tooling client bound to the shared transport
+    /// (model.options / session.usage / context_breakdown / steer / title /
+    /// branch). Same fail-closed-by-seam discipline as `approvals`.
+    public let tooling: any ConversationToolingProviding
+
     public init(
         gatewayID: GatewayID,
         displayName: String,
@@ -54,6 +59,7 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         let history = GatewaySessionHistoryClient(gatewayID: gatewayID, transport: transport)
         self.history = history
         self.approvals = GatewayApprovalClient(gatewayID: gatewayID, transport: transport)
+        self.tooling = GatewayConversationToolingClient(gatewayID: gatewayID, transport: transport)
         self.conversation = GatewayConversationClient(gatewayID: gatewayID, transport: transport)
         self.replay = GatewayReplayEngine(gatewayID: gatewayID, transport: transport, history: history)
     }

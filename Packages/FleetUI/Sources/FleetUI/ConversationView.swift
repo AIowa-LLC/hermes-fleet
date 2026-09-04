@@ -25,6 +25,12 @@ public struct ConversationView: View {
     /// V4 motion: bumped on every composer submit so `.sensoryFeedback`
     /// fires the send haptic (trigger-based; not on initial appearance).
     @State private var sendPulse = 0
+    /// R9-T2: model picker sheet presentation.
+    @State private var showingModelPicker = false
+    /// R9-T3: context breakdown sheet presentation.
+    @State private var showingContextBreakdown = false
+    /// R9-T4: fork navigation — the new session id to route to.
+    @State private var forkTargetSessionID: String?
 
     public init(environment: AppEnvironment, route: Route, sessionID: String?) {
         self.environment = environment
@@ -60,6 +66,10 @@ public struct ConversationView: View {
         VStack(spacing: 0) {
             botHeader(model)
             bannerArea(model)
+            // R9-T4: transient tooling notices (fork/rename failures).
+            if let toolingModel = model.toolingViewModel {
+                ToolingNoticeBanner(model: toolingModel)
+            }
             // R9-T1: the mid-session approval banner (danger surface) sits
             // above the transcript; nil model → nothing renders.
             if let approvalModel = model.approvalViewModel {
@@ -70,6 +80,45 @@ public struct ConversationView: View {
             transcriptList(model)
             composer(model)
         }
+        // R9-T2/T3/T4 sheets.
+        .sheet(isPresented: $showingModelPicker) {
+            if let toolingModel = model.toolingViewModel {
+                ModelPickerSheet(model: toolingModel) { _ in
+                    // The pick is sticky in the tooling VM; a NEW chat (next
+                    // conversation open) rides it on session.create.
+                }
+            }
+        }
+        .sheet(isPresented: $showingContextBreakdown) {
+            if let toolingModel = model.toolingViewModel {
+                ContextBreakdownSheet(model: toolingModel)
+            }
+        }
+        // R9-T4: navigate to a successfully forked session.
+        .onChange(of: model.forkedSession?.sessionID) { _, newID in
+            guard let newID, newID != forkTargetSessionID else { return }
+            forkTargetSessionID = newID
+            model.consumeForkedSession()
+        }
+        .navigationDestination(isPresented: forkNavigationBinding) {
+            ConversationView(
+                environment: environment,
+                route: route,
+                sessionID: forkTargetSessionID
+            )
+        }
+    }
+
+    /// Two-way binding for the fork push: entering pushes the forked
+    /// conversation; popping clears the target so a SECOND fork can push
+    /// again (same-session forks dedupe via forkTargetSessionID).
+    private var forkNavigationBinding: Binding<Bool> {
+        Binding(
+            get: { forkTargetSessionID != nil },
+            set: { shown in
+                if !shown { forkTargetSessionID = nil }
+            }
+        )
     }
 
     // MARK: Bot header (U6 — hero mock screen 2)
@@ -82,29 +131,85 @@ public struct ConversationView: View {
     private func botHeader(_ model: ConversationViewModel) -> some View {
         let bot = environment.bot(for: route)
         let name = bot?.displayName ?? route.profileSlug.rawValue
-        return HStack(spacing: FleetTheme.spacingMd) {
-            BotAvatar(displayName: name)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
-                    .lineLimit(1)
-                Text(route.id)
-                    .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        return VStack(spacing: 0) {
+            HStack(spacing: FleetTheme.spacingMd) {
+                BotAvatar(displayName: name)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textPrimary)
+                        .lineLimit(1)
+                    Text(model.sessionTitle ?? route.id)
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                // R9-T4: steer/rename/fork menu.
+                if let toolingModel = model.toolingViewModel {
+                    SessionSteerControls(
+                        model: toolingModel,
+                        isStreaming: model.isStreaming,
+                        sessionTitle: model.sessionTitle
+                    ) { forked in
+                        // The fork result lands on the conversation VM
+                        // (forkedSession) — navigated by the canvas binding.
+                    }
+                }
+                // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
+                // on enable). Hidden when the session has no approvals seam.
+                if let approvalModel = model.approvalViewModel {
+                    SessionYoloToggle(model: approvalModel)
+                }
+                StatusPill(status: headerPillStatus(bot: bot, model: model))
             }
-            Spacer()
-            // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
-            // on enable). Hidden when the session has no approvals seam.
-            if let approvalModel = model.approvalViewModel {
-                SessionYoloToggle(model: approvalModel)
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.vertical, FleetTheme.spacingSm)
+            // R9-T2/T3: model chip + live context meter sub-row. The chip
+            // shows the sticky pick (or the session's model readback); the
+            // meter renders only with tooling (absent data → hidden).
+            if model.toolingViewModel != nil {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Button {
+                        showingModelPicker = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "cpu")
+                                .font(.caption2)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                            Text(model.toolingViewModel?.selectedModel?.shortName
+                                 ?? model.sessionModel?.split(separator: "·").first.map(String.init)?.trimmingCharacters(in: .whitespaces)
+                                 ?? "model")
+                                .font(FleetTheme.monoCaptionFont)
+                                .foregroundStyle(
+                                    model.toolingViewModel?.selectedModel != nil
+                                        ? FleetTheme.accent
+                                        : FleetTheme.textSecondary
+                                )
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(FleetTheme.background, in: Capsule())
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityLabel("Model picker")
+                    .accessibilityValue(model.toolingViewModel?.selectedModel?.model ?? "profile default")
+                    .accessibilityHint("Choose the model for new chats on this device")
+                    .accessibilityIdentifier("model.chip")
+                    Spacer()
+                    if let toolingModel = model.toolingViewModel {
+                        ContextMeterView(model: toolingModel) {
+                            showingContextBreakdown = true
+                        }
+                    }
+                }
+                .padding(.horizontal, FleetTheme.spacingLg)
+                .padding(.vertical, 6)
             }
-            StatusPill(status: headerPillStatus(bot: bot, model: model))
         }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, FleetTheme.spacingSm)
         .background(FleetTheme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()

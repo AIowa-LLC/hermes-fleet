@@ -62,6 +62,11 @@ public enum ConversationEvent: Hashable, Sendable {
     /// user's decision (R9-T1; tui_gateway/server.py:3102). Not
     /// turn-terminal: the turn keeps streaming while the agent thread parks.
     case approvalRequested(sessionID: String, requestID: String, command: String, detail: String?, choices: [String], seq: Int? = nil)
+    /// `session.usage` — a mid-turn usage/context snapshot tick (R9-T3;
+    /// tui_gateway/server.py:13133 `_emit("session.usage", sid, {"usage":
+    /// _get_usage(agent)})`, ~1s while a turn runs so the context meter
+    /// tracks live growth). Not turn-terminal.
+    case usageUpdate(sessionID: String, usage: SessionUsageSnapshot, seq: Int? = nil)
     /// `error` — a turn-level error event (`{message, ...}`).
     case error(sessionID: String?, message: String, seq: Int? = nil)
     /// Any event type this client does not model — preserved with its raw
@@ -89,6 +94,7 @@ extension ConversationEvent {
         case .backgroundComplete(let sid, _, _, _): return sid
         case .sessionInfo(let sid, _, _, _, _, _, _, _, _): return sid
         case .approvalRequested(let sid, _, _, _, _, _): return sid
+        case .usageUpdate(let sid, _, _): return sid
         case .error(let sid, _, _): return sid
         case .unknown(let sid, _, _): return sid
         }
@@ -114,6 +120,7 @@ extension ConversationEvent {
              .backgroundComplete(_, _, _, let seq),
              .sessionInfo(_, _, _, _, _, _, _, _, let seq),
              .approvalRequested(_, _, _, _, _, let seq),
+             .usageUpdate(_, _, let seq),
              .error(_, _, let seq),
              .unknown(_, _, let seq):
             return seq

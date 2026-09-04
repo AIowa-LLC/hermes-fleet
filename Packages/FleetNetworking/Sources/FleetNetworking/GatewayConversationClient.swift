@@ -328,6 +328,16 @@ public struct GatewayConversationClient: ConversationProviding {
                 text: payload["text"]?.stringValue,
                 seq: seq
             )
+        case .usageUpdate:
+            // R9-T3 (server.py:13133): mid-turn usage tick. The snapshot
+            // rides at payload.usage (the _get_usage shape); a payload
+            // without it is dropped fail-soft (never fatal).
+            guard let usageObject = payload["usage"]?.objectValue else { return nil }
+            return .usageUpdate(
+                sessionID: sid,
+                usage: GatewayConversationToolingClient.decodeUsage(.object(usageObject)),
+                seq: seq
+            )
         case .error:
             return .error(sessionID: sid, message: payload["message"]?.stringValue ?? "", seq: seq)
         case .unknown:

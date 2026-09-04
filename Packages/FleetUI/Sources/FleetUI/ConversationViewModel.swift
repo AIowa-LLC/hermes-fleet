@@ -165,6 +165,14 @@ public final class ConversationViewModel {
     /// Lazily built once the session opens; nil when the concrete session
     /// exposes no approvals seam (fail-soft feature detection).
     public private(set) var approvalViewModel: ApprovalViewModel?
+    /// R9-T2/T3/T4 — the conversation-tooling state (sticky model pick,
+    /// live context meter, steer/rename/fork). Lazily built once the
+    /// session opens; nil when the concrete session exposes no tooling seam.
+    public private(set) var toolingViewModel: ConversationToolingViewModel?
+    /// R9-T4 — a successfully forked session awaiting navigation. The view
+    /// observes this, replaces the open conversation, and clears it
+    /// (`consumeForkedSession()`).
+    public private(set) var forkedSession: ConversationSession?
     /// True when the current transcript was hydrated from the persisted cache
     /// (M10 cold-start) rather than a live server fetch.
     public private(set) var hydratedFromCache = false
@@ -335,11 +343,17 @@ public final class ConversationViewModel {
                     openedSessionID = resumed.sessionID
                     applyOpenedSession(resumed)
                 } else {
+                    // R9-T2: ride the sticky per-device model pick on
+                    // session.create — the ONLY wire path for a picker
+                    // selection (per-session override,
+                    // methods_session.py:50-53). Never config.set.
+                    let modelParams = toolingViewModel?.createModelParams
+                        ?? (model: nil as String?, provider: nil as String?)
                     let created = try await session.conversation.createSession(
                         title: nil,
                         profile: route.profileSlug.rawValue,
-                        model: nil,
-                        provider: nil,
+                        model: modelParams.model,
+                        provider: modelParams.provider,
                         cols: nil
                     )
                     guard isCurrent(token) else { return false }
@@ -473,6 +487,41 @@ public final class ConversationViewModel {
         }
     }
 
+    // MARK: R9-T2/T3/T4 — tooling actions (steer/rename/fork/usage)
+
+    /// Steer the running turn via the tooling seam (see-through to the
+    /// tooling VM; kept here so the view has ONE entry point).
+    public func steer(_ text: String) async {
+        await toolingViewModel?.steer(text: text)
+    }
+
+    /// Rename the open session; adopts the server-resolved title into the
+    /// header state on success.
+    public func renameSession(title: String) async {
+        if let resolved = await toolingViewModel?.rename(title: title) {
+            sessionTitle = resolved
+        }
+    }
+
+    /// Fork the open session (`session.branch`). On success the new session
+    /// lands in `forkedSession` for the view to navigate to (the view calls
+    /// `consumeForkedSession()` after routing).
+    public func forkSession() async {
+        guard let branch = await toolingViewModel?.fork(name: nil) else { return }
+        forkedSession = branch
+    }
+
+    /// Clear the pending fork navigation target (view consumed it).
+    public func consumeForkedSession() {
+        forkedSession = nil
+    }
+
+    /// Refresh the context meter after a completed turn (the streamed ticks
+    /// stop at message.complete; the RPC read is the settling figure).
+    public func refreshUsageSnapshot() async {
+        await toolingViewModel?.refreshUsage()
+    }
+
     /// Cancel background tasks (view disappear). Idempotent.
     ///
     /// P2-3: cancels ONLY the RESTARTABLE status watcher. The event
@@ -524,6 +573,17 @@ public final class ConversationViewModel {
             }
         } else {
             approvalViewModel?.bind(sessionID: opened.sessionID)
+        }
+        // R9-T2/T3/T4: same one-cast build for the tooling seam (sticky
+        // model pick, context meter, steer/rename/fork).
+        if toolingViewModel == nil {
+            if let capable = session as? ConversationToolingCapable {
+                let vm = ConversationToolingViewModel(tooling: capable.tooling, gatewayID: route.gatewayID)
+                vm.bind(sessionID: opened.sessionID)
+                toolingViewModel = vm
+            }
+        } else {
+            toolingViewModel?.bind(sessionID: opened.sessionID)
         }
         Task { await persistTranscript() }
     }
@@ -709,6 +769,9 @@ public final class ConversationViewModel {
             // P0-8: a completed turn must not carry buffered reasoning into
             // the next one (e.g. an errored turn that never minted a row).
             pendingReasoning = nil
+            // R9-T3: settle the context meter with the authoritative RPC
+            // figure (the streamed ticks stop at this frame).
+            Task { await refreshUsageSnapshot() }
             if isError, let error {
                 errorMessage = error
             }
@@ -762,6 +825,11 @@ public final class ConversationViewModel {
             // R9-T3: adopt the approval-bypass readback (effective OR of
             // config mode / env / session flag — server.py:7758).
             approvalViewModel?.applySessionInfo(yolo: yolo, approvalMode: approvalMode)
+
+        case .usageUpdate(_, let snapshot, _):
+            // R9-T3: live context meter tick (server.py:13133) — applies to
+            // the tooling VM only; the transcript is untouched.
+            toolingViewModel?.applyUsage(snapshot)
 
         case .approvalRequested(let sid, let requestID, let command, let detail, let choices, _):
             // R9-T1: surface the blocked dangerous command in the banner.

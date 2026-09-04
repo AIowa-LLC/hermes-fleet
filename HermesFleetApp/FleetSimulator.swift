@@ -191,12 +191,15 @@ private struct ScriptedSessionListService: SessionListProviding {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
     /// approval banner is fully walkable in the simulator + UI tests).
     let approvalsBox = ScriptedApprovalsBox()
+    /// R9-T2/T3/T4: scripted tooling seam (fixture models + usage +
+    /// steer/title/branch recorders).
+    let toolingBox = ScriptedToolingBox()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
@@ -240,6 +243,11 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
         approvalsBox
     }
 
+    /// R9-T2/T3/T4: scripted tooling seam.
+    var tooling: any ConversationToolingProviding {
+        toolingBox
+    }
+
     /// R9-T1 UI-test hook: push a scripted approval request into the
     /// conversation event stream (drives the banner deterministically).
     func pushApprovalRequest(_ request: ApprovalRequest) {
@@ -281,13 +289,15 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
     }
 
     func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+        // R9-T2: honor the per-session model override (the sticky pick rides
+        // here) — the scripted session reflects the requested model back.
         ConversationSession(
-            sessionID: "scripted-\\(gatewayID.rawValue)",
-            storedSessionID: "stored-scripted-\\(gatewayID.rawValue)",
+            sessionID: "scripted-\(gatewayID.rawValue)",
+            storedSessionID: "stored-scripted-\(gatewayID.rawValue)",
             messageCount: 0,
             messages: [],
-            model: "scripted-model",
-            provider: "simulator",
+            model: model ?? "scripted-model",
+            provider: provider ?? "simulator",
             profileName: profile
         )
     }
@@ -295,7 +305,7 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
     func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
         ConversationSession(
             sessionID: sessionID,
-            storedSessionID: "stored-\\(sessionID)",
+            storedSessionID: "stored-\(sessionID)",
             messageCount: 0,
             messages: [],
             model: "scripted-model",
@@ -329,9 +339,23 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             }
         }
         // Stream a canned assistant turn shortly after submit (async so the
-        // view model's event subscription is attached).
+        // view model's event subscription is attached). R9-T3: a mid-turn
+        // session.usage tick exercises the live context meter path.
         Task { [streamBox] in
             try? await Task.sleep(for: .milliseconds(250))
+            streamBox.yield(.usageUpdate(
+                sessionID: sessionID,
+                usage: SessionUsageSnapshot(
+                    model: "hermes",
+                    input: 12_000,
+                    output: 1_200,
+                    total: 13_200,
+                    calls: 2,
+                    contextUsed: 52_000,
+                    contextMax: 120_000,
+                    contextPercent: 43
+                )
+            ))
             streamBox.yield(.messageStart(sessionID: sessionID))
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "Hello from the scripted fleet. ", rendered: nil))
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "You said: ", rendered: nil))
@@ -393,6 +417,113 @@ final class ScriptedApprovalsBox: ApprovalsProviding, @unchecked Sendable {
     /// demo approval arrives as a push event, not a reconnect restore).
     func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
         []
+    }
+}
+
+/// R9-T2/T3/T4: scripted tooling seam (DEBUG simulator). Deterministic
+/// fixture models for the picker; records steer/rename/branch calls; usage
+/// readback with a mid-turn context gauge. Thread-safe recorders.
+final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _steerTexts: [String] = []
+    private var _renames: [String] = []
+    private var _branches: [String?] = []
+
+    var steerTexts: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _steerTexts
+    }
+    var renames: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _renames
+    }
+    var branches: [String?] {
+        lock.lock(); defer { lock.unlock() }
+        return _branches
+    }
+
+    private func recordSteer(_ text: String) {
+        lock.lock(); defer { lock.unlock() }
+        _steerTexts.append(text)
+    }
+    private func recordRename(_ title: String) {
+        lock.lock(); defer { lock.unlock() }
+        _renames.append(title)
+    }
+    private func recordBranch(_ name: String?) {
+        lock.lock(); defer { lock.unlock() }
+        _branches.append(name)
+    }
+
+    /// Fixture models (deterministic, mono ids — the picker's UI-test set).
+    func modelChoices(sessionID: String?) async throws -> [ModelChoice] {
+        [
+            ModelChoice(model: "hermes", provider: "nous", providerName: "Nous Research", isCurrent: true),
+            ModelChoice(model: "hermes-mini", provider: "nous", providerName: "Nous Research", isCurrent: false),
+            ModelChoice(model: "openai/gpt-5", provider: "openrouter", providerName: "OpenRouter", isCurrent: false),
+            ModelChoice(model: "anthropic/claude-sonnet-4", provider: "openrouter", providerName: "OpenRouter", isCurrent: false),
+        ]
+    }
+
+    /// Usage readback with a mid-context gauge (fixture: 38% of 120k).
+    func usage(sessionID: String) async throws -> SessionUsageSnapshot {
+        SessionUsageSnapshot(
+            model: "hermes",
+            input: 12_000,
+            output: 3_400,
+            total: 16_300,
+            calls: 4,
+            contextUsed: 45_600,
+            contextMax: 120_000,
+            contextPercent: 38
+        )
+    }
+
+    /// Fixture breakdown mirroring context_breakdown.py:163's category set.
+    func contextBreakdown(sessionID: String) async throws -> ContextBreakdown {
+        ContextBreakdown(
+            categories: [
+                ContextBreakdownCategory(id: "system_prompt", label: "System prompt", tokens: 5_200),
+                ContextBreakdownCategory(id: "tool_definitions", label: "Tool definitions", tokens: 9_800),
+                ContextBreakdownCategory(id: "rules", label: "Rules", tokens: 1_400),
+                ContextBreakdownCategory(id: "skills", label: "Skills", tokens: 2_100),
+                ContextBreakdownCategory(id: "mcp", label: "MCP", tokens: 0),
+                ContextBreakdownCategory(id: "subagent_definitions", label: "Subagent definitions", tokens: 1_100),
+                ContextBreakdownCategory(id: "memory", label: "Memory", tokens: 3_400),
+                ContextBreakdownCategory(id: "conversation", label: "Conversation", tokens: 22_600),
+            ].filter { $0.tokens > 0 },
+            contextMax: 120_000,
+            contextPercent: 38,
+            contextUsed: 45_600,
+            estimatedTotal: 45_600,
+            model: "hermes"
+        )
+    }
+
+    func steer(sessionID: String, text: String) async throws -> Bool {
+        recordSteer(text)
+        return true
+    }
+
+    func renameSession(sessionID: String, title: String) async throws -> String {
+        recordRename(title)
+        return title
+    }
+
+    func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
+        recordBranch(name)
+        return ConversationSession(
+            sessionID: "scripted-branch-\(sessionID)",
+            storedSessionID: "stored-\(sessionID)-branch",
+            messageCount: 2,
+            messages: [
+                SessionMessage(role: .user, text: "hello fixture"),
+                SessionMessage(role: .assistant, text: "Hi from the scripted branch."),
+            ],
+            model: "hermes",
+            provider: "simulator",
+            profileName: nil
+        )
     }
 }
 
