@@ -93,4 +93,46 @@ final class R10ProjectsBrowserUITests: XCTestCase {
 
         _ = firstMatch(in: app, identifier: "fleet.projects.retry")
     }
+
+    /// R10-T3 round 2 (QA defect 1+2 regression): a transcript `@file:`
+    /// chip taps THROUGH into the browser at that path — the focus
+    /// banner carries the referenced path and names the containing
+    /// project, which is also badged "referenced" (pre-highlight).
+    /// Scripted fixture: resumeSession returns a durable row with an
+    /// absolute @file: path inside the scripted tree's repo.
+    func testTranscriptFileRefChipTapsThroughToFocusedBrowser() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_FILEREF_FIXTURE"] = "1"
+        app.launch()
+
+        // Walk to the conversation the same way the reactions suite does.
+        UITabNavigation.openGatewaysTab(app)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.<dev-workstation>").firstMatch)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.bots.row.<dev-workstation>#default").firstMatch)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1").firstMatch)
+        let composer = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation canvas should open")
+
+        // The transcript row's @file: chip (durable history rows render
+        // after resume; bounded wait for the chip to appear).
+        let chip = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.fileref.0").firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 10),
+                      "the @file: chip must render under the transcript row")
+        scrollTo(chip, in: app)
+        tap(chip)
+
+        // Landed in the Projects browser AT that path: the focus banner
+        // carries the referenced path and names the containing project.
+        let banner = firstMatch(in: app, identifier: "fleet.projects.focus.banner")
+        XCTAssertTrue(banner.label.contains("ProjectsView.swift"),
+                      "focus banner surfaces the referenced path: \(banner.label)")
+        XCTAssertTrue(banner.label.contains("Fleet iOS"),
+                      "focus banner names the containing project: \(banner.label)")
+
+        // The containing project row is pre-highlighted ("referenced").
+        let fleetRow = firstMatch(in: app, identifier: "fleet.projects.row.proj-fleet")
+        XCTAssertTrue(fleetRow.label.contains("referenced"),
+                      "containing project carries the tap-through highlight: \(fleetRow.label)")
+    }
 }

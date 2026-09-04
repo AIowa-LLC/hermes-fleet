@@ -36,6 +36,9 @@ public enum FleetScreen: Hashable, Sendable {
     /// R9-T7: the per-gateway Memory Graph (read-only learning star map).
     case memoryGraph(GatewayID)
     /// R10-T3: the per-gateway remote Projects browser
-    /// (projects.tree + drill-in).
-    case projects(GatewayID)
+    /// (projects.tree + drill-in). `focusPath` (R10-T3 round 2) carries a
+    /// transcript `@file:`/`@folder:` ref path so the browser pre-
+    /// highlights the containing project and surfaces the target path
+    /// (the tap-through "at that path" requirement).
+    case projects(GatewayID, focusPath: String? = nil)
 }

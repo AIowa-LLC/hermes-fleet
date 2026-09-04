@@ -286,6 +286,129 @@ final class ProjectsBrowserTests: XCTestCase {
     }
 }
 
+// MARK: - R10-T3 round 2: @file: tap-through (QA round-1 defects 1+2)
+
+/// The transcript `@file:`/`@folder:` parser (ConversationView.fileRefs)
+/// — pure static function, previously untested (QA defect 2).
+final class ConversationFileRefsTests: XCTestCase {
+
+    func testExtractsFileAndFolderRefs() {
+        let refs = ConversationView.fileRefs(
+            in: "see @file:/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift and @folder:/Users/dev/code/fleet-ios/Packages/ notes")
+        XCTAssertEqual(refs.map(\.displayPath),
+                       ["/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift",
+                        "/Users/dev/code/fleet-ios/Packages/"])
+        XCTAssertEqual(refs.map(\.ref),
+                       ["@file:/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift",
+                        "@folder:/Users/dev/code/fleet-ios/Packages/"])
+        XCTAssertEqual(refs.map(\.index), [0, 1], "indices are sequential per message")
+    }
+
+    func testRejectsUrlAndGitRefs() {
+        let refs = ConversationView.fileRefs(
+            in: "docs @url:https://example.com/a and source @git:https://github.com/org/repo")
+        XCTAssertTrue(refs.isEmpty, "@url:/@git: vocabulary is not a path ref")
+    }
+
+    func testDelimitersEndThePath() {
+        let refs = ConversationView.fileRefs(
+            in: "fixed in @file:src/main.swift (see also @folder:docs/) later")
+        XCTAssertEqual(refs.map(\.displayPath), ["src/main.swift", "docs/"],
+                       "whitespace, ')' and ']' terminate the path value")
+    }
+
+    func testEmptyValueIsSkippedNotMatched() {
+        let refs = ConversationView.fileRefs(in: "broken ref @file: here")
+        XCTAssertTrue(refs.isEmpty, "an empty path value is not a ref")
+    }
+
+    func testPlainTextWithoutRefsIsEmpty() {
+        XCTAssertTrue(ConversationView.fileRefs(in: "no references at all").isEmpty)
+        XCTAssertTrue(ConversationView.fileRefs(in: "").isEmpty)
+    }
+
+    func testMultipleRefsInOneMessageKeepOrderAndUniqueIdentity() {
+        let refs = ConversationView.fileRefs(in: "a @file:one.txt b @file:two.txt c @file:one.txt")
+        XCTAssertEqual(refs.map(\.displayPath), ["one.txt", "two.txt", "one.txt"])
+        XCTAssertEqual(Set(refs).count, 3, "index distinguishes duplicate paths for ForEach identity")
+    }
+}
+
+/// The Projects route must CARRY the referenced path (QA defect 1: the
+/// chip previously navigated to the browser root with no focus).
+final class FleetScreenProjectsRouteTests: XCTestCase {
+
+    func testProjectsRouteCarriesFocusPath() {
+        let plain = FleetScreen.projects(GatewayID(rawValue: "<dev-workstation>"))
+        let focused = FleetScreen.projects(
+            GatewayID(rawValue: "<dev-workstation>"),
+            focusPath: "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift")
+        XCTAssertNotEqual(plain, focused,
+                          "a focused route is a distinct navigation value")
+        XCTAssertEqual(
+            focused,
+            FleetScreen.projects(
+                GatewayID(rawValue: "<dev-workstation>"),
+                focusPath: "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift"))
+        if case .projects(let gatewayID, let focusPath) = focused {
+            XCTAssertEqual(gatewayID.rawValue, "<dev-workstation>")
+            XCTAssertEqual(focusPath, "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift")
+        } else {
+            XCTFail("expected .projects case")
+        }
+    }
+
+    func testFocusPathHashesIntoRouteValue() {
+        var seen = Set<FleetScreen>()
+        XCTAssertTrue(seen.insert(FleetScreen.projects(GatewayID(rawValue: "g"), focusPath: "a")).inserted)
+        XCTAssertFalse(seen.insert(FleetScreen.projects(GatewayID(rawValue: "g"), focusPath: "a")).inserted,
+                       "same focus path hashes equal")
+        XCTAssertTrue(seen.insert(FleetScreen.projects(GatewayID(rawValue: "g"), focusPath: "b")).inserted,
+                      "different focus path hashes distinct")
+        XCTAssertTrue(seen.insert(FleetScreen.projects(GatewayID(rawValue: "g"))).inserted,
+                      "nil focus is distinct from any focused value")
+    }
+}
+
+/// Focus resolution in the browser: the containing project highlight is
+/// a pure function of the loaded tree + carried focus path (deep prefix
+/// matching lives in FleetCore.ProjectsPathMatchingTests).
+@MainActor
+final class ProjectsFocusTests: XCTestCase {
+
+    private func fixtureTree() -> ProjectsTree {
+        ProjectsTree(
+            projects: [
+                ProjectNode(
+                    id: "proj-fleet", label: "Fleet iOS",
+                    path: "/Users/dev/code/fleet-ios", color: nil,
+                    isAuto: false, isNoProject: false, sessionCount: 3,
+                    lastActive: 1, totalTokens: 0, totalCostUsd: 0,
+                    repos: [
+                        ProjectRepoNode(
+                            id: "/Users/dev/code/fleet-ios", label: "fleet-ios",
+                            path: "/Users/dev/code/fleet-ios", sessionCount: 3, groups: [])],
+                    previewSessions: [])],
+            activeID: "proj-fleet", scopedSessionIDs: [])
+    }
+
+    func testAbsoluteRefInsideRepoResolvesContainingProject() {
+        let tree = fixtureTree()
+        XCTAssertEqual(
+            tree.project(containingPath: "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift")?.id,
+            "proj-fleet")
+    }
+
+    func testRelativeRefResolvesNilHonestly() {
+        XCTAssertNil(fixtureTree().project(containingPath: "attachments/notes.png"),
+                     "repo-relative refs have no resolvable root — nil, never a wrong highlight")
+    }
+
+    func testUnrelatedAbsoluteRefResolvesNil() {
+        XCTAssertNil(fixtureTree().project(containingPath: "/opt/homebrew/etc/rc"))
+    }
+}
+
 /// Minimal in-memory snapshot store for VM tests (lock discipline:
 /// synchronous helpers only).
 final class InMemoryProjectsSnapshotStore: ProjectsSnapshotStoring, @unchecked Sendable {

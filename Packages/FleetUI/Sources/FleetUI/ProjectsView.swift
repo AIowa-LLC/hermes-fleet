@@ -13,12 +13,17 @@ import FleetCore
 public struct ProjectsView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
+    /// R10-T3 round 2 — the tap-through `@file:`/`@folder:` ref path:
+    /// the containing project is pre-highlighted and the target path
+    /// surfaced in a focus banner (never a silent root landing).
+    private let focusPath: String?
     @State private var model: ProjectsBrowserViewModel?
     @State private var drillPath: [ProjectDrillRoute] = []
 
-    public init(environment: AppEnvironment, gatewayID: GatewayID) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID, focusPath: String? = nil) {
         self.environment = environment
         self.gatewayID = gatewayID
+        self.focusPath = focusPath
     }
 
     public var body: some View {
@@ -78,12 +83,24 @@ public struct ProjectsView: View {
         }
     }
 
+    /// R10-T3 round 2 — the project containing the tap-through
+    /// `focusPath` (deep repo-root prefix match, FleetCore). Nil = the
+    /// ref doesn't live in any listed project (relative refs, foreign
+    /// paths) — then only the banner shows, no fake highlight.
+    private var focusedProjectID: String? {
+        guard let focusPath, let tree = model?.tree else { return nil }
+        return tree.project(containingPath: focusPath)?.id
+    }
+
     private func treeList(_ model: ProjectsBrowserViewModel) -> some View {
         // ScrollView + VStack + plain NavigationLinks — the proven
         // BotDetailView pattern (List rows + custom button styles have
         // swallowed NavigationLink taps on this OS).
         ScrollView {
             VStack(spacing: FleetTheme.spacingSm) {
+                if let focusPath {
+                    focusBanner(focusPath)
+                }
                 if let error = model.errorMessage {
                     // Offline-with-snapshot: thin banner, not a pane error.
                     offlineBanner(error, capturedAt: model.offlineCapturedAt, model: model)
@@ -101,7 +118,10 @@ public struct ProjectsView: View {
                             profile: profileScope)
                     } label: {
                         FleetCard {
-                            projectRow(project, isActiveProject: project.id == model.tree?.activeID)
+                            projectRow(
+                                project,
+                                isActiveProject: project.id == model.tree?.activeID,
+                                isFocusedProject: project.id == focusedProjectID)
                         }
                     }
                     .buttonStyle(.fleetPressable)
@@ -116,7 +136,44 @@ public struct ProjectsView: View {
         }
     }
 
-    private func projectRow(_ project: ProjectNode, isActiveProject: Bool) -> some View {
+    /// R10-T3 round 2 — tap-through context: the referenced path is
+    /// surfaced at the top of the browser (never a silent root landing).
+    /// When the containing project is known it is also highlighted; the
+    /// banner names it so the highlight is self-explanatory.
+    private func focusBanner(_ path: String) -> some View {
+        let projectLabel = focusedProjectID.flatMap { id in
+            model?.tree?.projects.first(where: { $0.id == id })?.label
+        }
+        return HStack(spacing: FleetTheme.spacingSm) {
+            Image(systemName: "scope")
+                .foregroundStyle(FleetTheme.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(projectLabel.map { "From transcript — in \($0)" } ?? "From transcript")
+                    .font(FleetTheme.monoCaptionFont.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
+                Text(path)
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(FleetTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        // Explicit combined label: the visually-truncated path text is
+        // not reliably folded into the element's accessibility label.
+        .accessibilityLabel(
+            (projectLabel.map { "From transcript — in \($0). " } ?? "From transcript. ") + path)
+        .accessibilityIdentifier("fleet.projects.focus.banner")
+    }
+
+    private func projectRow(
+        _ project: ProjectNode,
+        isActiveProject: Bool,
+        isFocusedProject: Bool = false
+    ) -> some View {
         HStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: project.isNoProject
                   ? "tray" : (project.isAuto ? "folder.badge.gearshape" : "folder"))
@@ -127,6 +184,16 @@ public struct ProjectsView: View {
                     Text(project.label)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
+                    if isFocusedProject {
+                        // R10-T3 round 2 — tap-through target badge: the
+                        // containing project of the referenced file.
+                        Text("referenced")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(FleetTheme.accent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(FleetTheme.accent.opacity(0.15), in: Capsule())
+                    }
                     if isActiveProject {
                         Text("active")
                             .font(.caption2.weight(.semibold))

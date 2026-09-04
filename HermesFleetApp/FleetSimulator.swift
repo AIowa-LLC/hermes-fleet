@@ -724,6 +724,31 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 profileName: nil
             )
         }
+        // R10-T3 round 2 UI-test hook: fixture durable rows carrying an
+        // `@file:` ref whose ABSOLUTE path lands inside the scripted
+        // projects tree's repo (so the tap-through highlights its
+        // containing project) — mirrors what a real transcript row with
+        // an attached-file reference looks like on the wire.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_FILEREF_FIXTURE"] == "1" {
+            return ConversationSession(
+                sessionID: sessionID,
+                storedSessionID: "stored-\(sessionID)",
+                messageCount: 2,
+                messages: [
+                    SessionMessage(
+                        role: .user,
+                        text: "Please review @file:/Users/dev/code/fleet-ios/Packages/FleetUI/ProjectsView.swift before merging",
+                        rowID: "9200"),
+                    SessionMessage(
+                        role: .assistant,
+                        text: "Reviewed. The ProjectsView drills via projects.project_sessions.",
+                        rowID: "9201"),
+                ],
+                model: "scripted-model",
+                provider: "simulator",
+                profileName: nil
+            )
+        }
         return ConversationSession(
             sessionID: sessionID,
             storedSessionID: "stored-\(sessionID)",

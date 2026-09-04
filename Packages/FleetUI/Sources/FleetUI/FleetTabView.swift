@@ -177,8 +177,8 @@ public struct FleetTabView: View {
             SkillsView(environment: environment, gatewayID: gatewayID)
         case .memoryGraph(let gatewayID):
             MemoryGraphView(environment: environment, gatewayID: gatewayID)
-        case .projects(let gatewayID):
-            ProjectsView(environment: environment, gatewayID: gatewayID)
+        case .projects(let gatewayID, let focusPath):
+            ProjectsView(environment: environment, gatewayID: gatewayID, focusPath: focusPath)
         }
     }
 

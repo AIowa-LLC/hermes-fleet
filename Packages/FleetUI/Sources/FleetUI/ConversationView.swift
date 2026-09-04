@@ -394,7 +394,7 @@ public struct ConversationView: View {
         if !refs.isEmpty {
             HStack(spacing: 6) {
                 ForEach(refs, id: \.self) { ref in
-                    NavigationLink(value: FleetScreen.projects(route.gatewayID)) {
+                    NavigationLink(value: FleetScreen.projects(route.gatewayID, focusPath: ref.displayPath)) {
                         Label(ref.displayPath, systemImage: "doc")
                             .font(FleetTheme.monoCaptionFont)
                             .foregroundStyle(FleetTheme.accent)

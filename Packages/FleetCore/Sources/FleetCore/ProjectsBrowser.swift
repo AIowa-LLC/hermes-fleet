@@ -184,6 +184,52 @@ public struct ProjectsTree: Hashable, Codable, Sendable {
         self.activeID = activeID
         self.scopedSessionIDs = scopedSessionIDs
     }
+
+    /// R10-T3 round 2 — resolve a transcript `@file:` / `@folder:` ref to
+    /// the project whose repository (or own path) contains it, so a
+    /// tap-through can pre-highlight the containing project. Deepest
+    /// (longest) repo-root prefix wins; the No Project tier is never a
+    /// target; a repo-RELATIVE ref (no resolvable root) resolves nil —
+    /// honest no-highlight beats a wrong highlight. Pure function over
+    /// the wire payload (no gateway round trip).
+    public func project(containingPath rawPath: String) -> ProjectNode? {
+        Self.containingProject(in: projects, path: rawPath)
+    }
+
+    static func containingProject(in projects: [ProjectNode], path rawPath: String) -> ProjectNode? {
+        guard let target = Self.normalizedSegments(rawPath), !target.isEmpty else { return nil }
+        var best: (node: ProjectNode, depth: Int)?
+        for project in projects where !project.isNoProject {
+            var roots: [String] = project.repos.compactMap(\.path)
+            if let projectPath = project.path { roots.append(projectPath) }
+            for root in roots {
+                guard let rootSegments = Self.normalizedSegments(root), !rootSegments.isEmpty,
+                      target.count > rootSegments.count,
+                      target.prefix(rootSegments.count) == rootSegments[...] else { continue }
+                if best == nil || rootSegments.count > best!.depth {
+                    best = (project, rootSegments.count)
+                }
+            }
+        }
+        return best?.node
+    }
+
+    /// Split a path into normalized (`.`, `..`, empty segments resolved)
+    /// components. Absolute and relative paths both normalize; nil never
+    /// returned — an empty result means "no usable segments".
+    static func normalizedSegments(_ path: String) -> [String]? {
+        var out: [String] = []
+        for segment in path.split(separator: "/") {
+            switch segment {
+            case ".": continue
+            case "..":
+                if out.isEmpty { return nil } // escapes the root: unresolvable
+                out.removeLast()
+            default: out.append(String(segment))
+            }
+        }
+        return out
+    }
 }
 
 /// One `complete.path` completion item (methods_complete.py:303-309).
