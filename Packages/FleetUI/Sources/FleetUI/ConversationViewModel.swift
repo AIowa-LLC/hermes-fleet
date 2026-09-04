@@ -180,6 +180,23 @@ public final class ConversationViewModel {
     public private(set) var sessionTitle: String?
     public private(set) var sessionModel: String?
 
+    // MARK: R10-T1 — attachment staging (composer tray)
+
+    /// The attachment seam — fail-closed `UnsupportedAttachmentStaging` until
+    /// the concrete session exposes one (`AttachmentStagingCapable`), so the
+    /// composer's attach affordances surface an honest error instead of
+    /// pretending the gateway staged the file.
+    private let attachments: any AttachmentStagingProviding
+    /// Pending attachments staged on the gateway, awaiting the next send.
+    /// Identified by a local UUID — STAGING IS NOT IDEMPOTENT on the wire
+    /// (every attach call writes a new gateway-side file), so `Task.cancel`
+    /// mid-upload is surfaced as an error rather than retried blind.
+    public private(set) var pendingAttachments: [PendingAttachment] = []
+    /// True while an attachment upload is in flight (chip spinner).
+    public private(set) var isUploadingAttachment = false
+    /// Non-secret composer attachment error banner text (never silent).
+    public private(set) var attachmentError: String?
+
     // MARK: Internal state
 
     private var openedSessionID: String?
@@ -235,6 +252,12 @@ public final class ConversationViewModel {
         self.biometrics = biometrics
         self.statusInterval = statusInterval
         self.maxDisplayRows = maxDisplayRows
+        // R10-T1: one cast at build time (the ApprovalsCapable discipline).
+        if let capable = session as? AttachmentStagingCapable {
+            self.attachments = capable.attachments
+        } else {
+            self.attachments = UnsupportedAttachmentStaging()
+        }
     }
 
     /// P2-3: when the VM is permanently released (the conversation screen is
@@ -452,16 +475,30 @@ public final class ConversationViewModel {
     }
 
     /// Submit a prompt. Requires an open session and no in-flight turn.
+    /// R10-T1: pending attachments were staged on the gateway at PICK time
+    /// (`stageAttachment` — the wire attach calls run before submit, exactly
+    /// the gateway's designed order since `image.attach_bytes`/`pdf.attach`
+    /// queue onto the session for the NEXT `prompt.submit`,
+    /// methods_prompt.py:1163+); submit carries the composed text with the
+    /// staged refs appended. Attach-only sends (empty text) are valid.
     public func send(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let sid = openedSessionID,
+        guard let sid = openedSessionID,
               !isStreaming,
               phase == .ready || phase == .streaming else { return }
+        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return }
 
-        appendRow(.init(id: nextRowID(), kind: .user, text: trimmed))
+        let refTexts = pendingAttachments.map(\.refText)
+        let composed = AttachmentStagingRules.promptAppending(refs: refTexts, to: trimmed)
+        guard !composed.isEmpty else { return }
+
+        appendRow(.init(id: nextRowID(), kind: .user, text: composed))
+        // The refs were staged successfully at pick time — the tray clears
+        // with the send (image/PDF bytes are already queued server-side;
+        // removing them here would orphan the upload).
+        pendingAttachments = []
         do {
-            let submission = try await session.conversation.submitPrompt(sessionID: sid, text: trimmed)
+            let submission = try await session.conversation.submitPrompt(sessionID: sid, text: composed)
             guard submission.isStreaming else {
                 phase = .ready
                 return
@@ -469,6 +506,120 @@ public final class ConversationViewModel {
         } catch {
             classifyTurnFailure(error)
         }
+    }
+
+    // MARK: R10-T1 — attachment staging (composer tray)
+
+    /// One pending composer attachment: staged on the gateway, awaiting the
+    /// next send. `refText` is the cite-form appended to the prompt
+    /// (an `@file:` ref for generic files, the gateway's attachment marker
+    /// for vision-tile images, a pages summary for PDFs).
+    public struct PendingAttachment: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let displayName: String
+        public let byteCount: Int
+        public let refText: String
+
+        public init(id: String, displayName: String, byteCount: Int, refText: String) {
+            self.id = id
+            self.displayName = displayName
+            self.byteCount = byteCount
+            self.refText = refText
+        }
+
+        /// Chip caption: name + human-readable size.
+        public var caption: String {
+            "\(displayName) · \(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))"
+        }
+    }
+
+    /// Stage one local file on the gateway now (the "+" pickers call this).
+    /// The honest pre-upload guards (10 MB client cap, image-extension
+    /// allowlist) fire BEFORE any upload; wire failures surface in the
+    /// composer banner, never silently. On success the chip lands in
+    /// `pendingAttachments` awaiting the next send.
+    public func stageAttachment(name: String, mime: String?, byteCount: Int, loadBytes: @escaping @Sendable () throws -> Data) async {
+        guard let sid = openedSessionID else {
+            attachmentError = "Attachment needs an open session"
+            return
+        }
+        guard byteCount <= AttachmentStagingRules.clientCapBytes else {
+            setAttachmentError(AttachmentStagingError.fileTooLarge(
+                name: name, sizeBytes: byteCount, capBytes: AttachmentStagingRules.clientCapBytes))
+            return
+        }
+        guard !isUploadingAttachment else { return } // one upload at a time
+        isUploadingAttachment = true
+        defer { isUploadingAttachment = false }
+        do {
+            let bytes = try loadBytes()
+            let lower = (name as NSString).pathExtension.lowercased()
+            let refText: String
+            if AttachmentStagingRules.imageExtensions.contains(lower) {
+                // Vision-tile path: bytes queue as an attached image the NEXT
+                // prompt.submit consumes (server.py `_queue_attached_image`).
+                // The prompt cites the gateway's own attachment marker form.
+                guard case .success(let dataURL) = AttachmentStagingRules.imageDataURL(filename: name, bytes: bytes) else {
+                    if case .failure(let error) = AttachmentStagingRules.imageDataURL(filename: name, bytes: bytes) {
+                        setAttachmentError(error)
+                    }
+                    return
+                }
+                let image = try await attachments.attachImageBytes(
+                    sessionID: sid, filename: name, dataURL: dataURL)
+                refText = "[User attached image: \(image.name ?? (name as NSString).lastPathComponent)]"
+            } else if lower == "pdf" {
+                guard case .success(let dataURL) = AttachmentStagingRules.pdfDataURL(filename: name, bytes: bytes) else {
+                    if case .failure(let error) = AttachmentStagingRules.pdfDataURL(filename: name, bytes: bytes) {
+                        setAttachmentError(error)
+                    }
+                    return
+                }
+                let pdf = try await attachments.attachPDF(sessionID: sid, filename: name, dataURL: dataURL)
+                refText = "[User attached PDF: \(pdf.filename) (\(pdf.pagesAttached) page(s))]"
+            } else {
+                // Generic artifact: the `@file:` ref the agent's file tools
+                // read (file.attach methods_prompt.py:1350).
+                let resolvedMime = mime ?? "application/octet-stream"
+                guard case .success(let dataURL) = AttachmentStagingRules.fileDataURL(filename: name, mime: resolvedMime, bytes: bytes) else {
+                    if case .failure(let error) = AttachmentStagingRules.fileDataURL(filename: name, mime: resolvedMime, bytes: bytes) {
+                        setAttachmentError(error)
+                    }
+                    return
+                }
+                let file = try await attachments.attachFile(sessionID: sid, name: name, dataURL: dataURL)
+                refText = file.refText
+            }
+            pendingAttachments.append(PendingAttachment(
+                id: UUID().uuidString,
+                displayName: (name as NSString).lastPathComponent,
+                byteCount: byteCount,
+                refText: refText))
+            attachmentError = nil
+        } catch let error as AttachmentStagingError {
+            setAttachmentError(error)
+        } catch is CancellationError {
+            setAttachmentError(AttachmentStagingError.rpcFailed("upload cancelled — re-attach the file"))
+        } catch {
+            setAttachmentError(AttachmentStagingError.rpcFailed(Self.nonSecret(error)))
+        }
+    }
+
+    /// Remove a pending attachment. Image/PDF bytes are already queued on
+    /// the gateway session — the ref simply stops being cited on send (the
+    /// harmless residue matches `image.detach` semantics without a second
+    /// wire call).
+    public func removePendingAttachment(_ id: String) {
+        pendingAttachments.removeAll { $0.id == id }
+    }
+
+    /// Dismiss the composer attachment error banner.
+    public func clearAttachmentError() {
+        attachmentError = nil
+    }
+
+    private func setAttachmentError(_ error: AttachmentStagingError) {
+        attachmentError = error.description
     }
 
     /// Interrupt a running turn (session.interrupt).

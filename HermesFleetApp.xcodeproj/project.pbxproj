@@ -64,6 +64,7 @@
 		C5377CCD5DCFD49530466CE3 /* FleetDashboardFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70AC6557D0E8E55FB00F295 /* FleetDashboardFormattingTests.swift */; };
 		C56D4ED822D48F543FC80D08 /* P0_7SessionStateMachineUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20AB484DBACFFEEC06179C2 /* P0_7SessionStateMachineUITests.swift */; };
 		C6F51B49816B3F8801F18F68 /* AppLockProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A603A8D0B8049916523C335 /* AppLockProviders.swift */; };
+		CB2A546E9A4953A64976DD80 /* AttachmentStagingViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26665EB6ED4AAD8BAA2065F0 /* AttachmentStagingViewModelTests.swift */; };
 		CBAF6553CBB3340D244FEFD5 /* FleetSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 4FD859AB5DC4007FABF3E84F /* FleetSecurity */; };
 		CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */; };
 		CE2B614CC7652368415DA8C4 /* UITabNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E486750093968F32F0092 /* UITabNavigation.swift */; };
@@ -72,6 +73,7 @@
 		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
 		D82BFF6EBCBB2A7B6D1B0C11 /* U4DashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */; };
 		DEA04FB333232EAAE82C9AD7 /* R9ManagementPanesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C593000BFB095D711C803E /* R9ManagementPanesUITests.swift */; };
+		E068680EB7D3C89322F99764 /* R10AttachmentTrayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B326FB606E259B0116F2F6D /* R10AttachmentTrayUITests.swift */; };
 		E966FB2E068DD8CF603A349B /* L1LiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4F9B97BE138E2E91D5F991 /* L1LiveGatewayUITests.swift */; };
 		EC633F89B6F3E540C837E1A2 /* RT4FormSaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16ABB40EB8195A89AAF2A6C /* RT4FormSaveFailureUITests.swift */; };
 		EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */; };
@@ -113,12 +115,14 @@
 		21D1C48B297C70782863ECDB /* R9ConversationToolingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ConversationToolingUITests.swift; sourceTree = "<group>"; };
 		2380AC190371692E170A3C23 /* FleetSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSimulator.swift; sourceTree = "<group>"; };
 		260BB18804C7394A2D1C217E /* FleetNetworking */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetNetworking; path = Packages/FleetNetworking; sourceTree = SOURCE_ROOT; };
+		26665EB6ED4AAD8BAA2065F0 /* AttachmentStagingViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStagingViewModelTests.swift; sourceTree = "<group>"; };
 		289566529F99173DE8015AB1 /* F2QRPairingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = F2QRPairingUITests.swift; sourceTree = "<group>"; };
 		2B40ECEBBFB0680B0EA13A70 /* P3FixLoopbackGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P3FixLoopbackGatewayUITests.swift; sourceTree = "<group>"; };
 		3069E03CD70BDCC3377C0D75 /* SplashConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashConfigurationTests.swift; sourceTree = "<group>"; };
 		34781F74AFD460D82B873234 /* RT4RosterEmptyStateUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT4RosterEmptyStateUITests.swift; sourceTree = "<group>"; };
 		35E6CE9927E15E78239C062A /* UnconfiguredGateways.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnconfiguredGateways.swift; sourceTree = "<group>"; };
 		36A4B24E61526D2294992BD2 /* U3TabNavigationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U3TabNavigationUITests.swift; sourceTree = "<group>"; };
+		3B326FB606E259B0116F2F6D /* R10AttachmentTrayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R10AttachmentTrayUITests.swift; sourceTree = "<group>"; };
 		3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT4LogicRegressionTests.swift; sourceTree = "<group>"; };
 		3F88573D747272E04066317D /* SplashUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashUITests.swift; sourceTree = "<group>"; };
 		44C074CE45D0B5E88EB78568 /* T2FixTailnetGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T2FixTailnetGatewayUITests.swift; sourceTree = "<group>"; };
@@ -212,6 +216,7 @@
 				FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */,
 				C5B652485831E5050A35169A /* ApprovalFlowTests.swift */,
 				1493BE85176762EA67892033 /* ATSExceptionDriftTests.swift */,
+				26665EB6ED4AAD8BAA2065F0 /* AttachmentStagingViewModelTests.swift */,
 				5BEEFC0BD1DC4133FB63310C /* ConversationFixtureLoopTests.swift */,
 				EA799545FCC5860AE8ABB192 /* ConversationToolingTests.swift */,
 				C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */,
@@ -311,6 +316,7 @@
 				21D1C48B297C70782863ECDB /* R9ConversationToolingUITests.swift */,
 				69C593000BFB095D711C803E /* R9ManagementPanesUITests.swift */,
 				6676D110095F10C4FB78A5A9 /* R9MemoryGraphUITests.swift */,
+				3B326FB606E259B0116F2F6D /* R10AttachmentTrayUITests.swift */,
 				AA0788C641C3AD0C32972980 /* RT2RemovalAndEndpointSanitizationUITests.swift */,
 				C16ABB40EB8195A89AAF2A6C /* RT4FormSaveFailureUITests.swift */,
 				34781F74AFD460D82B873234 /* RT4RosterEmptyStateUITests.swift */,
@@ -486,6 +492,7 @@
 				0F2A6454E506740BE84B1739 /* AppEnvironmentTests.swift in Sources */,
 				CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */,
 				70DBE252BC45F78409C8C733 /* ApprovalFlowTests.swift in Sources */,
+				CB2A546E9A4953A64976DD80 /* AttachmentStagingViewModelTests.swift in Sources */,
 				99E6CF69A06EBD35702F27B0 /* ConversationFixtureLoopTests.swift in Sources */,
 				D1E600C197F91CC57F736C98 /* ConversationToolingTests.swift in Sources */,
 				AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */,
@@ -529,6 +536,7 @@
 				6AC11F4E4AB93D71284181CC /* P2GatewayFormDraftUITests.swift in Sources */,
 				0098E9FDF89D44B5CE8F7285 /* P3FixLANGatewayUITests.swift in Sources */,
 				83F772490E202B9E595C263B /* P3FixLoopbackGatewayUITests.swift in Sources */,
+				E068680EB7D3C89322F99764 /* R10AttachmentTrayUITests.swift in Sources */,
 				530AA02746BD1BF75369C072 /* R9ApprovalBannerUITests.swift in Sources */,
 				16D96136BF1241B597E4722D /* R9ConversationToolingUITests.swift in Sources */,
 				DEA04FB333232EAAE82C9AD7 /* R9ManagementPanesUITests.swift in Sources */,

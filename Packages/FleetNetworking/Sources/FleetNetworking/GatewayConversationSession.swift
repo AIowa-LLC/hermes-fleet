@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -42,6 +42,11 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
     /// branch). Same fail-closed-by-seam discipline as `approvals`.
     public let tooling: any ConversationToolingProviding
 
+    /// R10-T1 attachment-staging client bound to the shared transport
+    /// (file.attach / image.attach_bytes / pdf.attach / image.detach).
+    /// Same fail-closed-by-seam discipline as `approvals` / `tooling`.
+    public let attachments: any AttachmentStagingProviding
+
     public init(
         gatewayID: GatewayID,
         displayName: String,
@@ -60,6 +65,7 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         self.history = history
         self.approvals = GatewayApprovalClient(gatewayID: gatewayID, transport: transport)
         self.tooling = GatewayConversationToolingClient(gatewayID: gatewayID, transport: transport)
+        self.attachments = GatewayAttachmentClient(gatewayID: gatewayID, transport: transport)
         self.conversation = GatewayConversationClient(gatewayID: gatewayID, transport: transport)
         self.replay = GatewayReplayEngine(gatewayID: gatewayID, transport: transport, history: history)
     }

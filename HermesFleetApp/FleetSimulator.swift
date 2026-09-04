@@ -383,7 +383,7 @@ final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable 
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
@@ -392,6 +392,10 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// R9-T2/T3/T4: scripted tooling seam (fixture models + usage +
     /// steer/title/branch recorders).
     let toolingBox = ScriptedToolingBox()
+    /// R10-T1: scripted attachment-staging seam (fixture refs + failure
+    /// hooks so the composer tray is fully walkable in the simulator + UI
+    /// tests).
+    let attachmentsBox = ScriptedAttachmentSeam()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
@@ -438,6 +442,11 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// R9-T2/T3/T4: scripted tooling seam.
     var tooling: any ConversationToolingProviding {
         toolingBox
+    }
+
+    /// R10-T1: scripted attachment-staging seam.
+    var attachments: any AttachmentStagingProviding {
+        attachmentsBox
     }
 
     /// R9-T1 UI-test hook: push a scripted approval request into the
@@ -716,6 +725,82 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
             provider: "simulator",
             profileName: nil
         )
+    }
+}
+
+/// R10-T1: scripted attachment-staging seam (DEBUG simulator only).
+/// Deterministic fixture `@file:` refs shaped like the live gateway's
+/// `file.attach` result (methods_prompt.py:1350-1395); records every attach
+/// call so UI tests assert the wire-shaped ask. Failure hook
+/// (`HERMES_FLEET_ATTACHMENT_FAIL=1`) makes every attach throw 4018-shaped
+/// `tooLarge` so the never-silent error banner is walkable.
+final class ScriptedAttachmentSeam: AttachmentStagingProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _attachCalls: [(method: String, sessionID: String, name: String)] = []
+
+    /// Recorded attach calls (method, session, name) — UI-test observability.
+    var attachCalls: [(method: String, sessionID: String, name: String)] {
+        lock.lock(); defer { lock.unlock() }
+        return _attachCalls
+    }
+
+    private func record(_ method: String, _ sessionID: String, _ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        _attachCalls.append((method, sessionID, name))
+    }
+
+    private var failAll: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_ATTACHMENT_FAIL"] == "1"
+    }
+
+    func attachFile(sessionID: String, name: String, dataURL: String) async throws -> StagedFileAttachment {
+        record("file.attach", sessionID, name)
+        if failAll {
+            throw AttachmentStagingError.tooLarge(detail: "fixture: file too large (UI-test failure hook)")
+        }
+        let display = (name as NSString).lastPathComponent
+        return StagedFileAttachment(
+            name: display,
+            path: "/srv/hermes/profiles/default/attachments/\(display)",
+            refPath: "attachments/\(display)",
+            refText: "@file:attachments/\(display)",
+            uploaded: true)
+    }
+
+    func attachImageBytes(sessionID: String, filename: String, dataURL: String) async throws -> StagedImageAttachment {
+        record("image.attach_bytes", sessionID, filename)
+        if failAll {
+            throw AttachmentStagingError.tooLarge(detail: "fixture: image too large (UI-test failure hook)")
+        }
+        return StagedImageAttachment(
+            path: "/srv/hermes/images/upload_fixture_1.png",
+            name: "upload_fixture_1.png",
+            count: 1,
+            byteCount: 1_024,
+            width: 64,
+            height: 64,
+            tokenEstimate: 320)
+    }
+
+    func attachPDF(sessionID: String, filename: String, dataURL: String) async throws -> StagedPDFAttachment {
+        record("pdf.attach", sessionID, filename)
+        if failAll {
+            throw AttachmentStagingError.tooLarge(detail: "fixture: PDF too large (UI-test failure hook)")
+        }
+        return StagedPDFAttachment(
+            filename: (filename as NSString).lastPathComponent,
+            pagesAttached: 2,
+            pages: [
+                StagedPDFPage(path: "/srv/hermes/images/pdf_p1_1.png", pageNumber: 1,
+                              name: "pdf_p1_1.png", width: 1275, height: 1650),
+                StagedPDFPage(path: "/srv/hermes/images/pdf_p2_2.png", pageNumber: 2,
+                              name: "pdf_p2_2.png", width: 1275, height: 1650),
+            ],
+            count: 2)
+    }
+
+    func detachImage(sessionID: String, path: String) async throws -> DetachedImageState {
+        DetachedImageState(detached: true, count: 0)
     }
 }
 

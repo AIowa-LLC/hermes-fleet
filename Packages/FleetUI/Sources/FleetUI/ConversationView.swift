@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 import FleetCore
 import FleetPersistence
 
@@ -31,6 +33,9 @@ public struct ConversationView: View {
     @State private var showingContextBreakdown = false
     /// R9-T4: fork navigation — the new session id to route to.
     @State private var forkTargetSessionID: String?
+    /// R10-T1: composer attachment pickers.
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingFileImporter = false
 
     public init(environment: AppEnvironment, route: Route, sessionID: String?) {
         self.environment = environment
@@ -52,6 +57,20 @@ public struct ConversationView: View {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
             }
             await viewModel?.start()
+            // R10-T1 demo hook (simulator only): `HERMES_FLEET_ATTACHMENT_PICK=1`
+            // stages a fixture markdown file through the seam once the session
+            // is open — the deterministic UI-test stand-in for the system
+            // photo/document pickers (which cannot be driven deterministically
+            // on the simulator).
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_ATTACHMENT_PICK"] == "1",
+               viewModel?.pendingAttachments.isEmpty == true {
+                let fixture = Data("# fixture notes\nR10-T1 scripted attachment.\n".utf8)
+                await viewModel?.stageAttachment(
+                    name: "notes.md",
+                    mime: "text/markdown",
+                    byteCount: fixture.count,
+                    loadBytes: { fixture })
+            }
         }
         .onDisappear {
             viewModel?.teardown()
@@ -356,67 +375,273 @@ public struct ConversationView: View {
     // MARK: Composer (V2 — surface bar, flat pale-cyan circular send button)
 
     private func composer(_ model: ConversationViewModel) -> some View {
-        HStack(spacing: FleetTheme.spacingSm) {
-            TextField("Message", text: $composerText, axis: .vertical)
-                .lineLimit(1...4)
-                .font(.body)
-                .foregroundStyle(FleetTheme.textPrimary)
-                .tint(FleetTheme.accent)
-                .padding(.horizontal, FleetTheme.spacingMd)
-                .padding(.vertical, FleetTheme.spacingSm)
-                .background(
-                    RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                        .fill(FleetTheme.background)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                        .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
-                )
-                .disabled(model.phase != .ready && model.phase != .streaming)
-                .accessibilityIdentifier("fleet.conversation.composer")
-                .onSubmit {
-                    Task { await submit(model) }
+        VStack(spacing: 0) {
+            // R10-T1: pending-attachment chips (name + size, removable) and
+            // the never-silent error banner sit directly above the input row.
+            if !model.pendingAttachments.isEmpty || model.isUploadingAttachment {
+                attachmentTray(model)
+            }
+            if let attachmentError = model.attachmentError {
+                attachmentErrorBanner(model, message: attachmentError)
+            }
+            HStack(spacing: FleetTheme.spacingSm) {
+                // R10-T1: "+" affordance — Photos picker (images) + Files
+                // importer (PDF/any). Hidden while a turn streams (the
+                // gateway queues attaches for the NEXT submit; allowing
+                // mid-stream picks invites orphaned uploads).
+                if model.phase == .ready {
+                    Menu {
+                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                            Label("Photo…", systemImage: "photo")
+                        }
+                        Button {
+                            showingFileImporter = true
+                        } label: {
+                            Label("File or PDF…", systemImage: "doc")
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(FleetTheme.accent)
+                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .background(Circle().fill(FleetTheme.surfaceElevated))
+                            .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityLabel("Attach")
+                    .accessibilityIdentifier("fleet.conversation.attach")
                 }
 
-            if model.phase == .streaming || model.isStreaming {
-                Button {
-                    Task { await model.interrupt() }
-                } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                        .background(Circle().fill(FleetTheme.surfaceElevated))
-                        .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                TextField("Message", text: $composerText, axis: .vertical)
+                    .lineLimit(1...4)
+                    .font(.body)
+                    .foregroundStyle(FleetTheme.textPrimary)
+                    .tint(FleetTheme.accent)
+                    .padding(.horizontal, FleetTheme.spacingMd)
+                    .padding(.vertical, FleetTheme.spacingSm)
+                    .background(
+                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                            .fill(FleetTheme.background)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                            .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
+                    )
+                    .disabled(model.phase != .ready && model.phase != .streaming)
+                    .accessibilityIdentifier("fleet.conversation.composer")
+                    .onSubmit {
+                        Task { await submit(model) }
+                    }
+
+                if model.phase == .streaming || model.isStreaming {
+                    Button {
+                        Task { await model.interrupt() }
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .background(Circle().fill(FleetTheme.surfaceElevated))
+                            .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityLabel("Stop")
+                    .accessibilityIdentifier("fleet.conversation.stop")
+                } else {
+                    Button {
+                        Task { await submit(model) }
+                    } label: {
+                        // V2 (Nous Direction A): FLAT pale-cyan circle, dark
+                        // glyph — the one accent, no glow, no gradient.
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(FleetTheme.background)
+                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .background(Circle().fill(FleetTheme.accent))
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .disabled(model.phase != .ready || (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
+                    .accessibilityLabel("Send")
+                    .accessibilityIdentifier("fleet.conversation.send")
                 }
-                .buttonStyle(.fleetPressable)
-                .accessibilityLabel("Stop")
-                .accessibilityIdentifier("fleet.conversation.stop")
-            } else {
-                Button {
-                    Task { await submit(model) }
-                } label: {
-                    // V2 (Nous Direction A): FLAT pale-cyan circle, dark
-                    // glyph — the one accent, no glow, no gradient.
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(FleetTheme.background)
-                        .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                        .background(Circle().fill(FleetTheme.accent))
-                }
-                .buttonStyle(.fleetPressable)
-                .disabled(model.phase != .ready || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Send")
-                .accessibilityIdentifier("fleet.conversation.send")
             }
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.vertical, FleetTheme.spacingSm)
         }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, FleetTheme.spacingSm)
         .background(FleetTheme.surface)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
                 .frame(height: 1)
+        }
+        // R10-T1: pickers.
+        .onChange(of: selectedPhoto) { _, item in
+            guard let item else { return }
+            selectedPhoto = nil
+            Task { await loadPickedPhoto(item, model: model) }
+        }
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
+            guard case .success(let url) = result else {
+                // User-cancelled picker: not an error.
+                return
+            }
+            Task { await loadPickedFile(url, model: model) }
+        }
+    }
+
+    // MARK: R10-T1 — attachment tray + pickers
+
+    /// Pending-attachment chips: name + human-readable size, removable with
+    /// the X button; a spinner chip while an upload is in flight.
+    private func attachmentTray(_ model: ConversationViewModel) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: FleetTheme.spacingSm) {
+                if model.isUploadingAttachment {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Uploading…")
+                            .font(.caption)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                            .fill(FleetTheme.surfaceElevated))
+                    .accessibilityIdentifier("fleet.conversation.attachment.uploading")
+                }
+                ForEach(model.pendingAttachments) { chip in
+                    HStack(spacing: 6) {
+                        Image(systemName: "paperclip")
+                            .font(.caption2)
+                            .foregroundStyle(FleetTheme.accent)
+                        Text(chip.caption)
+                            .font(.caption)
+                            .foregroundStyle(FleetTheme.textPrimary)
+                            .lineLimit(1)
+                        Button {
+                            model.removePendingAttachment(chip.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                        }
+                        .accessibilityLabel("Remove attachment \(chip.displayName)")
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                            .fill(FleetTheme.surfaceElevated))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
+                            .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("fleet.conversation.attachment.chip.\(chip.displayName)")
+                }
+            }
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.top, FleetTheme.spacingSm)
+        }
+    }
+
+    /// Composer attachment error banner — never silent (R10-T1 mandate).
+    private func attachmentErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(FleetTheme.statusDegraded)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(FleetTheme.textPrimary)
+                .lineLimit(3)
+            Spacer(minLength: 0)
+            Button {
+                model.clearAttachmentError()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+            .accessibilityLabel("Dismiss attachment error")
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, 6)
+        .background(FleetTheme.surfaceElevated)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.attachment.error")
+    }
+
+    /// Load picked photo bytes (the gateway image allowlist: PNG/JPEG/GIF/
+    /// WebP/BMP) and stage them. HEIC/other camera formats convert to JPEG
+    /// via ImageIO first (the vision pipeline can't read them, cli.py:3954);
+    /// unconvertible data fails honestly pre-upload.
+    private func loadPickedPhoto(_ item: PhotosPickerItem, model: ConversationViewModel) async {
+        let data: Data
+        do {
+            guard let loaded = try await item.loadTransferable(type: Data.self), !loaded.isEmpty else {
+                return // user-cancelled / empty pick — not an error
+            }
+            data = loaded
+        } catch {
+            await model.stageAttachment(
+                name: "photo.bin", mime: nil, byteCount: 0,
+                loadBytes: { throw error })
+            return
+        }
+        if let ext = AttachmentStagingRules.sniffedImageExtension(bytes: data) {
+            let stamp = Int(Date.now.timeIntervalSince1970)
+            await model.stageAttachment(
+                name: "photo_\(stamp).\(ext)",
+                mime: nil,
+                byteCount: data.count,
+                loadBytes: { data })
+        } else if let jpeg = Self.cameraDataAsJPEG(data) {
+            let stamp = Int(Date.now.timeIntervalSince1970)
+            await model.stageAttachment(
+                name: "photo_\(stamp).jpg",
+                mime: nil,
+                byteCount: jpeg.count,
+                loadBytes: { jpeg })
+        } else {
+            await model.stageAttachment(
+                name: "photo.unsupported", mime: nil, byteCount: data.count,
+                loadBytes: { throw AttachmentStagingError.unsupportedImageFormat(name: "photo") })
+        }
+    }
+
+    /// HEIC/RAW → JPEG via ImageIO (device photos default to HEIC; the
+    /// gateway's image pipeline accepts PNG/JPEG/GIF/WebP/BMP only).
+    private static func cameraDataAsJPEG(_ data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0 else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImageFromSource(destination, source, 0, [
+            kCGImageDestinationLossyCompressionQuality: 0.85,
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+
+    /// Load a picked file URL (PDF or any type) via security-scoped access.
+    private func loadPickedFile(_ url: URL, model: ConversationViewModel) async {
+        let gotAccess = url.startAccessingSecurityScopedResource()
+        defer { if gotAccess { url.stopAccessingSecurityScopedResource() } }
+        let name = url.lastPathComponent
+        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+        do {
+            // Pre-upload guard on the real size before reading the bytes.
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            await model.stageAttachment(
+                name: name,
+                mime: mime,
+                byteCount: size,
+                loadBytes: { try Data(contentsOf: url) })
+        } catch {
+            await model.stageAttachment(
+                name: name, mime: mime, byteCount: 0,
+                loadBytes: { throw error })
         }
     }
 
