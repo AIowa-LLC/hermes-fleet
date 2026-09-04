@@ -60,6 +60,14 @@ public typealias FleetProjectsSeamFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any GatewayProjectsProviding
 
+/// R10-T4 — builds the on-device voice engine (Speech framework STT +
+/// AVSpeechSynthesizer TTS) shared by every conversation view model. nil ⇒
+/// the fail-closed `UnsupportedVoiceTranscriber` (mic affordances hidden).
+/// Lives in FleetUI for the same M0-guard reason as the factories above:
+/// SwiftUI depends only on the FleetCore `VoiceTranscribing` seam — never on
+/// AVFoundation/Speech directly.
+public typealias FleetVoiceEngineFactory = @Sendable () -> (any VoiceTranscribing)?
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -192,6 +200,10 @@ public final class AppEnvironment {
     /// gateway (the concrete `GatewayProjectsClient` in production,
     /// scripted in DEBUG/tests).
     private let projectsSeamFactory: FleetProjectsSeamFactory?
+
+    /// R10-T4 — builds the shared on-device voice engine (nil ⇒ fail-closed
+    /// default; mic affordances hidden).
+    private let voiceEngineFactory: FleetVoiceEngineFactory?
     /// R10-T3: projects-tree snapshot store (offline browse). Same
     /// construction as the learning snapshot store.
     private let projectsSnapshotStore_: (any ProjectsSnapshotStoring)?
@@ -242,7 +254,8 @@ public final class AppEnvironment {
         projectsSnapshotStore: (any ProjectsSnapshotStoring)? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
-        seedRegistrations: [GatewayRegistration] = []
+        seedRegistrations: [GatewayRegistration] = [],
+        voiceEngineFactory: FleetVoiceEngineFactory? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -259,6 +272,7 @@ public final class AppEnvironment {
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
+        self.voiceEngineFactory = voiceEngineFactory
     }
 
     // MARK: Load / refresh
@@ -536,7 +550,8 @@ public final class AppEnvironment {
 
     /// Build the U3 Conversation view model for a route (nil when the gateway
     /// has no conversation session wired — the screen renders an unavailable
-    /// state, fail closed).
+    /// state, fail closed). R10-T4: the shared voice engine rides along
+    /// (fail-closed default inside the VM when nil).
     public func makeConversationViewModel(route: Route, sessionID: String?) -> ConversationViewModel? {
         guard let session = conversationSession(for: route.gatewayID) else { return nil }
         return ConversationViewModel(
@@ -544,7 +559,8 @@ public final class AppEnvironment {
             cache: cache,
             route: route,
             sessionID: sessionID,
-            biometrics: biometrics
+            biometrics: biometrics,
+            voice: voiceEngineFactory?()
         )
     }
 

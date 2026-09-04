@@ -98,8 +98,93 @@ extension FleetServiceGraph {
             },
             projectsSnapshotStore: cacheStore,
             health: health,
-            seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations
+            seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
+            // R10-T4: scripted voice seam (env-knobbed) so the mic button,
+            // authorization gate and transcript review are walkable
+            // deterministically in the simulator + UI tests — no live speech.
+            voiceEngineFactory: { ScriptedVoiceEngine.shared }
         )
+    }
+}
+
+/// R10-T4 — scripted voice engine (DEBUG simulator only), env-knobbed:
+/// - `HERMES_FLEET_VOICE_DENIED=1`: authorization reports denied (the honest
+///   gate UI renders, no capture ever starts).
+/// - `HERMES_FLEET_VOICE_TRANSCRIPT=1`: an authorized mic tap returns a fixed
+///   FINAL transcript after a short delay (lands in the review chip).
+/// - default: authorized, no transcript (listening state renders until the
+///   tap-to-stop, which returns nil).
+final class ScriptedVoiceEngine: VoiceTranscribing, @unchecked Sendable {
+    static let shared = ScriptedVoiceEngine()
+
+    private let lock = NSLock()
+    private var _listening = false
+    private var _stopRequested = false
+    private var _spoken: [String] = []
+
+    private var denied: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_VOICE_DENIED"] == "1"
+    }
+    private var scriptedTranscript: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_VOICE_TRANSCRIPT"] == "1"
+    }
+
+    // Sync lock helpers (NSLock is unavailable from async contexts).
+    private func tryBeginListening() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if _listening { return false }
+        _listening = true
+        _stopRequested = false
+        return true
+    }
+    private func endListening() {
+        lock.lock(); defer { lock.unlock() }
+        _listening = false
+    }
+    private var stopRequestedFlag: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _stopRequested
+    }
+    private func requestStop() {
+        lock.lock(); defer { lock.unlock() }
+        _stopRequested = true
+    }
+    private func recordSpoken(_ text: String) {
+        lock.lock(); defer { lock.unlock() }
+        _spoken.append(text)
+    }
+
+    func authorizationStatus() async -> VoiceAuthorization { denied ? .denied : .authorized }
+    func requestAuthorization() async -> VoiceAuthorization { denied ? .denied : .authorized }
+
+    func transcribe() async throws -> VoiceTranscript? {
+        guard tryBeginListening() else { throw VoiceError.alreadyListening }
+        defer { endListening() }
+        if scriptedTranscript {
+            try? await Task.sleep(for: .milliseconds(400))
+            return VoiceTranscript(text: "Scripted voice transcript for review", isFinal: true)
+        }
+        // Default: listen until the user taps stop (an honest "nothing
+        // recognized" nil — no fabricated transcript).
+        while !stopRequestedFlag {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
+    func stopTranscribing() async {
+        requestStop()
+    }
+
+    func speak(text: String) async throws {
+        recordSpoken(text)
+    }
+    func stopSpeaking() async {}
+    var isSpeaking: Bool { false }
+
+    var spokenTexts: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _spoken
     }
 }
 

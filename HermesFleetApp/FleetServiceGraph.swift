@@ -172,7 +172,13 @@ enum FleetServiceGraph {
             // LAContext; DEBUG device dogfood too, since makeDefaultEnvironment
             // only scripts the SIMULATOR).
             biometrics: makeApprovalBiometrics(),
-            seedRegistrations: []
+            seedRegistrations: [],
+            // R10-T4: the REAL on-device voice engine (Speech framework STT +
+            // AVSpeechSynthesizer TTS) — a documented client-side deviation:
+            // the gateway has no client-audio upload (server.py:17334 listens
+            // on the gateway's own mic), so iOS transcribes locally and
+            // submits text. See docs/R10-pocket-parity-ii.md.
+            voiceEngineFactory: { SpeechVoiceIO() }
         )
     }
 

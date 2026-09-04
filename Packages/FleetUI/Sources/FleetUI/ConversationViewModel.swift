@@ -226,6 +226,40 @@ public final class ConversationViewModel {
     /// Non-secret reaction error banner text (never silent).
     public private(set) var reactionError: String?
 
+    // MARK: R10-T4 — voice (client-side STT/TTS, documented deviation)
+
+    /// The voice seam — fail-closed `UnsupportedVoiceTranscriber` when the
+    /// composition root wires no engine, so the mic affordances hide entirely
+    /// instead of pretending. DEVIATION: hermes-agent 0.21 has NO client-audio
+    /// WS upload (`/voice` listens on the GATEWAY's local mic,
+    /// `full_duplex_listen` server.py:17334) — iOS transcribes on-device via
+    /// the Speech framework and submits TEXT through `prompt.submit`; replies
+    /// are spoken locally via AVSpeechSynthesizer. See docs/R10.
+    private let voice: any VoiceTranscribing
+    /// True when a real voice engine is wired (drives affordance visibility).
+    public var isVoiceAvailable: Bool {
+        if voice is UnsupportedVoiceTranscriber { return false }
+        return true
+    }
+    /// True while mic capture is running (mic button shows stop).
+    public private(set) var isListening = false
+    /// Honest authorization-denied state for the gate UI (Settings deep link).
+    public private(set) var isVoiceDenied = false
+    /// The latest transcript, landed for composer REVIEW (review-first).
+    public private(set) var latestVoiceTranscript: VoiceTranscript?
+    /// Voice mode: assistant replies are spoken (TTS). User-toggled.
+    public var isVoiceModeEnabled = false
+    /// Optional: auto-submit a FINAL transcript (submit-on-silence).
+    /// Default OFF — review-first. A PARTIAL (manual-stop) transcript is
+    /// NEVER auto-submitted.
+    public var isSubmitOnSilenceEnabled = false
+    /// Non-secret voice error banner text (never silent).
+    public private(set) var voiceError: String?
+    /// The mic capture task. `nonisolated(unsafe)`: only canceled from
+    /// `deinit` (the established eventTask/statusWatcher pattern); all
+    /// creation/nil-out happens on the main actor.
+    nonisolated(unsafe) private var micTask: Task<Void, Never>?
+
     // MARK: Internal state
 
     private var openedSessionID: String?
@@ -243,6 +277,9 @@ public final class ConversationViewModel {
     /// row, and flushed into the row when this turn's assistant row is
     /// created (`message.start`, or the first `message.delta` minting one).
     private var pendingReasoning: String?
+    /// R10-T4 TTS: whether any assistant chunk was spoken for the current
+    /// turn (guards the exactly-once complete-text fallback).
+    private var spokenThisTurn = false
     /// `nonisolated(unsafe)`: the event task is only ever CANCELED from
     /// `deinit` (a nonisolated context); cancel is thread-safe. All mutation
     /// (creation, nil-out) happens on the main actor.
@@ -272,7 +309,8 @@ public final class ConversationViewModel {
         sessionID: String?,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         statusInterval: Duration = .milliseconds(400),
-        maxDisplayRows: Int = 200
+        maxDisplayRows: Int = 200,
+        voice: (any VoiceTranscribing)? = nil
     ) {
         self.session = session
         self.cache = cache
@@ -281,6 +319,8 @@ public final class ConversationViewModel {
         self.biometrics = biometrics
         self.statusInterval = statusInterval
         self.maxDisplayRows = maxDisplayRows
+        // R10-T4: fail-closed voice default when no engine is injected.
+        self.voice = voice ?? UnsupportedVoiceTranscriber()
         // R10-T1: one cast at build time (the ApprovalsCapable discipline).
         if let capable = session as? AttachmentStagingCapable {
             self.attachments = capable.attachments
@@ -303,6 +343,7 @@ public final class ConversationViewModel {
     deinit {
         eventTask?.cancel()
         statusWatcher?.cancel()
+        micTask?.cancel()
     }
 
     // MARK: Lifecycle
@@ -516,7 +557,14 @@ public final class ConversationViewModel {
     /// queue onto the session for the NEXT `prompt.submit`,
     /// methods_prompt.py:1163+); submit carries the composed text with the
     /// staged refs appended. Attach-only sends (empty text) are valid.
+    /// R10-T4: a NEW user turn cuts any spoken reply first — the client-side
+    /// mirror of `mark_speech_interrupted` (server.py:17191: the gateway cuts
+    /// its own TTS when a new user turn arrives; here the iOS TTS is local,
+    /// so the cut is local too).
     public func send(_ text: String) async {
+        if isVoiceModeEnabled {
+            await voice.stopSpeaking()
+        }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sid = openedSessionID,
               !isStreaming,
@@ -670,6 +718,88 @@ public final class ConversationViewModel {
             }
         } catch {
             classifyTurnFailure(error)
+        }
+    }
+
+    // MARK: R10-T4 — voice (client-side STT/TTS; see the seam's deviation note)
+
+    /// Toggle mic capture. First tap authorizes (system sheets); a DENIED
+    /// state surfaces honestly (`isVoiceDenied`) and never captures. While
+    /// listening, a second tap stops and takes the best PARTIAL (never
+    /// auto-submitted). A settled FINAL transcript lands in
+    /// `latestVoiceTranscript` for composer review — and auto-submits ONLY
+    /// when the user opted into submit-on-silence.
+    public func toggleMic() async {
+        guard isVoiceAvailable else {
+            voiceError = VoiceError.unsupported.description
+            return
+        }
+        guard !isListening else {
+            // Manual stop: the in-flight transcribe() returns the best
+            // partial (isFinal == false ⇒ review-only, never auto-submit).
+            await voice.stopTranscribing()
+            return
+        }
+        let status = await voice.requestAuthorization()
+        isVoiceDenied = (status == .denied)
+        guard status == .authorized else { return }
+        voiceError = nil
+        isListening = true
+        micTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let transcript = try await self.voice.transcribe()
+                await MainActor.run {
+                    self.isListening = false
+                    guard let transcript, !transcript.text.isEmpty else { return }
+                    self.latestVoiceTranscript = transcript
+                    if transcript.isFinal && self.isSubmitOnSilenceEnabled {
+                        Task { await self.send(transcript.text) }
+                    }
+                }
+            } catch is CancellationError {
+                await MainActor.run { self.isListening = false }
+            } catch let error as VoiceError {
+                await MainActor.run {
+                    self.isListening = false
+                    self.voiceError = error.description
+                }
+            } catch {
+                await MainActor.run {
+                    self.isListening = false
+                    self.voiceError = VoiceError.captureFailed(Self.nonSecret(error)).description
+                }
+            }
+        }
+    }
+
+    /// Voice mode toggle: turning OFF cuts any in-flight speech immediately
+    /// (never talks over the user reading).
+    public func setVoiceMode(_ enabled: Bool) async {
+        isVoiceModeEnabled = enabled
+        if !enabled {
+            await voice.stopSpeaking()
+        }
+    }
+
+    /// Dismiss the never-silent voice error banner.
+    public func clearVoiceError() {
+        voiceError = nil
+    }
+
+    /// Clear the pending transcript review chip (used/discard/edit paths).
+    public func discardTranscript() {
+        latestVoiceTranscript = nil
+    }
+
+    /// R10-T4 TTS: speak one assistant text chunk (a streaming delta or a
+    /// complete text — see `render` for the exactly-once discipline).
+    /// Chunks are NOT trimmed (trimming would concatenate "Hello "+"fleet"
+    /// into "Hellofleet"); whitespace-only chunks are skipped.
+    private func speakAssistant(_ text: String) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Task { [voice] in
+            try? await voice.speak(text: text)
         }
     }
 
@@ -933,9 +1063,17 @@ public final class ConversationViewModel {
             flushPendingReasoning()
             isStreaming = true
             phase = .streaming
+            spokenThisTurn = false
 
         case .messageDelta(_, let text, _, _):
             appendToAssistant(text)
+            if isVoiceModeEnabled {
+                // R10-T4: chunked TTS — speak each streaming delta as it
+                // lands (the desktop speaks streamed chunks; here chunks are
+                // local utterances).
+                speakAssistant(text)
+                spokenThisTurn = true
+            }
             if !isStreaming {
                 isStreaming = true
                 phase = .streaming
@@ -944,6 +1082,11 @@ public final class ConversationViewModel {
         case .messageInterim(_, let text, let alreadyStreamed, _):
             if !alreadyStreamed {
                 appendToAssistant(text)
+                if isVoiceModeEnabled {
+                    // Not streamed as a delta — speak it as its own chunk.
+                    speakAssistant(text)
+                    spokenThisTurn = true
+                }
             }
 
         case .messageComplete(_, let text, let status, let error, _):
@@ -953,6 +1096,13 @@ public final class ConversationViewModel {
                 allRows[idx].isStreaming = false
                 allRows[idx].isFailed = isError
             }
+            if isVoiceModeEnabled && !spokenThisTurn && !isError && !text.isEmpty {
+                // No deltas were spoken (turn arrived as one complete frame) —
+                // speak the full text EXACTLY ONCE (never in addition to the
+                // already-spoken chunks, which concatenate to the same text).
+                speakAssistant(text)
+            }
+            spokenThisTurn = false
             isStreaming = false
             phase = .ready
             // P0-8: a completed turn must not carry buffered reasoning into

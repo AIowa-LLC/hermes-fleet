@@ -110,3 +110,96 @@ Commit: see `git log --grep t_8f7350ae`.
   author surface is future desktop parity.
 - The reacted live row's chip re-renders from the settle result; there is
   no push event for third-party reactions (none exists on the wire).
+
+## T4 — Voice (client-side STT/TTS, documented deviation)
+
+Commit: see `git log --grep t_703c65a6`.
+
+### Wire truth (verified 2026-09-04)
+
+- hermes-agent 0.21 has NO client-audio WS upload method. The WS registry
+  exposes no audio-in method; `/voice` toggles the gateway's OWN local-mic
+  loop: `full_duplex_listen` (`server.py:17334`, armed by
+  `_arm_full_duplex_listener` `server.py:17223/17246`) records the gateway
+  host's microphone, `transcribe_recording` runs server-side, and the
+  transcript is fed to the agent as a local interjection
+  (`server.py:17334-17360`). None of that path accepts remote audio.
+- Interrupt semantics for spoken replies:
+  `mark_speech_interrupted` (`tools/tts_streaming.py`, called at
+  `server.py:17191` on voice-mode change and `server.py:17303` when a voice
+  interjection arrives mid-turn) — speech is cut when a new user turn lands.
+
+### DEVIATION BY DESIGN
+
+Desktop's `/voice` loop listens on the gateway's local mic. iOS cannot feed
+a remote mic into it — no wire exists — so the iOS implementation is
+CLIENT-SIDE and documented here as a deviation:
+
+- STT: on-device `SFSpeechRecognizer` (on-device recognition requested when
+  supported; only recognized TEXT is ever submitted, via the normal
+  `prompt.submit` path — no audio leaves the device).
+- TTS: local `AVSpeechSynthesizer`, chunked by streaming `message.delta`s
+  (each delta is one queued utterance; a turn that arrives as a single
+  complete frame is spoken exactly once — the never-double rule).
+- Interrupt: a new user turn cuts speech locally at `send()` entry —
+  mirroring `mark_speech_interrupted` (server.py:17191), applied to the
+  local synthesizer since the speech is local.
+
+No wire was invented; nothing here claims gateway-side voice.
+
+### Implementation
+
+- `FleetCore/VoiceSeam.swift` — `VoiceTranscript`, `VoiceAuthorization`,
+  `VoiceError`, the `VoiceTranscribing` seam +
+  `UnsupportedVoiceTranscriber` fail-closed default (FleetUI never imports
+  AVFoundation/Speech — M0 discipline).
+- `HermesFleetApp/VoiceIO.swift` — `SpeechVoiceIO`: the concrete engine
+  (AVAudioSession playAndRecord+duckOthers, SFSpeechAudioBufferRecognition
+  request with on-device recognition when supported, one parked
+  continuation resumed exactly once — final > partial > nil; AVSpeech
+  queue with per-utterance completion bridge; stopSpeaking cuts the queue).
+- `ConversationViewModel` — `voice` seam (default fail-closed),
+  `toggleMic()` (authorize → gate or capture), `latestVoiceTranscript`
+  (review-first), `isSubmitOnSilenceEnabled` (final-only auto-submit;
+  partials NEVER auto-submit), voice mode speaking in `render`, speech cut
+  at `send()` entry, never-silent `voiceError`.
+- `ConversationView` — mic button (`fleet.conversation.mic`,
+  listening/stop states), "Speak Replies" toggle in the "+" menu
+  (`fleet.conversation.voiceMode.toggle`), transcript review chip
+  (Use/Send/Discard), honest denied banner with Settings deep link,
+  never-silent voice error banner.
+- `AppEnvironment` — `FleetVoiceEngineFactory` seam, threaded into the
+  conversation VM (nil ⇒ fail-closed, affordances hidden).
+- `FleetServiceGraph` — production wires `SpeechVoiceIO`;
+  `FleetSimulator` wires the env-knobbed `ScriptedVoiceEngine`
+  (`HERMES_FLEET_VOICE_DENIED=1`, `HERMES_FLEET_VOICE_TRANSCRIPT=1`).
+- `Info.plist` — `NSSpeechRecognitionUsageDescription` +
+  `NSMicrophoneUsageDescription`.
+
+### Tests
+
+- FleetCore `VoiceSeamDomainTests` — 4 tests (values, fail-closed default).
+- Hosted `ConversationVoiceViewModelTests` — 9 tests, scripted seams, no
+  live speech: denied gate never captures; final transcript lands for
+  review (review-first default); submit-on-silence auto-submits FINALS
+  only; partials never auto-submit; deltas spoken chunked + complete text
+  exactly once; every user turn cuts speech; voice-off never speaks;
+  capture failure surfaces the never-silent banner; fail-closed default
+  hides affordances + honest error.
+- UI `R10VoiceUITests` — 2 deterministic tests (denied gate banner +
+  Settings action, no capture; transcript chip → Send submits through the
+  composer path and the scripted turn streams back). Registered in
+  `scripts/c1_ci_validate.sh` (the R9-T7 QA rule).
+- Live mic/speech verification is a LOCAL-ONLY environmental suite (real
+  device dogfood lane) — never in CI.
+
+### Deviations / honest notes
+
+- CLIENT-SIDE VOICE IS THE DEVIATION (above). If hermes-agent later adds a
+  client-audio WS method, the seam is the swap point.
+- Speech recognition may require network for some locales even with
+  `requiresOnDeviceRecognition` requested; the usage description says
+  "on-device" only for locales that support it — the permission copy
+  states text-only submission honestly.
+- Submit-on-silence defaults OFF (review-first); manual stop always lands
+  a PARTIAL that is never auto-submitted.

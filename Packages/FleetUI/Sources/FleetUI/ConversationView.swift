@@ -36,6 +36,9 @@ public struct ConversationView: View {
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingFileImporter = false
+    /// R10-T4: voice transcript review confirmation (sheet). Presented when a
+    /// transcript lands for review (submit-on-silence OFF).
+    @State private var showingTranscriptReview = false
 
     public init(environment: AppEnvironment, route: Route, sessionID: String?) {
         self.environment = environment
@@ -462,6 +465,21 @@ public struct ConversationView: View {
             if let reactionError = model.reactionError {
                 reactionErrorBanner(model, message: reactionError)
             }
+            // R10-T4: voice banners — honest authorization-denied gate +
+            // never-silent capture/synthesis failure.
+            if model.isVoiceDenied {
+                voiceDeniedBanner(model)
+            }
+            if let voiceError = model.voiceError {
+                voiceErrorBanner(model, message: voiceError)
+            }
+            // R10-T4: transcript review chip — the recognized text lands for
+            // review before any submit (review-first; never auto-sent unless
+            // the user opted into submit-on-silence).
+            if let transcript = model.latestVoiceTranscript,
+               !model.isListening {
+                transcriptReviewChip(model, transcript: transcript)
+            }
             HStack(spacing: FleetTheme.spacingSm) {
                 // R10-T1: "+" affordance — Photos picker (images) + Files
                 // importer (PDF/any). Hidden while a turn streams (the
@@ -488,6 +506,41 @@ public struct ConversationView: View {
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Attach")
                     .accessibilityIdentifier("fleet.conversation.attach")
+                    // R10-T4: voice-mode toggle rides the "+" menu (speaker
+                    // icon). ON = assistant replies spoken via local TTS;
+                    // turning OFF cuts speech immediately.
+                    Toggle(isOn: Binding(
+                        get: { model.isVoiceModeEnabled },
+                        set: { enabled in
+                            Task { await model.setVoiceMode(enabled) }
+                        }
+                    )) {
+                        Label(
+                            model.isVoiceModeEnabled ? "Speak Replies On" : "Speak Replies",
+                            systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
+                        )
+                    }
+                    .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+                }
+
+                // R10-T4: mic button — on-device transcription (Speech
+                // framework) into the composer. Hidden entirely when no
+                // voice engine is wired (fail-closed). While listening, the
+                // button becomes a stop control (best-partial capture).
+                if model.isVoiceAvailable {
+                    Button {
+                        Task { await model.toggleMic() }
+                    } label: {
+                        Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDegraded) : AnyShapeStyle(FleetTheme.accent))
+                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .background(Circle().fill(FleetTheme.surfaceElevated))
+                            .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
+                    .accessibilityIdentifier("fleet.conversation.mic")
                 }
 
                 TextField("Message", text: $composerText, axis: .vertical)
@@ -671,6 +724,118 @@ public struct ConversationView: View {
         .background(FleetTheme.surfaceElevated)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.conversation.reaction.error")
+    }
+
+    // MARK: R10-T4 — voice banners + transcript review chip
+
+    /// Honest authorization-denied gate: mic/speech permission refused — the
+    /// ONLY action offered is opening Settings (never a fake retry).
+    private func voiceDeniedBanner(_ model: ConversationViewModel) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "mic.slash")
+                .foregroundStyle(FleetTheme.statusDegraded)
+            Text("Voice needs microphone + speech recognition access. Enable them in Settings to transcribe.")
+                .font(.caption)
+                .foregroundStyle(FleetTheme.textPrimary)
+                .lineLimit(3)
+            Spacer(minLength: 0)
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                Text("Settings")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
+            }
+            .accessibilityIdentifier("fleet.conversation.voice.denied.settings")
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, 6)
+        .background(FleetTheme.surfaceElevated)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.voice.denied")
+    }
+
+    /// Never-silent voice failure banner (capture/synthesis errors).
+    private func voiceErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(FleetTheme.statusDegraded)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(FleetTheme.textPrimary)
+                .lineLimit(3)
+            Spacer(minLength: 0)
+            Button {
+                model.clearVoiceError()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+            .accessibilityLabel("Dismiss voice error")
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, 6)
+        .background(FleetTheme.surfaceElevated)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.voice.error")
+    }
+
+    /// Transcript review chip: the recognized text lands above the composer
+    /// for review. "Use" drops it into the composer field for editing;
+    /// "Send" submits it as-is; "Discard" clears it. A partial (manual-stop)
+    /// transcript is labeled honestly.
+    private func transcriptReviewChip(_ model: ConversationViewModel, transcript: VoiceTranscript) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "waveform")
+                .foregroundStyle(FleetTheme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(transcript.text)
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textPrimary)
+                    .lineLimit(3)
+                if !transcript.isFinal {
+                    Text("Partial — stopped early. Edit before sending.")
+                        .font(.caption2)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+            }
+            Spacer(minLength: 0)
+            Button {
+                composerText = transcript.text
+                model.discardTranscript()
+            } label: {
+                Text("Use")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
+            }
+            .accessibilityIdentifier("fleet.conversation.voice.transcript.use")
+            Button {
+                Task {
+                    model.discardTranscript()
+                    await model.send(transcript.text)
+                }
+            } label: {
+                Text("Send")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
+            }
+            .accessibilityIdentifier("fleet.conversation.voice.transcript.send")
+            Button {
+                model.discardTranscript()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+            .accessibilityLabel("Discard transcript")
+            .accessibilityIdentifier("fleet.conversation.voice.transcript.discard")
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, 6)
+        .background(FleetTheme.surfaceElevated)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("fleet.conversation.voice.transcript")
     }
 
     /// Load picked photo bytes (the gateway image allowlist: PNG/JPEG/GIF/
