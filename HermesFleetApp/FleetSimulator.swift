@@ -89,6 +89,10 @@ extension FleetServiceGraph {
             managementSeamFactory: { gateway in
                 ScriptedManagementSeam(gatewayID: gateway.id)
             },
+            learningSeamFactory: { gateway in
+                ScriptedLearningSeam(gatewayID: gateway.id)
+            },
+            learningSnapshotStore: cacheStore,
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations
         )
@@ -309,6 +313,71 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
         }
     }
 }
+
+/// R9-T7: scripted learning seam (DEBUG simulator only) — a fixture
+/// learning journey (mirrors the live mac profile's real shape: learned
+/// skills + memory chunks across date buckets) so the Memory Graph is
+/// fully walkable without a live gateway. Presentation data only.
+final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable {
+
+    init(gatewayID: GatewayID) {}
+
+    func learningGraph(profile: String?) async throws -> LearningGraph {
+        Self.fixtureGraph()
+    }
+
+    func nodeDetail(id: String) async throws -> LearningNodeDetail {
+        let isMemory = id.hasPrefix("memory:")
+        return LearningNodeDetail(
+            id: id,
+            kind: isMemory ? "memory" : "skill",
+            label: id,
+            content: isMemory
+                ? "# apple-dev profile memory\n\nVerified Xcode/Swift/repo/toolchain lessons only, no secrets.\n\n(fixture memory chunk for the simulator walkthrough)"
+                : "---\nname: \(id)\ndescription: Fixture skill for the simulator walkthrough.\n---\n\n(fixture SKILL.md body)")
+    }
+
+    /// A fixture journey shaped like the live payload (buckets with skills
+    /// + memories, summary/axis/count) — deterministic.
+    static func fixtureGraph() -> LearningGraph {
+        var buckets: [LearningGraphBucket] = []
+        let plan: [(label: String, date: String, skills: [String], memories: [String])] = [
+            ("30 Aug", "30 Aug 2026", ["systematic-debugging"], []),
+            ("31 Aug", "31 Aug 2026", ["github-auth"], ["memory:profile:0"]),
+            ("1 Sep", "1 Sep 2026", ["codex", "hermes-agent"], ["memory:memory:1"]),
+            ("2 Sep", "2 Sep 2026", ["test-driven-development"], ["memory:profile:2"]),
+            ("3 Sep", "3 Sep 2026", ["github-code-review", "github-pr-workflow"], []),
+            ("4 Sep", "4 Sep 2026", ["ios-xcode-project-pipeline", "swift-and-platform-engineering", "apple-product-factory"], ["memory:memory:3"]),
+        ]
+        for (index, slice) in plan.enumerated() {
+            var nodes: [LearningGraphNode] = slice.skills.map {
+                LearningGraphNode(
+                    id: $0, label: $0, fullLabel: $0, isMemory: false,
+                    meta: "skill · \(slice.date) · x\(2 + index)")
+            }
+            nodes.append(contentsOf: slice.memories.map {
+                LearningGraphNode(
+                    id: $0, label: "profile memory", fullLabel: "profile memory",
+                    isMemory: true, meta: "memory · \(slice.date)",
+                    body: "# profile memory\n\nchunk…")
+            })
+            buckets.append(LearningGraphBucket(
+                index: index, label: slice.label, date: slice.date,
+                category: index % 2 == 0 ? "dev" : "software-development",
+                nodes: nodes))
+        }
+        let skillCount = plan.reduce(0) { $0 + $1.skills.count }
+        let memoryCount = plan.reduce(0) { $0 + $1.memories.count }
+        return LearningGraph(
+            buckets: buckets,
+            summary: LearningGraphSummary(
+                lines: ["\(skillCount) learned skills · \(memoryCount) memories · 9 skill links",
+                        "\(memoryCount) memory↔skill links · busiest day 4 Sep · 4 learned"],
+                start: "30 Aug 2026", end: "4 Sep 2026",
+                totalCount: skillCount + memoryCount))
+    }
+}
+
 /// Scripted per-gateway conversation session (DEBUG only): a scripted
 /// connection + a scripted conversation client that streams a canned turn
 /// (message.start → deltas → message.complete) after each prompt.submit, a

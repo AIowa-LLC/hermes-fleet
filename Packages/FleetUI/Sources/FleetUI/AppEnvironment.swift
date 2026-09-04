@@ -48,6 +48,12 @@ public typealias FleetManagementSeamFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any GatewayManagementProviding
 
+/// Builds a per-gateway learning seam (R9-T7 — memory graph). Same M0-guard
+/// construction as the management seam above.
+public typealias FleetLearningSeamFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any GatewayLearningProviding
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -168,6 +174,14 @@ public final class AppEnvironment {
     /// (the concrete `GatewayManagementClient` in production, scripted in
     /// DEBUG/tests).
     private let managementSeamFactory: FleetManagementSeamFactory?
+    /// R9-T7: learning seam factory (memory graph) — one per gateway (the
+    /// concrete `GatewayLearningClient` in production, scripted in
+    /// DEBUG/tests).
+    private let learningSeamFactory: FleetLearningSeamFactory?
+    /// R9-T7: learning-graph snapshot store (offline browse). Optional —
+    /// tests inject doubles; production passes the composition root's
+    /// SwiftData cache store adapted to the FleetCore seam.
+    private let learningSnapshotStore_: (any LearningGraphSnapshotStoring)?
     /// Gateways to register on first launch (empty registry) so the U1
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
@@ -186,6 +200,10 @@ public final class AppEnvironment {
     /// transport survives view teardowns like a conversation session's).
     private var managementSeams: [GatewayID: any GatewayManagementProviding] = [:]
 
+    /// R9-T7: lazily-built learning seams per gateway (same lifetime as
+    /// the management seams).
+    private var learningSeams: [GatewayID: any GatewayLearningProviding] = [:]
+
     /// Generation of the newest roster refresh (t_e77c614c). Bumped each time
     /// `refreshRoster()` starts; an in-flight refresh whose captured token no
     /// longer matches is STALE and must not settle observable state (the
@@ -201,6 +219,8 @@ public final class AppEnvironment {
         conversationFactory: FleetConversationFactory? = nil,
         kanbanWatcherFactory: FleetKanbanWatcherFactory? = nil,
         managementSeamFactory: FleetManagementSeamFactory? = nil,
+        learningSeamFactory: FleetLearningSeamFactory? = nil,
+        learningSnapshotStore: (any LearningGraphSnapshotStoring)? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = []
@@ -213,6 +233,8 @@ public final class AppEnvironment {
         self.conversationFactory = conversationFactory
         self.kanbanWatcherFactory = kanbanWatcherFactory
         self.managementSeamFactory = managementSeamFactory
+        self.learningSeamFactory = learningSeamFactory
+        self.learningSnapshotStore_ = learningSnapshotStore
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
@@ -525,5 +547,23 @@ public final class AppEnvironment {
         let seam = factory(gateway)
         managementSeams[gatewayID] = seam
         return seam
+    }
+
+    // MARK: Memory graph (R9-T7 — learning star map)
+
+    /// Build the learning seam for a gateway. Nil when no factory is wired
+    /// (the pane renders its unavailable state, fail closed).
+    public func makeLearningSeam(for gatewayID: GatewayID) -> (any GatewayLearningProviding)? {
+        if let existing = learningSeams[gatewayID] { return existing }
+        guard let factory = learningSeamFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let seam = factory(gateway)
+        learningSeams[gatewayID] = seam
+        return seam
+    }
+
+    /// The learning-graph snapshot store (offline browse), when wired.
+    public var learningSnapshotStore: (any LearningGraphSnapshotStoring)? {
+        learningSnapshotStore_
     }
 }

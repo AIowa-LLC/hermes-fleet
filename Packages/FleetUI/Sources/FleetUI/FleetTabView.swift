@@ -175,6 +175,8 @@ public struct FleetTabView: View {
             CronView(environment: environment, gatewayID: gatewayID)
         case .skills(let gatewayID):
             SkillsView(environment: environment, gatewayID: gatewayID)
+        case .memoryGraph(let gatewayID):
+            MemoryGraphView(environment: environment, gatewayID: gatewayID)
         }
     }
 

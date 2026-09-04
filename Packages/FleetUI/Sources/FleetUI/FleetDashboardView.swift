@@ -286,6 +286,16 @@ public struct FleetDashboardView: View {
             }
             .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("fleet.dashboard.skills.entry")
+            NavigationLink(value: FleetScreen.memoryGraph(gateway.id)) {
+                FleetCard {
+                    managementRowLabel(
+                        icon: "sparkles",
+                        title: "Memory Graph",
+                        subtitle: "Learning journey on \(gateway.displayName)")
+                }
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityIdentifier("fleet.dashboard.memorygraph.entry")
         }
     }
 

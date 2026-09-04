@@ -1,0 +1,466 @@
+import SwiftUI
+import FleetCore
+
+/// R9-T7 — the read-only Memory Graph star map (Nous terminal-minimal,
+/// Direction A): a SwiftUI Canvas constellation of learned skills (●) and
+/// memories (◆) on the near-black canvas, pale-cyan accent ONLY on
+/// interactive/memory ink, pan + zoom gestures, All/Skills/Memories filter,
+/// and a timeline scrubber that reveals the journey oldest → newest.
+/// Read-only for R9 — no edit/delete affordances.
+public struct MemoryGraphView: View {
+    private let environment: AppEnvironment
+    private let gatewayID: GatewayID
+    @State private var model: MemoryGraphViewModel?
+
+    public init(environment: AppEnvironment, gatewayID: GatewayID) {
+        self.environment = environment
+        self.gatewayID = gatewayID
+    }
+
+    public var body: some View {
+        Group {
+            if let model {
+                graphContent(model)
+            } else {
+                unavailableContent
+            }
+        }
+        .background(FleetTheme.background)
+        .navigationTitle("Memory Graph")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: profileScope) {
+            await bindModel()
+        }
+        .onDisappear {
+            Task { model = nil }
+        }
+    }
+
+    private var profileScope: String {
+        let profiles = environment.rosterSnapshot?.roster.bots(on: gatewayID) ?? []
+        return profiles.map { $0.route.profileSlug.rawValue }.first ?? "default"
+    }
+
+    private func bindModel() async {
+        guard let seam = environment.makeLearningSeam(for: gatewayID) else {
+            model = nil
+            return
+        }
+        let next = MemoryGraphViewModel(
+            gatewayID: gatewayID,
+            learning: seam,
+            snapshotStore: environment.learningSnapshotStore)
+        model = next
+        await next.start(profile: profileScope)
+    }
+
+    // MARK: content
+
+    @ViewBuilder
+    private func graphContent(_ model: MemoryGraphViewModel) -> some View {
+        VStack(spacing: 0) {
+            if let error = model.errorMessage, model.graph == nil {
+                errorContent(error, model: model)
+            } else if model.isLoading && model.graph == nil {
+                ProgressView("Mapping learning…")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let graph = model.graph, graph.summary.totalCount == 0,
+                      graph.buckets.isEmpty {
+                emptyContent
+            } else {
+                starMap(model)
+            }
+        }
+        .sheet(item: detailBinding(model)) { box in
+            if let detail = box.detail {
+                LearningNodeDetailSheet(detail: detail)
+            } else if let errorText = box.errorText {
+                LearningNodeDetailErrorSheet(errorText: errorText)
+            }
+        }
+    }
+
+    private func detailBinding(_ model: MemoryGraphViewModel) -> Binding<LearningDetailBox?> {
+        Binding(
+            get: {
+                if let detail = model.detail {
+                    return LearningDetailBox(detail: detail)
+                }
+                if let errorText = model.detailError {
+                    return LearningDetailBox(errorText: errorText)
+                }
+                return nil
+            },
+            set: { _ in model.dismissDetail() }
+        )
+    }
+
+    private func starMap(_ model: MemoryGraphViewModel) -> some View {
+        VStack(spacing: FleetTheme.spacingSm) {
+            if let error = model.errorMessage {
+                // Offline-with-snapshot: the failure is surfaced as a thin
+                // banner, not a pane error.
+                offlineBanner(error, capturedAt: model.offlineCapturedAt, model: model)
+            }
+            summaryHeader(model)
+            filterChips(model)
+            MemoryGraphCanvas(model: model) { nodeID in
+                Task { await model.loadDetail(for: nodeID) }
+            }
+            .frame(maxHeight: .infinity)
+            scrubber(model)
+        }
+        .padding(FleetTheme.spacingMd)
+        .refreshable {
+            await model.reload(profile: profileScope)
+        }
+    }
+
+    private func summaryHeader(_ model: MemoryGraphViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let layout = model.layout, let cap = layout.capLabel {
+                Text(cap)
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityIdentifier("memorygraph.cap-label")
+            }
+            ForEach(model.graph?.summary.lines ?? [], id: \.self) { line in
+                Text(line)
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+            if model.source == .offlineSnapshot, let captured = model.offlineCapturedAt {
+                Text("offline snapshot · \(captured.formatted(date: .abbreviated, time: .shortened))")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textMuted)
+                    .accessibilityIdentifier("memorygraph.offline-stamp")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("memorygraph.summary")
+    }
+
+    private func filterChips(_ model: MemoryGraphViewModel) -> some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            ForEach(MemoryGraphFilter.allCases) { filter in
+                Button {
+                    model.filter = filter
+                } label: {
+                    Text(filter.title)
+                        .font(FleetTheme.secondaryFont.weight(.semibold))
+                        .foregroundStyle(
+                            model.filter == filter ? FleetTheme.background : FleetTheme.textSecondary)
+                        .padding(.horizontal, FleetTheme.spacingMd)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(
+                                model.filter == filter ? FleetTheme.accent : FleetTheme.accent.opacity(0.08)))
+                }
+                .buttonStyle(.fleetPressable)
+                .accessibilityIdentifier("memorygraph.filter.\(filter.rawValue)")
+            }
+            Spacer()
+            Text("● skills   ◆ memories")
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(FleetTheme.textMuted)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func scrubber(_ model: MemoryGraphViewModel) -> some View {
+        VStack(spacing: 2) {
+            HStack {
+                Text(model.graph?.summary.start ?? "oldest")
+                Spacer()
+                Text(model.graph?.summary.end ?? "now")
+            }
+            .font(FleetTheme.secondaryFont)
+            .foregroundStyle(FleetTheme.textMuted)
+            .accessibilityHidden(true)
+            Slider(value: Binding(
+                get: { model.reveal },
+                set: { model.setReveal($0) }
+            ), in: 0...1)
+            .tint(FleetTheme.accent)
+            .accessibilityLabel("Timeline reveal")
+            .accessibilityIdentifier("memorygraph.scrubber")
+        }
+    }
+
+    private func offlineBanner(_ text: String, capturedAt: Date?, model: MemoryGraphViewModel) -> some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Image(systemName: "wifi.slash")
+                .font(.caption)
+                .foregroundStyle(FleetTheme.statusDegraded)
+                .accessibilityHidden(true)
+            Text("Offline — showing the last captured map. \(text)")
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(FleetTheme.statusDegraded)
+                .lineLimit(2)
+            Spacer()
+            Button("Retry") {
+                Task { await model.reload(profile: profileScope) }
+            }
+            .font(FleetTheme.secondaryFont.weight(.semibold))
+            .foregroundStyle(FleetTheme.accent)
+            .buttonStyle(.fleetPressable)
+            .accessibilityIdentifier("memorygraph.retry")
+        }
+        .padding(.horizontal, FleetTheme.spacingMd)
+    }
+
+    private var emptyContent: some View {
+        VStack(spacing: FleetTheme.spacingMd) {
+            Image(systemName: "sparkles")
+                .font(.title2)
+                .foregroundStyle(FleetTheme.textSecondary)
+                .accessibilityHidden(true)
+            Text("No learning yet — keep using Hermes and it maps out here.")
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(FleetTheme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(FleetTheme.spacingXl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("memorygraph.empty")
+    }
+
+    private func errorContent(_ error: String, model: MemoryGraphViewModel) -> some View {
+        VStack(spacing: FleetTheme.spacingMd) {
+            FleetCard {
+                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                    Label {
+                        Text(error)
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(FleetTheme.statusDegraded)
+                    }
+                    Button("Retry") {
+                        Task { await model.reload(profile: profileScope) }
+                    }
+                    .font(FleetTheme.secondaryFont.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityIdentifier("memorygraph.error.retry")
+                }
+            }
+        }
+        .padding(FleetTheme.spacingLg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var unavailableContent: some View {
+        ContentUnavailableView {
+            Label("Memory Graph Unavailable", systemImage: "sparkles")
+        } description: {
+            Text("This gateway has no learning session wired. Reconnect and try again.")
+        }
+        .accessibilityIdentifier("memorygraph.unavailable")
+    }
+}
+
+// MARK: - Canvas
+
+/// The pan/zoom constellation canvas. Nodes render as ● (skill, muted
+/// gray-blue) / ◆ (memory, pale-cyan accent — memories are the drillable
+/// ink, matching the desktop palette roles); brightness rides the
+/// age-gradient ink. Taps hit-test in unit space (size-independent).
+struct MemoryGraphCanvas: View {
+    let model: MemoryGraphViewModel
+    let onTapNode: (String) -> Void
+
+    @State private var dragOffset: CGSize = .zero
+    @State private var pinchScale: CGFloat = 1.0
+    @State private var lastPinch: CGFloat = 1.0
+    @State private var canvasSize: CGSize = .zero
+
+    /// Node render radius (points) at scale 1.
+    private let nodeRadius: CGFloat = 5
+
+    var body: some View {
+        GeometryReader { proxy in
+            Canvas { context, size in
+                guard let layout = model.layout else { return }
+                let side = min(size.width, size.height) * pinchScale
+                let originX = (size.width - side) / 2 + dragOffset.width
+                let originY = (size.height - side) / 2 + dragOffset.height
+
+                for placed in layout.orderedNodes {
+                    let point = CGPoint(
+                        x: originX + placed.x * side,
+                        y: originY + placed.y * side)
+                    let alpha = 0.35 + 0.65 * placed.ink
+                    let color = placed.isMemory
+                        ? FleetTheme.accent.opacity(alpha)
+                        : FleetTheme.textSecondary.opacity(alpha)
+                    if placed.isMemory {
+                        // ◆ diamond (memory — drillable ink).
+                        var path = Path()
+                        path.move(to: CGPoint(x: point.x, y: point.y - nodeRadius))
+                        path.addLine(to: CGPoint(x: point.x + nodeRadius, y: point.y))
+                        path.addLine(to: CGPoint(x: point.x, y: point.y + nodeRadius))
+                        path.addLine(to: CGPoint(x: point.x - nodeRadius, y: point.y))
+                        path.closeSubpath()
+                        context.fill(path, with: .color(color))
+                    } else {
+                        // ● circle (skill).
+                        let rect = CGRect(
+                            x: point.x - nodeRadius, y: point.y - nodeRadius,
+                            width: nodeRadius * 2, height: nodeRadius * 2)
+                        context.fill(Path(ellipseIn: rect), with: .color(color))
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(dragGesture.simultaneously(with: magnificationGesture))
+            .onTapGesture { location in
+                guard let layout = model.layout, canvasSize != .zero else { return }
+                let side = min(canvasSize.width, canvasSize.height) * pinchScale
+                let originX = (canvasSize.width - side) / 2 + dragOffset.width
+                let originY = (canvasSize.height - side) / 2 + dragOffset.height
+                // Nearest node within a generous touch radius (points).
+                let hitRadius: CGFloat = 28
+                var best: (id: String, distance: CGFloat)?
+                for placed in layout.orderedNodes {
+                    let point = CGPoint(
+                        x: originX + placed.x * side,
+                        y: originY + placed.y * side)
+                    let dx = point.x - location.x
+                    let dy = point.y - location.y
+                    let distance = (dx * dx + dy * dy).squareRoot()
+                    if distance <= hitRadius && (best == nil || distance < best!.distance) {
+                        best = (placed.id, distance)
+                    }
+                }
+                if let best {
+                    onTapNode(best.id)
+                }
+            }
+            .task {
+                // Set outside the render pass (mutating @State inside
+                // Canvas's closure is "state modification during view
+                // update").
+                canvasSize = proxy.size
+            }
+            .onChange(of: proxy.size) { _, newSize in
+                canvasSize = newSize
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Learning constellation, \(model.layout?.orderedNodes.count ?? 0) nodes. Drag to pan, pinch to zoom, tap a diamond for memory content.")
+        .accessibilityIdentifier("memorygraph.canvas")
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                dragOffset = value.translation
+            }
+            .onEnded { _ in
+                // Keep the pan (free exploration); a double-tap resets below.
+            }
+    }
+
+    private var magnificationGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                // Anchored incremental scaling: multiply the scale delta
+                // since the last callback, clamped 1…4.
+                let delta = value / lastPinch
+                lastPinch = value
+                pinchScale = min(max(pinchScale * delta, 1.0), 4.0)
+            }
+            .onEnded { _ in
+                lastPinch = 1.0
+            }
+    }
+}
+
+/// Sheet identity wrapper (LearningNodeDetail is not Identifiable).
+struct LearningDetailBox: Identifiable {
+    let detail: LearningNodeDetail?
+    let errorText: String?
+
+    var id: String {
+        detail?.id ?? "error-\(errorText ?? "")"
+    }
+
+    init(detail: LearningNodeDetail) {
+        self.detail = detail
+        self.errorText = nil
+    }
+
+    init(errorText: String) {
+        self.detail = nil
+        self.errorText = errorText
+    }
+}
+
+/// Read-only node drill-in error (detail fetch failed).
+struct LearningNodeDetailErrorSheet: View {
+    let errorText: String
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: FleetTheme.spacingMd) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.title3)
+                    .foregroundStyle(FleetTheme.statusDegraded)
+                Text(errorText)
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(FleetTheme.spacingXl)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(FleetTheme.background)
+            .navigationTitle("Node")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+/// Read-only node drill-in: full SKILL.md or memory chunk (learning.detail).
+struct LearningNodeDetailSheet: View {
+    let detail: LearningNodeDetail
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                    HStack(spacing: FleetTheme.spacingSm) {
+                        Image(systemName: detail.kind == "memory" ? "diamond" : "circle")
+                            .font(.caption)
+                            .foregroundStyle(FleetTheme.accent)
+                            .accessibilityHidden(true)
+                        Text(detail.kind.uppercased())
+                            .font(FleetTheme.sectionHeaderFont)
+                            .tracking(FleetTheme.microLabelTracking)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                    }
+                    Text(detail.label)
+                        .font(.system(.title3, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(FleetTheme.textPrimary)
+                        .accessibilityIdentifier("memorygraph.detail.label")
+                    Text(detail.content)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("memorygraph.detail.content")
+                }
+                .padding(FleetTheme.spacingLg)
+            }
+            .background(FleetTheme.background)
+            .navigationTitle("Node")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}

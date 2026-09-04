@@ -162,6 +162,8 @@ enum FleetServiceGraph {
             conversationFactory: makeConversationFactory(credentialStore: credentialStore, pinStore: pinStore),
             kanbanWatcherFactory: makeKanbanWatcherFactory(credentialStore: credentialStore, pinStore: pinStore),
             managementSeamFactory: makeManagementSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
+            learningSeamFactory: makeLearningSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
+            learningSnapshotStore: cacheStore,
             health: health,
             // R9-T1: the approval banner's FaceID gate rides the SAME
             // LocalAuthentication seam as the app lock (release: real
@@ -299,6 +301,28 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayManagementClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// R9-T7: real per-gateway learning seam (memory graph) — the
+    /// `GatewayLearningClient` over its own authenticated transport (same
+    /// construction as the management seam factory).
+    nonisolated private static func makeLearningSeamFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetLearningSeamFactory {
+        { gateway in
+            // F2: no compiled loopback default — see makeKanbanWatcherFactory.
+            guard let base = gateway.endpoint else {
+                return UnsupportedGatewayLearning()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayLearningClient(gatewayID: gateway.id, transport: transport)
         }
     }
 

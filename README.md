@@ -95,6 +95,8 @@ in.
 | RT3 Junk-frame liveness + initial recovery + deterministic UI in CI | junk frames no longer refresh liveness; conversation initial recovery; UI suites in CI | Landed (commit `a1c43bb`) |
 | RT4 UX/reliability polish | P2-3/5/6/7/8 + P3-1 (transcript windowing, roster empty state, form retry, VoiceOver, removal) | Landed (commit `89c2c55`) |
 | RT5 Docs truth pass + ADRs | this README milestone map + `docs/adr/` | This change |
+| R9 Pocket Desktop (approvals, YOLO, model picker, context meter, steer/rename/fork, cron, skills) | desktop-parity features over the WS surface | Landed (`docs/R9-pocket-desktop.md`; commits `5603f15`, `255da9f`, `5596900`, `c8cfd2f`, `66919f4`) |
+| R9 Memory Graph (read-only star map) | learning star map: pan/zoom canvas, All/Skills/Memories filter, timeline scrubber, offline snapshot | Landed (`docs/R9-pocket-desktop.md`) |
 
 Milestone numbering is historical: M12/M13 have no standalone docs (M13
 appears as a HOLD in the D1 fix commit `47cacef`; folded into the M14/M15

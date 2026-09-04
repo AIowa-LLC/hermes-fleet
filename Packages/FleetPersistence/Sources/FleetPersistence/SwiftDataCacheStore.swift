@@ -21,7 +21,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     /// The SwiftData container backing this cache. In-memory in tests /
     /// previews; file-backed in the app with NSFileProtectionComplete +
     /// backup-exclusion applied to the store file.
-    private let container: ModelContainer
+    let container: ModelContainer
 
     /// Where the file-backed store lives (nil for in-memory). Used to apply
     /// and verify file-protection attributes. Immutable and Sendable, so it is
@@ -275,7 +275,7 @@ public extension SwiftDataCacheStore {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
-                 CachedHealthStatsRow.self, CachedGatewayRow.self,
+                 CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
             configurations: config
         )
         return SwiftDataCacheStore(container: container)
@@ -292,7 +292,7 @@ public extension SwiftDataCacheStore {
         let config = ModelConfiguration(url: storeURL)
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
-                 CachedHealthStatsRow.self, CachedGatewayRow.self,
+                 CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
             configurations: config
         )
         // The store file is created eagerly at container init (verified); apply

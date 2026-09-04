@@ -33,4 +33,6 @@ public enum FleetScreen: Hashable, Sendable {
     case cron(GatewayID)
     /// R9-T6: the per-gateway Skills management pane.
     case skills(GatewayID)
+    /// R9-T7: the per-gateway Memory Graph (read-only learning star map).
+    case memoryGraph(GatewayID)
 }
