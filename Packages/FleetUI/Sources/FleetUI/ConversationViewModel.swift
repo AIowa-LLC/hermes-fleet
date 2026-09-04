@@ -236,6 +236,12 @@ public final class ConversationViewModel {
     /// the Speech framework and submits TEXT through `prompt.submit`; replies
     /// are spoken locally via AVSpeechSynthesizer. See docs/R10.
     private let voice: any VoiceTranscribing
+    /// R10-T5: serializes TTS chunks. Each streaming delta used to spawn its
+    /// own unstructured Task, so two chunks could reach the synthesizer OUT
+    /// OF ORDER (spoken audio garbled; caught as a gate flake —
+    /// speakCalls ["fleet", "Hello "]). An actor queue preserves arrival
+    /// order across awaits.
+    private let speechQueue = SpeechQueue()
     /// True when a real voice engine is wired (drives affordance visibility).
     public var isVoiceAvailable: Bool {
         if voice is UnsupportedVoiceTranscriber { return false }
@@ -564,6 +570,7 @@ public final class ConversationViewModel {
     public func send(_ text: String) async {
         if isVoiceModeEnabled {
             await voice.stopSpeaking()
+            await speechQueue.drain()
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sid = openedSessionID,
@@ -779,6 +786,7 @@ public final class ConversationViewModel {
         isVoiceModeEnabled = enabled
         if !enabled {
             await voice.stopSpeaking()
+            await speechQueue.drain()
         }
     }
 
@@ -798,8 +806,11 @@ public final class ConversationViewModel {
     /// into "Hellofleet"); whitespace-only chunks are skipped.
     private func speakAssistant(_ text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        Task { [voice] in
-            try? await voice.speak(text: text)
+        let voice = self.voice
+        Task {
+            await speechQueue.enqueue {
+                try? await voice.speak(text: text)
+            }
         }
     }
 
@@ -1676,4 +1687,33 @@ public struct NeverLockBiometricAuth: AppLockBiometricAuth {
     }
 
     public func evaluateDevicePasscode(reason: String) async -> Bool { false }
+}
+
+// MARK: - R10-T5 TTS ordering
+
+/// Serializes TTS chunk speaks: streaming deltas arrive sequentially through
+/// the VM's event consumer, but each speak is an async call — without a
+/// queue, two chunks could reach the synthesizer out of order (spoken audio
+/// garbled). An actor runs the closures strictly in enqueue order.
+actor SpeechQueue {
+    private var pending: [@Sendable () async -> Void] = []
+    private var isDraining = false
+
+    func enqueue(_ work: @escaping @Sendable () async -> Void) async {
+        pending.append(work)
+        guard !isDraining else { return }
+        isDraining = true
+        while !pending.isEmpty {
+            let next = pending.removeFirst()
+            await next()
+        }
+        isDraining = false
+    }
+
+    /// Drop queued (not yet spoken) chunks — called when speech is cut
+    /// (new user turn / voice mode off): a stale chunk must never play
+    /// after the cut.
+    func drain() {
+        pending.removeAll()
+    }
 }

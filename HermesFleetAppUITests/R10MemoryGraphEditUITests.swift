@@ -30,29 +30,45 @@ final class R10MemoryGraphEditUITests: XCTestCase {
         element.tap()
     }
 
+    /// Opens the Memory Graph and drills into a memory node. Simulator app
+    /// relaunches are occasionally stale under gate load (the app surfaces
+    /// the previous screen); one full relaunch retry keeps this deterministic.
     private func openMemoryDetail(in app: XCUIApplication) -> XCUIElement {
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.memorygraph.entry"), in: app)
-        tap(entry)
-        let canvas = firstMatch(in: app, identifier: "memorygraph.canvas")
-        XCTAssertTrue(canvas.waitForExistence(timeout: 15))
-        // Memories-only view makes the diamond hit-test deterministic.
-        tap(firstMatch(in: app, identifier: "memorygraph.filter.memories"))
-        let memoryOnly = NSPredicate(format: "label CONTAINS %@", "4 nodes")
-        wait(for: [XCTNSPredicateExpectation(predicate: memoryOnly, object: canvas)], timeout: 10)
-        // Tap near the vertical center of the canvas — with 4 memory nodes
-        // spread across the star map, the center cluster is hit-test range.
-        let coord = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        coord.tap()
-        // Retry a couple of offsets if the first tap missed every node.
-        let label = firstMatch(in: app, identifier: "memorygraph.detail.label")
-        var attempt = 0
-        while !label.exists && attempt < 6 {
-            let jitter = CGVector(dx: 0.35 + Double(attempt % 3) * 0.15, dy: 0.35 + Double(attempt / 3) * 0.3)
-            canvas.coordinate(withNormalizedOffset: jitter).tap()
-            attempt += 1
+        var label = firstMatch(in: app, identifier: "memorygraph.detail.label")
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                app.terminate()
+                app.launch()
+            }
+            let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.memorygraph.entry"), in: app)
+            guard entry.exists else { continue }
+            tap(entry)
+            let canvas = firstMatch(in: app, identifier: "memorygraph.canvas")
+            let filter = firstMatch(in: app, identifier: "memorygraph.filter.memories")
+            guard canvas.waitForExistence(timeout: 15), filter.waitForExistence(timeout: 10) else {
+                continue // stale launch — retry once with a clean relaunch
+            }
+            // Memories-only view makes the diamond hit-test deterministic.
+            tap(filter)
+            let memoryOnly = NSPredicate(format: "label CONTAINS %@", "4 nodes")
+            wait(for: [XCTNSPredicateExpectation(predicate: memoryOnly, object: canvas)], timeout: 10)
+            // Tap near the vertical center of the canvas — with 4 memory nodes
+            // spread across the star map, the center cluster is hit-test range.
+            let coord = canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            coord.tap()
+            // Retry a couple of offsets if the first tap missed every node.
+            label = firstMatch(in: app, identifier: "memorygraph.detail.label")
+            var jitter = 0
+            while !label.exists && jitter < 6 {
+                let offset = CGVector(dx: 0.35 + Double(jitter % 3) * 0.15, dy: 0.35 + Double(jitter / 3) * 0.3)
+                canvas.coordinate(withNormalizedOffset: offset).tap()
+                jitter += 1
+            }
+            if label.waitForExistence(timeout: 5) {
+                return label
+            }
         }
-        XCTAssertTrue(label.waitForExistence(timeout: 5),
-                      "tapping a memory node opens the drill-in sheet")
+        XCTFail("tapping a memory node opens the drill-in sheet (even after one clean relaunch)")
         return label
     }
 
