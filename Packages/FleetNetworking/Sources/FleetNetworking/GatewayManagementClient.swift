@@ -113,7 +113,11 @@ public struct GatewayManagementClient: GatewayManagementProviding {
     // MARK: - Skills
 
     public func skillsCatalog(profile: String) async throws -> SkillsCatalog {
-        // Pass 1: the installed catalog with categories.
+        // Pass 1: the visible catalog with categories. NOTE: 0.21.0's
+        // `skills.manage list` EXCLUDES disabled skills (skills_tool.py:773)
+        // with no include-disabled flag on the WS handler
+        // (methods_tools.py:1916-1919), so this pass alone cannot be the
+        // catalog — pass 2 is the floor.
         let listResult = try await request(
             method: "skills.manage",
             params: .object([
@@ -127,9 +131,13 @@ public struct GatewayManagementClient: GatewayManagementProviding {
                 categories.append((category, names))
             }
         }
-        // Pass 2: per-profile enablement.
+        // Pass 2: per-profile enablement from the UNFILTERED describe set —
+        // the union join (review round 1: without it, disabling a skill
+        // makes it vanish on the next reload; describe keeps it visible
+        // with enabled:false and its toggle).
         let enabledByName = try await describedSkills(profile: profile)
-        return SkillsCatalog(categories: categories, enabledByName: enabledByName)
+        return SkillsCatalog(
+            unionOf: categories, describedSkills: enabledByName)
     }
 
     public func setSkill(_ name: String, enabled: Bool, profile: String) async throws -> Bool {

@@ -509,8 +509,73 @@ final class GatewayManagementClientTests: XCTestCase {
         XCTAssertEqual(describeParams?["name"] as? String, "default")
     }
 
-    // MARK: 7. skill toggle (profiles.configure disabled_skills)
+    /// Review round 1: on a live 0.21.0 gateway, `skills.manage list`
+    /// EXCLUDES disabled skills (skills_tool.py:773 `if name in disabled:
+    /// continue`; no include flag on the WS handler — methods_tools.py:
+    /// 1916-1919) while `profiles.describe` reports them enabled:false
+    /// (methods_profiles.py:625-640). The catalog must be the UNION —
+    /// a describe-only skill still gets a row (disabled) with its toggle.
+    func testSkillsCatalogKeepsDescribeOnlyDisabledSkills() async throws {
+        let captured = ManagementParamCapture()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frameText in
+                guard let (id, method, params) = Self.extractRequest(frameText) else { return [] }
+                switch method {
+                case "skills.manage":
+                    captured.record(method, params)
+                    // Server-faithful: the list pass FILTERED OUT the
+                    // disabled skill (codex) — only github survives.
+                    return [Self.responseFrame(id: id, result: [
+                        "skills": [
+                            "github": ["github-code-review"],
+                        ],
+                    ])]
+                case "profiles.describe":
+                    captured.record(method, params)
+                    // Unfiltered describe: codex still reported, disabled.
+                    return [Self.responseFrame(id: id, result: [
+                        "name": params["name"] as? String ?? "default",
+                        "skills": [
+                            ["name": "codex", "enabled": false],
+                            ["name": "github-code-review", "enabled": true],
+                        ],
+                    ])]
+                default:
+                    return []
+                }
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
 
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayManagementClient(
+            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let catalog = try await client.skillsCatalog(profile: "default")
+
+        // The describe-only skill keeps a row, disabled, with its toggle.
+        let codex = catalog.rows.first { $0.name == "codex" }
+        XCTAssertNotNil(codex, "describe-only skill must not vanish from the catalog")
+        XCTAssertEqual(codex?.isEnabled, false)
+        // And it renders under the `installed` fallback group.
+        let fallback = catalog.categories.first { $0.category == SkillsCatalog.fallbackCategory }
+        XCTAssertEqual(fallback?.skills, ["codex"], "describe-only skill groups under 'installed'")
+        // The listed skill is untouched by the union.
+        let listed = catalog.rows.first { $0.name == "github-code-review" }
+        XCTAssertEqual(listed?.isEnabled, true)
+        XCTAssertEqual(catalog.rows.count, 2)
+        // Both wire passes ran, scoped to the profile.
+        let requests = await captured.all
+        XCTAssertEqual(requests.filter { $0.method == "skills.manage" }.count, 1)
+        XCTAssertEqual(requests.filter { $0.method == "profiles.describe" }.count, 1)
+    }
+
+    // MARK: 7. skill toggle (profiles.configure disabled_skills)
     func testSkillToggleSendsFullReplacementDisabledList() async throws {
         let captured = ManagementParamCapture()
         // State machine: describe returns the CURRENT disabled set; configure

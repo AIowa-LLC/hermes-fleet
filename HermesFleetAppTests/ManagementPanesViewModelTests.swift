@@ -133,13 +133,21 @@ final class ManagementPanesViewModelTests: XCTestCase {
             record("skills.list", profile)
             if let e = takeFailNext() { throw e }
             let (categories, disabled) = unlocked { (_catalogCategories, _disabledSkills) }
+            // Mirrors the live 0.21.0 server: `skills.manage list` EXCLUDES
+            // disabled skills (tools/skills_tool.py:773) with no include flag
+            // on the WS handler (methods_tools.py:1916-1919), while
+            // `profiles.describe` reports the full installed set with
+            // enablement (methods_profiles.py:625-640).
+            let visibleCategories = categories
+                .map { (category: $0.category, skills: $0.skills.filter { !disabled.contains($0.lowercased()) }) }
+                .filter { !$0.skills.isEmpty }
+            let described = categories.flatMap { $0.skills }
             let enabledByName = Dictionary(
-                uniqueKeysWithValues: categories.flatMap { category in
-                    category.skills.map { name in
-                        (name.lowercased(), !disabled.contains(name.lowercased()))
-                    }
+                uniqueKeysWithValues: described.map { name in
+                    (name.lowercased(), !disabled.contains(name.lowercased()))
                 })
-            return SkillsCatalog(categories: categories, enabledByName: enabledByName)
+            return SkillsCatalog(
+                unionOf: visibleCategories, describedSkills: enabledByName)
         }
 
         func setSkill(_ name: String, enabled: Bool, profile: String) async throws -> Bool {
@@ -274,7 +282,13 @@ final class ManagementPanesViewModelTests: XCTestCase {
         let debugging = vm.skillsRows.first { $0.name == "systematic-debugging" }
         XCTAssertEqual(debugging?.isEnabled, false)
         XCTAssertEqual(vm.categoryGroups.first?.category, "dev")
-        XCTAssertEqual(vm.categoryGroups.first?.rows.count, 3)
+        XCTAssertEqual(vm.categoryGroups.first?.rows.count, 2,
+                       "the list pass filters disabled skills out of their categories")
+        // The disabled describe-only skill renders under the fallback group
+        // with its toggle — never vanishes (review round 1 union).
+        let fallback = vm.categoryGroups.first { $0.category == SkillsCatalog.fallbackCategory }
+        XCTAssertEqual(fallback?.rows.map(\.name), ["systematic-debugging"])
+        XCTAssertEqual(fallback?.rows.first?.isEnabled, false)
     }
 
     func testSkillToggleRoundTrips() async {
@@ -286,6 +300,31 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
         XCTAssertEqual(vm.skillsRows.first { $0.name == "systematic-debugging" }?.isEnabled, true)
         XCTAssertTrue(seam.calls.contains { $0.0 == "skill.toggle" && $0.1 == "default" })
+    }
+
+    /// Review round-1 finding: on a live 0.21.0 gateway, disabling a skill
+    /// removes it from `skills.manage list` (skills_tool.py:773) while
+    /// `profiles.describe` still reports it enabled:false. A reload must
+    /// keep the row (with its toggle) — disable must not be a one-way door.
+    func testDisabledSkillSurvivesCatalogReload() async {
+        let seam = ScriptedManagement()
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        await vm.start(profile: "default")
+
+        // Disable a skill, then RELOAD the catalog the way a
+        // pull-to-refresh does — the seam now mirrors the server's
+        // list-side filtering.
+        await vm.setSkill("codex", enabled: false, profile: "default")
+        await vm.refresh(profile: "default")
+
+        XCTAssertEqual(
+            vm.skillsRows.count, 5,
+            "every described skill keeps a row even when the list pass drops it")
+        let codex = vm.skillsRows.first { $0.name == "codex" }
+        XCTAssertEqual(codex?.isEnabled, false, "describe-only skill surfaces disabled")
+        XCTAssertTrue(
+            vm.categoryGroups.contains { $0.rows.contains { $0.name == "codex" } },
+            "describe-only skill renders in a group with its toggle")
     }
 
     func testInFlightToggleGuardPreventsDoubleFire() async {

@@ -95,7 +95,23 @@ public struct ProfileSkill: Identifiable, Hashable, Sendable {
 /// Skills grouped the way `skills.manage list` reports them
 /// (`{category: [names]}` — banner.py:102), plus per-skill enablement from
 /// the profile describe pass.
+///
+/// UNION DISCIPLINE (review round 1): `skills.manage list` EXCLUDES disabled
+/// skills on hermes-agent 0.21.0 (tools/skills_tool.py:773
+/// `if name in disabled: continue`; no include-disabled flag on the WS
+/// handler — methods_tools.py:1916-1919), while `profiles.describe` walks
+/// the profile skills dir UNFILTERED and reports disabled skills with
+/// enabled:false (methods_profiles.py:625-640). Without a union, a
+/// disabled skill vanishes from the catalog on the next reload — a
+/// one-way door on live gateways. `categories` is therefore the JOINED
+/// view: every listed category in list order, plus describe-only names
+/// (i.e. skills the list pass filtered out) under the `installed`
+/// fallback group so they always render with their toggle.
 public struct SkillsCatalog: Sendable {
+    /// Fallback group for describe-only skills whose category the (filtered)
+    /// list pass no longer reports.
+    public static let fallbackCategory = "installed"
+
     public let categories: [(category: String, skills: [String])]
     /// Enablement by lowercased skill name (profiles.describe's model:
     /// enabled unless listed in the profile's skills.disabled config).
@@ -117,6 +133,46 @@ public struct SkillsCatalog: Sendable {
                 )
             }
         }
+    }
+}
+
+extension SkillsCatalog {
+    /// UNION of the `skills.manage list` categories with `profiles.describe`'s
+    /// unfiltered skills set — the anti-one-way-door join. List categories
+    /// keep their wire order and canonical casing; describe-only names
+    /// (disabled skills the list pass filtered out — skills_tool.py:773) go
+    /// to the `installed` fallback group (sorted, lowercased spelling from
+    /// describe). Names are matched case-insensitively; describe is the
+    /// floor — an empty list pass still yields every described skill.
+    public init(
+        unionOf listCategories: [(category: String, skills: [String])],
+        describedSkills: [String: Bool]
+    ) {
+        var seen = Set<String>()
+        var merged: [(category: String, skills: [String])] = []
+        for group in listCategories {
+            var names: [String] = []
+            for name in group.skills {
+                let key = name.lowercased()
+                guard !seen.contains(key) else { continue }
+                seen.insert(key)
+                names.append(name)
+            }
+            if !names.isEmpty {
+                merged.append((group.category, names))
+            }
+        }
+        // Describe-only names the filtered list no longer categorizes: the
+        // `installed` fallback group (sorted) — describe is the floor, so a
+        // disabled skill always keeps its row + toggle.
+        let orphans = describedSkills
+            .keys
+            .filter { !seen.contains($0) }
+            .sorted()
+        if !orphans.isEmpty {
+            merged.append((Self.fallbackCategory, orphans))
+        }
+        self.init(categories: merged, enabledByName: describedSkills)
     }
 }
 

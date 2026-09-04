@@ -274,19 +274,28 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
     }
 
     func skillsCatalog(profile: String) async throws -> SkillsCatalog {
+        // Mirrors the live 0.21.0 server: `skills.manage list` EXCLUDES
+        // disabled skills (tools/skills_tool.py:773) with no include flag
+        // on the WS handler (methods_tools.py:1916-1919), while
+        // `profiles.describe` reports the full installed set with
+        // enablement (methods_profiles.py:625-640). The union join in
+        // SkillsCatalog restores the disabled names under `installed`.
         let disabledNow = unlocked { disabled }
-        let categories: [(category: String, skills: [String])] = [
+        let allCategories: [(category: String, skills: [String])] = [
             ("dev", ["codex", "systematic-debugging", "test-driven-development"]),
             ("github", ["github-code-review", "github-pr-workflow", "github-auth"]),
             ("hermes", ["hermes-agent"]),
         ]
+        let visibleCategories = allCategories
+            .map { (category: $0.category, skills: $0.skills.filter { !disabledNow.contains($0.lowercased()) }) }
+            .filter { !$0.skills.isEmpty }
+        let described = allCategories.flatMap { $0.skills }
         let enabledByName = Dictionary(
-            uniqueKeysWithValues: categories.flatMap { category in
-                category.skills.map { name in
-                    (name.lowercased(), !disabledNow.contains(name.lowercased()))
-                }
+            uniqueKeysWithValues: described.map { name in
+                (name.lowercased(), !disabledNow.contains(name.lowercased()))
             })
-        return SkillsCatalog(categories: categories, enabledByName: enabledByName)
+        return SkillsCatalog(
+            unionOf: visibleCategories, describedSkills: enabledByName)
     }
 
     func setSkill(_ name: String, enabled: Bool, profile: String) async throws -> Bool {
@@ -695,7 +704,7 @@ private struct ScriptedHistory: SessionHistoryProviding {
         SessionHistory(sessionID: sessionID, count: 0, messages: [])
     }
     func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
-        SessionStatus.parse(output: "Session ID: \\(sessionID)")
+        SessionStatus.parse(output: "Session ID: \(sessionID)")
     }
 }
 
