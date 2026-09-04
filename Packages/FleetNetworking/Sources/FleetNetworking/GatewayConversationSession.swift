@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -47,6 +47,11 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
     /// Same fail-closed-by-seam discipline as `approvals` / `tooling`.
     public let attachments: any AttachmentStagingProviding
 
+    /// R10-T2 reaction client bound to the shared transport
+    /// (message.react write path; read-back rides session.history's
+    /// display_metadata). Same fail-closed-by-seam discipline.
+    public let reactions: any ReactionProviding
+
     public init(
         gatewayID: GatewayID,
         displayName: String,
@@ -66,6 +71,7 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         self.approvals = GatewayApprovalClient(gatewayID: gatewayID, transport: transport)
         self.tooling = GatewayConversationToolingClient(gatewayID: gatewayID, transport: transport)
         self.attachments = GatewayAttachmentClient(gatewayID: gatewayID, transport: transport)
+        self.reactions = GatewayReactionClient(gatewayID: gatewayID, transport: transport)
         self.conversation = GatewayConversationClient(gatewayID: gatewayID, transport: transport)
         self.replay = GatewayReplayEngine(gatewayID: gatewayID, transport: transport, history: history)
     }

@@ -98,6 +98,13 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         } else {
             rowID = object["row_id"]?.stringValue
         }
+        // R10-T2: `display_metadata.reactions` — the read-back surface for
+        // reactions (durable rows only; `_history_to_messages` server.py:
+        // 9936 forwards display_metadata per message). Tolerant of every
+        // malformed shape: nil when absent, empty when undecodable.
+        let reactions = object["display_metadata"].flatMap {
+            Self.decodeReactions(fromMetadata: $0)
+        }
         let message = SessionMessage(
             role: role,
             text: text,
@@ -106,10 +113,30 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
             displayKind: object["display_kind"]?.stringValue,
             reasoning: reasoning,
             toolName: toolName,
-            toolContext: toolContext
+            toolContext: toolContext,
+            reactions: reactions
         )
         guard message.hasContent else { return nil }
         return message
+    }
+
+    /// `display_metadata.reactions` → domain reactions. Returns nil when the
+    /// metadata discloses no decodable reactions (absent / non-object /
+    /// reactions not an array) — malformed shapes are treated as not
+    /// disclosed, matching the SessionMessage nil contract.
+    static func decodeReactions(fromMetadata metadata: JSONValue) -> [MessageReaction]? {
+        guard let meta = metadata.objectValue,
+              let list = meta["reactions"]?.arrayValue else { return nil }
+        return list.compactMap { item in
+            guard let entry = item.objectValue,
+                  let emoji = entry["emoji"]?.stringValue,
+                  !emoji.isEmpty else { return nil }
+            return MessageReaction(
+                emoji: emoji,
+                author: entry["author"]?.stringValue ?? "user",
+                at: entry["at"]?.numberValue
+            )
+        }
     }
 
     /// The gateway discloses reasoning under several key names across versions

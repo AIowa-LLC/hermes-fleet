@@ -32,6 +32,13 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
     public var timestamp: Double?
     public var isStreaming: Bool
     public var isFailed: Bool
+    /// R10-T2: the durable gateway `row_id` this row was decoded from, when
+    /// present — the reaction write target. Live rows (streamed this
+    /// session) carry nil and react via `newest_role`.
+    public var rowID: String?
+    /// R10-T2: reactions rendered under this bubble (a live view over the
+    /// VM's `reactionsByRowID`, updated by the view). Nil = none.
+    public var reactions: [MessageReaction]?
 
     public init(
         id: String,
@@ -40,7 +47,8 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         detail: String? = nil,
         timestamp: Double? = nil,
         isStreaming: Bool = false,
-        isFailed: Bool = false
+        isFailed: Bool = false,
+        rowID: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -49,6 +57,7 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         self.timestamp = timestamp
         self.isStreaming = isStreaming
         self.isFailed = isFailed
+        self.rowID = rowID
     }
 
     // MARK: VoiceOver semantics (P2-7)
@@ -150,10 +159,21 @@ public final class ConversationViewModel {
     /// The authoritative, full history lives in `allRows` (and the persisted
     /// cache), so capping the window never loses history.
     public var transcript: [ConversationRow] {
-        Array(allRows.suffix(maxDisplayRows))
+        var rows = Array(allRows.suffix(maxDisplayRows))
+        // R10-T2: project the reaction state onto each row for rendering
+        // (durable-keyed; a live row reads its in-flight optimistic state
+        // under the live-* key).
+        for index in rows.indices {
+            let key = rows[index].rowID ?? Self.liveRowKey(kind: rows[index].kind)
+            rows[index].reactions = reactionsByRowID[key]?.reactions
+        }
+        return rows
     }
     public private(set) var isStreaming = false
-    /// Non-secret replay hydration notice shown after a reconnect (M6).
+    /// R10-T2: reactions per transcript row id — rendered under the bubbles.
+    /// Sources: history-carried `display_metadata.reactions` (durable rows)
+    /// and post-`message.react` server truth / optimistic updates.
+    public private(set) var reactionsByRowID: [String: MessageReactionsSnapshot] = [:]
     public private(set) var replayNotice: String?
     /// t_8401d3c3 — non-secret stream-integrity notice shown when a gap was
     /// detected on the live event stream (recovered via targeted replay, or
@@ -196,6 +216,15 @@ public final class ConversationViewModel {
     public private(set) var isUploadingAttachment = false
     /// Non-secret composer attachment error banner text (never silent).
     public private(set) var attachmentError: String?
+
+    // MARK: R10-T2 — message reactions (Tapback)
+
+    /// The reaction seam — fail-closed `UnsupportedReactionProviding` until
+    /// the concrete session exposes one (`ReactionCapable`), so the
+    /// long-press menu surfaces an honest error instead of pretending.
+    private let reactionSeam: any ReactionProviding
+    /// Non-secret reaction error banner text (never silent).
+    public private(set) var reactionError: String?
 
     // MARK: Internal state
 
@@ -257,6 +286,12 @@ public final class ConversationViewModel {
             self.attachments = capable.attachments
         } else {
             self.attachments = UnsupportedAttachmentStaging()
+        }
+        // R10-T2: same one-cast discipline for the reaction seam.
+        if let capable = session as? ReactionCapable {
+            self.reactionSeam = capable.reactions
+        } else {
+            self.reactionSeam = UnsupportedReactionProviding()
         }
     }
 
@@ -690,6 +725,7 @@ public final class ConversationViewModel {
         guard let cached = try? await cache.loadHistory(sessionID: sessionID, for: route.gatewayID),
               !cached.messages.isEmpty else { return }
         allRows = cached.messages.map { Self.row(from: $0, id: nextRowID()) }
+        adoptHistoryReactions(into: allRows, from: cached.messages)
         hydratedFromCache = true
         phase = .ready
     }
@@ -699,6 +735,7 @@ public final class ConversationViewModel {
     private func applyOpenedSession(_ opened: ConversationSession) {
         if !opened.messages.isEmpty {
             allRows = opened.messages.map { Self.row(from: $0, id: nextRowID()) }
+            adoptHistoryReactions(into: allRows, from: opened.messages)
             hydratedFromCache = false
         }
         sessionTitle = opened.profileName
@@ -878,6 +915,7 @@ public final class ConversationViewModel {
         }
         guard isCurrent(token) else { return }
         allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
+        adoptHistoryReactions(into: allRows, from: history.messages)
         hydratedFromCache = false
         // History is snapshot-authoritative, not event-id tagged: drop the
         // cursor so the next stamped live event re-establishes continuity
@@ -1176,6 +1214,145 @@ public final class ConversationViewModel {
         )
     }
 
+    // MARK: R10-T2 — message reactions (Tapback)
+
+    /// React to (or toggle) one transcript row's message via `message.react`.
+    ///
+    /// Target resolution: the row's durable `row_id` when it has one; a live
+    /// row (streamed this session, not yet round-tripped through a resume)
+    /// addresses `newest_role` — the newest persisted row of that role,
+    /// which is the message the user just reacted to
+    /// (methods_session.py:1576-1579). Re-sending the same emoji is a
+    /// server-side RETRACT (hermes_state.py:13008) — the client toggles by
+    /// sending again. Optimistic update with rollback on error; server truth
+    /// (the post-write reaction list) settles the row.
+    public func react(rowID: String?, kind: ConversationRow.Kind = .user, emoji: String) async {
+        reactionError = nil
+        guard let sid = openedSessionID else {
+            reactionError = "Reactions need an open session"
+            return
+        }
+        // Resolve the wire target.
+        let target: MessageReactionTarget
+        if let rowID {
+            target = .durable(rowID: rowID)
+        } else {
+            guard let role = Self.wireRole(for: kind),
+                  let live = MessageReactionTarget(liveRole: role) else {
+                reactionError = "This message can't be reacted to yet"
+                return
+            }
+            target = live
+        }
+        // Optimistic update keyed on the ROW id the UI addressed (durable id
+        // when present, else the transcript row id).
+        let displayKey = rowID ?? Self.liveRowKey(kind: kind)
+        let prior = reactionsByRowID[displayKey] ?? .empty
+        let optimistic = prior.applyingOwnReaction(emoji)
+        reactionsByRowID[displayKey] = optimistic
+        do {
+            let result = try await reactionSeam.react(sessionID: sid, target: target, emoji: emoji)
+            // Server truth settles — keyed on the durable id the write
+            // landed on (a live newest_role write adopts it here).
+            reactionsByRowID[result.rowID] = MessageReactionsSnapshot(result)
+            if result.rowID != displayKey {
+                reactionsByRowID.removeValue(forKey: displayKey)
+            }
+        } catch {
+            // Rollback: restore the pre-optimistic state (absent = none).
+            if prior.reactions.isEmpty {
+                reactionsByRowID.removeValue(forKey: displayKey)
+            } else {
+                reactionsByRowID[displayKey] = prior
+            }
+            reactionError = Self.nonSecret(error)
+        }
+    }
+
+    /// Clear the local user's reaction on a row (`emoji: null`).
+    public func clearReaction(rowID: String?, kind: ConversationRow.Kind = .user) async {
+        reactionError = nil
+        guard let sid = openedSessionID else {
+            reactionError = "Reactions need an open session"
+            return
+        }
+        let target: MessageReactionTarget
+        if let rowID {
+            target = .durable(rowID: rowID)
+        } else {
+            guard let role = Self.wireRole(for: kind),
+                  let live = MessageReactionTarget(liveRole: role) else {
+                reactionError = "This message can't be reacted to yet"
+                return
+            }
+            target = live
+        }
+        let displayKey = rowID ?? Self.liveRowKey(kind: kind)
+        let prior = reactionsByRowID[displayKey] ?? .empty
+        let optimistic = prior.clearingOwnReaction()
+        if optimistic.reactions.isEmpty {
+            reactionsByRowID.removeValue(forKey: displayKey)
+        } else {
+            reactionsByRowID[displayKey] = optimistic
+        }
+        do {
+            let result = try await reactionSeam.react(sessionID: sid, target: target, emoji: nil)
+            if result.reactions.isEmpty {
+                reactionsByRowID.removeValue(forKey: result.rowID)
+            } else {
+                reactionsByRowID[result.rowID] = MessageReactionsSnapshot(result)
+            }
+            if result.rowID != displayKey {
+                reactionsByRowID.removeValue(forKey: displayKey)
+            }
+        } catch {
+            if prior.reactions.isEmpty {
+                reactionsByRowID.removeValue(forKey: displayKey)
+            } else {
+                reactionsByRowID[displayKey] = prior
+            }
+            reactionError = Self.nonSecret(error)
+        }
+    }
+
+    /// Dismiss the reaction error banner.
+    public func clearReactionError() {
+        reactionError = nil
+    }
+
+    /// The wire role a live row maps to (only user/assistant rows are
+    /// reactable via newest_role; tool/status/system rows are not).
+    static func wireRole(for kind: ConversationRow.Kind) -> String? {
+        switch kind {
+        case .user: return "user"
+        case .assistant: return "assistant"
+        default: return nil
+        }
+    }
+
+    /// Stable in-flight key for a live (row_id-less) row awaiting its
+    /// durable id from the server.
+    static func liveRowKey(kind: ConversationRow.Kind) -> String {
+        "live-\(kind == .user ? "user" : "assistant")"
+    }
+
+    /// Adopt history-carried reactions when rows (re)load (durable rows
+    /// only — live rows never carry them on the wire). Rows without a
+    /// durable row_id cannot be keyed — their reactions (if any ever appear)
+    /// are ignored.
+    private func adoptHistoryReactions(into rows: [ConversationRow], from messages: [SessionMessage]) {
+        for (row, message) in zip(rows, messages) {
+            guard let durableID = row.rowID else { continue }
+            if let reactions = message.reactions {
+                if reactions.isEmpty {
+                    reactionsByRowID.removeValue(forKey: durableID)
+                } else {
+                    reactionsByRowID[durableID] = MessageReactionsSnapshot(reactions: reactions)
+                }
+            }
+        }
+    }
+
     // MARK: Failure classification
 
     private func classifyConnectFailure(_ error: any Error) {
@@ -1225,18 +1402,21 @@ public final class ConversationViewModel {
     // MARK: Static mapping helpers
 
     /// Map a persisted `SessionMessage` (history projection) onto a rendered row.
+    /// R10-T2: the durable `row_id` rides onto the row (the reaction write
+    /// target); history-carried reactions seed `reactionsByRowID` via
+    /// `adoptHistoryReactions`.
     static func row(from message: SessionMessage, id: String) -> ConversationRow {
         switch message.role {
         case .user:
-            return .init(id: id, kind: .user, text: message.text, timestamp: message.timestamp)
+            return .init(id: id, kind: .user, text: message.text, timestamp: message.timestamp, rowID: message.rowID)
         case .assistant:
-            return .init(id: id, kind: .assistant, text: message.text, detail: message.reasoning, timestamp: message.timestamp)
+            return .init(id: id, kind: .assistant, text: message.text, detail: message.reasoning, timestamp: message.timestamp, rowID: message.rowID)
         case .tool:
-            return .init(id: id, kind: .tool, text: message.toolName ?? message.text, detail: message.toolContext, timestamp: message.timestamp)
+            return .init(id: id, kind: .tool, text: message.toolName ?? message.text, detail: message.toolContext, timestamp: message.timestamp, rowID: message.rowID)
         case .system:
-            return .init(id: id, kind: .system, text: message.text, timestamp: message.timestamp)
+            return .init(id: id, kind: .system, text: message.text, timestamp: message.timestamp, rowID: message.rowID)
         case .unknown:
-            return .init(id: id, kind: .system, text: message.text, timestamp: message.timestamp)
+            return .init(id: id, kind: .system, text: message.text, timestamp: message.timestamp, rowID: message.rowID)
         }
     }
 

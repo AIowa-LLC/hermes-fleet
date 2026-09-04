@@ -347,8 +347,12 @@ public struct ConversationView: View {
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(model.transcript) { row in
-                        ConversationBubbleView(row: row)
-                            .id(row.id)
+                        ConversationBubbleView(row: row) { emoji in
+                            Task { await model.react(rowID: row.rowID, kind: row.kind, emoji: emoji) }
+                        } clear: {
+                            Task { await model.clearReaction(rowID: row.rowID, kind: row.kind) }
+                        }
+                        .id(row.id)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -383,6 +387,10 @@ public struct ConversationView: View {
             }
             if let attachmentError = model.attachmentError {
                 attachmentErrorBanner(model, message: attachmentError)
+            }
+            // R10-T2: reaction error banner — never silent.
+            if let reactionError = model.reactionError {
+                reactionErrorBanner(model, message: reactionError)
             }
             HStack(spacing: FleetTheme.spacingSm) {
                 // R10-T1: "+" affordance — Photos picker (images) + Files
@@ -570,6 +578,31 @@ public struct ConversationView: View {
         .accessibilityIdentifier("fleet.conversation.attachment.error")
     }
 
+    /// R10-T2: reaction error banner — never silent (same mandate).
+    private func reactionErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(FleetTheme.statusDegraded)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(FleetTheme.textPrimary)
+                .lineLimit(3)
+            Spacer(minLength: 0)
+            Button {
+                model.clearReactionError()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+            .accessibilityLabel("Dismiss reaction error")
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, 6)
+        .background(FleetTheme.surfaceElevated)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.reaction.error")
+    }
+
     /// Load picked photo bytes (the gateway image allowlist: PNG/JPEG/GIF/
     /// WebP/BMP) and stage them. HEIC/other camera formats convert to JPEG
     /// via ImageIO first (the vision pipeline can't read them, cli.py:3954);
@@ -732,6 +765,10 @@ private struct ReasoningDisclosure: View {
 private struct ConversationBubbleView: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let row: ConversationRow
+    /// R10-T2: reaction handlers from the owning view (the bubble owns no
+    /// model reference).
+    var react: (String) -> Void = { _ in }
+    var clear: () -> Void = {}
 
     /// V4 motion budget: subtle entrance for user bubbles — opacity + a
     /// 0.97 scale settle, ease-out 0.18s. Under Reduce Motion the scale is
@@ -753,6 +790,9 @@ private struct ConversationBubbleView: View {
             VStack(alignment: row.kind == .user ? .trailing : .leading, spacing: FleetTheme.spacingXs) {
                 bubbleContent
                     .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
+                if let reactions = row.reactions, !reactions.isEmpty {
+                    reactionChips(reactions)
+                }
                 if let timestampText {
                     // V3: timestamps are telemetry — mono caption.
                     Text(timestampText)
@@ -763,12 +803,70 @@ private struct ConversationBubbleView: View {
             if row.kind != .user { Spacer(minLength: 60) }
         }
         .transition(row.kind == .user ? entrance : .identity)
+        // R10-T2: long-press Tapback menu — small palette + Clear. Only
+        // user/assistant rows are reactable (tool/status/system rows are
+        // not addressable on the wire).
+        .contextMenu { reactionMenu }
         .accessibilityElement(children: .combine)
         // P2-7: expose speaker + content semantics and live turn state to
         // assistive tech — the combined bubble text alone hides who spoke.
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityValue(row.accessibilityValue)
         .accessibilityIdentifier("fleet.conversation.row.\(row.id)")
+    }
+
+    /// R10-T2: the long-press context menu (palette + Clear reaction).
+    @ViewBuilder
+    private var reactionMenu: some View {
+        if row.kind == .user || row.kind == .assistant {
+            ForEach(MessageReactionPalette.standard.emojis, id: \.self) { emoji in
+                Button {
+                    react(emoji)
+                } label: {
+                    Text(emoji)
+                }
+                .accessibilityLabel("React \(emoji)")
+                .accessibilityIdentifier("fleet.conversation.reaction.palette.\(emoji)")
+            }
+            if row.reactions?.contains(where: { $0.author == "user" }) == true {
+                Button(role: .destructive) {
+                    clear()
+                } label: {
+                    Label("Clear Reaction", systemImage: "xmark.circle")
+                }
+                .accessibilityIdentifier("fleet.conversation.reaction.clear")
+            }
+        }
+    }
+
+    /// R10-T2: reactions rendered under the bubble — one chip per author
+    /// (the per-author single-reaction semantics), own emoji emphasized.
+    private func reactionChips(_ reactions: [MessageReaction]) -> some View {
+        HStack(spacing: 4) {
+            ForEach(reactions) { reaction in
+                Text(reaction.emoji)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        FleetTheme.surfaceElevated,
+                        in: Capsule()
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(
+                            reaction.author == "user"
+                                ? FleetTheme.accent.opacity(0.5)
+                                : FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast),
+                            lineWidth: 1)
+                    )
+                    .accessibilityLabel(
+                        reaction.author == "user"
+                            ? "Your reaction \(reaction.emoji)"
+                            : "Reaction \(reaction.emoji)")
+                    .accessibilityIdentifier("fleet.conversation.reaction.chip.\(reaction.emoji)")
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 
     /// U6: timestamp under the bubble — rendered only when the gateway

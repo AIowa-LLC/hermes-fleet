@@ -383,7 +383,7 @@ final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable 
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
@@ -396,10 +396,20 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// hooks so the composer tray is fully walkable in the simulator + UI
     /// tests).
     let attachmentsBox = ScriptedAttachmentSeam()
+    /// R10-T2: scripted reaction seam (records react calls + failure hook so
+    /// long-press Tapback is fully walkable in the simulator + UI tests).
+    let reactionsBox = ScriptedReactionSeam()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
         self.client = ScriptedConversationClient(gatewayID: gatewayID)
+        // R10-T2: keep the scripted reaction seam's durable-row state in
+        // lockstep with the fixture resume projection (the seeded 👀 on
+        // row 9101), so a same-emoji re-send retracts exactly like the DB
+        // layer would.
+        reactionsBox.seedReactions(
+            [MessageReaction(emoji: "👀", author: "user", at: 1_788_600_000)],
+            rowID: "9101")
     }
 
     var status: GatewayStatus {
@@ -447,6 +457,11 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// R10-T1: scripted attachment-staging seam.
     var attachments: any AttachmentStagingProviding {
         attachmentsBox
+    }
+
+    /// R10-T2: scripted reaction seam.
+    var reactions: any ReactionProviding {
+        reactionsBox
     }
 
     /// R9-T1 UI-test hook: push a scripted approval request into the
@@ -504,7 +519,32 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
     }
 
     func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
-        ConversationSession(
+        // R10-T2: fixture durable rows (row_id-stamped, one carrying a
+        // seeded reaction) so long-press Tapback targets DURABLE rows in
+        // the simulator + UI tests — mirroring what a real session.resume
+        // projection carries.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_REACTION_FIXTURE"] == "1" {
+            return ConversationSession(
+                sessionID: sessionID,
+                storedSessionID: "stored-\(sessionID)",
+                messageCount: 2,
+                messages: [
+                    SessionMessage(
+                        role: .user,
+                        text: "Reaction fixture row — long-press me",
+                        rowID: "9100"),
+                    SessionMessage(
+                        role: .assistant,
+                        text: "Fixture answer with a seeded reaction.",
+                        rowID: "9101",
+                        reactions: [MessageReaction(emoji: "👀", author: "user", at: 1_788_600_000)]),
+                ],
+                model: "scripted-model",
+                provider: "simulator",
+                profileName: nil
+            )
+        }
+        return ConversationSession(
             sessionID: sessionID,
             storedSessionID: "stored-\(sessionID)",
             messageCount: 0,
@@ -801,6 +841,69 @@ final class ScriptedAttachmentSeam: AttachmentStagingProviding, @unchecked Senda
 
     func detachImage(sessionID: String, path: String) async throws -> DetachedImageState {
         DetachedImageState(detached: true, count: 0)
+    }
+}
+
+/// R10-T2: scripted reaction seam — records every `message.react` call so
+/// UI tests assert the wire-shaped ask (row_id vs newest_role, emoji vs
+/// null). Failure hook (`HERMES_FLEET_REACTION_FAIL=1`) makes every react
+/// throw 4040-shaped `messageNotFound` so the never-silent error banner +
+/// optimistic rollback are walkable. Result discipline mirrors the server:
+/// the post-write reaction list reflects the per-author single-reaction
+/// semantics (re-send same emoji retracts).
+final class ScriptedReactionSeam: ReactionProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reactCalls: [(sessionID: String, target: MessageReactionTarget, emoji: String?)] = []
+    private var _reactions: [String: [MessageReaction]] = [:]
+
+    /// Recorded react calls — UI-test observability.
+    var reactCalls: [(sessionID: String, target: MessageReactionTarget, emoji: String?)] {
+        lock.lock(); defer { lock.unlock() }
+        return _reactCalls
+    }
+
+    /// Seed a row's reactions (fixture history adoption).
+    func seedReactions(_ reactions: [MessageReaction], rowID: String) {
+        lock.lock(); defer { lock.unlock() }
+        _reactions[rowID] = reactions
+    }
+
+    private var failAll: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_REACTION_FAIL"] == "1"
+    }
+
+    func react(
+        sessionID: String,
+        target: MessageReactionTarget,
+        emoji: String?
+    ) async throws -> MessageReactionResult {
+        let failing = failAll
+        let result: MessageReactionResult = try lock.withLock {
+            _reactCalls.append((sessionID, target, emoji))
+            // Resolve the durable row the write lands on (mirrors
+            // latest_message_row_id for newest_role — the scripted fleet has
+            // no DB, so live targets land on the fixed fixture row).
+            let rowID = target.rowID ?? "9101"
+            var reactions = _reactions[rowID] ?? []
+            if !failing, let emoji {
+                // Server semantics (hermes_state.set_message_reaction):
+                // re-sending the same emoji retracts; different replaces.
+                let hadSame = reactions.contains { $0.author == "user" && $0.emoji == emoji }
+                reactions.removeAll { $0.author == "user" }
+                if !hadSame {
+                    reactions.append(MessageReaction(emoji: emoji, author: "user", at: 1_788_600_000))
+                }
+                _reactions[rowID] = reactions
+            } else if !failing {
+                reactions.removeAll { $0.author == "user" }
+                _reactions[rowID] = reactions
+            }
+            return MessageReactionResult(rowID: rowID, reactions: reactions)
+        }
+        if failing {
+            throw ReactionError.messageNotFound("fixture: message not found (UI-test failure hook)")
+        }
+        return result
     }
 }
 

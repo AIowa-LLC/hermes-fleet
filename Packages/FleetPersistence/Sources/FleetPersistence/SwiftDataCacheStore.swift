@@ -57,6 +57,7 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
                 reasoning: message.reasoning,
                 toolName: message.toolName,
                 toolContext: message.toolContext,
+                reactionsData: Self.encodeReactions(message.reactions),
                 clientID: message.clientID
             ))
         }
@@ -80,10 +81,39 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
                 reasoning: row.reasoning,
                 toolName: row.toolName,
                 toolContext: row.toolContext,
+                reactions: Self.decodeReactions(row.reactionsData),
                 clientID: row.clientID
             )
         }
         return SessionHistory(sessionID: sessionID, count: messages.count, messages: messages)
+    }
+
+    // MARK: R10-T2 reactions column codec
+
+    /// One persisted reaction entry (Codable mirror of `MessageReaction`).
+    private struct CachedReaction: Codable {
+        let emoji: String
+        let author: String
+        let at: Double?
+    }
+
+    /// `[MessageReaction]?` → JSON string. nil stays nil; an EMPTY list
+    /// encodes as `"[]"` so "disclosed none" survives the round trip
+    /// distinct from "not disclosed".
+    nonisolated private static func encodeReactions(_ reactions: [MessageReaction]?) -> String? {
+        guard let reactions else { return nil }
+        let entries = reactions.map { CachedReaction(emoji: $0.emoji, author: $0.author, at: $0.at) }
+        guard let data = try? JSONEncoder().encode(entries) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// JSON string → `[MessageReaction]?`. nil / undecodable → nil (honest
+    /// not-disclosed); `"[]"` → `[]` (disclosed none).
+    nonisolated private static func decodeReactions(_ json: String?) -> [MessageReaction]? {
+        guard let json, let data = json.data(using: .utf8),
+              let entries = try? JSONDecoder().decode([CachedReaction].self, from: data)
+        else { return nil }
+        return entries.map { MessageReaction(emoji: $0.emoji, author: $0.author, at: $0.at) }
     }
 
     public func deleteHistory(sessionID: String, for gatewayID: GatewayID) async throws {

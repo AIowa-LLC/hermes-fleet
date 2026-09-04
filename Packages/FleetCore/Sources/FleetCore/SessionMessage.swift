@@ -52,6 +52,13 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
     public let toolName: String?
     /// Tool message context (an 80-char preview of the call), tool only.
     public let toolContext: String?
+    /// R10-T2: reactions this message carries, when the wire disclosed
+    /// them. Durable history rows carry `display_metadata.reactions`
+    /// (`_rows_to_conversation` hermes_state.py:14153 →
+    /// `_history_to_messages` server.py:9936); live streamed rows never do
+    /// (no event pushes reactions). Nil = not disclosed; empty = disclosed
+    /// as none.
+    public let reactions: [MessageReaction]?
     /// Launch-stable client identity (B1): a UUID minted at message
     /// construction when the gateway did not stamp a durable `row_id`, and
     /// persisted through the FleetPersistence seam so the same stored message
@@ -69,6 +76,7 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
         reasoning: String? = nil,
         toolName: String? = nil,
         toolContext: String? = nil,
+        reactions: [MessageReaction]? = nil,
         clientID: String? = nil
     ) {
         self.role = role
@@ -79,6 +87,7 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
         self.reasoning = reasoning
         self.toolName = toolName
         self.toolContext = toolContext
+        self.reactions = reactions
         // Mint a launch-stable UUID at construction whenever there is no
         // durable row_id and the caller (e.g. the persistence seam restoring a
         // stored row) did not supply an existing one. This is the ONLY id
@@ -111,6 +120,7 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
             && lhs.reasoning == rhs.reasoning
             && lhs.toolName == rhs.toolName
             && lhs.toolContext == rhs.toolContext
+            && lhs.reactions == rhs.reactions
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -122,6 +132,7 @@ public struct SessionMessage: Hashable, Sendable, Identifiable {
         hasher.combine(reasoning)
         hasher.combine(toolName)
         hasher.combine(toolContext)
+        hasher.combine(reactions)
     }
 
     /// Whether the message carries any renderable content: text, reasoning, or

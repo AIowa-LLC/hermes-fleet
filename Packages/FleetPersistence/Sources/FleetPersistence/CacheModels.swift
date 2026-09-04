@@ -37,6 +37,11 @@ public final class CachedMessageRow {
     public var toolName: String?
     /// Tool message context (an 80-char preview of the call), tool only.
     public var toolContext: String?
+    /// R10-T2: this row's reactions, JSON-encoded
+    /// (`[{"emoji","author","at"?}]`) — nil when none were disclosed. An
+    /// additive optional column: legacy rows decode nil via lightweight
+    /// migration. Non-secret display metadata.
+    public var reactionsData: String?
 
     public init(
         gatewayID: String,
@@ -50,6 +55,7 @@ public final class CachedMessageRow {
         reasoning: String?,
         toolName: String?,
         toolContext: String?,
+        reactionsData: String? = nil,
         clientID: String? = nil
     ) {
         self.gatewayID = gatewayID
@@ -64,6 +70,7 @@ public final class CachedMessageRow {
         self.reasoning = reasoning
         self.toolName = toolName
         self.toolContext = toolContext
+        self.reactionsData = reactionsData
     }
 }
 
