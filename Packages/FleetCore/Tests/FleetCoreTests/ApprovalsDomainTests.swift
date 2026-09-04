@@ -89,7 +89,10 @@ final class ApprovalsDomainTests: XCTestCase {
     // MARK: Redaction.commandPreview (client-side second pass)
 
     func testCommandPreviewMasksTokenShapedSubstrings() {
-        let masked = Redaction.commandPreview("curl -H 'Authorization: Bearer sk-live-abc123' https://x")
+        // FAKE token fixture (allowline-annotated: gitleaks curl-auth-header
+        // matches any token-shaped bearer literal; this one must stay so the
+        // ≥8-char bearer redaction path is exercised end-to-end).
+        let masked = Redaction.commandPreview("curl -H 'Authorization: Bearer sk-live-abc123' https://x") // gitleaks:allow
         XCTAssertTrue(masked.contains("[REDACTED]"), "bearer token must be masked: \(masked)")
         XCTAssertFalse(masked.contains("sk-live-abc123"))
         // Structure survives (this is a preview, not a full redact).
@@ -120,6 +123,12 @@ final class ApprovalsDomainTests: XCTestCase {
         do {
             _ = try await seam.setSessionYolo(true, sessionID: "s")
             XCTFail("setSessionYolo must throw when unsupported")
+        } catch {
+            // expected
+        }
+        do {
+            _ = try await seam.pendingApprovals(sessionID: "s")
+            XCTFail("pendingApprovals must throw when unsupported")
         } catch {
             // expected
         }

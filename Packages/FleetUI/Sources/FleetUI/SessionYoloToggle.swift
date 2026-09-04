@@ -7,8 +7,9 @@ import FleetCore
 /// flips this session's bypass flag, never the global `approvals.mode`,
 /// never persisted, never survives restart — honest per-session copy.
 /// Enabling shows a danger confirmation (deliberate friction); disabling is
-/// immediate (restoring safety needs no friction). The FaceID gate rides
-/// the confirm action: confirming YOLO requires biometric success.
+/// immediate (restoring safety needs no friction). No biometric gate rides
+/// the confirm action (spec requires the confirmation alert only); the
+/// FaceID gate applies to approval-banner APPROVE, not to YOLO enable.
 public struct SessionYoloToggle: View {
     @Bindable var model: ApprovalViewModel
 

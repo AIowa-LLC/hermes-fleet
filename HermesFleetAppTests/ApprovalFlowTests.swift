@@ -57,6 +57,23 @@ final class ApprovalFlowTests: XCTestCase {
             // the scripted error exercises).
             return try yoloResult.map { _ in enabled }.get()
         }
+
+        // R9-T1 rework: reconnect-restore seam. Scriptable per test.
+        var pendingResult: Result<[ApprovalRequest], Error> = .success([])
+        private var _pendingCalls: [String] = []
+        var pendingCalls: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return _pendingCalls
+        }
+        private func recordPending(_ sessionID: String) {
+            lock.lock(); defer { lock.unlock() }
+            _pendingCalls.append(sessionID)
+        }
+
+        func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
+            recordPending(sessionID)
+            return try pendingResult.get()
+        }
     }
 
     /// Scripted biometric seam: denies by default (the banner must NOT send
@@ -71,7 +88,10 @@ final class ApprovalFlowTests: XCTestCase {
     private let request = ApprovalRequest(
         requestID: "req-1",
         sessionID: "s-1",
-        command: "curl -H 'Authorization: Bearer sk-live-abc123' https://api",
+        // FAKE token fixture (allowline-annotated: gitleaks curl-auth-header
+        // matches any token-shaped bearer literal; this one must stay so the
+        // ≥8-char bearer redaction path is exercised end-to-end).
+        command: "curl -H 'Authorization: Bearer sk-live-abc123' https://api", // gitleaks:allow
         detail: "HTTP request",
         choices: ["once", "session", "always", "deny"]
     )
@@ -238,5 +258,59 @@ final class ApprovalFlowTests: XCTestCase {
         )
         vm.handleApprovalRequest(other)
         XCTAssertNil(vm.pending, "another session's approval must not hijack this screen")
+    }
+
+    // MARK: - Reconnect restore (R9-T1 rework: approval.pending wiring)
+
+    func testRestorePendingApprovalsSurfacesMissedBanner() async {
+        let (approvals, vm) = makeViewModel()
+        approvals.pendingResult = .success([
+            ApprovalRequest(
+                requestID: "req-9", sessionID: "s-1",
+                command: "git push --force", detail: "Force push", choices: ["once", "deny"]
+            )
+        ])
+        await vm.restorePendingApprovals()
+        XCTAssertEqual(approvals.pendingCalls, ["s-1"], "restore must query the bound session")
+        XCTAssertEqual(vm.pending?.requestID, "req-9")
+        XCTAssertEqual(vm.state, .pending)
+        // Restored commands get the same client-side redaction pass.
+        XCTAssertTrue(vm.pending!.command.contains("git push --force"))
+    }
+
+    func testRestorePendingApprovalsDedupesAgainstLiveBanner() async {
+        let (approvals, vm) = makeViewModel()
+        vm.handleApprovalRequest(request)  // push arrived before the restore
+        approvals.pendingResult = .success([
+            request,  // same id the live banner already shows
+            ApprovalRequest(
+                requestID: "req-10", sessionID: "s-1",
+                command: "rm -rf /tmp/x", detail: nil, choices: ["once", "deny"]
+            )
+        ])
+        await vm.restorePendingApprovals()
+        XCTAssertEqual(vm.pending?.requestID, "req-1", "live banner stays")
+        XCTAssertEqual(vm.queued.map(\.requestID), ["req-10"], "only the unknown id queues")
+    }
+
+    func testRestorePendingApprovalsFailsSoft() async {
+        let (approvals, vm) = makeViewModel()
+        vm.handleApprovalRequest(request)
+        approvals.pendingResult = .failure(ConversationError.notConnected)
+        await vm.restorePendingApprovals()
+        XCTAssertEqual(vm.pending?.requestID, "req-1", "fail-soft: existing banner untouched")
+        XCTAssertEqual(vm.state, .pending)
+        XCTAssertFalse(approvals.pendingCalls.isEmpty, "the read was attempted")
+    }
+
+    func testRestorePendingApprovalsNoSessionIsNoOp() async {
+        // Unbound VM: restore must not hit the wire at all.
+        let approvals = ScriptedApprovals()
+        let vm = ApprovalViewModel(
+            approvals: approvals,
+            biometrics: ScriptedBiometrics(result: .success)
+        )
+        await vm.restorePendingApprovals()
+        XCTAssertTrue(approvals.pendingCalls.isEmpty, "unbound VM must not hit the wire")
     }
 }

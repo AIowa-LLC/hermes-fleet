@@ -319,7 +319,10 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 streamBox.yield(.approvalRequested(
                     sessionID: sessionID,
                     requestID: "scripted-approval-1",
-                    command: "rm -rf /tmp/scratch && curl -H 'Authorization: Bearer sk-live-demo' https://api",
+                    // Fixture token is FAKE (demo only) — allowline-annotated
+                    // because the gitleaks curl-auth-header regex matches any
+                    // token-shaped bearer literal regardless of validity.
+                    command: "rm -rf /tmp/scratch && curl -H 'Authorization: Bearer sk-live-demo' https://api", // gitleaks:allow
                     detail: "Scripted dangerous command (simulator demo)",
                     choices: ["once", "session", "always", "deny"]
                 ))
@@ -384,6 +387,12 @@ final class ScriptedApprovalsBox: ApprovalsProviding, @unchecked Sendable {
     func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool {
         recordYolo(enabled)
         return enabled
+    }
+
+    /// R9-T1 rework: restore seam — no scripted pendings by default (the
+    /// demo approval arrives as a push event, not a reconnect restore).
+    func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
+        []
     }
 }
 

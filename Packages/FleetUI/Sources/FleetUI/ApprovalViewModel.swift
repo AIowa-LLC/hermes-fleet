@@ -117,6 +117,27 @@ public final class ApprovalViewModel {
         }
     }
 
+    /// R9-T1 rework: reconnect-restore — `approval.pending` readback for
+    /// banners whose push event was missed while detached. Called on
+    /// open/reconnect. Fail-soft by design: a failed restore must never
+    /// break the conversation (a later push event or the next reconnect
+    /// retries); results are deduped against already-pending/queued ids so
+    /// a push racing the restore never double-renders one banner.
+    public func restorePendingApprovals() async {
+        guard let sid = boundSessionID else { return }
+        let restored: [ApprovalRequest]
+        do {
+            restored = try await approvals.pendingApprovals(sessionID: sid)
+        } catch {
+            // Fail-soft: leave current banner state untouched.
+            return
+        }
+        let known = Set([self.pending?.requestID].compactMap { $0 } + queued.map(\.requestID))
+        for request in restored where !known.contains(request.requestID) {
+            handleApprovalRequest(request)
+        }
+    }
+
     // MARK: Actions
 
     /// DENY — friction-free, no biometrics. The safe answer is one tap.

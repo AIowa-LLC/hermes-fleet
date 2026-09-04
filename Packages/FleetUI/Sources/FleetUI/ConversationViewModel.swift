@@ -354,6 +354,11 @@ public final class ConversationViewModel {
         }
         startEventSubscription()
         startStatusWatcher()
+        // R9-T1 rework: reconnect-restore — after (re)opening + subscribing,
+        // pull `approval.pending` so a banner whose push event was missed
+        // while detached is restored (fail-soft inside the VM; deduped
+        // against any banner that did arrive).
+        Task { await approvalViewModel?.restorePendingApprovals() }
         phase = .ready
         return true
     }

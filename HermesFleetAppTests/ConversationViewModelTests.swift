@@ -27,6 +27,7 @@ final class ConversationViewModelTests: XCTestCase {
         ConversationProviding,
         ReplayProviding,
         SessionHistoryProviding,
+        ApprovalsCapable,
         @unchecked Sendable
     {
         let gatewayID = GatewayID(rawValue: "<dev-workstation>")
@@ -97,6 +98,9 @@ final class ConversationViewModelTests: XCTestCase {
         var conversation: any ConversationProviding { self }
         var replay: any ReplayProviding { self }
         var history: any SessionHistoryProviding { self }
+        // MARK: ApprovalsCapable (R9-T1 rework: approval.pending restore)
+        var approvals: any ApprovalsProviding { approvalsBox }
+        let approvalsBox = ScriptedPendingApprovals()
         func reauthenticate() async throws {
             reauthenticateCount += 1
             if let connectError { throw connectError }
@@ -200,6 +204,49 @@ final class ConversationViewModelTests: XCTestCase {
         }
     }
 
+    // MARK: - Scripted approvals double (R9-T1 rework)
+
+    /// Thread-safe scripted `ApprovalsProviding` — the ConversationViewModel
+    /// wiring test only needs `pendingApprovals` (respond/yolo fail closed).
+    private final class ScriptedPendingApprovals: ApprovalsProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _pendingCalls: [String] = []
+        var pendingCalls: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return _pendingCalls
+        }
+        /// Delay applied inside pendingApprovals before returning, letting a
+        /// test hold the restore in flight (fencing observation).
+        var pendingGate: OneShotGate?
+        private func recordPendingAndTakeGate(_ sessionID: String) -> OneShotGate? {
+            lock.lock(); defer { lock.unlock() }
+            _pendingCalls.append(sessionID)
+            return pendingGate
+        }
+
+        func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
+            throw ConversationError.notConnected
+        }
+
+        func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool {
+            throw ConversationError.notConnected
+        }
+
+        func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
+            let gate = recordPendingAndTakeGate(sessionID)
+            if let gate { await gate.wait() }
+            return [
+                ApprovalRequest(
+                    requestID: "req-restore-1",
+                    sessionID: sessionID,
+                    command: "git push --force",
+                    detail: "Force push",
+                    choices: ["once", "deny"]
+                )
+            ]
+        }
+    }
+
     // MARK: - Fixture
 
     private var cache: SwiftDataCacheStore!
@@ -234,6 +281,27 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(scripted.connectCount, 1)
         XCTAssertEqual(viewModel.phase, .ready)
         XCTAssertEqual(viewModel.sessionTitle, "default")
+    }
+
+    /// R9-T1 rework: opening a session pulls `approval.pending` and restores
+    /// a banner whose push event was missed while detached.
+    func testStartRestoresPendingApprovalsAfterOpen() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: nil)
+
+        await viewModel.start()
+
+        XCTAssertEqual(scripted.connectCount, 1)
+        XCTAssertEqual(viewModel.phase, .ready)
+        // The restore rides a post-open Task — poll for it (bounded).
+        for _ in 0..<200 where viewModel.approvalViewModel?.pending == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(
+            scripted.approvalsBox.pendingCalls, ["s-1"],
+            "open must pull approval.pending for the bound runtime session"
+        )
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.requestID, "req-restore-1")
+        XCTAssertEqual(viewModel.approvalViewModel?.state, .pending)
     }
 
     func testStartConnectsAndResumesExistingSession() async throws {

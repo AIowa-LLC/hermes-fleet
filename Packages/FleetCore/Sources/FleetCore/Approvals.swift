@@ -86,6 +86,13 @@ public protocol ApprovalsProviding: Sendable {
     /// same contract as the desktop's Shift+Tab (server.py:14967).
     /// - Returns: the resulting enabled state.
     func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool
+
+    /// `approval.pending` (methods_prompt.py:1804) — the replay-safe list
+    /// of unresolved approvals for a session. Called on open/reconnect to
+    /// restore a banner whose push event was missed while detached; the
+    /// server-side queue stays authoritative (this is a read, not a claim).
+    /// - Returns: the session's unresolved approvals (empty when none).
+    func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest]
 }
 
 /// Sessions whose concrete type carries an approvals seam (R9-T1).
@@ -114,6 +121,10 @@ public struct UnsupportedApprovals: ApprovalsProviding {
     }
 
     public func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool {
+        throw ConversationError.notConnected
+    }
+
+    public func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
         throw ConversationError.notConnected
     }
 }
