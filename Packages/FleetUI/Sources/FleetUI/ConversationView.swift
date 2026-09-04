@@ -353,6 +353,13 @@ public struct ConversationView: View {
                             Task { await model.clearReaction(rowID: row.rowID, kind: row.kind) }
                         }
                         .id(row.id)
+                        // R10-T3: `@file:`/`@folder:` refs tap through into
+                        // the Projects browser. Rendered OUTSIDE the bubble
+                        // (the bubble combines its children for a11y — the
+                        // R9-T6 lesson: .combine hides descendant buttons).
+                        if row.kind == .user || row.kind == .assistant {
+                            fileRefChips(row)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -377,6 +384,69 @@ public struct ConversationView: View {
     }
 
     // MARK: Composer (V2 — surface bar, flat pale-cyan circular send button)
+
+    /// R10-T3 — `@file:`/`@folder:` reference chips under a transcript
+    /// row. Each chip deep-links into the Projects browser. The chips
+    /// live OUTSIDE the combined bubble element (a11y discipline).
+    @ViewBuilder
+    private func fileRefChips(_ row: ConversationRow) -> some View {
+        let refs = Self.fileRefs(in: row.text)
+        if !refs.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(refs, id: \.self) { ref in
+                    NavigationLink(value: FleetScreen.projects(route.gatewayID)) {
+                        Label(ref.displayPath, systemImage: "doc")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.accent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(FleetTheme.surfaceElevated, in: Capsule())
+                            .overlay(
+                                Capsule().strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityLabel("Browse \(ref.displayPath)")
+                    .accessibilityIdentifier("fleet.conversation.fileref.\(ref.index)")
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
+            .padding(.top, 2)
+        }
+    }
+
+    /// One `@file:` / `@folder:` reference found in message text.
+    struct FileRef: Hashable {
+        let ref: String
+        let displayPath: String
+        let index: Int
+    }
+
+    /// Extract `@file:` / `@folder:` refs from message text (the T1
+    /// attachment vocabulary; `@url:`/`@git:` etc. are not paths).
+    static func fileRefs(in text: String) -> [FileRef] {
+        var results: [FileRef] = []
+        var scanner = Substring(text)
+        while let atRange = scanner.range(of: "@") {
+            let tail = scanner[atRange.upperBound...]
+            guard let colon = tail.firstIndex(of: ":") else { break }
+            let kind = String(tail[..<colon])
+            guard kind == "file" || kind == "folder" else {
+                scanner = tail
+                continue
+            }
+            let path = tail[tail.index(after: colon)...]
+            let pathEnd = path.firstIndex(where: { $0.isWhitespace || $0 == ")" || $0 == "]" }) ?? path.endIndex
+            let value = String(path[..<pathEnd])
+            guard !value.isEmpty else {
+                scanner = path
+                continue
+            }
+            results.append(FileRef(ref: "@\(kind):\(value)", displayPath: value, index: results.count))
+            scanner = path[pathEnd...]
+        }
+        return results
+    }
 
     private func composer(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {

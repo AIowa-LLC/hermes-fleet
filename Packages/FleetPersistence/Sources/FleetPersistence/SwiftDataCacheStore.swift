@@ -306,6 +306,7 @@ public extension SwiftDataCacheStore {
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
                  CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
+                 ProjectsSnapshotRow.self,
             configurations: config
         )
         return SwiftDataCacheStore(container: container)
@@ -323,6 +324,7 @@ public extension SwiftDataCacheStore {
         let container = try ModelContainer(
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
                  CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
+                 ProjectsSnapshotRow.self,
             configurations: config
         )
         // The store file is created eagerly at container init (verified); apply

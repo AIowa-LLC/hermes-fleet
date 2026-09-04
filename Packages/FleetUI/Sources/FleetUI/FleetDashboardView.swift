@@ -286,6 +286,16 @@ public struct FleetDashboardView: View {
             }
             .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("fleet.dashboard.skills.entry")
+            NavigationLink(value: FleetScreen.projects(gateway.id)) {
+                FleetCard {
+                    managementRowLabel(
+                        icon: "folder",
+                        title: "Projects",
+                        subtitle: "Project & session browser on \(gateway.displayName)")
+                }
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityIdentifier("fleet.dashboard.projects.entry")
             NavigationLink(value: FleetScreen.memoryGraph(gateway.id)) {
                 FleetCard {
                     managementRowLabel(

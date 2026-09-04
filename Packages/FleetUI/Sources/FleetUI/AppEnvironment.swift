@@ -54,6 +54,12 @@ public typealias FleetLearningSeamFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any GatewayLearningProviding
 
+/// Builds a per-gateway projects seam (R10-T3 — remote file browser).
+/// Same M0-guard construction as the seams above.
+public typealias FleetProjectsSeamFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any GatewayProjectsProviding
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -182,6 +188,13 @@ public final class AppEnvironment {
     /// tests inject doubles; production passes the composition root's
     /// SwiftData cache store adapted to the FleetCore seam.
     private let learningSnapshotStore_: (any LearningGraphSnapshotStoring)?
+    /// R10-T3: projects seam factory (remote file browser) — one per
+    /// gateway (the concrete `GatewayProjectsClient` in production,
+    /// scripted in DEBUG/tests).
+    private let projectsSeamFactory: FleetProjectsSeamFactory?
+    /// R10-T3: projects-tree snapshot store (offline browse). Same
+    /// construction as the learning snapshot store.
+    private let projectsSnapshotStore_: (any ProjectsSnapshotStoring)?
     /// Gateways to register on first launch (empty registry) so the U1
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
@@ -204,6 +217,10 @@ public final class AppEnvironment {
     /// the management seams).
     private var learningSeams: [GatewayID: any GatewayLearningProviding] = [:]
 
+    /// R10-T3: lazily-built projects seams per gateway (same lifetime as
+    /// the learning seams).
+    private var projectsSeams: [GatewayID: any GatewayProjectsProviding] = [:]
+
     /// Generation of the newest roster refresh (t_e77c614c). Bumped each time
     /// `refreshRoster()` starts; an in-flight refresh whose captured token no
     /// longer matches is STALE and must not settle observable state (the
@@ -221,6 +238,8 @@ public final class AppEnvironment {
         managementSeamFactory: FleetManagementSeamFactory? = nil,
         learningSeamFactory: FleetLearningSeamFactory? = nil,
         learningSnapshotStore: (any LearningGraphSnapshotStoring)? = nil,
+        projectsSeamFactory: FleetProjectsSeamFactory? = nil,
+        projectsSnapshotStore: (any ProjectsSnapshotStoring)? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = []
@@ -235,6 +254,8 @@ public final class AppEnvironment {
         self.managementSeamFactory = managementSeamFactory
         self.learningSeamFactory = learningSeamFactory
         self.learningSnapshotStore_ = learningSnapshotStore
+        self.projectsSeamFactory = projectsSeamFactory
+        self.projectsSnapshotStore_ = projectsSnapshotStore
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
@@ -565,5 +586,23 @@ public final class AppEnvironment {
     /// The learning-graph snapshot store (offline browse), when wired.
     public var learningSnapshotStore: (any LearningGraphSnapshotStoring)? {
         learningSnapshotStore_
+    }
+
+    // MARK: Projects browser (R10-T3 — remote file browser)
+
+    /// Build the projects seam for a gateway. Nil when no factory is
+    /// wired (the browser renders its unavailable state, fail closed).
+    public func makeProjectsSeam(for gatewayID: GatewayID) -> (any GatewayProjectsProviding)? {
+        if let existing = projectsSeams[gatewayID] { return existing }
+        guard let factory = projectsSeamFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let seam = factory(gateway)
+        projectsSeams[gatewayID] = seam
+        return seam
+    }
+
+    /// The projects-tree snapshot store (offline browse), when wired.
+    public var projectsSnapshotStore: (any ProjectsSnapshotStoring)? {
+        projectsSnapshotStore_
     }
 }

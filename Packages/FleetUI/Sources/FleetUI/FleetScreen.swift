@@ -35,4 +35,7 @@ public enum FleetScreen: Hashable, Sendable {
     case skills(GatewayID)
     /// R9-T7: the per-gateway Memory Graph (read-only learning star map).
     case memoryGraph(GatewayID)
+    /// R10-T3: the per-gateway remote Projects browser
+    /// (projects.tree + drill-in).
+    case projects(GatewayID)
 }

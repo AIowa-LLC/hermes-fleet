@@ -93,6 +93,10 @@ extension FleetServiceGraph {
                 ScriptedLearningSeam(gatewayID: gateway.id)
             },
             learningSnapshotStore: cacheStore,
+            projectsSeamFactory: { gateway in
+                ScriptedProjectsSeam(gatewayID: gateway.id)
+            },
+            projectsSnapshotStore: cacheStore,
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations
         )
@@ -375,6 +379,182 @@ final class ScriptedLearningSeam: GatewayLearningProviding, @unchecked Sendable 
                         "\(memoryCount) memory↔skill links · busiest day 4 Sep · 4 learned"],
                 start: "30 Aug 2026", end: "4 Sep 2026",
                 totalCount: skillCount + memoryCount))
+    }
+}
+
+/// R10-T3: scripted projects seam (DEBUG simulator only) — a fixture
+/// projects.tree mirroring the live gateway's real shape (an explicit
+/// project with two lanes + the "No Project" tier, previews on the
+/// overview, hydrated rows on drill-in) so the Projects browser is
+/// fully walkable without a live gateway. Presentation data only.
+///
+/// Failure hook (`HERMES_FLEET_PROJECTS_FAIL=1`) makes every call throw
+/// 5061-shaped — the honest offline/error walkthrough for UI tests.
+final class ScriptedProjectsSeam: GatewayProjectsProviding, @unchecked Sendable {
+
+    private static let failHook =
+        ProcessInfo.processInfo.environment["HERMES_FLEET_PROJECTS_FAIL"] == "1"
+
+    init(gatewayID: GatewayID) {}
+
+    func projectTree(profile: String?) async throws -> ProjectsTree {
+        if Self.failHook {
+            throw GatewayProjectsError.rpcFailed("profile db locked (5061)")
+        }
+        return Self.fixtureTree()
+    }
+
+    func projectSessions(projectID: String, profile: String?) async throws -> ProjectNode? {
+        if Self.failHook {
+            throw GatewayProjectsError.rpcFailed("profile db locked (5061)")
+        }
+        return Self.fixtureTree().projects.first { $0.id == projectID }
+            .map(Self.hydrate)
+    }
+
+    func completePath(word: String, cwd: String?) async throws -> [PathCompletionItem] {
+        if Self.failHook {
+            throw GatewayProjectsError.rpcFailed("profile db locked (5061)")
+        }
+        // Scripted completions for the walkthrough only.
+        switch word {
+        case "@file:PACK", "@file:Packages/Fle":
+            return [
+                PathCompletionItem(text: "@folder:Packages/FleetUI/", display: "FleetUI/", meta: "dir"),
+                PathCompletionItem(text: "@file:Packages/Module.swift", display: "Module.swift", meta: "Packages"),
+            ]
+        default:
+            return []
+        }
+    }
+
+    /// Fixture overview (hydrate=False shape: lanes carry no rows).
+    static func fixtureTree() -> ProjectsTree {
+        let sessionRow = { (id: String, title: String, preview: String, branch: String,
+                            started: Double, active: Double, messages: Int, cost: Double) in
+            ProjectSessionRow(
+                id: id, title: title, preview: preview,
+                startedAt: started, lastActive: active, endedAt: nil,
+                cwd: "/Users/dev/code/fleet-ios", gitBranch: branch,
+                messageCount: messages, toolCallCount: messages / 4,
+                inputTokens: messages * 50, outputTokens: messages * 75,
+                actualCostUsd: cost, estimatedCostUsd: nil,
+                model: "glm-5.3", profile: "default")
+        }
+        let fleet = ProjectNode(
+            id: "proj-fleet", label: "Fleet iOS",
+            path: "/Users/dev/code/fleet-ios", color: "#22d3ee",
+            isAuto: false, isNoProject: false, sessionCount: 3,
+            lastActive: 1_788_550_000, totalTokens: 1_500, totalCostUsd: 0.05,
+            repos: [
+                ProjectRepoNode(
+                    id: "/Users/dev/code/fleet-ios", label: "fleet-ios",
+                    path: "/Users/dev/code/fleet-ios", sessionCount: 3,
+                    groups: [
+                        ProjectLaneNode(
+                            id: "/Users/dev/code/fleet-ios::branch::r10-t3",
+                            label: "r10-t3", path: "/Users/dev/code/fleet-ios",
+                            isMain: false, isKanban: false, sessions: []),
+                        ProjectLaneNode(
+                            id: "/Users/dev/code/fleet-ios::branch::main",
+                            label: "main", path: "/Users/dev/code/fleet-ios",
+                            isMain: true, isKanban: false, sessions: []),
+                        ProjectLaneNode(
+                            id: "/Users/dev/code/fleet-ios::kanban",
+                            label: "kanban", path: "/Users/dev/code/fleet-ios",
+                            isMain: false, isKanban: true, sessions: []),
+                    ]),
+            ],
+            previewSessions: [
+                sessionRow("s1", "WS transport fix", "correlate rpc ids", "r10-t3",
+                           1_788_540_000, 1_788_550_000, 12, 0.04),
+                sessionRow("s2", "Reactions round 2", "promote newest_role", "main",
+                           1_788_500_000, 1_788_510_000, 8, 0.01),
+                sessionRow("s3", "Board sweep", "qa findings", "main",
+                           1_788_480_000, 1_788_490_000, 5, 0.00),
+            ])
+        let noProject = ProjectNode(
+            id: "__no_project__", label: "No Project", path: nil, color: nil,
+            isAuto: false, isNoProject: true, sessionCount: 1,
+            lastActive: 1_788_540_000, totalTokens: 500, totalCostUsd: 0.01,
+            repos: [
+                ProjectRepoNode(
+                    id: "__no_project__", label: "No Project", path: nil, sessionCount: 1,
+                    groups: [
+                        ProjectLaneNode(
+                            id: "__no_project__", label: "No Project", path: nil,
+                            isMain: false, isKanban: false, sessions: [])]),
+            ],
+            previewSessions: [
+                ProjectSessionRow(
+                    id: "s9", title: "Loose scratch chat", preview: "quick question",
+                    startedAt: 1_788_530_000, lastActive: 1_788_540_000, endedAt: nil,
+                    cwd: "/tmp", gitBranch: "", messageCount: 2, toolCallCount: 0,
+                    inputTokens: 200, outputTokens: 300,
+                    actualCostUsd: 0.01, estimatedCostUsd: nil,
+                    model: "glm-5.3", profile: "default"),
+            ])
+        return ProjectsTree(
+            projects: [noProject, fleet],
+            activeID: "proj-fleet",
+            scopedSessionIDs: ["s9", "s1", "s2", "s3"])
+    }
+
+    /// Fixture drill-in (hydrate=True shape: lanes carry rows).
+    static func hydrate(_ node: ProjectNode) -> ProjectNode {
+        let rows: [String: ProjectSessionRow] = [
+            "s1": ProjectSessionRow(
+                id: "s1", title: "WS transport fix", preview: "correlate rpc ids",
+                startedAt: 1_788_540_000, lastActive: 1_788_550_000, endedAt: nil,
+                cwd: "/Users/dev/code/fleet-ios", gitBranch: "r10-t3",
+                messageCount: 12, toolCallCount: 3, inputTokens: 600, outputTokens: 900,
+                actualCostUsd: 0.04, estimatedCostUsd: nil,
+                model: "glm-5.3", profile: "default"),
+            "s2": ProjectSessionRow(
+                id: "s2", title: "Reactions round 2", preview: "promote newest_role",
+                startedAt: 1_788_500_000, lastActive: 1_788_510_000, endedAt: nil,
+                cwd: "/Users/dev/code/fleet-ios", gitBranch: "main",
+                messageCount: 8, toolCallCount: 0, inputTokens: 100, outputTokens: 200,
+                actualCostUsd: 0.01, estimatedCostUsd: nil,
+                model: "glm-5.3", profile: "default"),
+            "s3": ProjectSessionRow(
+                id: "s3", title: "Board sweep", preview: "qa findings",
+                startedAt: 1_788_480_000, lastActive: 1_788_490_000, endedAt: nil,
+                cwd: "/Users/dev/code/fleet-ios", gitBranch: "main",
+                messageCount: 5, toolCallCount: 1, inputTokens: 250, outputTokens: 375,
+                actualCostUsd: 0.0, estimatedCostUsd: nil,
+                model: "glm-5.3", profile: "default"),
+        ]
+        let hydratedRepos = node.repos.map { repo in
+            ProjectRepoNode(
+                id: repo.id, label: repo.label, path: repo.path,
+                sessionCount: repo.sessionCount,
+                groups: repo.groups.map { lane in
+                    ProjectLaneNode(
+                        id: lane.id, label: lane.label, path: lane.path,
+                        isMain: lane.isMain, isKanban: lane.isKanban,
+                        sessions: lane.id.hasSuffix("::kanban")
+                            ? []
+                            : lane.label.replacements(rowCount: lane.isMain ? 2 : 1).compactMap { rows[$0] })
+                })
+        }
+        return ProjectNode(
+            id: node.id, label: node.label, path: node.path, color: node.color,
+            isAuto: node.isAuto, isNoProject: node.isNoProject,
+            sessionCount: node.sessionCount, lastActive: node.lastActive,
+            totalTokens: node.totalTokens, totalCostUsd: node.totalCostUsd,
+            repos: hydratedRepos, previewSessions: [])
+    }
+}
+
+/// Tiny helper: deterministic session-id pick per lane for the fixture.
+private extension String {
+    func replacements(rowCount: Int) -> [String] {
+        switch self {
+        case "r10-t3": return rowCount >= 1 ? ["s1"] : []
+        case "main": return rowCount >= 2 ? ["s2", "s3"] : (rowCount == 1 ? ["s2"] : [])
+        default: return []
+        }
     }
 }
 
