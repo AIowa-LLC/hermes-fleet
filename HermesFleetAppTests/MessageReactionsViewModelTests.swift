@@ -243,6 +243,75 @@ final class MessageReactionsViewModelTests: XCTestCase {
         XCTAssertEqual(bare?.reactions ?? [], [], "rows without reactions render none")
     }
 
+    // MARK: - Live-row (newest_role) path — QA round-1 defect coverage
+
+    /// QA defect (round 1): a live row (streamed this session, no durable
+    /// row_id) addressed via newest_role lost its reaction chip the moment
+    /// the message.react SUCCEEDED — settle keyed server truth under the
+    /// durable id and dropped the live-* key while the row still projected
+    /// through it. The chip must survive settle.
+    func testReactOnLiveRowKeepsChipVisibleAfterSuccessfulSettle() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-9")
+        try await Task.sleep(for: .milliseconds(50))
+
+        // A live user row: appended by send(), never round-tripped through
+        // a resume — no durable row_id.
+        await viewModel.send("live question")
+        await flush()
+
+        // Default scripted result: durable row 42 + the user's 👍.
+        await viewModel.react(rowID: nil, kind: .user, emoji: "👍")
+        await flush()
+
+        let calls = scripted.reactionsBox.calls
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls[0].target, .newest(role: "user"),
+                       "live row addresses newest_role on the wire")
+
+        let row = viewModel.transcript.first { $0.text == "live question" }
+        XCTAssertNotNil(row)
+        XCTAssertEqual(row?.reactions?.map(\.emoji), ["👍"],
+                       "chip must SURVIVE a successful settle on a live row")
+    }
+
+    /// The settled live row is PROMOTED to the durable id the server
+    /// assigned — it projects through the durable key (so Clear Reaction
+    /// stays reachable) and later durable-keyed writes target the same row.
+    func testReactOnLiveRowPromotesRowToDurableID() async throws {
+        let (_, viewModel) = try await makeFixture(sessionID: "s-9")
+        try await Task.sleep(for: .milliseconds(50))
+
+        await viewModel.send("live question")
+        await flush()
+        await viewModel.react(rowID: nil, kind: .user, emoji: "👍")
+        await flush()
+
+        let row = viewModel.transcript.first { $0.text == "live question" }
+        XCTAssertEqual(row?.rowID, "42",
+                       "live row adopts the durable id from message.react's result")
+        XCTAssertEqual(viewModel.reactionsByRowID["42"]?.reactions.map(\.emoji), ["👍"],
+                       "server truth is keyed under the durable id")
+    }
+
+    /// Clear on a live row after a settled react: the chip clears and the
+    /// Clear affordance's precondition (a visible own reaction) held.
+    func testClearOnLiveRowAfterSettledReactClearsChip() async throws {
+        let (_, viewModel) = try await makeFixture(sessionID: "s-9")
+        try await Task.sleep(for: .milliseconds(50))
+
+        await viewModel.send("live question")
+        await flush()
+        await viewModel.react(rowID: nil, kind: .user, emoji: "👍")
+        await flush()
+
+        // After promotion the row is durable — clear addresses row_id.
+        await viewModel.clearReaction(rowID: nil, kind: .user)
+        await flush()
+
+        let row = viewModel.transcript.first { $0.text == "live question" }
+        XCTAssertEqual(row?.reactions ?? [], [], "cleared live-row reaction renders none")
+    }
+
     // MARK: - Fail-closed default
 
     func testReactWithoutCapableSessionSurfacesHonestError() async throws {

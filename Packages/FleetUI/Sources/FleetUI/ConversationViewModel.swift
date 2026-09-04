@@ -1253,11 +1253,19 @@ public final class ConversationViewModel {
         do {
             let result = try await reactionSeam.react(sessionID: sid, target: target, emoji: emoji)
             // Server truth settles — keyed on the durable id the write
-            // landed on (a live newest_role write adopts it here).
-            reactionsByRowID[result.rowID] = MessageReactionsSnapshot(result)
-            if result.rowID != displayKey {
-                reactionsByRowID.removeValue(forKey: displayKey)
+            // landed on. On the live path (newest_role) the addressed row
+            // is PROMOTED to that durable id, so it projects through this
+            // key and the chip survives the settle (QA round-1 defect: the
+            // settle used to drop the live-* key while the row still
+            // projected through it — the chip vanished exactly when the
+            // server confirmed it).
+            let snapshot = MessageReactionsSnapshot(result)
+            if snapshot.reactions.isEmpty {
+                reactionsByRowID.removeValue(forKey: result.rowID)
+            } else {
+                reactionsByRowID[result.rowID] = snapshot
             }
+            settleReactionKeys(wireTarget: target, displayKey: displayKey, resultRowID: result.rowID)
         } catch {
             // Rollback: restore the pre-optimistic state (absent = none).
             if prior.reactions.isEmpty {
@@ -1302,9 +1310,7 @@ public final class ConversationViewModel {
             } else {
                 reactionsByRowID[result.rowID] = MessageReactionsSnapshot(result)
             }
-            if result.rowID != displayKey {
-                reactionsByRowID.removeValue(forKey: displayKey)
-            }
+            settleReactionKeys(wireTarget: target, displayKey: displayKey, resultRowID: result.rowID)
         } catch {
             if prior.reactions.isEmpty {
                 reactionsByRowID.removeValue(forKey: displayKey)
@@ -1334,6 +1340,42 @@ public final class ConversationViewModel {
     /// durable id from the server.
     static func liveRowKey(kind: ConversationRow.Kind) -> String {
         "live-\(kind == .user ? "user" : "assistant")"
+    }
+
+    /// Post-settle key reconciliation for a reaction write (QA round-1
+    /// defect fix). The optimistic update keyed under `displayKey` (durable
+    /// id or live-* key); server truth lands under `resultRowID`.
+    /// - Durable path: the keys match, nothing to reconcile.
+    /// - Live path (newest_role): the newest LIVE row of that kind is
+    ///   PROMOTED to `resultRowID` — it now projects through the durable
+    ///   key, so the settled chip stays visible and Clear Reaction remains
+    ///   reachable — and the in-flight live-* entry is dropped.
+    private func settleReactionKeys(
+        wireTarget: MessageReactionTarget,
+        displayKey: String,
+        resultRowID: String
+    ) {
+        if wireTarget.rowID != nil {
+            // Durable write: server truth settled under the same key the
+            // optimistic update used. Nothing to reconcile.
+            return
+        }
+        guard let role = wireTarget.newestRole else { return }
+        let kind: ConversationRow.Kind = role == "user" ? .user : .assistant
+        // Promote the newest live row of this kind to the durable id the
+        // server assigned. Skip when no live row addresses it (e.g. the row
+        // already round-tripped through a resume — then a durable row
+        // carries the same id and no live-* key exists to reconcile).
+        if let idx = allRows.lastIndex(where: {
+            $0.kind == kind && $0.rowID == nil
+        }) {
+            allRows[idx].rowID = resultRowID
+        }
+        // Drop the in-flight live-* entry (the promoted row now reads the
+        // durable key; a next live write optimistically starts fresh).
+        if displayKey != resultRowID {
+            reactionsByRowID.removeValue(forKey: displayKey)
+        }
     }
 
     /// Adopt history-carried reactions when rows (re)load (durable rows

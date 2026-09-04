@@ -36,7 +36,12 @@ Commit: see `git log --grep t_8f7350ae`.
   `display_metadata.reactions` and the app renders existing reactions.
   Live in-memory rows never carry reactions (no event pushes them) —
   reactions render only on rows that came back from durable history, and a
-  just-reacted live row settles from the `message.react` result itself.
+  just-reacted live row settles from the `message.react` result itself:
+  the settle PROMOTES the addressed live row to the returned durable row
+  id, so the row projects through the durable key and the chip survives
+  (QA round-1 defect: the settle previously dropped the live-* key while
+  the row still projected through it — the chip vanished exactly when the
+  server confirmed the write).
 
 ### Implementation
 
@@ -83,13 +88,16 @@ Commit: see `git log --grep t_8f7350ae`.
   shape incl. explicit `emoji: null`, error mapping 4023/4024/4040/4001,
   malformed result, history read-back decode, fail-closed default).
 - FleetPersistence `CachedMessageReactionsTests` — 2 round-trip tests.
-- Hosted `MessageReactionsViewModelTests` — 6 tests (target resolution,
+- Hosted `MessageReactionsViewModelTests` — 9 tests (target resolution,
   optimistic settle, rollback + never-silent error, clear-null, history
-  render, fail-closed).
-- UI `R10MessageReactionsUITests` — 3 deterministic tests (long-press →
-  chip; same-emoji retract; failure banner + rollback). Registered in
-  `scripts/c1_ci_validate.sh` (the R9-T7 QA rule: every UI suite joins the
-  gate).
+  render, fail-closed; round-2 live-path coverage: chip survives a
+  successful settle on a newest_role row, promotion to the durable id,
+  clear on a settled live row).
+- UI `R10MessageReactionsUITests` — 4 deterministic tests (long-press →
+  chip; same-emoji retract; failure banner + rollback; live-row
+  react → chip survives settle → Clear Reaction reachable → clears).
+  Registered in `scripts/c1_ci_validate.sh` (the R9-T7 QA rule: every UI
+  suite joins the gate).
 
 ### Deviations / honest notes
 

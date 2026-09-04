@@ -122,10 +122,68 @@ final class R10MessageReactionsUITests: XCTestCase {
         // The optimistic chip rolled back (bounded wait).
         let chip = app.descendants(matching: .any)
             .matching(identifier: "fleet.conversation.reaction.chip.👍").firstMatch
-        let deadline = Date().addingTimeInterval(10)
-        while chip.exists && Date() < deadline {
+        let rollbackDeadline = Date().addingTimeInterval(10)
+        while chip.exists && Date() < rollbackDeadline {
             Thread.sleep(forTimeInterval: 0.3)
         }
         XCTAssertFalse(chip.exists, "optimistic reaction must roll back on wire failure")
+    }
+
+    /// QA round-1 defect regression (live path): react to a LIVE row — one
+    /// streamed this session with no durable row_id (newest_role on the
+    /// wire). The chip must SURVIVE the settle, so a second long-press
+    /// offers Clear Reaction (pre-fix the settle dropped the live-* key
+    /// while the row still projected through it: the chip vanished on
+    /// SUCCESS and Clear was unreachable). Clearing then removes the chip.
+    /// No REACTION_FIXTURE here: the transcript starts empty, so the sent
+    /// user row is live (row-1, row_id-less) — the scripted seam resolves
+    /// newest_role to its fixed durable row exactly like the gateway's
+    /// latest_message_row_id.
+    func testLiveRowReactKeepsChipAfterSettleAndClearWorks() throws {
+        let app = XCUIApplication()
+        app.launch()
+        openConversation(app)
+
+        // Send a prompt — the user row (row-1) is LIVE (no durable row_id);
+        // the scripted assistant turn completes the exchange.
+        let composer = app.textFields["fleet.conversation.composer"]
+        composer.tap()
+        composer.typeText("react to me")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+        let reply = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Hello from the scripted fleet")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 15), "scripted assistant turn should stream in")
+
+        // Long-press the LIVE user row → react 👍 (newest_role on the wire).
+        let row = firstMatch(in: app, identifier: "fleet.conversation.row.row-1")
+        row.press(forDuration: 1.0)
+        let thumbsUp = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.reaction.palette.👍").firstMatch
+        XCTAssertTrue(thumbsUp.waitForExistence(timeout: 5), "palette should present on long-press")
+        thumbsUp.tap()
+
+        // The chip must survive the settle — bounded wait for it to EXIST,
+        // then it must STILL exist (the settle lands within moments; the
+        // Clear check below is the deterministic guard either way).
+        let chip = firstMatch(in: app, identifier: "fleet.conversation.reaction.chip.👍")
+        XCTAssertTrue(chip.label.contains("👍"), "chip label carries the emoji: \(chip.label)")
+
+        // A settled own reaction keeps Clear Reaction reachable — the
+        // QA-repro'd side effect of the defect was that it never appeared.
+        row.press(forDuration: 1.0)
+        let clear = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.reaction.clear").firstMatch
+        XCTAssertTrue(clear.waitForExistence(timeout: 5),
+                      "Clear Reaction must be offered on a row the user reacted to (chip survived settle)")
+        clear.tap()
+
+        // The chip clears.
+        let gone = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.reaction.chip.👍").firstMatch
+        let deadline = Date().addingTimeInterval(10)
+        while gone.exists && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        XCTAssertFalse(gone.exists, "clearing the live-row reaction removes the chip")
     }
 }
