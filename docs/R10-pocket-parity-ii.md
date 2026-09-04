@@ -291,3 +291,40 @@ WS registry exposes no audio-in method" was overbroad — `wake.feed`
 armed openWakeWord wake-word detector (wake.start capture:"client");
 there is no remote-audio transcription path. The T4 design conclusion
 (client-side STT, no wire invented) is unaffected.
+
+### Round evidence (T5)
+
+- Commits: `f134fe3` (implementation) + `1508e40` (round 2).
+- Local CI gate `scripts/c1_ci_validate.sh` on round-2 tip `1508e40`:
+  GATE_EXIT=0 — PASS xcodegen; PASS FleetCore 229 tests; PASS
+  FleetNetworking 317 (incl. 4 new learning-mutation wire tests);
+  PASS FleetPersistence 30; PASS FleetSecurity 37; PASS M0 guard;
+  PASS unit bundle 302 tests (incl. 4 new VM mutation tests); PASS
+  deterministic UI 72 tests / 24 suites (incl. 3
+  R10MemoryGraphEditUITests); PASS gitleaks. Pushed to origin/main
+  (`6be0c5a..1508e40`).
+- Gate run 1 caught TWO defects, both fixed in round 2:
+  1. REAL T4-surface bug: `speakAssistant` spawned an unstructured
+     Task per streaming delta, so TTS chunks could reach the
+     synthesizer OUT OF ORDER (observed speakCalls ["fleet", "Hello "]
+     under full-bundle load; 6/6 green in isolation, which is why T4's
+     own gate pass missed it). Fixed with a `SpeechQueue` actor
+     (arrival-order serialization; `send`/`setVoiceMode` cuts also
+     drain queued chunks so stale audio never plays after an
+     interrupt).
+  2. Simulator relaunch flakiness: XCUITest `launch()` under gate load
+     occasionally surfaced the PREVIOUS test's screen (AX dump showed
+     the prior run's memory graph + banner after a "fresh" launch;
+     SpringBoard logs confirmed force-quit kills mid-test).
+     `openMemoryDetail` retries once via terminate()+launch(); suite
+     3/3 across three consecutive full-suite runs, then 3/3 inside
+     gate run 2.
+- Wire tests 4 new (edit ask/decode, empty-body refusal, delete
+  ask/archive decode, pinned refusal verbatim) — suite 12/12.
+- VM tests 4 new (edit reload+message, refusal verbatim no-reload,
+  delete removes node from graph AND offline snapshot + closes sheet,
+  refusal keeps map intact) — suite 16/16.
+- NO build bump: CURRENT_PROJECT_VERSION stays 17.
+- Known limitation: deleting a skill ARCHIVES it server-side
+  (restorable via `hermes curator restore`); the alert copy says so —
+  there is no un-archive wire method on the WS registry (YAGNI).
