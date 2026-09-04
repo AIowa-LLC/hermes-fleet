@@ -17,7 +17,7 @@ commit.
 | T1 | Approval banner (approval.pending/received/respond + per-session YOLO toggle) | `5603f15` (+ QA rework `255da9f`) | 13 |
 | T2–T4 | Model picker (sticky, session-scoped), context meter + breakdown, steer/rename/fork | `5596900` | 14 |
 | T5/T6 | Cron pane + Skills pane (`cron.manage`, `skills.manage` + `profiles.describe`/`configure`) | `c8cfd2f` (+ QA rework `66919f4`) | 15, 16 |
-| T7 | **Memory Graph — read-only star map + docs sweep (this doc)** | see below | 17 |
+| T7 | **Memory Graph — read-only star map + docs sweep (this doc)** | `09bc296` (build bump `d254258`, CI PASS=9 FAIL=0) | 17 |
 
 ## T7 — Memory Graph (read-only star map)
 
