@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -30,6 +30,12 @@ public actor GatewayConversationSession: ConversationSessionProviding {
 
     /// The M4 read-only history client bound to the shared transport.
     public let history: any SessionHistoryProviding
+
+    /// R9-T1 approvals client bound to the shared transport (approve/deny +
+    /// per-session YOLO). Non-optional: `GatewayApprovalClient` is
+    /// fail-closed by itself (throws `.notConnected` when the transport is
+    /// down), matching every other seam on this session.
+    public let approvals: any ApprovalsProviding
 
     public init(
         gatewayID: GatewayID,
@@ -47,6 +53,7 @@ public actor GatewayConversationSession: ConversationSessionProviding {
         self.connection = connection
         let history = GatewaySessionHistoryClient(gatewayID: gatewayID, transport: transport)
         self.history = history
+        self.approvals = GatewayApprovalClient(gatewayID: gatewayID, transport: transport)
         self.conversation = GatewayConversationClient(gatewayID: gatewayID, transport: transport)
         self.replay = GatewayReplayEngine(gatewayID: gatewayID, transport: transport, history: history)
     }

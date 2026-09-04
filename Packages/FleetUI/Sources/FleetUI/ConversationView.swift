@@ -60,6 +60,13 @@ public struct ConversationView: View {
         VStack(spacing: 0) {
             botHeader(model)
             bannerArea(model)
+            // R9-T1: the mid-session approval banner (danger surface) sits
+            // above the transcript; nil model → nothing renders.
+            if let approvalModel = model.approvalViewModel {
+                ApprovalBanner(model: approvalModel) {
+                    Task { await approvalModel.deny() }
+                }
+            }
             transcriptList(model)
             composer(model)
         }
@@ -89,6 +96,11 @@ public struct ConversationView: View {
                     .truncationMode(.middle)
             }
             Spacer()
+            // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
+            // on enable). Hidden when the session has no approvals seam.
+            if let approvalModel = model.approvalViewModel {
+                SessionYoloToggle(model: approvalModel)
+            }
             StatusPill(status: headerPillStatus(bot: bot, model: model))
         }
         .padding(.horizontal, FleetTheme.spacingLg)

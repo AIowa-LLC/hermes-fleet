@@ -137,6 +137,10 @@ public final class ConversationViewModel {
     public let route: Route
     /// The runtime session id to resume, or nil to create a new conversation.
     public let sessionID: String?
+    /// R9-T1/T2/T3 — biometric seam for the approval gate (FaceID-gated
+    /// approve, confirmed YOLO enable). Injected by the composition root;
+    /// defaults to the app-lock provider's seam.
+    private let biometrics: any AppLockBiometricAuth
 
     // MARK: Observable state (SwiftUI renders these)
 
@@ -157,6 +161,10 @@ public final class ConversationViewModel {
     public private(set) var integrityNotice: String?
     /// Non-secret error / auth surface text.
     public private(set) var errorMessage: String?
+    /// R9-T1 — the approval banner state (pending request + YOLO readback).
+    /// Lazily built once the session opens; nil when the concrete session
+    /// exposes no approvals seam (fail-soft feature detection).
+    public private(set) var approvalViewModel: ApprovalViewModel?
     /// True when the current transcript was hydrated from the persisted cache
     /// (M10 cold-start) rather than a live server fetch.
     public private(set) var hydratedFromCache = false
@@ -208,6 +216,7 @@ public final class ConversationViewModel {
         cache: any CacheStoring,
         route: Route,
         sessionID: String?,
+        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         statusInterval: Duration = .milliseconds(400),
         maxDisplayRows: Int = 200
     ) {
@@ -215,6 +224,7 @@ public final class ConversationViewModel {
         self.cache = cache
         self.route = route
         self.sessionID = sessionID
+        self.biometrics = biometrics
         self.statusInterval = statusInterval
         self.maxDisplayRows = maxDisplayRows
     }
@@ -492,6 +502,24 @@ public final class ConversationViewModel {
         } else if let model = opened.model {
             sessionModel = model
         }
+        // R9-T1: the session is open — build the approval banner VM bound to
+        // this runtime session id, over the session's approvals seam (nil on
+        // sessions without one → the banner surface simply never appears).
+        // One cast at build time (see ApprovalsCapable: a same-named
+        // extension property recurses through swift_dynamicCast).
+        if approvalViewModel == nil {
+            if let capable = session as? ApprovalsCapable {
+                let vm = ApprovalViewModel(
+                    approvals: capable.approvals,
+                    biometrics: biometrics,
+                    initialYolo: nil
+                )
+                vm.bind(sessionID: opened.sessionID)
+                approvalViewModel = vm
+            }
+        } else {
+            approvalViewModel?.bind(sessionID: opened.sessionID)
+        }
         Task { await persistTranscript() }
     }
 
@@ -719,13 +747,30 @@ public final class ConversationViewModel {
         case .backgroundComplete(_, _, let text, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: text ?? "Background task complete"))
 
-        case .sessionInfo(_, let model, let provider, let title, _, _, _):
+        case .sessionInfo(_, let model, let provider, let title, _, _, let yolo, let approvalMode, _):
             if let model, let provider {
                 sessionModel = "\(model) · \(provider)"
             } else if let model {
                 sessionModel = model
             }
             sessionTitle = title ?? sessionTitle
+            // R9-T3: adopt the approval-bypass readback (effective OR of
+            // config mode / env / session flag — server.py:7758).
+            approvalViewModel?.applySessionInfo(yolo: yolo, approvalMode: approvalMode)
+
+        case .approvalRequested(let sid, let requestID, let command, let detail, let choices, _):
+            // R9-T1: surface the blocked dangerous command in the banner.
+            // The session filter above already dropped other sessions'
+            // approvals; the redaction pass lives in the approval VM.
+            approvalViewModel?.handleApprovalRequest(
+                ApprovalRequest(
+                    requestID: requestID,
+                    sessionID: sid,
+                    command: command,
+                    detail: detail,
+                    choices: choices
+                )
+            )
 
         case .error(_, let message, _):
             appendRow(.init(id: nextRowID(), kind: .error, text: message, isFailed: true))
@@ -1016,4 +1061,23 @@ public final class ConversationViewModel {
         }
         return "Reconnected · " + parts.joined(separator: ", ")
     }
+}
+
+// MARK: - R9-T1 default biometric seam
+
+/// Default `AppLockBiometricAuth` when the composition root injects none:
+/// treats every evaluation as failed — the approval banner's APPROVE path
+/// fails CLOSED (the command stays blocked) instead of crashing or silently
+/// approving. Production injects the real `LocalAuthenticationBiometricAuth`
+/// (or the scripted H1 provider in DEBUG).
+public struct NeverLockBiometricAuth: AppLockBiometricAuth {
+    public init() {}
+
+    public func canEvaluateBiometrics() -> Bool { false }
+
+    public func evaluateBiometrics(reason: String) async -> AppLockAuthResult {
+        .unavailable
+    }
+
+    public func evaluateDevicePasscode(reason: String) async -> Bool { false }
 }

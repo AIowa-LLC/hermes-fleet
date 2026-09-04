@@ -60,4 +60,37 @@ public enum Redaction {
     public static func redacted(_ value: String) -> String {
         placeholder
     }
+
+    /// MARK: R9-T1 — approval command preview (second-pass redaction).
+    ///
+    /// The gateway redacts credentials from `approval.request.command`
+    /// server-side (#48456, `_redact_approval_command` in gateway/run.py),
+    /// but the client never trusts that blindly: this pass masks common
+    /// credential-shaped substrings (`Bearer <token>`, `token=`, `password=`,
+    /// long hex/base64 runs after a credential keyword) with `[REDACTED]`
+    /// before the preview is rendered in the approval banner. Structure
+    /// survives — the user must still recognize the command to decide.
+    public static func commandPreview(_ command: String) -> String {
+        guard !command.isEmpty else { return command }
+        var masked = command
+        for pattern in Self.previewSecretPatterns {
+            masked = pattern.stringByReplacingMatches(
+                in: masked,
+                range: NSRange(masked.startIndex..., in: masked),
+                withTemplate: "$1[REDACTED]"
+            )
+        }
+        return masked
+    }
+
+    /// Credential-shaped patterns for `commandPreview`. Each keeps a leading
+    /// separator/quote as capture group 1 so the masking stays readable.
+    private static let previewSecretPatterns: [NSRegularExpression] = {
+        let patterns = [
+            #"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"#,          // Authorization: Bearer xxx
+            #"(?i)((?:api[_-]?key|token|password|passwd|secret)[\"']?\s*[:=]\s*[\"']?)[^\s\"']{6,}"#,
+            #"(?i)((?:token|apikey|api_key|pass|password)=)[^&\s]{6,}"#,  // ?token=xxx / --pass=xxx
+        ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+    }()
 }

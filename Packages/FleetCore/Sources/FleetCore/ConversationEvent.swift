@@ -53,8 +53,15 @@ public enum ConversationEvent: Hashable, Sendable {
     /// `background.complete` — a background turn finished (`{task_id, text}`).
     case backgroundComplete(sessionID: String, taskID: String?, text: String?, seq: Int? = nil)
     /// `session.info` — end-of-turn session metadata
-    /// (`{model, provider, title?, cwd?, profile_name?, ...}`).
-    case sessionInfo(sessionID: String, model: String?, provider: String?, title: String?, cwd: String?, profileName: String?, seq: Int? = nil)
+    /// (`{model, provider, title?, cwd?, profile_name?, ...}`). R9-T1 adds
+    /// the approval-bypass readback fields `yolo` / `approval_mode`
+    /// (tui_gateway/server.py:7758 — the same three sources the guard ORs
+    /// together, so the toggle reflects effective state, not just the flag).
+    case sessionInfo(sessionID: String, model: String?, provider: String?, title: String?, cwd: String?, profileName: String?, yolo: Bool? = nil, approvalMode: String? = nil, seq: Int? = nil)
+    /// `approval.request` — a dangerous command is blocked awaiting the
+    /// user's decision (R9-T1; tui_gateway/server.py:3102). Not
+    /// turn-terminal: the turn keeps streaming while the agent thread parks.
+    case approvalRequested(sessionID: String, requestID: String, command: String, detail: String?, choices: [String], seq: Int? = nil)
     /// `error` — a turn-level error event (`{message, ...}`).
     case error(sessionID: String?, message: String, seq: Int? = nil)
     /// Any event type this client does not model — preserved with its raw
@@ -80,7 +87,8 @@ extension ConversationEvent {
         case .toolProgress(let sid, _, _, _, _): return sid
         case .toolComplete(let sid, _, _, _, _): return sid
         case .backgroundComplete(let sid, _, _, _): return sid
-        case .sessionInfo(let sid, _, _, _, _, _, _): return sid
+        case .sessionInfo(let sid, _, _, _, _, _, _, _, _): return sid
+        case .approvalRequested(let sid, _, _, _, _, _): return sid
         case .error(let sid, _, _): return sid
         case .unknown(let sid, _, _): return sid
         }
@@ -104,7 +112,8 @@ extension ConversationEvent {
              .toolProgress(_, _, _, _, let seq),
              .toolComplete(_, _, _, _, let seq),
              .backgroundComplete(_, _, _, let seq),
-             .sessionInfo(_, _, _, _, _, _, let seq),
+             .sessionInfo(_, _, _, _, _, _, _, _, let seq),
+             .approvalRequested(_, _, _, _, _, let seq),
              .error(_, _, let seq),
              .unknown(_, _, let seq):
             return seq

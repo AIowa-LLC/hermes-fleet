@@ -161,8 +161,36 @@ enum FleetServiceGraph {
                 credentialStore: credentialStore, health: health, pinStore: pinStore),
             conversationFactory: makeConversationFactory(credentialStore: credentialStore, pinStore: pinStore),
             kanbanWatcherFactory: makeKanbanWatcherFactory(credentialStore: credentialStore, pinStore: pinStore),
-            health: health
+            health: health,
+            // R9-T1: the approval banner's FaceID gate rides the SAME
+            // LocalAuthentication seam as the app lock (release: real
+            // LAContext; DEBUG device dogfood too, since makeDefaultEnvironment
+            // only scripts the SIMULATOR).
+            biometrics: makeApprovalBiometrics(),
+            seedRegistrations: []
         )
+    }
+
+    /// Approval-gate biometrics. The gate must be REAL on any device build
+    /// (Debug dogfood included) — a scripted-success provider would let
+    /// Approve silently pass with no FaceID prompt. Scripted auth is for the
+    /// DEBUG SIMULATOR only (deterministic UI tests via
+    /// `HERMES_FLEET_APPROVAL_BIOMETRIC`: `success` default, `fail`,
+    /// `unavailable`).
+    static func makeApprovalBiometrics() -> any AppLockBiometricAuth {
+        #if DEBUG && targetEnvironment(simulator)
+        switch ProcessInfo.processInfo.environment["HERMES_FLEET_APPROVAL_BIOMETRIC"] {
+        case "fail":
+            return ScriptedLockAuth(biometricResult: .failure, passcodeSucceeds: false)
+        case "unavailable":
+            return ScriptedLockAuth(biometricResult: .unavailable, passcodeSucceeds: false)
+        default:
+            return ScriptedLockAuth(biometricResult: .success, passcodeSucceeds: true)
+        }
+        #else
+        // Device (Debug dogfood + Release) and production: real LAContext.
+        return LocalAuthenticationBiometricAuth()
+        #endif
     }
 
     /// t_3b321b7b: real per-gateway kanban board watcher — the

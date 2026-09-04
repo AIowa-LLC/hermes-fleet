@@ -232,8 +232,31 @@ public struct GatewayConversationClient: ConversationProviding {
                 title: payload["title"]?.stringValue,
                 cwd: payload["cwd"]?.stringValue,
                 profileName: payload["profile_name"]?.stringValue,
+                // R9-T1: approval-bypass readback (server.py:7758 — the
+                // effective OR of config mode / env / session flag).
+                yolo: payload["yolo"]?.boolValue,
+                approvalMode: payload["approval_mode"]?.stringValue,
                 seq: seq
             )
+        case .approvalRequest:
+            // R9-T1 (server.py:3102): a dangerous command is blocked. The
+            // command is ALREADY gateway-redacted (#48456); the client-side
+            // second pass (`Redaction.commandPreview`) runs in the VIEW
+            // MODEL before rendering, keeping the domain value raw-wire.
+            // Fail-soft decode: a payload without request_id is DROPPED —
+            // not surfaced as `.unknown` (that would render a confusing
+            // transcript row for a known-but-malformed approval frame).
+            return GatewayApprovalClient.decodeApprovalRequest(payload: event.payload, sessionID: sid)
+                .map { request in
+                    ConversationEvent.approvalRequested(
+                        sessionID: request.sessionID,
+                        requestID: request.requestID,
+                        command: request.command,
+                        detail: request.detail,
+                        choices: request.choices,
+                        seq: seq
+                    )
+                }
         case .messageStart:
             return .messageStart(sessionID: sid, seq: seq)
         case .messageDelta:

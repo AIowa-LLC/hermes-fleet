@@ -191,9 +191,12 @@ private struct ScriptedSessionListService: SessionListProviding {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
+    /// R9-T1: scripted approvals seam (records respond/yolo calls so the
+    /// approval banner is fully walkable in the simulator + UI tests).
+    let approvalsBox = ScriptedApprovalsBox()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
@@ -233,6 +236,16 @@ private struct ScriptedConversationSession: ConversationSessionProviding {
         client
     }
 
+    var approvals: any ApprovalsProviding {
+        approvalsBox
+    }
+
+    /// R9-T1 UI-test hook: push a scripted approval request into the
+    /// conversation event stream (drives the banner deterministically).
+    func pushApprovalRequest(_ request: ApprovalRequest) {
+        client.pushApprovalRequest(request)
+    }
+
     var replay: any ReplayProviding {
         ScriptedReplay(gatewayID: gatewayID)
     }
@@ -253,6 +266,18 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
 
     var events: AsyncStream<ConversationEvent> {
         streamBox.stream
+    }
+
+    /// R9-T1 UI-test hook: yield a scripted approval.request into the event
+    /// fan-out (the banner renders from the same conversation stream).
+    func pushApprovalRequest(_ request: ApprovalRequest) {
+        streamBox.yield(.approvalRequested(
+            sessionID: request.sessionID,
+            requestID: request.requestID,
+            command: request.command,
+            detail: request.detail,
+            choices: request.choices
+        ))
     }
 
     func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
@@ -285,6 +310,21 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
     }
 
     func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+        // R9-T1 demo hook (simulator only): `HERMES_FLEET_APPROVAL_DEMO=1`
+        // makes every scripted turn also raise an approval request mid-turn
+        // — the banner is then fully walkable in the simulator + UI tests.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_APPROVAL_DEMO"] == "1" {
+            Task { [streamBox] in
+                try? await Task.sleep(for: .milliseconds(400))
+                streamBox.yield(.approvalRequested(
+                    sessionID: sessionID,
+                    requestID: "scripted-approval-1",
+                    command: "rm -rf /tmp/scratch && curl -H 'Authorization: Bearer sk-live-demo' https://api",
+                    detail: "Scripted dangerous command (simulator demo)",
+                    choices: ["once", "session", "always", "deny"]
+                ))
+            }
+        }
         // Stream a canned assistant turn shortly after submit (async so the
         // view model's event subscription is attached).
         Task { [streamBox] in
@@ -306,6 +346,44 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
 
     func interrupt(sessionID: String) async throws -> InterruptResult {
         InterruptResult(status: "interrupted")
+    }
+}
+
+/// R9-T1: scripted approvals seam (DEBUG simulator). Records every
+/// respond/yolo call (thread-safe) and succeeds — the banner's wire path is
+/// observable from UI tests via the recorded state.
+final class ScriptedApprovalsBox: ApprovalsProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _respondChoices: [String] = []
+    private var _yoloStates: [Bool] = []
+
+    var respondChoices: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _respondChoices
+    }
+    var yoloStates: [Bool] {
+        lock.lock(); defer { lock.unlock() }
+        return _yoloStates
+    }
+
+    // Sync-record helpers (NSLock is unavailable from async contexts).
+    private func recordRespond(_ raw: String) {
+        lock.lock(); defer { lock.unlock() }
+        _respondChoices.append(raw)
+    }
+    private func recordYolo(_ enabled: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        _yoloStates.append(enabled)
+    }
+
+    func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
+        recordRespond(choice.rawValue)
+        return 1
+    }
+
+    func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool {
+        recordYolo(enabled)
+        return enabled
     }
 }
 

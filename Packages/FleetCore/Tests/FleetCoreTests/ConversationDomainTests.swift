@@ -115,7 +115,7 @@ final class ConversationDomainTests: XCTestCase {
         let info = ConversationEvent.sessionInfo(
             sessionID: "s1", model: "deepseek-v4-flash", provider: "nous",
             title: "Research", cwd: "/Users/t", profileName: "default")
-        guard case .sessionInfo(_, let model, let provider, let title, let cwd, let profile, _) = info else {
+        guard case .sessionInfo(_, let model, let provider, let title, let cwd, let profile, _, _, _) = info else {
             return XCTFail("expected sessionInfo")
         }
         XCTAssertEqual(model, "deepseek-v4-flash")

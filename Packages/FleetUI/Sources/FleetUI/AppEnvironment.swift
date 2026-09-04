@@ -143,6 +143,10 @@ public final class AppEnvironment {
     /// Read-only `session.list` path for Bot detail (injected concrete:
     /// `GatewaySessionListService` in production, scripted in DEBUG/tests).
     private let sessionList: any SessionListProviding
+    /// R9-T1: biometric seam for the approval gate (FaceID-gated approve /
+    /// confirmed YOLO enable). Injected by the app composition root; the
+    /// default fails closed.
+    private let biometrics: any AppLockBiometricAuth
     /// U3 conversation sessions per gateway (injected concrete:
     /// `GatewayConversationSession` in production, scripted in DEBUG/tests).
     private let conversationFactory: FleetConversationFactory?
@@ -178,6 +182,7 @@ public final class AppEnvironment {
         conversationFactory: FleetConversationFactory? = nil,
         kanbanWatcherFactory: FleetKanbanWatcherFactory? = nil,
         health: any ConnectionHealthAccumulating,
+        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = []
     ) {
         self.registry = registry
@@ -188,6 +193,7 @@ public final class AppEnvironment {
         self.conversationFactory = conversationFactory
         self.kanbanWatcherFactory = kanbanWatcherFactory
         self.health = health
+        self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
     }
 
@@ -468,7 +474,13 @@ public final class AppEnvironment {
     /// state, fail closed).
     public func makeConversationViewModel(route: Route, sessionID: String?) -> ConversationViewModel? {
         guard let session = conversationSession(for: route.gatewayID) else { return nil }
-        return ConversationViewModel(session: session, cache: cache, route: route, sessionID: sessionID)
+        return ConversationViewModel(
+            session: session,
+            cache: cache,
+            route: route,
+            sessionID: sessionID,
+            biometrics: biometrics
+        )
     }
 
     // MARK: Kanban board (t_3b321b7b)
