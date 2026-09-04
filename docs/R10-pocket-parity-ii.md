@@ -203,3 +203,19 @@ No wire was invented; nothing here claims gateway-side voice.
   states text-only submission honestly.
 - Submit-on-silence defaults OFF (review-first); manual stop always lands
   a PARTIAL that is never auto-submitted.
+
+### Round evidence (T4)
+
+- Commits: `d8c964c` (implementation) + `007b6c9` (round 2 — the voice-mode
+  Toggle had landed as a bare switch INSIDE the composer HStack, breaking
+  R10AttachmentTrayUITests with an AX-query timeout; baseline HEAD~1
+  verified green isolating the regression; moved into the "+" Menu as a
+  titled Button).
+- Local CI gate `scripts/c1_ci_validate.sh` on tip `007b6c9`: GATE_EXIT=0 —
+  PASS xcodegen; PASS FleetCore 229 tests; PASS FleetNetworking 313;
+  PASS FleetPersistence 30; PASS FleetSecurity 37; PASS M0 guard
+  (0 `import FleetNetworking` in FleetUI); PASS unit bundle 298 tests
+  (incl. 9 voice VM tests + 4 FleetCore voice-domain tests); PASS
+  deterministic UI 69 tests / 23 suites (incl. 2 R10VoiceUITests);
+  PASS gitleaks.
+- Pushed to origin/main (`54f51e7..007b6c9`).
