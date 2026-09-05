@@ -10,9 +10,12 @@ import SwiftUI
 /// exist yet are not fabricated; more sections land with their features.
 public struct FleetSettingsView: View {
     private let controller: AppLockController
+    private let accentController: FleetAccentController
 
-    public init(controller: AppLockController) {
+    public init(controller: AppLockController,
+                accentController: FleetAccentController = FleetAccentController.shared) {
         self.controller = controller
+        self.accentController = accentController
     }
 
     public var body: some View {
@@ -53,6 +56,39 @@ public struct FleetSettingsView: View {
                 Text("Require Face ID (or your device passcode) to unlock "
                      + "Hermes Fleet when the app opens. Stored gateway "
                      + "credentials stay protected by the Keychain.")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+
+            // V7.5: the ONE accent is user-choosable — vetted catalog only
+            // (no free-text hex; teal permanently banned, brand rule).
+            Section {
+                ForEach(FleetAccent.allCases) { accent in
+                    Button {
+                        accentController.selection = accent
+                    } label: {
+                        HStack(spacing: FleetTheme.spacingMd) {
+                            Circle()
+                                .fill(accent.color)
+                                .frame(width: 24, height: 24)
+                                .overlay(Circle().strokeBorder(FleetTheme.border, lineWidth: 1))
+                            Text(accent.label)
+                                .foregroundStyle(FleetTheme.textPrimary)
+                            Spacer()
+                            if accentController.selection == accent {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(FleetTheme.accent)
+                                    .accessibilityIdentifier("fleet.settings.accent.selected.\(accent.rawValue)")
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("fleet.settings.accent.\(accent.rawValue)")
+                }
+            } header: {
+                Text("Appearance")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            } footer: {
+                Text("Sets the app's single accent color. Warm Gold is the strongest contrast pairing with the white-wing mark; Hermes Blue is the Apple standard look.")
                     .foregroundStyle(FleetTheme.textSecondary)
             }
         }
