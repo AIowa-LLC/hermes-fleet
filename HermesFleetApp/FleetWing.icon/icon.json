@@ -1,0 +1,75 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "display-p3:0.065,0.065,0.11,1.0"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "display-p3:0.025,0.028,0.05,1.0"
+      }
+    },
+    {
+      "appearance": "tinted",
+      "value": {
+        "solid": "display-p3:0.07,0.07,0.09,1.0"
+      }
+    }
+  ],
+  "color-space-for-untagged-svg-colors": "display-p3",
+  "groups": [
+    {
+      "name": "Flight",
+      "layers": [
+        {
+          "name": "01-flight",
+          "image-name": "01-flight.svg",
+          "hidden": false,
+          "opacity": 1,
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "name": "02-current",
+          "image-name": "02-current.svg",
+          "hidden": false,
+          "opacity": 1,
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "name": "03-edge",
+          "image-name": "03-edge.svg",
+          "hidden": false,
+          "opacity": 1,
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "specular": true
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

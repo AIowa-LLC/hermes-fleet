@@ -152,7 +152,7 @@ final class FleetThemeTests: XCTestCase {
     /// (`.preferredColorScheme(.dark)`), but tokens must still resolve to the
     /// SAME values under a light trait collection so nothing crashes or shifts
     /// if a sheet/system presentation leaks light traits.
-    func testTokenColorsResolveIdenticallyInLightAppearance() {
+    func testSemanticColorsAdaptToLightAppearance() {
         let light = UITraitCollection(userInterfaceStyle: .light)
         let dark = UITraitCollection(userInterfaceStyle: .dark)
 
@@ -176,10 +176,25 @@ final class FleetThemeTests: XCTestCase {
             var dr: CGFloat = 0, dg: CGFloat = 0, db: CGFloat = 0, da: CGFloat = 0
             l.getRed(&lr, green: &lg, blue: &lb, alpha: &la)
             d.getRed(&dr, green: &dg, blue: &db, alpha: &da)
-            XCTAssertEqual(lr, dr, accuracy: 0.001, "\(name) red differs between light/dark")
-            XCTAssertEqual(lg, dg, accuracy: 0.001, "\(name) green differs between light/dark")
-            XCTAssertEqual(lb, db, accuracy: 0.001, "\(name) blue differs between light/dark")
-            XCTAssertEqual(la, da, accuracy: 0.001, "\(name) alpha differs between light/dark")
+            XCTAssertGreaterThan(abs(lr - dr) + abs(lg - dg) + abs(lb - db), 0.01, "\(name) must adapt to appearance")
+            XCTAssertEqual(la, 1, accuracy: 0.001)
+            XCTAssertEqual(da, 1, accuracy: 0.001)
+        }
+    }
+
+    func testAdaptiveTextContrastAcrossAppearances() {
+        func hex(_ color: Color, _ traits: UITraitCollection) -> UInt32 {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            UIColor(color).resolvedColor(with: traits).getRed(&r, green: &g, blue: &b, alpha: &a)
+            return UInt32((r * 255).rounded()) << 16 | UInt32((g * 255).rounded()) << 8 | UInt32((b * 255).rounded())
+        }
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            let traits = UITraitCollection(userInterfaceStyle: appearance)
+            for foreground in [FleetTheme.textPrimary, FleetTheme.textSecondary, FleetTheme.textMuted, FleetTheme.accent] {
+                for background in [FleetTheme.background, FleetTheme.surface, FleetTheme.surfaceElevated] {
+                    XCTAssertGreaterThanOrEqual(Self.wcagContrastRatio(hex(foreground, traits), hex(background, traits)), 4.5)
+                }
+            }
         }
     }
 

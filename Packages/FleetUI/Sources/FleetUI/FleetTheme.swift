@@ -5,13 +5,6 @@ import UIKit
 #endif
 
 /// Solid sRGB color from a 0xRRGGBB value.
-///
-/// V1 (Nous direction): Fleet stays DARK-ONLY — stark near-black canvas,
-/// off-white text, one pale-cyan accent. Tokens are fixed values, not
-/// light/dark adaptive pairs. The app forces the dark appearance at the root
-/// (`.preferredColorScheme(.dark)` in HermesFleetApp); tokens still resolve
-/// identically under light trait collections so nothing shifts or crashes if
-/// a system presentation leaks light traits (guarded by FleetThemeTests).
 extension Color {
     /// Solid sRGB color from a 0xRRGGBB value.
     init(hex: UInt32) {
@@ -78,41 +71,49 @@ public enum FleetColors {
     public static let statusOffline: UInt32 = 0x8A8A9A   // Offline pills
 }
 
-/// The Hermes Fleet design system — V1 "Nous terminal minimalism".
-///
-/// Stark #0A0A0A canvas, monospace as identity (Courier Prime with SF Mono
-/// fallback) for titles/stats/IDs, UPPERCASE micro-labels with wide tracking,
-/// one pale-cyan accent, hairline structure, terminal artifacts as brand.
-/// FLAT design: no glass soup, no gradients on surfaces, no shadows.
-///
-/// Radii: cards 16, rows 12, bubbles 18, pills fully-rounded (Capsule).
-/// Spacing scale: 4 / 8 / 12 / 16 / 24 / 32.
+/// Native semantic roles: adaptive light/dark colors, rounded system display
+/// typography, and monospaced technical metadata. Dark raw palette values
+/// remain stable; light counterparts are contrast-tested on every surface.
 public enum FleetTheme {
+    /// Semantic colors resolve at render time, including sheets and system controls.
+    private static func adaptive(dark: UInt32, light: UInt32) -> Color {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { traits in
+            let hex = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: CGFloat((hex >> 16) & 255) / 255,
+                           green: CGFloat((hex >> 8) & 255) / 255,
+                           blue: CGFloat(hex & 255) / 255, alpha: 1)
+        })
+        #else
+        return Color(hex: dark)
+        #endif
+    }
+
 
     // MARK: - Neutrals
 
-    public static let background: Color = Color(hex: FleetColors.background)
-    public static let surface: Color = Color(hex: FleetColors.surface)
-    public static let surfaceElevated: Color = Color(hex: FleetColors.surfaceElevated)
-    public static let textPrimary: Color = Color(hex: FleetColors.textPrimary)
-    public static let textSecondary: Color = Color(hex: FleetColors.textSecondary)
+    public static let background: Color = adaptive(dark: FleetColors.background, light: 0xF3F4F8)
+    public static let surface: Color = adaptive(dark: FleetColors.surface, light: 0xFFFFFF)
+    public static let surfaceElevated: Color = adaptive(dark: FleetColors.surfaceElevated, light: 0xE9ECF3)
+    public static let textPrimary: Color = adaptive(dark: FleetColors.textPrimary, light: 0x171923)
+    public static let textSecondary: Color = adaptive(dark: FleetColors.textSecondary, light: 0x515969)
 
     /// V5: muted foreground — the fixed-contrast replacement for opacity
     /// dimming of secondary text (card IDs, empty-lane placeholders).
-    public static let textMuted: Color = Color(hex: FleetColors.textMuted)
+    public static let textMuted: Color = adaptive(dark: FleetColors.textMuted, light: 0x606979)
 
     /// V5: Increase Contrast card surface — resolves to the base surface
     /// token elsewhere (views pick via `.colorSchemeContrast`).
-    public static let surfaceIncreased: Color = Color(hex: FleetColors.surfaceIncreased)
+    public static let surfaceIncreased: Color = adaptive(dark: FleetColors.surfaceIncreased, light: 0xFFFFFF)
 
     /// 1px hairline card borders: #32373C at full opacity (a hairline IS the
     /// restraint — no soft translucency).
-    public static let border: Color = Color(hex: FleetColors.border)
+    public static let border: Color = adaptive(dark: FleetColors.border, light: 0xCBD0DC)
 
     // MARK: - Accent (ONE accent: pale cyan)
 
     /// Pale cyan — links, active states, key numbers, primary tint.
-    public static let accent: Color = Color(hex: FleetColors.accent)
+    public static let accent: Color = adaptive(dark: FleetColors.accent, light: 0x006B78)
 
     // MARK: - Legacy Gold Fleet aliases (V2/V3 migrate remaining call sites)
 
@@ -123,16 +124,16 @@ public enum FleetTheme {
     public static var accentCyan: Color { accent }
 
     /// Gold — retained for the artwork/wordmark tie only.
-    public static let accentGold: Color = Color(hex: FleetColors.accentGold)
+    public static let accentGold: Color = adaptive(dark: FleetColors.accentGold, light: 0x866000)
     /// Magenta — send button / primary action only until V2 restyles it.
-    public static let accentMagenta: Color = Color(hex: FleetColors.accentMagenta)
+    public static let accentMagenta: Color = adaptive(dark: FleetColors.accentMagenta, light: 0xB51D58)
 
     // MARK: - Status (semantic, unchanged)
 
-    public static let statusOnline: Color = Color(hex: FleetColors.statusOnline)
-    public static let statusIdle: Color = Color(hex: FleetColors.statusIdle)
-    public static let statusDegraded: Color = Color(hex: FleetColors.statusDegraded)
-    public static let statusOffline: Color = Color(hex: FleetColors.statusOffline)
+    public static let statusOnline: Color = adaptive(dark: FleetColors.statusOnline, light: 0x00753B)
+    public static let statusIdle: Color = adaptive(dark: FleetColors.statusIdle, light: 0x856000)
+    public static let statusDegraded: Color = adaptive(dark: FleetColors.statusDegraded, light: 0xC02835)
+    public static let statusOffline: Color = adaptive(dark: FleetColors.statusOffline, light: 0x626879)
 
     /// Tinted pill background derived from a status color (~20%).
     public static func statusPillTint(_ status: Color) -> Color {
@@ -147,7 +148,7 @@ public enum FleetTheme {
     /// by the system, so the theme adapts them itself.
     public static func borderColor(colorSchemeContrast: ColorSchemeContrast) -> Color {
         colorSchemeContrast == .increased
-            ? Color(hex: FleetColors.borderIncreased)
+            ? adaptive(dark: FleetColors.borderIncreased, light: 0x697384)
             : border
     }
 
@@ -172,7 +173,7 @@ public enum FleetTheme {
     public static let spacingXl: CGFloat = 24
     public static let spacingXxl: CGFloat = 32
 
-    // MARK: - Typography (mono as identity; body stays SF Pro)
+    // MARK: - Typography (system display, monospaced metadata)
     //
     // V5 accessibility (t_b2628d33): every role below is Dynamic-Type aware.
     // Mono faces scale via `Font.custom(_:size:relativeTo:)` (see
@@ -182,7 +183,7 @@ public enum FleetTheme {
 
     /// Screen titles / hero numbers — 28pt bold MONO (Courier Prime),
     /// scaling with the user's text size (relative to .title2).
-    public static let titleFont: Font = FleetFonts.monoDisplay(size: titleFontSize, weight: titleFontWeight, relativeTo: .title2)
+    public static let titleFont: Font = .system(.largeTitle, design: .rounded, weight: .bold)
     public static let titleFontSize: CGFloat = 28
     public static let titleFontWeight: Font.Weight = .bold
 
@@ -196,7 +197,7 @@ public enum FleetTheme {
 
     /// Stat numbers — 28pt bold MONO with tabular figures (dashboards line
     /// up), scaling with Dynamic Type (relative to .title2).
-    public static let statFont: Font = FleetFonts.monoDisplay(size: statFontSize, weight: statFontWeight, relativeTo: .title2).monospacedDigit()
+    public static let statFont: Font = .system(.title, design: .rounded, weight: .semibold).monospacedDigit()
     public static let statFontSize: CGFloat = 28
     public static let statFontWeight: Font.Weight = .bold
 

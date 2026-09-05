@@ -66,6 +66,7 @@
 		AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */; };
 		B1306E98F67503207DCCAC67 /* F1FailureCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EDD0C9EA5DA66D6FA4D2F1C /* F1FailureCopyTests.swift */; };
 		B1AB16A9F5EB927CD0BADA2C /* H2HealthDashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81A1A63C6F0F29A8454980F6 /* H2HealthDashboardUITests.swift */; };
+		B370F267CF80B8A8161A8527 /* FleetWing.icon in Resources */ = {isa = PBXBuildFile; fileRef = 9A05382B633430B51638CBE2 /* FleetWing.icon */; };
 		B43425B083F862091F76937C /* U6ConversationSkinTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EB7D7B5572E537B3CCA3553 /* U6ConversationSkinTests.swift */; };
 		B9F70C648F21F01431B2BCBC /* HermesFleetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */; };
 		BD835154FEAB0EB84978C12F /* U5BotDetailUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10E6E3D880ED0ED902488681 /* U5BotDetailUITests.swift */; };
@@ -77,6 +78,7 @@
 		CBAF6553CBB3340D244FEFD5 /* FleetSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 4FD859AB5DC4007FABF3E84F /* FleetSecurity */; };
 		CC9DA412A22B594A47067A21 /* AppLockControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */; };
 		CE2B614CC7652368415DA8C4 /* UITabNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E486750093968F32F0092 /* UITabNavigation.swift */; };
+		CEE35FD50C2E188BB54260A7 /* SecondGenerationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */; };
 		CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */; };
 		D1E600C197F91CC57F736C98 /* ConversationToolingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA799545FCC5860AE8ABB192 /* ConversationToolingTests.swift */; };
 		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
@@ -163,6 +165,8 @@
 		84817A22FDC16B5FCACA9EC9 /* RT4VoiceOverUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT4VoiceOverUITests.swift; sourceTree = "<group>"; };
 		8E4B9CA2708C4F6346F45A41 /* R10VoiceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R10VoiceUITests.swift; sourceTree = "<group>"; };
 		90F4785CD8BD260DF07E65DF /* R9ApprovalBannerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ApprovalBannerUITests.swift; sourceTree = "<group>"; };
+		920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecondGenerationUITests.swift; sourceTree = "<group>"; };
+		9A05382B633430B51638CBE2 /* FleetWing.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = FleetWing.icon; sourceTree = "<group>"; };
 		9BAF2911DD7A9A273ED1D5D2 /* FleetComponentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetComponentsTests.swift; sourceTree = "<group>"; };
 		A6325589D12BB7792035231F /* P0_7LiveTailnetUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P0_7LiveTailnetUITests.swift; sourceTree = "<group>"; };
 		A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U7GatewayQrLockSettingsUITests.swift; sourceTree = "<group>"; };
@@ -299,6 +303,7 @@
 				745ADDE165B902910C38E299 /* Assets.xcassets */,
 				F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */,
 				2380AC190371692E170A3C23 /* FleetSimulator.swift */,
+				9A05382B633430B51638CBE2 /* FleetWing.icon */,
 				F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */,
 				FABC7CBF939AAF966D3C7ACD /* Info.plist */,
 				CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */,
@@ -349,6 +354,7 @@
 				34781F74AFD460D82B873234 /* RT4RosterEmptyStateUITests.swift */,
 				84817A22FDC16B5FCACA9EC9 /* RT4VoiceOverUITests.swift */,
 				F3E045B2C895711DCB6AC796 /* S3CleartextWarningUITests.swift */,
+				920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */,
 				3F88573D747272E04066317D /* SplashUITests.swift */,
 				44C074CE45D0B5E88EB78568 /* T2FixTailnetGatewayUITests.swift */,
 				36A4B24E61526D2294992BD2 /* U3TabNavigationUITests.swift */,
@@ -490,6 +496,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				90B9C115EEE142503EBBF622 /* Assets.xcassets in Resources */,
+				B370F267CF80B8A8161A8527 /* FleetWing.icon in Resources */,
 				179BD4EFE6311D44DEF19762 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -582,6 +589,7 @@
 				A2B84AE3662AEC98EC77C3EE /* RT4RosterEmptyStateUITests.swift in Sources */,
 				F14069A7319C17D2D0651D4F /* RT4VoiceOverUITests.swift in Sources */,
 				5F465EC10BBE403B4835C88E /* S3CleartextWarningUITests.swift in Sources */,
+				CEE35FD50C2E188BB54260A7 /* SecondGenerationUITests.swift in Sources */,
 				82725A689F83E414C95BE70C /* SplashUITests.swift in Sources */,
 				608C037057F7FF6801D39160 /* T2FixTailnetGatewayUITests.swift in Sources */,
 				1B5563751D50E50C7B196921 /* U3TabNavigationUITests.swift in Sources */,
@@ -644,7 +652,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 20;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -664,7 +672,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -730,7 +738,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 20;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -744,7 +752,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -760,7 +768,7 @@
 		520B8CD80B486F6273D163E6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 3JS22HX92T;
@@ -801,7 +809,7 @@
 		7DA6329A7118C964983BF34C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 3JS22HX92T;

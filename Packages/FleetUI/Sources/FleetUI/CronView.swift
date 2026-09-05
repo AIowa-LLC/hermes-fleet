@@ -206,9 +206,9 @@ public struct CronView: View {
                 .font(FleetTheme.monoCaptionFont)
                 .foregroundStyle(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOffline)
             if let last = job.lastStatus, !last.isEmpty {
-                Text("last: \(last)")
+                Label(last, systemImage: ["failed", "error", "failure"].contains(last.lowercased()) ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(FleetTheme.textMuted)
+                    .foregroundStyle(["failed", "error", "failure"].contains(last.lowercased()) ? FleetTheme.statusDegraded : FleetTheme.textMuted)
             }
         }
     }

@@ -124,9 +124,7 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launch()
 
-        let settingsTab = app.tabBars.firstMatch.buttons["Settings"]
-        XCTAssertTrue(settingsTab.waitForExistence(timeout: 15), "Settings tab should exist")
-        settingsTab.tap()
+        UITabNavigation.openSettings(app)
 
         // U7: gold brand header on the settings canvas.
         let brand = firstMatch(in: app, identifier: "fleet.settings.brand")

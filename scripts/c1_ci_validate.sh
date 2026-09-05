@@ -125,6 +125,7 @@ if xcodebuild "${XC[@]}" \
     -only-testing:HermesFleetAppUITests/P2GatewayFormDraftUITests \
     -only-testing:HermesFleetAppUITests/F2QRPairingUITests \
     -only-testing:HermesFleetAppUITests/U3TabNavigationUITests \
+    -only-testing:HermesFleetAppUITests/SecondGenerationUITests \
     -only-testing:HermesFleetAppUITests/U4DashboardUITests \
     -only-testing:HermesFleetAppUITests/U5BotDetailUITests \
     -only-testing:HermesFleetAppUITests/U6ConversationSkinUITests \
