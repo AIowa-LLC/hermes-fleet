@@ -328,3 +328,63 @@ there is no remote-audio transcription path. The T4 design conclusion
 - Known limitation: deleting a skill ARCHIVES it server-side
   (restorable via `hermes curator restore`); the alert copy says so —
   there is no un-archive wire method on the WS registry (YAGNI).
+
+## T1/T3 evidence and route notes
+
+### T1 — Attachments
+
+- Accepted commit: `d40b675` (pushed to `origin/main`); independent QA
+  verdict PASS. The client wire shapes are grounded at
+  `methods_prompt.py:1163` (`image.attach_bytes`), `:1224` (`pdf.attach`),
+  `:1350` (`file.attach`), `:1397` (`image.detach`), and server ceilings at
+  `server.py:14284-14286`.
+- The client uses `data:<mime>;base64,<b64>` for remote file staging and
+  applies a conservative 10 MB client cap. QA measured the live image
+  ceiling at 24.9 MB accepted and 25.1 MB rejected with 4018; the cap is
+  therefore intentionally below the gateway ceiling. `pdftoppm` is absent
+  on this Mac, so local PDF conversion remains an environment limitation;
+  the client maps the gateway failure without silently swallowing it.
+- RED-first wire/VM/UI coverage was independently accepted: 293 networking
+  tests, 40 hosted attachment tests, and `R10AttachmentTrayUITests` 2/2;
+  the suite is registered in `scripts/c1_ci_validate.sh`. The simulator
+  picker uses the documented `HERMES_FLEET_ATTACHMENT_PICK` fixture hook;
+  system picker automation is not claimed as deterministic.
+
+### T3 — Projects browser and FleetScreen routes
+
+- Accepted commit: `54f51e7` (round-2 correction, pushed to
+  `origin/main`); independent QA verdict PASS. Wire citations are
+  `methods_config.py:117-153` (`projects.tree`), `:157-191`
+  (`projects.project_sessions` / 5063), `project_tree.py:540-571`
+  (project nodes), `server.py:15827-15866` (session rows), and
+  `methods_complete.py:41-326` (`complete.path`).
+- `FleetScreen.projects(gatewayID, focusPath:)` carries an `@file:` path
+  from the transcript. `ProjectsView` resolves the deepest segment-safe
+  project prefix, shows a focus banner with the path and containing project,
+  and badges that project as referenced. Relative or foreign paths resolve
+  nil honestly; no raw filesystem-browser behavior is implied.
+- The route and browser behavior are covered by parser, route, matcher, VM,
+  and deterministic UI tests. QA independently ran FleetNetworking 313/313,
+  FleetCore 225/225, FleetPersistence 30/30, app units 289/289, and the
+  focused Projects UI suite 4/4. The simulator UI evidence was executed on
+  iPhone 17 Pro / iOS 26.5; no unverified screenshot is presented as
+  pixel evidence in this document.
+
+## R10 aggregate acceptance and build 18 release boundary
+
+Accepted feature SHAs, in execution order: T1 `d40b675`, T2 `c1caa39`,
+T3 `54f51e7`, T4 `6be0c5a` (implementation `007b6c9`), and T5 `0ebc2b6`
+(implementation gate `1508e40`). QA approved all five cards independently.
+The release candidate is the exact clean local `main` tip after the
+version-only commit `8cc4b49` and documentation commit `6717c51`; it is
+version `0.1.0 (18)`, with `project.yml` and the generated pbxproj agreeing.
+
+T4 remains intentionally client-side: `server.py:17334` is the gateway's
+local microphone loop, while `server.py:17861` `wake.feed` only feeds the
+openWakeWord detector and is not a remote transcription path. T4's
+submit-on-silence capability defaults OFF and remains review-first.
+
+The release authorization is the 2026-09-04 batch authorization on the T6
+card. Upload is bounded to TestFlight build 18; no App Store submission,
+public release, pricing change, or public tag push is authorized by this
+evidence.
