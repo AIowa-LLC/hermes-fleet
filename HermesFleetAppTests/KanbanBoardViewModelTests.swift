@@ -149,4 +149,11 @@ final class ScriptedKanbanWatcherDouble: KanbanBoardWatching, @unchecked Sendabl
         }
         for target in targets { target.finish() }
     }
+
+    // t_624b81cd: this double predates the selector — honest empties.
+    func fetchBoards() async throws -> KanbanBoardList {
+        KanbanBoardList(boards: [], current: nil)
+    }
+
+    func pinBoard(_ slug: String?) async {}
 }

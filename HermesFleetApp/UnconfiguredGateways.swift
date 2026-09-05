@@ -123,7 +123,8 @@ private struct UnconfiguredHistory: SessionHistoryProviding {
 
 /// Kanban-watcher stub: the board fetch fails closed; the event stream
 /// finishes immediately (reconnect logic sees a terminal stream, not a
-/// fabricated board).
+/// fabricated board). t_624b81cd: selector surface is honest — no boards
+/// to list, no pin to hold.
 struct UnconfiguredKanbanWatcher: KanbanBoardWatching {
     func snapshot() async throws -> KanbanBoardSnapshot {
         throw KanbanBoardError.streamDropped("no gateway endpoint configured — add a gateway")
@@ -132,4 +133,8 @@ struct UnconfiguredKanbanWatcher: KanbanBoardWatching {
         AsyncStream { $0.finish() }
     }
     func stop() async {}
+    func fetchBoards() async throws -> KanbanBoardList {
+        KanbanBoardList(boards: [], current: nil)
+    }
+    func pinBoard(_ slug: String?) async {}
 }
