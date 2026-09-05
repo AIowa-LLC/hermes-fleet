@@ -215,4 +215,22 @@ public protocol KanbanBoardWatching: Sendable {
     /// Tear the stream down. Idempotent. Async so actors can conform
     /// without nonisolated escape hatches.
     func stop() async
+    // t_624b81cd (B1) — board-selection REQUIREMENTS (dynamic dispatch
+    // through the existential; defaults below keep existing conformers
+    // source-compatible). `fetchBoards` = GET /boards; `pinBoard` is
+    // CLIENT-SIDE selection only — `POST /boards/{slug}/switch` is
+    // FORBIDDEN (it repoints the orchestrator Mac's active board).
+    func fetchBoards() async throws -> KanbanBoardList
+    func pinBoard(_ slug: String?) async
+}
+
+/// t_624b81cd (B1) — default implementations: conformers that cannot list
+/// boards (unconfigured stubs, older doubles) keep working — empty list +
+/// no-op pin.
+public extension KanbanBoardWatching {
+    func fetchBoards() async throws -> KanbanBoardList {
+        KanbanBoardList(boards: [], current: nil)
+    }
+
+    func pinBoard(_ slug: String?) async {}
 }

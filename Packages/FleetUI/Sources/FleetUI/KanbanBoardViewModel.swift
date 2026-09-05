@@ -39,10 +39,32 @@ public final class KanbanBoardViewModel {
     /// stream path (vs. the poll backstop) drove the update.
     public private(set) var liveUpdateCount = 0
 
+    // MARK: Board selection (t_624b81cd — B1)
+
+    /// Boards the gateway offers (empty until the first list fetch).
+    public private(set) var boards: [KanbanBoardSummary] = []
+    /// The pinned board slug, or nil when following the gateway's ACTIVE
+    /// board. Selection is CLIENT-SIDE only (never /boards/{slug}/switch).
+    public private(set) var selectedBoard: String?
+    /// The board name shown in the picker button (active board's name when
+    /// unpinned; the slug itself as an honest fallback).
+    public var displayBoardName: String {
+        if let selectedBoard {
+            return boards.first { $0.slug == selectedBoard }?.name ?? selectedBoard
+        }
+        return boards.first { $0.isCurrent }?.name
+            ?? boards.first?.name
+            ?? "Board"
+    }
+
     // MARK: Dependencies
 
     private let watcher: any KanbanBoardWatching
+    private let selectionStore: KanbanBoardSelectionStore?
     private var streamTask: Task<Void, Never>?
+    /// Monotonic stream-generation counter (t_624b81cd): a cancelled
+    /// selectBoard predecessor can never write state for its successor.
+    private var streamGeneration = 0
     private var pollTask: Task<Void, Never>?
     /// Coalescing: a refetch requested but not yet started.
     private var refetchPending = false
@@ -51,20 +73,44 @@ public final class KanbanBoardViewModel {
     /// Coalescing window for event bursts (one refetch per burst).
     private static let coalesceWindow: Duration = .milliseconds(300)
 
-    public init(watcher: any KanbanBoardWatching) {
+    public init(
+        watcher: any KanbanBoardWatching,
+        selectionStore: KanbanBoardSelectionStore = KanbanBoardSelectionStore()
+    ) {
         self.watcher = watcher
+        self.selectionStore = selectionStore
     }
 
     // MARK: Lifecycle
 
-    /// Fetch the initial snapshot and consume the live stream.
+    /// Fetch the boards list + initial snapshot and consume the live stream.
     public func start() async {
         guard streamTask == nil else { return }
+        await loadBoards()
+        streamGeneration += 1
+        let generation = streamGeneration
         streamTask = Task { [weak self] in
-            await self?.consumeStream()
+            await self?.consumeStream(generation: generation)
         }
         await loadSnapshot(initial: true)
         startPollBackstop()
+    }
+
+    /// Load the boards list; restore the persisted selection when the
+    /// gateway still has that board (unknown slug → active board, no crash).
+    private func loadBoards() async {
+        if let list = try? await watcher.fetchBoards() {
+            boards = list.boards
+        }
+        guard let stored = selectionStore?.loadSelectedBoard() else { return }
+        if boards.contains(where: { $0.slug == stored }) {
+            selectedBoard = stored
+            await watcher.pinBoard(stored)
+        } else {
+            // Unknown persisted slug (board deleted/renamed elsewhere):
+            // drop back to the active board and clear the stale persist.
+            selectionStore?.saveSelectedBoard(nil)
+        }
     }
 
     /// Tear everything down (view disappeared / gateway removed).
@@ -82,13 +128,44 @@ public final class KanbanBoardViewModel {
         await loadSnapshot(initial: false)
     }
 
+    // MARK: Board switching (t_624b81cd — client-side selection only)
+
+    /// Switch the displayed board: pin the watcher (snapshot + WS URLs take
+    /// `?board=`), cancel the old event stream, refetch the snapshot, and
+    /// re-open the stream pinned to the new slug at handshake. Persisted
+    /// per-device. Passing nil returns to the gateway's ACTIVE board.
+    /// NEVER calls `/boards/{slug}/switch` (orchestrator pointer untouched).
+    public func selectBoard(_ slug: String?) async {
+        guard slug != selectedBoard else { return }
+        selectedBoard = slug
+        selectionStore?.saveSelectedBoard(slug)
+
+        // Snapshot of the OLD board is stale the moment we switch — drop it
+        // rather than showing another board's cards under the new name.
+        snapshot = nil
+        recentEvents.removeAll()
+
+        streamTask?.cancel()
+        streamTask = nil
+        await watcher.pinBoard(slug)
+        streamGeneration += 1
+        let generation = streamGeneration
+        streamTask = Task { [weak self] in
+            await self?.consumeStream(generation: generation)
+        }
+        await loadSnapshot(initial: true)
+    }
+
     // MARK: Internals
 
-    private func consumeStream() async {
+    private func consumeStream(generation: Int) async {
         let batches = await watcher.changeEvents()
+        // t_624b81cd: only the CURRENT stream generation may set phase — a
+        // task superseded by selectBoard must not clobber its successor.
+        guard generation == streamGeneration else { return }
         streamPhase = .streaming
         for await batch in batches {
-            if Task.isCancelled { break }
+            if Task.isCancelled || generation != streamGeneration { break }
             var events = batch.events
             events.reverse()
             recentEvents.insert(
@@ -99,7 +176,9 @@ public final class KanbanBoardViewModel {
             // Coalesce: one refetch per run-loop-ish window per burst.
             scheduleLiveRefetch()
         }
-        streamPhase = .idle
+        if generation == streamGeneration {
+            streamPhase = .idle
+        }
     }
 
     private func scheduleLiveRefetch() {
