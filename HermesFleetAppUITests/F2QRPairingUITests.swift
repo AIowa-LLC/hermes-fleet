@@ -16,6 +16,68 @@ final class F2QRPairingUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// C1 hardening: the scanner sheet must render its camera-denied
+    /// recovery state — real copy + Open Settings — and never a dead
+    /// spinner or a camera surface. Driven via the DEBUG-only
+    /// `HERMES_FLEET_PAIRING_CAMERA_DENIED` seam (the simulator camera is
+    /// unsupported, so the real denied path is unreachable there).
+    func testScannerDeniedStateShowsRecoveryCopyAndSettingsLink() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_PAIRING_CAMERA_DENIED"] = "1"
+        app.launch()
+        UITabNavigation.openGatewaysTab(app)
+
+        let add = app.buttons["fleet.gateways.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        add.tap()
+
+        let nameField = app.textFields["fleet.gateways.form.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 10))
+
+        let scan = app.buttons["fleet.gateways.form.scan"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 5))
+        scan.tap()
+
+        let denied = app.staticTexts["fleet.gateways.scan.denied"]
+        XCTAssertTrue(denied.waitForExistence(timeout: 10),
+                      "denied state must surface real copy, not a dead spinner")
+        let settings = app.buttons["fleet.gateways.scan.denied.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5),
+                      "denied state must offer the Settings deep link")
+        // The manual path stays reachable: cancel back to the form.
+        let cancel = app.buttons["fleet.gateways.scan.cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(nameField.waitForExistence(timeout: 10),
+                      "cancel must return to the manual-entry form")
+    }
+
+    /// C1 IA re-order: the scanner must be demoted BELOW the manual entry
+    /// fields with a clear "requires pairing support" label — manual entry
+    /// is the tier-1 primary path.
+    func testScannerEntryIsDemotedBelowManualEntryWithSupportLabel() throws {
+        let app = XCUIApplication()
+        app.launch()
+        UITabNavigation.openGatewaysTab(app)
+
+        let add = app.buttons["fleet.gateways.add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 15))
+        add.tap()
+
+        let nameField = app.textFields["fleet.gateways.form.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 10))
+        let scan = app.buttons["fleet.gateways.form.scan"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 5))
+        // The scan button must come AFTER the manual endpoint field in the
+        // accessible element order — manual entry is tier 1.
+        XCTAssertTrue(nameField.frame.maxY < scan.frame.minY,
+                      "scanner entry must render below the manual entry fields")
+        let supportLabel = app.staticTexts["fleet.gateways.form.scan.support-note"]
+        XCTAssertTrue(supportLabel.waitForExistence(timeout: 5),
+                      "scanner section must carry the pairing-support caveat")
+        attachScreenshotF2(of: app, name: "c1-scanner-demoted")
+    }
+
     /// The raw QR text the gateway side would render (F2 v1 payload).
     private var simulatedScan: String {
         "{\"password\":\"7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c\",\"url\":\"http://<lan-ip>:8642\",\"username\":\"fleet-operator\",\"v\":1}"

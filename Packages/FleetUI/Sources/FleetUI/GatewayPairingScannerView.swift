@@ -3,6 +3,7 @@ import FleetCore
 #if os(iOS)
 import UIKit
 import VisionKit
+import AVFoundation
 #endif
 
 /// F2 — QR pairing scanner sheet for the Add-Gateway flow.
@@ -28,13 +29,22 @@ struct GatewayPairingScannerView: View {
     @Bindable private var draftStore: GatewayFormDraftStore
     @Environment(\.dismiss) private var dismiss
 
-    /// Non-secret status shown when a scan fails to decode.
-    @State private var scanError: String?
-
     #if os(iOS)
     /// Whether the camera scanner is running (for the stop/start control).
     @State private var isScanning = false
+    /// C1 hardening: explicit camera permission state — the scanner must
+    /// never construct/start a DataScannerViewController while camera access
+    /// is denied or restricted (TCC terminates the app if the camera is
+    /// touched without a granted authorization AND a usage description).
+    /// A denied state shows real recovery copy instead of a dead camera view.
+    @State private var cameraPermission: CameraPermission = .undetermined
     #endif
+
+    /// Non-secret status shown when a scan fails to decode (kept outside the
+    /// os(iOS) block so the fallback path can surface it too).
+    @State private var scanError: String?
+
+    enum CameraPermission { case undetermined, granted, denied }
 
     init(draftStore: GatewayFormDraftStore) {
         self.draftStore = draftStore
@@ -59,20 +69,103 @@ struct GatewayPairingScannerView: View {
     @ViewBuilder
     private var scannerBody: some View {
         #if os(iOS)
-        if cameraSupported {
-            ZStack {
-                PairingCameraScanner(
-                    onRaw: handleRaw,
-                    onCameraError: { scanError = $0; isScanning = false }
-                )
-                .ignoresSafeArea(edges: .bottom)
-                statusOverlay
-            }
-        } else {
+        // DEBUG-only UI-test seam comes FIRST: on the simulator the camera
+        // is unsupported, so the forced-denied check must precede the
+        // hardware short-circuit to be reachable in CI.
+        if Self.forceDeniedForUITest {
+            deniedBody
+        } else if !cameraSupported {
+            // Unsupported hardware (simulator, no camera) short-circuits
+            // BEFORE any permission request so the deterministic fallback
+            // (and the DEBUG test hook) renders without a TCC prompt on CI
+            // simulators.
             fallbackBody
+        } else {
+            switch cameraPermission {
+            case .granted:
+                ZStack {
+                    PairingCameraScanner(
+                        onRaw: handleRaw,
+                        onCameraError: { scanError = $0; isScanning = false }
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                    statusOverlay
+                }
+            case .denied:
+                deniedBody
+            case .undetermined:
+                // C1 hardening: never touch the camera before authorization
+                // resolves. Brief non-spinner placeholder while TCC runs.
+                VStack(spacing: FleetTheme.spacingLg) {
+                    Image(systemName: "camera.aperture")
+                        .font(.system(size: 44))
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .accessibilityHidden(true)
+                    Text("Checking camera access…")
+                        .font(.callout)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+                .padding(FleetTheme.spacingXl)
+                .task { await resolveCameraPermission() }
+            }
         }
         #else
         fallbackBody
+        #endif
+    }
+
+    #if os(iOS)
+    /// C1 hardening: resolve camera authorization WITHOUT touching the
+    /// camera. `AVCaptureDevice.authorizationStatus` is checked first; only
+    /// an undetermined status triggers the system prompt
+    /// (`requestAccess` presents TCC — the NSCameraUsageDescription in the
+    /// app's Info.plist is what makes that prompt legal instead of a kill).
+    private func resolveCameraPermission() async {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            cameraPermission = .granted
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .video)
+            cameraPermission = granted ? .granted : .denied
+        default:
+            // denied / restricted — surface recovery copy, never the camera.
+            cameraPermission = .denied
+        }
+    }
+    #endif
+
+    /// C1 hardening: camera-permission-denied state — real copy and a way
+    /// out (deep link to the app's Settings pane), no dead spinner, no
+    /// retry surface that could re-trigger TCC.
+    private var deniedBody: some View {
+        VStack(spacing: FleetTheme.spacingLg) {
+            Image(systemName: "video.slash")
+                .font(.system(size: 44))
+                .foregroundStyle(FleetTheme.statusDegraded)
+                .accessibilityHidden(true)
+            Text("Camera access is off.\nAllow camera access in Settings to scan pairing codes, or enter the gateway details manually below.")
+                .font(.callout)
+                .foregroundStyle(FleetTheme.textPrimary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("fleet.gateways.scan.denied")
+            Button {
+                openSettings()
+            } label: {
+                Label("Open Settings", systemImage: "gear")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(FleetTheme.accent)
+            .accessibilityIdentifier("fleet.gateways.scan.denied.settings")
+        }
+        .padding(FleetTheme.spacingXl)
+    }
+
+    private func openSettings() {
+        #if canImport(UIKit)
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
         #endif
     }
 
@@ -197,6 +290,17 @@ struct GatewayPairingScannerView: View {
         ProcessInfo.processInfo.environment["HERMES_FLEET_PAIRING_SIMULATED_SCAN"]
         #else
         nil
+        #endif
+    }
+
+    /// DEBUG-only seam (C1 hardening tests): force the camera-denied state
+    /// via `HERMES_FLEET_PAIRING_CAMERA_DENIED=1` so the denied recovery UI
+    /// is testable on the simulator. Nil/false in release builds.
+    static var forceDeniedForUITest: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["HERMES_FLEET_PAIRING_CAMERA_DENIED"] == "1"
+        #else
+        false
         #endif
     }
 }

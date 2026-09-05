@@ -69,23 +69,31 @@ struct GatewayFormSheet: View {
                             .accessibilityIdentifier("fleet.gateways.form.endpoint")
                         pasteButton("fleet.gateways.form.paste.endpoint", into: $draftStore.endpointText)
                     }
-                    // F2: one-scan pairing — opens the camera scanner; a
-                    // successful scan fills this entire form (endpoint +
-                    // username/password strategy + credentials) and returns
-                    // here for Save.
-                    // U7 (Gold Fleet): the scanner entry is the form's
-                    // highlighted secondary action — magenta label + icon on
-                    // the token surface (flat, no fill).
+                } header: {
+                    Text("Gateway")
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+
+                // C1 IA re-order (design): manual entry / URL is the tier-1
+                // primary path; the scanner is DEMOTED to a clearly-labeled
+                // secondary action — no server-side pairing-code generator
+                // exists yet, so the scanner cannot receive a code today.
+                Section {
                     Button {
                         isShowingScanner = true
                     } label: {
                         Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(FleetTheme.textSecondary)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.scan")
                 } header: {
-                    Text("Gateway")
+                    Text("Pairing Code (Optional)")
                         .foregroundStyle(FleetTheme.textSecondary)
+                } footer: {
+                    Text("Requires gateway pairing support. Enter the address and credentials above instead.")
+                        .font(.caption)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .accessibilityIdentifier("fleet.gateways.form.scan.support-note")
                 }
 
                 if cleartextRisk {

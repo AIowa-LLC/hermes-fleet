@@ -17,6 +17,8 @@
 	     and not as an ATS exception. -->
 	<key>FleetDefaultEndpoint</key>
 	<string>https://<legacy-fleet-endpoint></string>
+	<key>NSCameraUsageDescription</key>
+	<string>Hermes Fleet uses the camera only to scan your gateway's pairing QR code. No photos or video are saved.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Hermes Fleet uses Face ID to unlock the app and protect your fleet conversations.</string>
 	<key>NSLocalNetworkUsageDescription</key>
