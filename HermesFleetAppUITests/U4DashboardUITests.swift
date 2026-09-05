@@ -8,7 +8,7 @@ import XCTest
 ///   1. gold "Hermes Fleet" masthead renders on Home;
 ///   2. Fleet Overview stat row: the real bot/gateway counts render;
 ///   3. Gateways rows (name + endpoint + pill) from the registry;
-///   4. Active Bots rows (name + gateway subtitle + last-active) from the
+///   4. Known Bots rows (name + gateway subtitle + last-active) from the
 ///      roster — no fabricated uptime;
 ///   5. Recent Activity renders its honest empty state until real
 ///      connection events accumulate (no fabricated timeline entries);
@@ -59,7 +59,7 @@ final class U4DashboardUITests: XCTestCase {
 
         // Roster truth: a real bot row (<dev-workstation>#default) with subtitle.
         let row = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.bot.<dev-workstation>#default"), in: app)
-        XCTAssertTrue(row.exists, "a roster bot must render an Active Bots row")
+        XCTAssertTrue(row.exists, "a roster bot must render an Known Bots row")
         // Honest last-active from the scripted latest session (never
         // fabricated uptime): the subtitle contains "· ".
         XCTAssertTrue(
@@ -103,7 +103,7 @@ final class U4DashboardUITests: XCTestCase {
             "the Gateways View All must push the registry cockpit"
         )
         // Back returns to the dashboard.
-        app.buttons["Home"].firstMatch.tap()
+        app.buttons["Command"].firstMatch.tap()
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.dashboard.title").waitForExistence(timeout: 10),
             "back navigation must return to the dashboard"

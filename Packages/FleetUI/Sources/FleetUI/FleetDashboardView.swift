@@ -16,6 +16,8 @@ import FleetPersistence
 /// tab's own NavigationStack (registry cockpit / union roster / activity
 /// feed) — presentation-layer navigation only, no logic changes.
 public struct FleetDashboardView: View {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var typeSize
     private let environment: AppEnvironment
 
     /// Local drill-in path for the section View All actions. Rides the tab's
@@ -34,17 +36,26 @@ public struct FleetDashboardView: View {
             VStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
                 masthead
                 overviewStats
-                gatewaysSection
-                activeBotsSection
-                kanbanSection
                 managementSection
-                recentActivitySection
+                if sizeClass == .regular && !typeSize.isAccessibilitySize {
+                    HStack(alignment: .top, spacing: 24) {
+                        VStack(spacing: 24) { activeBotsSection; kanbanSection }
+                        VStack(spacing: 24) { gatewaysSection; recentActivitySection }
+                    }
+                } else {
+                    activeBotsSection
+                    gatewaysSection
+                    kanbanSection
+                    recentActivitySection
+                }
             }
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.vertical, FleetTheme.spacingXl)
+            .frame(maxWidth: 1200)
+            .frame(maxWidth: .infinity)
         }
         .background(FleetTheme.background.ignoresSafeArea())
-        .navigationTitle("Home")
+        .navigationTitle("Command")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("fleet.dashboard")
         .task {
@@ -60,10 +71,23 @@ public struct FleetDashboardView: View {
     // MARK: Masthead (gold brand title per the hero mock)
 
     private var masthead: some View {
-        Text("Hermes Fleet")
-            .font(FleetTheme.titleFont)
-            .foregroundStyle(FleetTheme.accentGold)
-            .accessibilityIdentifier("fleet.dashboard.title")
+        VStack(alignment: .leading, spacing: 12) {
+            Label("HERMES FLEET", systemImage: "sparkle")
+                .font(.caption.weight(.semibold)).tracking(3)
+                .foregroundStyle(FleetTheme.accent)
+            Text("Your agents.\nWithin reach.")
+                .font(FleetTheme.titleFont)
+                .foregroundStyle(FleetTheme.textPrimary)
+            Text("A clear view of your fleet. A direct line to your next idea.")
+                .font(.subheadline).foregroundStyle(FleetTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .background {
+            RoundedRectangle(cornerRadius: 28)
+                .fill(LinearGradient(colors: [FleetTheme.accent.opacity(0.12), FleetTheme.surface], startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+        .accessibilityIdentifier("fleet.dashboard.title")
     }
 
     // MARK: Fleet Overview (real counts only)
@@ -71,10 +95,10 @@ public struct FleetDashboardView: View {
     private var overviewStats: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             SectionHeader(title: "Fleet Overview")
-            HStack(spacing: FleetTheme.spacingMd) {
+            HStack(alignment: .top, spacing: FleetTheme.spacingMd) {
                 StatCard(
                     value: "\(environment.rosterSnapshot?.roster.allBots.count ?? 0)",
-                    label: "Active Bots"
+                    label: "Known Bots"
                 )
                 StatCard(
                     value: "\(environment.gateways.count)",
@@ -82,7 +106,7 @@ public struct FleetDashboardView: View {
                 )
                 StatCard(
                     value: connectedFractionText,
-                    label: "Fleet Health"
+                    label: "Connected"
                 )
             }
         }
@@ -105,7 +129,7 @@ public struct FleetDashboardView: View {
             if environment.gateways.isEmpty {
                 emptyHint(
                     icon: "server.rack",
-                    text: "No gateways registered. Add one from the Gateways tab."
+                    text: "No gateways registered. Add one in Control → Gateways."
                 )
                 .accessibilityIdentifier("fleet.dashboard.gateways.empty")
             } else {
@@ -166,12 +190,13 @@ public struct FleetDashboardView: View {
 
     private var activeBotsSection: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            SectionHeader(title: "Active Bots", destination: FleetScreen.roster)
+            SectionHeader(title: "Agents", destination: FleetScreen.roster)
                 .accessibilityIdentifier("fleet.dashboard.bots.header")
             if let bots = environment.rosterSnapshot?.roster.allBots, !bots.isEmpty {
                 VStack(spacing: FleetTheme.spacingSm) {
                     ForEach(bots.prefix(10)) { bot in
-                        botRow(bot)
+                        NavigationLink(value: FleetScreen.botDetail(bot.route)) { botRow(bot) }
+                            .buttonStyle(.fleetPressable)
                     }
                 }
             } else {
@@ -216,7 +241,8 @@ public struct FleetDashboardView: View {
     private func botSubtitle(_ bot: FleetBot) -> String {
         let gatewayName = environment.gateway(for: bot.route.gatewayID)?.displayName
             ?? bot.route.gatewayID.rawValue
-        return "\(gatewayName) · \(FleetDashboardFormatting.lastActiveLabel(bot: bot, now: now))"
+        let session = bot.latestSession?.title
+        return "\(gatewayName) · \(session?.isEmpty == false ? session! : "No named conversation")"
     }
 
     // MARK: Kanban board entry (t_3b321b7b)
@@ -264,70 +290,29 @@ public struct FleetDashboardView: View {
     @ViewBuilder
     private var managementSection: some View {
         if let gateway = managementGateway {
-            SectionHeader(title: "Management", destination: FleetScreen.cron(gateway.id))
-                .accessibilityIdentifier("fleet.dashboard.management.header")
-            NavigationLink(value: FleetScreen.cron(gateway.id)) {
-                FleetCard {
-                    managementRowLabel(
-                        icon: "clock.badge.checkmark",
-                        title: "Cron Jobs",
-                        subtitle: "Schedules on \(gateway.displayName)")
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: "Quick launch · \(gateway.displayName)")
+                    .accessibilityIdentifier("fleet.dashboard.management.header")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
+                    quickLink("Cron Jobs", icon: "calendar.badge.clock", screen: .cron(gateway.id), id: "cron")
+                    quickLink("Skills", icon: "sparkles", screen: .skills(gateway.id), id: "skills")
+                    quickLink("Projects", icon: "folder", screen: .projects(gateway.id), id: "projects")
+                    quickLink("Memory Graph", icon: "point.3.connected.trianglepath.dotted", screen: .memoryGraph(gateway.id), id: "memorygraph")
                 }
             }
-            .buttonStyle(.fleetPressable)
-            .accessibilityIdentifier("fleet.dashboard.cron.entry")
-            NavigationLink(value: FleetScreen.skills(gateway.id)) {
-                FleetCard {
-                    managementRowLabel(
-                        icon: "wrench.and.screwdriver",
-                        title: "Skills",
-                        subtitle: "Installed skills on \(gateway.displayName)")
-                }
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityIdentifier("fleet.dashboard.skills.entry")
-            NavigationLink(value: FleetScreen.projects(gateway.id)) {
-                FleetCard {
-                    managementRowLabel(
-                        icon: "folder",
-                        title: "Projects",
-                        subtitle: "Project & session browser on \(gateway.displayName)")
-                }
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityIdentifier("fleet.dashboard.projects.entry")
-            NavigationLink(value: FleetScreen.memoryGraph(gateway.id)) {
-                FleetCard {
-                    managementRowLabel(
-                        icon: "sparkles",
-                        title: "Memory Graph",
-                        subtitle: "Learning journey on \(gateway.displayName)")
-                }
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityIdentifier("fleet.dashboard.memorygraph.entry")
         }
     }
 
-    private func managementRowLabel(icon: String, title: String, subtitle: String) -> some View {
-        HStack(spacing: FleetTheme.spacingMd) {
-            Image(systemName: icon)
-                .foregroundStyle(FleetTheme.accent)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
-                Text(subtitle)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-            }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
-                .accessibilityHidden(true)
+    private func quickLink(_ title: String, icon: String, screen: FleetScreen, id: String) -> some View {
+        NavigationLink(value: screen) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .padding(.horizontal, 14).padding(.vertical, 5)
+                .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: 18))
         }
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.\(id).entry")
     }
 
     /// The gateway the management panes target: the first CONNECTED

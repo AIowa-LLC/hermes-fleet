@@ -12,6 +12,7 @@ public struct SkillsView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     @State private var model: ManagementPanesViewModel?
+    @State private var query = ""
 
     public init(environment: AppEnvironment, gatewayID: GatewayID) {
         self.environment = environment
@@ -28,6 +29,7 @@ public struct SkillsView: View {
         }
         .background(FleetTheme.background)
         .navigationTitle("Skills")
+        .searchable(text: $query, prompt: "Find a capability")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: profileScope) {
             await bindModel()
@@ -138,7 +140,10 @@ public struct SkillsView: View {
         // VM rows is unnecessary — but the roster-scoped VM keeps the flat
         // rows, so group by the catalog's category pass via the VM order.
         // Simplest stable grouping: keep insertion order.
-        model?.categoryGroups ?? []
+        (model?.categoryGroups ?? []).compactMap { group in
+            let rows = group.rows.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || group.category.localizedCaseInsensitiveContains(query) }
+            return rows.isEmpty ? nil : (category: group.category, rows: rows)
+        }
     }
 
     private func errorCard(_ text: String) -> some View {

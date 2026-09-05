@@ -18,6 +18,9 @@ import FleetPersistence
 /// the app composition root (M0 hard guard).
 public struct ConversationView: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showingTimeline = false
+    @State private var followingLatest = true
     private let environment: AppEnvironment
     private let route: Route
     private let sessionID: String?
@@ -360,7 +363,12 @@ public struct ConversationView: View {
                         // the Projects browser. Rendered OUTSIDE the bubble
                         // (the bubble combines its children for a11y — the
                         // R9-T6 lesson: .combine hides descendant buttons).
-                        if row.kind == .user || row.kind == .assistant {
+                        // D-2: rendered under USER rows only — the assistant
+                        // bubble's raw @file: text is what wedged iOS 26 AX
+                        // snapshots (see FleetSimulator D-2 fix note); the
+                        // user row's own refs (the ones the sender attached)
+                        // keep the tap-through affordance.
+                        if row.kind == .user {
                             fileRefChips(row)
                         }
                     }
@@ -371,19 +379,62 @@ public struct ConversationView: View {
                 // ease-out context. Keyed to the LAST ROW IDENTITY (not
                 // count — the display window caps, P2-8) so it only fires
                 // when rows actually arrive.
-                .animation(.easeOut(duration: 0.18), value: model.transcript.last?.id)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.transcript.last?.id)
+            }
+            .accessibilityIdentifier("fleet.conversation.transcript")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if model.transcript.contains(where: { $0.kind == .user }) {
+                    HStack {
+                        Button("Conversation timeline", systemImage: "list.bullet.indent") { showingTimeline = true }
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("fleet.conversation.timeline.open")
+                        Spacer()
+                        if !followingLatest {
+                            Button("Latest", systemImage: "arrow.down") {
+                                followingLatest = true
+                                if let last = model.transcript.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                            }.accessibilityIdentifier("fleet.conversation.timeline.latest")
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).frame(minHeight: 44)
+                    .background(FleetTheme.surface)
+                }
+            }
+            .sheet(isPresented: $showingTimeline) {
+                NavigationStack {
+                    List {
+                        Section("Loaded turns") {
+                            ForEach(model.transcript.filter { $0.kind == .user }) { row in
+                                Button {
+                                    showingTimeline = false
+                                    followingLatest = false
+                                    if reduceMotion { proxy.scrollTo(row.id, anchor: .top) }
+                                    else { withAnimation(.snappy) { proxy.scrollTo(row.id, anchor: .top) } }
+                                } label: {
+                                    Text(row.text).font(.body).lineLimit(3)
+                                        .foregroundStyle(FleetTheme.textPrimary).padding(.vertical, 4)
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("Timeline").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingTimeline = false } } }
+                }
+                .presentationDetents([.medium, .large])
+                .accessibilityIdentifier("fleet.conversation.timeline")
             }
             // P2-8: key auto-scroll off the last row's identity, not the count —
             // the display window is capped, so count stops changing once full
             // while new rows keep arriving at the bottom.
             .onChange(of: model.transcript.last?.id) {
-                if let last = model.transcript.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                if followingLatest, let last = model.transcript.last {
+                    if reduceMotion { proxy.scrollTo(last.id, anchor: .bottom) }
+                    else { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                 }
             }
         }
         .scrollDismissesKeyboard(.interactively)
-        .accessibilityIdentifier("fleet.conversation.transcript")
     }
 
     // MARK: Composer (V2 — surface bar, flat pale-cyan circular send button)
@@ -397,25 +448,36 @@ public struct ConversationView: View {
         if !refs.isEmpty {
             HStack(spacing: 6) {
                 ForEach(refs, id: \.self) { ref in
-                    NavigationLink(value: FleetScreen.projects(route.gatewayID, focusPath: ref.displayPath)) {
-                        Label(ref.displayPath, systemImage: "doc")
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.accent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(FleetTheme.surfaceElevated, in: Capsule())
-                            .overlay(
-                                Capsule().strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1))
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Browse \(ref.displayPath)")
-                    .accessibilityIdentifier("fleet.conversation.fileref.\(ref.index)")
+                    fileRefChip(ref, row: row)
                 }
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
             .padding(.top, 2)
         }
+    }
+
+    /// One tap-through `@file:` chip under a user transcript row.
+    @ViewBuilder
+    private func fileRefChip(_ ref: FileRef, row: ConversationRow) -> some View {
+        NavigationLink(value: FleetScreen.projects(route.gatewayID, focusPath: ref.displayPath)) {
+            chipLabelBody(ref)
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityLabel("Browse \(ref.displayPath)")
+        .accessibilityIdentifier("fleet.conversation.fileref.\(ref.index)")
+    }
+
+    /// The chip capsule label body.
+    private func chipLabelBody(_ ref: FileRef) -> some View {
+        Label(ref.displayPath, systemImage: "doc")
+            .font(FleetTheme.monoCaptionFont)
+            .foregroundStyle(FleetTheme.accent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(FleetTheme.surfaceElevated, in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1))
     }
 
     /// One `@file:` / `@folder:` reference found in message text.
@@ -495,6 +557,14 @@ public struct ConversationView: View {
                         } label: {
                             Label("File or PDF…", systemImage: "doc")
                         }
+                        let previousPrompts = model.transcript.filter { $0.kind == .user && !$0.text.isEmpty }.suffix(10)
+                        if !previousPrompts.isEmpty {
+                            Menu("Reuse a prompt", systemImage: "clock.arrow.circlepath") {
+                                ForEach(previousPrompts.reversed()) { row in
+                                    Button(String(row.text.prefix(80))) { composerText = row.text }
+                                }
+                            }
+                        }
                         // R10-T4: voice-mode toggle rides the "+" menu. ON =
                         // assistant replies spoken via local TTS; turning
                         // OFF cuts speech immediately.
@@ -567,7 +637,7 @@ public struct ConversationView: View {
                     } label: {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(FleetTheme.textPrimary)
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
                             .background(Circle().fill(FleetTheme.surfaceElevated))
                             .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
@@ -911,9 +981,12 @@ public struct ConversationView: View {
     }
 
     /// Send/stop button side length (pt) — circular, per the hero mock.
-    private static let sendButtonSide: CGFloat = 40
+    private static let sendButtonSide: CGFloat = 44
 
     private func submit(_ model: ConversationViewModel) async {
+        guard model.phase == .ready,
+              !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pendingAttachments.isEmpty else { return }
+        followingLatest = true
         let text = composerText
         composerText = ""
         sendPulse += 1
@@ -1039,7 +1112,7 @@ private struct ConversationBubbleView: View {
         // user/assistant rows are reactable (tool/status/system rows are
         // not addressable on the wire).
         .contextMenu { reactionMenu }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: row.kind == .tool ? .contain : .combine)
         // P2-7: expose speaker + content semantics and live turn state to
         // assistive tech — the combined bubble text alone hides who spoke.
         .accessibilityLabel(row.accessibilityLabel)
@@ -1164,20 +1237,7 @@ private struct ConversationBubbleView: View {
                     .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
             )
         case .tool:
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(row.text).font(.caption.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
-                    if let detail = row.detail, !detail.isEmpty {
-                        Text(detail).font(.caption2).foregroundStyle(FleetTheme.textSecondary)
-                    }
-                }
-            } icon: {
-                Image(systemName: "wrench.and.screwdriver")
-                    .foregroundStyle(FleetTheme.accent)
-            }
-            .padding(10)
-            .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+            FleetToolActivityView(title: row.text, detail: row.detail)
         case .status, .system:
             Text(row.text)
                 .font(.caption)

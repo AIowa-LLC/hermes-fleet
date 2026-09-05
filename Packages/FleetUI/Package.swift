@@ -28,10 +28,9 @@ let package = Package(
             "FleetSecurity",
             "FleetPersistence"
         ], resources: [
-            // V1 (Nous direction): Courier Prime under the SIL Open Font
-            // License (OFL.txt alongside) — the mono display typeface for
-            // titles / stats / IDs. SF Mono is the runtime fallback when the
-            // custom face is unavailable.
+            // V7: the FleetWingMark identity asset (white-wing lock/splash
+            // mark) + FleetEmptyState artwork, package-local so FleetUI
+            // resolves it via Bundle.module.
             .process("Resources")
         ])
     ]

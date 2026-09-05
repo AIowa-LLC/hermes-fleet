@@ -89,8 +89,8 @@ final class U5BotDetailUITests: XCTestCase {
         let segment = firstMatch(in: app, identifier: "fleet.bot-detail.segment")
         XCTAssertTrue(segment.waitForExistence(timeout: 10),
                       "bot detail must render the segmented control")
-        XCTAssertTrue(segmentButton(app, "Chat").exists, "Chat segment must exist")
-        XCTAssertTrue(segmentButton(app, "Details").exists, "Details segment must exist")
+        XCTAssertTrue(segmentButton(app, "Conversations").exists, "Chat segment must exist")
+        XCTAssertTrue(segmentButton(app, "Overview").exists, "Details segment must exist")
         XCTAssertFalse(segmentButton(app, "Metrics").exists,
                        "Metrics must be OMITTED (no real per-bot metrics data)")
 
@@ -113,7 +113,7 @@ final class U5BotDetailUITests: XCTestCase {
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
         // Switch to Details: the identity card renders.
-        segmentButton(app, "Details").tap()
+        segmentButton(app, "Overview").tap()
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.route").waitForExistence(timeout: 10),
             "the Details segment must render the identity card"

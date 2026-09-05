@@ -310,6 +310,8 @@ public struct MemoryGraphView: View {
 /// ink, matching the desktop palette roles); brightness rides the
 /// age-gradient ink. Taps hit-test in unit space (size-independent).
 struct MemoryGraphCanvas: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let model: MemoryGraphViewModel
     let onTapNode: (String) -> Void
 
@@ -333,10 +335,16 @@ struct MemoryGraphCanvas: View {
                     let point = CGPoint(
                         x: originX + placed.x * side,
                         y: originY + placed.y * side)
-                    let alpha = 0.35 + 0.65 * placed.ink
+                    let alpha = contrast == .increased ? 1.0 : 0.55 + 0.45 * placed.ink
                     let color = placed.isMemory
                         ? FleetTheme.accent.opacity(alpha)
                         : FleetTheme.textSecondary.opacity(alpha)
+                    if placed.isMemory && !reduceTransparency && contrast != .increased {
+                        let halo = CGRect(x: point.x - 12, y: point.y - 12, width: 24, height: 24)
+                        context.fill(Path(ellipseIn: halo), with: .radialGradient(
+                            Gradient(colors: [FleetTheme.accent.opacity(0.2), .clear]),
+                            center: point, startRadius: 2, endRadius: 12))
+                    }
                     if placed.isMemory {
                         // ◆ diamond (memory — drillable ink).
                         var path = Path()

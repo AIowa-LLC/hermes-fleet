@@ -117,9 +117,7 @@ final class H1AppLockUITests: XCTestCase {
 
         // Open Settings (U3: a root tab, no longer a Gateways sheet) → the
         // App Lock toggle is ON by default (acceptance).
-        let settingsTab = app.tabBars.firstMatch.buttons["Settings"]
-        XCTAssertTrue(settingsTab.waitForExistence(timeout: 10), "Settings tab should exist")
-        settingsTab.tap()
+        UITabNavigation.openSettings(app)
 
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10), "App Lock toggle should appear")
@@ -147,9 +145,7 @@ final class H1AppLockUITests: XCTestCase {
                        "no lock screen when the persisted toggle is OFF")
 
         // Prove the toggle really persisted: reopen Settings and read OFF.
-        let settingsTabAgain = app.tabBars.firstMatch.buttons["Settings"]
-        XCTAssertTrue(settingsTabAgain.waitForExistence(timeout: 10))
-        settingsTabAgain.tap()
+        UITabNavigation.openSettings(app)
         let toggleAgain = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggleAgain.waitForExistence(timeout: 10))
         XCTAssertEqual(toggleAgain.value as? String, "0",

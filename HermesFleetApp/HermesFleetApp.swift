@@ -19,11 +19,14 @@ struct HermesFleetApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var environment = FleetServiceGraph.makeDefaultEnvironment()
     @State private var lockController = FleetServiceGraph.makeLockController()
+    // V7.5: the root observes the accent pick so .tint re-renders live when
+    // the user changes it in Settings ▸ Appearance (FleetTheme.accent alone
+    // is a static seam and would not invalidate the root body).
+    @State private var accentController = FleetAccentController.shared
 
     var body: some Scene {
         WindowGroup {
-            // U1 (Gold Fleet): the palette is dark-only; force the dark
-            // appearance app-wide so system chrome matches the tokens.
+            // Semantic colors follow system appearance, including the lock gate.
             ZStack {
                 FleetTabView(environment: environment, lockController: lockController)
                     .task {
@@ -40,7 +43,10 @@ struct HermesFleetApp: App {
                     SplashOverlayView()
                 }
             }
-            .preferredColorScheme(.dark)
+            // V7 (D5 §2): the ONE app-level accent — reaches sheets, covers
+            // and the lock overlay that sit outside FleetTabView's subtree.
+            // V7.5: reads the observed controller so a pick re-tints live.
+            .tint(accentController.selection.color)
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)

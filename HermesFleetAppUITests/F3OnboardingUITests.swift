@@ -23,17 +23,8 @@ final class F3OnboardingUITests: XCTestCase {
     }
 
     private func openGatewaysTab(_ app: XCUIApplication) {
-        // Cold launch lands on Home; the registry cockpit is the Gateways
-        // tab (U3 shell). Retry once if the lock-unlock swap ate the tap.
-        let tab = app.tabBars.firstMatch.buttons["Gateways"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 15), "Gateways tab should exist")
-        tab.tap()
-        let empty = app.staticTexts["No Gateways"]
-        if !empty.waitForExistence(timeout: 6) {
-            tab.tap()
-        }
-        XCTAssertTrue(empty.waitForExistence(timeout: 15),
-                      "zero-gateway launch must show the empty state")
+        UITabNavigation.openGatewaysTab(app)
+        XCTAssertTrue(app.staticTexts["No Gateways"].waitForExistence(timeout: 15))
     }
 
     func testEmptyStateShowsOnboardingCTAAndCopyFlow() throws {

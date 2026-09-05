@@ -133,12 +133,12 @@ public struct BotDetailView: View {
 
     private var segmentedControl: some View {
         Picker("Bot Detail Section", selection: $segment) {
-            Text("Chat").tag(DetailSegment.chat)
-            Text("Details").tag(DetailSegment.details)
+            Text("Conversations").tag(DetailSegment.chat)
+            Text("Overview").tag(DetailSegment.details)
         }
         .pickerStyle(.segmented)
         .accessibilityIdentifier("fleet.bot-detail.segment")
-        .accessibilityValue(segment == .chat ? "Chat" : "Details")
+        .accessibilityValue(segment == .chat ? "Conversations" : "Overview")
     }
 
     // MARK: Chat segment — sessions via read-only `session.list` (U2)
@@ -249,7 +249,7 @@ public struct BotDetailView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("fleet.bot-detail.status")
 
-            Text("Sessions refresh from session.list each time this screen appears. New Session starts a conversation via session.create.")
+            Text("Conversations refresh when you open this agent. Your chats stay connected to their original gateway.")
                 .font(.caption2)
                 .foregroundStyle(FleetTheme.textSecondary)
                 .padding(.top, FleetTheme.spacingXs)

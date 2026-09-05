@@ -1,91 +1,41 @@
 import SwiftUI
 import FleetCore
 
-/// U3 (Gold Fleet) — a root navigation tab.
-///
-/// Presentation-layer model only: SF Symbol icon + title per the plan-of-record
-/// tab bar (Home / Bots / Gateways / Activity / Settings). Case order IS tab
-/// order; `FleetTabTests` pins both the count and the order so accidental tab
-/// reordering fails a test instead of shipping.
 public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable {
-    case home
-    case bots
-    case gateways
-    case activity
-    case settings
-
+    case home, chats, bots, workspace, control
     public var id: String { rawValue }
-
-    /// Tab-bar title.
     public var label: String {
         switch self {
-        case .home: return "Home"
-        case .bots: return "Bots"
-        case .gateways: return "Gateways"
-        case .activity: return "Activity"
-        case .settings: return "Settings"
+        case .home: "Command"
+        case .chats: "Chats"
+        case .bots: "Bots"
+        case .workspace: "Workspace"
+        case .control: "Control"
         }
     }
-
-    /// SF Symbol for the tab item.
     public var systemImage: String {
         switch self {
-        case .home: return "house.fill"
-        case .bots: return "cpu"
-        case .gateways: return "server.rack"
-        case .activity: return "clock.arrow.circlepath"
-        case .settings: return "gearshape"
+        case .home: "sparkle"
+        case .chats: "bubble.left.and.bubble.right"
+        case .bots: "cpu"
+        case .workspace: "folder"
+        case .control: "slider.horizontal.3"
         }
     }
 }
 
-/// U3 (Gold Fleet) root navigation shell — the five-tab `TabView`.
-///
-/// Tabs: Home (dashboard) / Bots (fleet roster) / Gateways (registry) /
-/// Activity (connection event feed) / Settings (App Lock), SF Symbols, active
-/// tab tinted the pale-cyan accent (`.tint(FleetTheme.accent)` on the
-/// TabView; the lock gate keeps the app-wide tint). Each tab hosts its OWN `NavigationStack`
-/// with the typed `FleetScreen` destinations registered, so per-tab push
-/// navigation (bots → detail → conversation) works from every tab root and
-/// switching tabs preserves each stack.
-///
-/// Screen mapping (existing surfaces, no logic changes):
-/// - Home: `FleetDashboardView` over the live `AppEnvironment` — stat row
-///   (real counts only) + gateways summary + active-bots summary.
-/// - Bots: the union roster (`FleetRosterView`), previously the toolbar link.
-/// - Gateways: the registry cockpit (`GatewaysView`) — unchanged surface,
-///   now with the Roster/Health/Settings entries removed from its toolbar
-///   (they are tabs now).
-/// - Activity: `FleetActivityView` — REAL accumulated connection events from
-///   the H2 health stats (uptime / reconnects / last-disconnect per gateway).
-///   Honest gaps: no persistent event log exists yet; the empty state says so
-///   (no fabricated timeline entries).
-/// - Settings: `FleetSettingsView` hosting the existing App Lock toggle
-///   (previously the H1 sheet; same controller, same persisted key).
-///
-/// H1 (R4): when the app-lock controller is not unlocked, ONLY the minimal
-/// lock screen renders — no fleet content exists behind it (unchanged gate).
-///
-/// DEBUG auto-navigation hook (launch environment, evidence capture only):
-/// `HERMES_FLEET_AUTO_NAV=roster|bot-detail` now selects the Bots tab (and
-/// pushes bot detail on that tab's stack). Compiled out of Release. Never a
-/// product feature.
+/// Adaptive system navigation; every tab owns its stack and the lock gate owns all content.
 public struct FleetTabView: View {
     private let environment: AppEnvironment
     private let lockController: AppLockController
-    private let autoNav: String?
     @State private var selection: FleetTab = .home
-    @State private var botsPath: [FleetScreen] = []
+    @State private var paths: [FleetTab: [FleetScreen]] = [:]
+    @State private var showingCommandCenter = false
     @State private var autoNavHandled = false
 
     public init(environment: AppEnvironment, lockController: AppLockController) {
         self.environment = environment
         self.lockController = lockController
-        #if DEBUG
-        self.autoNav = ProcessInfo.processInfo.environment["HERMES_FLEET_AUTO_NAV"]
-        #else
-        self.autoNav = nil
-        #endif
     }
 
     public var body: some View {
@@ -94,64 +44,46 @@ public struct FleetTabView: View {
                 AppLockView(controller: lockController)
             } else {
                 TabView(selection: $selection) {
-                    NavigationStack(path: $botsPath) {
-                        FleetDashboardView(environment: environment)
-                            .navigationDestination(for: FleetScreen.self) { screen in
-                                destination(screen)
+                    ForEach(FleetTab.allCases) { tab in
+                        Tab(tab.label, systemImage: tab.systemImage, value: tab) {
+                            NavigationStack(path: Binding(get: { paths[tab] ?? [] }, set: { paths[tab] = $0 })) {
+                                root(tab)
+                                    .navigationDestination(for: FleetScreen.self) { destination($0) }
+                                    .toolbar {
+                                        ToolbarItem(placement: .topBarTrailing) {
+                                            Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
+                                                .accessibilityIdentifier("fleet.command-center.open")
+                                                .keyboardShortcut("k", modifiers: .command)
+                                        }
+                                    }
                             }
+                            .accessibilityIdentifier("fleet.tab.\(tab.rawValue)")
+                        }
                     }
-                    .tabItem { Label(FleetTab.home.label, systemImage: FleetTab.home.systemImage) }
-                    .tag(FleetTab.home)
-                    .accessibilityIdentifier("fleet.tab.home")
-
-                    NavigationStack {
-                        FleetRosterView(environment: environment)
-                            .navigationDestination(for: FleetScreen.self) { screen in
-                                destination(screen)
-                            }
-                    }
-                    .tabItem { Label(FleetTab.bots.label, systemImage: FleetTab.bots.systemImage) }
-                    .tag(FleetTab.bots)
-                    .accessibilityIdentifier("fleet.tab.bots")
-
-                    NavigationStack {
-                        GatewaysView(environment: environment)
-                            .navigationDestination(for: FleetScreen.self) { screen in
-                                destination(screen)
-                            }
-                    }
-                    .tabItem { Label(FleetTab.gateways.label, systemImage: FleetTab.gateways.systemImage) }
-                    .tag(FleetTab.gateways)
-                    .accessibilityIdentifier("fleet.tab.gateways")
-
-                    NavigationStack {
-                        FleetActivityView(environment: environment)
-                            .navigationDestination(for: FleetScreen.self) { screen in
-                                destination(screen)
-                            }
-                    }
-                    .tabItem { Label(FleetTab.activity.label, systemImage: FleetTab.activity.systemImage) }
-                    .tag(FleetTab.activity)
-                    .accessibilityIdentifier("fleet.tab.activity")
-
-                    NavigationStack {
-                        FleetSettingsView(controller: lockController)
-                    }
-                    .tabItem { Label(FleetTab.settings.label, systemImage: FleetTab.settings.systemImage) }
-                    .tag(FleetTab.settings)
-                    .accessibilityIdentifier("fleet.tab.settings")
+                }
+                .tabViewStyle(.sidebarAdaptable)
+                .sheet(isPresented: $showingCommandCenter) {
+                    FleetCommandCenter(environment: environment, navigate: { screen in
+                        paths[selection, default: []].append(screen)
+                    }, selectTab: { selection = $0 })
                 }
             }
         }
-        .task {
-            await performAutoNavIfNeeded()
-        }
         .tint(FleetTheme.accent)
+        .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false } }
+        .task { await performAutoNavIfNeeded() }
     }
 
-    /// Shared typed-destination renderer (every tab stack registers the same
-    /// `FleetScreen` destinations; only roster pushes actually originate
-    /// outside the roster today).
+    @ViewBuilder private func root(_ tab: FleetTab) -> some View {
+        switch tab {
+        case .home: FleetDashboardView(environment: environment)
+        case .chats: FleetChatsView(environment: environment)
+        case .bots: FleetRosterView(environment: environment)
+        case .workspace: FleetWorkspaceView(environment: environment)
+        case .control: FleetControlView(environment: environment, lockController: lockController)
+        }
+    }
+
     @ViewBuilder
     private func destination(_ screen: FleetScreen) -> some View {
         switch screen {
@@ -182,25 +114,32 @@ public struct FleetTabView: View {
         }
     }
 
-    /// DEBUG-only: drive the shell to the requested screen after the runtime
-    /// has loaded its registry + roster (so the destination has data).
-    @MainActor
-    private func performAutoNavIfNeeded() async {
+
+    @MainActor private func performAutoNavIfNeeded() async {
         #if DEBUG
-        guard !autoNavHandled, let autoNav else { return }
+        guard !autoNavHandled, let autoNav = ProcessInfo.processInfo.environment["HERMES_FLEET_AUTO_NAV"] else { return }
         autoNavHandled = true
         await environment.load()
         await environment.refreshRoster()
-        switch autoNav {
-        case "roster":
-            selection = .bots
-        case "bot-detail":
-            if let first = environment.rosterSnapshot?.roster.allBots.first {
-                selection = .bots
-                botsPath = [.botDetail(first.route)]
+        if autoNav == "roster" { selection = .bots }
+        if autoNav == "chats" { selection = .chats }
+        if autoNav == "workspace" { selection = .workspace }
+        if autoNav == "control" { selection = .control }
+        if autoNav == "command-center" { showingCommandCenter = true }
+        let gateway = environment.gateways.first { $0.id.rawValue == "<dev-workstation>" } ?? environment.gateways.first
+        if let gateway {
+            switch autoNav {
+            case "cron": paths[.home] = [.cron(gateway.id)]
+            case "skills": paths[.home] = [.skills(gateway.id)]
+            case "memory": paths[.home] = [.memoryGraph(gateway.id)]
+            case "projects": paths[.home] = [.projects(gateway.id)]
+            case "gateways": paths[.home] = [.gateways]
+            default: break
             }
-        default:
-            break
+        }
+        if autoNav == "bot-detail", let first = environment.rosterSnapshot?.roster.allBots.first {
+            selection = .bots
+            paths[.bots] = [.botDetail(first.route)]
         }
         #endif
     }

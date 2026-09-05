@@ -11,7 +11,7 @@ final class AppCompositionTests: XCTestCase {
         // order (Home / Bots / Gateways / Activity / Settings).
         XCTAssertEqual(
             FleetTab.allCases.map(\.label),
-            ["Home", "Bots", "Gateways", "Activity", "Settings"],
+            ["Command", "Chats", "Bots", "Workspace", "Control"],
             "the tab bar must match the plan-of-record five tabs in order"
         )
     }

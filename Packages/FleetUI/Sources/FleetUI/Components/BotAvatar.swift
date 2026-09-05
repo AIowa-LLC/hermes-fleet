@@ -20,10 +20,10 @@ public struct BotAvatar: View {
 
     public var body: some View {
         Text(initials)
-            .font(FleetFonts.monoDisplay(size: Self.fontSize, weight: .semibold))
-            .foregroundStyle(FleetTheme.textSecondary)
+            .font(.system(.headline, design: .rounded, weight: .bold))
+            .foregroundStyle(FleetTheme.accent)
             .frame(width: Self.side, height: Self.side)
-            .background(FleetTheme.surface)
+            .background(LinearGradient(colors: [FleetTheme.accent.opacity(0.18), FleetTheme.surfaceElevated], startPoint: .topLeading, endPoint: .bottomTrailing))
             .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
             .overlay(
                 RoundedRectangle(cornerRadius: Self.cornerRadius)
@@ -33,11 +33,11 @@ public struct BotAvatar: View {
     }
 
     /// Avatar square side (pt).
-    static let side: CGFloat = 34
+    static let side: CGFloat = 44
     /// Initials point size (mono).
     static let fontSize: CGFloat = 13
     /// Corner radius (softer than the 16pt card radius).
-    static let cornerRadius: CGFloat = 10
+    static let cornerRadius: CGFloat = 15
 }
 
 #Preview("BotAvatar") {

@@ -117,11 +117,11 @@ public struct GatewayOnboardingView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Image(systemName: "circle.hexagongrid.fill")
                 .font(.system(size: 40))
-                .foregroundStyle(FleetTheme.accentGold)
+                .foregroundStyle(FleetTheme.accent)
                 .accessibilityHidden(true)
             Text("Hermes Fleet")
                 .font(FleetTheme.titleFont)
-                .foregroundStyle(FleetTheme.accentGold)
+                .foregroundStyle(FleetTheme.accent)
                 .accessibilityIdentifier("fleet.onboarding.title")
             Text("No gateways yet. Your own Hermes agent can set everything up — the app, the network path, and a scoped gateway credential — and hand you three values to type in.")
                 .font(FleetTheme.secondaryFont)

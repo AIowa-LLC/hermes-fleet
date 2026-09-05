@@ -22,7 +22,7 @@ final class U3TabNavigationUITests: XCTestCase {
         // The tab bar exposes the five plan tabs by label.
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 15), "the root shell must render a tab bar")
-        for label in ["Home", "Bots", "Gateways", "Activity", "Settings"] {
+        for label in ["Command", "Chats", "Bots", "Workspace", "Control"] {
             XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
         }
 
@@ -30,7 +30,7 @@ final class U3TabNavigationUITests: XCTestCase {
         // fleet's gateways render in the summary section — real data only).
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
                       "Home should render the fleet dashboard with real scripted-fleet data")
-        XCTAssertTrue(app.navigationBars["Home"].exists, "Home tab is initially selected")
+        XCTAssertTrue(app.navigationBars["Command"].exists, "Home tab is initially selected")
         attachScreenshot(of: app, name: "u3-home-five-tabs")
     }
 
@@ -103,9 +103,9 @@ final class U3TabNavigationUITests: XCTestCase {
         // switch (each tab keeps its own NavigationStack). Plain tap on the
         // return trip: with bot detail pushed, the top bar is the detail's,
         // not "Hermes Fleet", so the verified-open helper does not apply.
-        tapTab(app, "Home")
-        XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 10))
-        tapTab(app, "Gateways")
+        tapTab(app, "Command")
+        XCTAssertTrue(app.navigationBars["Command"].waitForExistence(timeout: 10))
+        tapTab(app, "Control")
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")
@@ -121,25 +121,11 @@ final class U3TabNavigationUITests: XCTestCase {
     }
 
     private func openActivityTab(_ app: XCUIApplication) {
-        let tab = app.tabBars.firstMatch.buttons["Activity"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 15), "Activity tab should exist")
-        tab.tap()
-        if !app.navigationBars["Activity"].waitForExistence(timeout: 6) {
-            tab.tap()
-        }
-        XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 15),
-                      "the Activity tab must render")
+        UITabNavigation.openActivity(app)
     }
 
     private func openSettingsTab(_ app: XCUIApplication) {
-        let tab = app.tabBars.firstMatch.buttons["Settings"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 15), "Settings tab should exist")
-        tab.tap()
-        if !app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 6) {
-            tab.tap()
-        }
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 15),
-                      "the Settings tab must host the App Lock toggle")
+        UITabNavigation.openSettings(app)
     }
 
     // MARK: - Helpers

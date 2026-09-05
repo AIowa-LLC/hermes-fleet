@@ -3,241 +3,184 @@ import SwiftUI
 import UIKit
 @testable import FleetUI
 
-/// V1 (Nous direction, 2026-09-02 design pivot): drift guard — the FleetTheme
-/// palette MUST match the plan-of-record token table exactly. If a value
-/// changes here without a matching design decision, this test fails.
-///
-/// DELIBERATE PIVOT: the old Gold Fleet hex pins (0x0A0A0F canvas, gold/
-/// magenta/cyan accents) were REPLACED by the Nous terminal-minimal table
-/// (plan: 2026-09-02 gold-fleet-v2 "Direction A", Tony-approved bake-off).
-/// Old pins live in git history, not in this file.
-///
-/// Source of truth: FleetColors (single hex table) + plan
-/// `2026-09-02_115356-gold-fleet-v2-visual-upgrade.md`, Direction A.
+/// V7 HIG-native drift guard (t_9ce36690 / D5 spec, 2026-09-04): every
+/// bespoke palette token was DELETED from FleetTheme. The guard now pins
+/// SYSTEM RESOLUTION — each FleetTheme color must resolve identically to its
+/// corresponding system color in BOTH light and dark appearances. Any future
+/// bespoke drift (a hex sneaking back in) fails here. Old bespoke pins live
+/// in git history, not in this file.
 @MainActor
 final class FleetThemeTests: XCTestCase {
 
-    // MARK: - Raw hex drift guard (single source of truth: FleetColors)
+    // MARK: - System resolution drift guard
 
-    func testPaletteHexValuesMatchSpecExactly() {
-        // Neutrals — Nous #32373C family on stark near-black
-        XCTAssertEqual(FleetColors.background, 0x0A0A0A)
-        XCTAssertEqual(FleetColors.surface, 0x16161A)
-        XCTAssertEqual(FleetColors.surfaceElevated, 0x1D1E22)
-        XCTAssertEqual(FleetColors.border, 0x32373C)
-        XCTAssertEqual(FleetColors.textPrimary, 0xEDEDED)
-        XCTAssertEqual(FleetColors.textSecondary, 0x9BA1A6)
-        // V5 accessibility tokens (design review t_b2628d33)
-        XCTAssertEqual(FleetColors.textMuted, 0x858B91)
-        XCTAssertEqual(FleetColors.borderIncreased, 0x5A646D)
-        XCTAssertEqual(FleetColors.surfaceIncreased, 0x1F2025)
-        // ONE accent: pale cyan
-        XCTAssertEqual(FleetColors.accent, 0x98F3F9)
-        // Legacy Gold Fleet accents (retained until V2/V3 migrate call sites)
-        XCTAssertEqual(FleetColors.accentGold, 0xFFD700)
-        XCTAssertEqual(FleetColors.accentMagenta, 0xFF1F6A)
-        // Semantic status — unchanged by the pivot
-        XCTAssertEqual(FleetColors.statusOnline, 0x00C853)
-        XCTAssertEqual(FleetColors.statusIdle, 0xFFC107)
-        XCTAssertEqual(FleetColors.statusDegraded, 0xFF5252)
-        // DELIBERATE V5 accessibility decision (t_b2628d33 design review):
-        // statusOffline was raised 0x6A6A7A → 0x8A8A9A (3.4:1 → 5.31:1 on
-        // surface) to clear WCAG AA; the offline PILL LABEL additionally
-        // renders in textPrimary (see FleetStatus.labelColor).
-        XCTAssertEqual(FleetColors.statusOffline, 0x8A8A9A)
+    /// Resolves a FleetTheme Color and a system UIColor under the given
+    /// appearance and asserts they are the SAME color.
+    private func assertSystemResolved(
+        _ theme: Color, system: UIColor,
+        appearance: UIUserInterfaceStyle, name: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let traits = UITraitCollection(userInterfaceStyle: appearance)
+        let resolved = UIColor(theme).resolvedColor(with: traits)
+        let expected = system.resolvedColor(with: traits)
+        var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
+        var er: CGFloat = 0, eg: CGFloat = 0, eb: CGFloat = 0, ea: CGFloat = 0
+        resolved.getRed(&rr, green: &rg, blue: &rb, alpha: &ra)
+        expected.getRed(&er, green: &eg, blue: &eb, alpha: &ea)
+        XCTAssertEqual(rr, er, accuracy: 0.001, "\(name) red (system-resolved) \(appearance == .dark ? "dark" : "light")", file: file, line: line)
+        XCTAssertEqual(rg, eg, accuracy: 0.001, "\(name) green (system-resolved)", file: file, line: line)
+        XCTAssertEqual(rb, eb, accuracy: 0.001, "\(name) blue (system-resolved)", file: file, line: line)
+        XCTAssertEqual(ra, ea, accuracy: 0.001, "\(name) alpha (system-resolved)", file: file, line: line)
     }
 
-    // MARK: - Resolved color values (what actually renders)
-
-    func testTokenColorsResolveToSpecInDarkAppearance() {
-        let dark = UITraitCollection(userInterfaceStyle: .dark)
-
-        assertResolved(FleetTheme.background, hex: 0x0A0A0A, alpha: 1, traits: dark, name: "background")
-        assertResolved(FleetTheme.surface, hex: 0x16161A, alpha: 1, traits: dark, name: "surface")
-        assertResolved(FleetTheme.surfaceElevated, hex: 0x1D1E22, alpha: 1, traits: dark, name: "surfaceElevated")
-        assertResolved(FleetTheme.textPrimary, hex: 0xEDEDED, alpha: 1, traits: dark, name: "textPrimary")
-        assertResolved(FleetTheme.textSecondary, hex: 0x9BA1A6, alpha: 1, traits: dark, name: "textSecondary")
-        assertResolved(FleetTheme.accent, hex: 0x98F3F9, alpha: 1, traits: dark, name: "accent")
-        assertResolved(FleetTheme.accentGold, hex: 0xFFD700, alpha: 1, traits: dark, name: "accentGold (legacy)")
-        assertResolved(FleetTheme.accentMagenta, hex: 0xFF1F6A, alpha: 1, traits: dark, name: "accentMagenta (legacy)")
-        assertResolved(FleetTheme.statusOnline, hex: 0x00C853, alpha: 1, traits: dark, name: "statusOnline")
-        assertResolved(FleetTheme.statusIdle, hex: 0xFFC107, alpha: 1, traits: dark, name: "statusIdle")
-        assertResolved(FleetTheme.statusDegraded, hex: 0xFF5252, alpha: 1, traits: dark, name: "statusDegraded")
-        assertResolved(FleetTheme.statusOffline, hex: 0x8A8A9A, alpha: 1, traits: dark, name: "statusOffline")
-        assertResolved(FleetTheme.textMuted, hex: 0x858B91, alpha: 1, traits: dark, name: "textMuted")
-        assertResolved(Color(hex: FleetColors.borderIncreased), hex: 0x5A646D, alpha: 1, traits: dark, name: "borderIncreased")
-        assertResolved(Color(hex: FleetColors.surfaceIncreased), hex: 0x1F2025, alpha: 1, traits: dark, name: "surfaceIncreased")
+    func testNeutralsResolveToSystemSurfaces() {
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            assertSystemResolved(FleetTheme.background, system: .systemBackground, appearance: appearance, name: "background")
+            assertSystemResolved(FleetTheme.surface, system: .secondarySystemBackground, appearance: appearance, name: "surface")
+            assertSystemResolved(FleetTheme.surfaceElevated, system: .tertiarySystemBackground, appearance: appearance, name: "surfaceElevated")
+        }
     }
 
-    /// V5 (t_b2628d33): WCAG AA contrast guard — every text-bearing token
-    /// must clear 4.5:1 against the surface it renders on. Computed with the
-    /// WCAG relative-luminance formula (sRGB linearization + 2.4 gamma), so a
-    /// future token change that drops below AA fails HERE instead of in
-    /// design review. Note: statusOffline gray is used for text only where it
-    /// clears AA on its own (5.31:1 on surface); the offline pill label
-    /// renders textPrimary (11.7:1 on its own tint) via
-    /// FleetStatus.labelColor.
-    func testTextTokensClearWCAGAAOnTheirSurfaces() {
-        typealias Pair = (name: String, foreground: UInt32, background: UInt32)
-        let checks: [Pair] = [
-            ("textPrimary on background", FleetColors.textPrimary, FleetColors.background),
-            ("textPrimary on surface", FleetColors.textPrimary, FleetColors.surface),
-            ("textPrimary on surfaceElevated", FleetColors.textPrimary, FleetColors.surfaceElevated),
-            ("textPrimary on surfaceIncreased", FleetColors.textPrimary, FleetColors.surfaceIncreased),
-            ("textSecondary on background", FleetColors.textSecondary, FleetColors.background),
-            ("textSecondary on surface", FleetColors.textSecondary, FleetColors.surface),
-            ("textSecondary on surfaceElevated", FleetColors.textSecondary, FleetColors.surfaceElevated),
-            ("textSecondary on surfaceIncreased", FleetColors.textSecondary, FleetColors.surfaceIncreased),
-            ("textMuted on background", FleetColors.textMuted, FleetColors.background),
-            ("textMuted on surface", FleetColors.textMuted, FleetColors.surface),
-            ("textMuted on surfaceElevated", FleetColors.textMuted, FleetColors.surfaceElevated),
-            ("accent on background", FleetColors.accent, FleetColors.background),
-            ("accent on surface", FleetColors.accent, FleetColors.surface),
-            ("statusOffline (dot/tint gray) on surface", FleetColors.statusOffline, FleetColors.surface),
-            ("statusOffline (dot/tint gray) on surfaceElevated", FleetColors.statusOffline, FleetColors.surfaceElevated),
+    func testTextTokensResolveToSemanticLabels() {
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            assertSystemResolved(FleetTheme.textPrimary, system: .label, appearance: appearance, name: "textPrimary")
+            assertSystemResolved(FleetTheme.textSecondary, system: .secondaryLabel, appearance: appearance, name: "textSecondary")
+            assertSystemResolved(FleetTheme.textMuted, system: .tertiaryLabel, appearance: appearance, name: "textMuted")
+        }
+    }
+
+    func testBorderResolvesToSystemSeparator() {
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            assertSystemResolved(FleetTheme.border, system: .separator, appearance: appearance, name: "border")
+        }
+    }
+
+    func testBorderColorHelperResolvesOpaqueSeparatorUnderIncreasedContrast() {
+        let standard = UIColor(FleetTheme.borderColor(colorSchemeContrast: .standard)).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        let increased = UIColor(FleetTheme.borderColor(colorSchemeContrast: .increased)).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        let expectedStandard = UIColor.separator.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        let expectedIncreased = UIColor.opaqueSeparator.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        XCTAssertEqual(standard.description, expectedStandard.description)
+        XCTAssertEqual(increased.description, expectedIncreased.description)
+        // And the helper must actually STRENGTHEN under increased contrast.
+        XCTAssertNotEqual(standard.description, increased.description, "borderColor(.increased) must differ from standard")
+    }
+
+    func testSurfaceIncreasedLiftsUnderHighAccessibilityContrast() {
+        // Standard contrast: resolves as the base secondary surface.
+        let standardTraits = UITraitCollection(userInterfaceStyle: .dark)
+        let resolvedStandard = UIColor(FleetTheme.surfaceIncreased).resolvedColor(with: standardTraits)
+        let expectedStandard = UIColor.secondarySystemBackground.resolvedColor(with: standardTraits)
+        XCTAssertEqual(resolvedStandard.description, expectedStandard.description)
+        // Increase Contrast: lifts to the HIGH-contrast system background.
+        let highTraits = UITraitCollection(traitsFrom: [
+            UITraitCollection(userInterfaceStyle: .dark),
+            UITraitCollection(accessibilityContrast: .high),
+        ])
+        let resolvedHigh = UIColor(FleetTheme.surfaceIncreased).resolvedColor(with: highTraits)
+        let expectedHigh = UIColor.systemBackground.resolvedColor(with: highTraits)
+        XCTAssertEqual(resolvedHigh.description, expectedHigh.description)
+    }
+
+    /// ONE accent, now user-choosable: resolves to the controller's current
+    /// selection — systemBlue under the default (fresh-install) selection.
+    func testAccentResolvesToSystemBlue() {
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            assertSystemResolved(FleetTheme.accent, system: .systemBlue, appearance: appearance, name: "accent")
+        }
+    }
+
+    /// Non-default selections resolve to their adaptive pair, in both modes.
+    /// Drives the real seam (FleetAccentController.shared) — a suite-backed
+    /// controller instance would not affect FleetTheme.accent.
+    func testAccentFollowsUserSelection() {
+        let original = FleetAccentController.shared.selection
+        defer { FleetAccentController.shared.selection = original }   // load-bearing restore
+        FleetAccentController.shared.selection = .gold
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            let traits = UITraitCollection(userInterfaceStyle: appearance)
+            let resolved = UIColor(FleetTheme.accent).resolvedColor(with: traits)
+            let expected = UIColor(FleetAccent.gold.color).resolvedColor(with: traits)
+            XCTAssertEqual(resolved.description, expected.description,
+                           "accent must follow selection (gold), \(appearance == .dark ? "dark" : "light")")
+        }
+    }
+
+    /// The bespoke era must stay DEAD: none of the retired hex values may
+    /// reappear as the resolved value of any primary token (catches a hex
+    /// sneaking back under a different token name).
+    func testRetiredBespokeHexesStayDead() {
+        typealias Check = (name: String, color: Color)
+        let retiredDark: [UInt32] = [
+            0x0A0A0A, 0x16161A, 0x1D1E22, 0x32373C, 0xEDEDED, 0x9BA1A6,
+            0x858B91, 0x5A646D, 0x1F2025, 0x98F3F9, 0xFFD700, 0xFF1F6A,
         ]
-        for check in checks {
-            XCTAssertGreaterThanOrEqual(
-                Self.wcagContrastRatio(check.foreground, check.background),
-                4.5,
-                "\(check.name) must clear WCAG AA (4.5:1)"
-            )
-        }
-    }
-
-    /// V5 (t_b2628d33): Increase Contrast tokens — the hairline must gain
-    /// contrast and every text token must KEEP at least AA on the lifted
-    /// surface (the strengthened tokens may not trade one failure for
-    /// another).
-    func testIncreaseContrastTokensStrengthenWithoutBreakingAA() {
-        let standardBorder = Self.wcagContrastRatio(FleetColors.border, FleetColors.background)
-        let increasedBorder = Self.wcagContrastRatio(FleetColors.borderIncreased, FleetColors.background)
-        XCTAssertGreaterThan(increasedBorder, standardBorder, "borderIncreased must beat the standard hairline vs canvas")
-
-        let standardSurface = Self.wcagContrastRatio(FleetColors.surface, FleetColors.background)
-        let increasedSurface = Self.wcagContrastRatio(FleetColors.surfaceIncreased, FleetColors.background)
-        XCTAssertGreaterThan(increasedSurface, standardSurface, "surfaceIncreased must separate more from canvas than surface")
-
-        for (name, fg) in [
-            ("textPrimary", FleetColors.textPrimary),
-            ("textSecondary", FleetColors.textSecondary),
-            ("textMuted", FleetColors.textMuted),
-            ("accent", FleetColors.accent),
-        ] {
-            XCTAssertGreaterThanOrEqual(
-                Self.wcagContrastRatio(fg, FleetColors.surfaceIncreased),
-                4.5,
-                "\(name) must keep WCAG AA on surfaceIncreased"
-            )
-        }
-    }
-
-    /// WCAG 2.x relative luminance + contrast ratio over solid sRGB hex
-    /// tokens (fixed hex — no alpha, no dynamic remap, so this is exact).
-    private static func wcagContrastRatio(_ a: UInt32, _ b: UInt32) -> Double {
-        func linear(_ channel: UInt32) -> Double {
-            let c = Double(channel) / 255
-            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
-        }
-        func luminance(_ hex: UInt32) -> Double {
-            0.2126 * linear((hex >> 16) & 0xFF)
-                + 0.7152 * linear((hex >> 8) & 0xFF)
-                + 0.0722 * linear(hex & 0xFF)
-        }
-        let l1 = luminance(a), l2 = luminance(b)
-        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
-    }
-
-    /// Policy: dark-only palette. The app forces dark at the root
-    /// (`.preferredColorScheme(.dark)`), but tokens must still resolve to the
-    /// SAME values under a light trait collection so nothing crashes or shifts
-    /// if a sheet/system presentation leaks light traits.
-    func testTokenColorsResolveIdenticallyInLightAppearance() {
-        let light = UITraitCollection(userInterfaceStyle: .light)
-        let dark = UITraitCollection(userInterfaceStyle: .dark)
-
-        for (name, color) in [
+        let retiredLight: [UInt32] = [0x006B78, 0x866000, 0xB51D58]
+        let tokens: [Check] = [
             ("background", FleetTheme.background),
             ("surface", FleetTheme.surface),
             ("surfaceElevated", FleetTheme.surfaceElevated),
+            ("border", FleetTheme.border),
             ("textPrimary", FleetTheme.textPrimary),
             ("textSecondary", FleetTheme.textSecondary),
+            ("textMuted", FleetTheme.textMuted),
             ("accent", FleetTheme.accent),
-            ("accentGold", FleetTheme.accentGold),
-            ("accentMagenta", FleetTheme.accentMagenta),
-            ("statusOnline", FleetTheme.statusOnline),
-            ("statusIdle", FleetTheme.statusIdle),
-            ("statusDegraded", FleetTheme.statusDegraded),
-            ("statusOffline", FleetTheme.statusOffline),
-        ] {
-            let l = UIColor(color).resolvedColor(with: light)
-            let d = UIColor(color).resolvedColor(with: dark)
-            var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
-            var dr: CGFloat = 0, dg: CGFloat = 0, db: CGFloat = 0, da: CGFloat = 0
-            l.getRed(&lr, green: &lg, blue: &lb, alpha: &la)
-            d.getRed(&dr, green: &dg, blue: &db, alpha: &da)
-            XCTAssertEqual(lr, dr, accuracy: 0.001, "\(name) red differs between light/dark")
-            XCTAssertEqual(lg, dg, accuracy: 0.001, "\(name) green differs between light/dark")
-            XCTAssertEqual(lb, db, accuracy: 0.001, "\(name) blue differs between light/dark")
-            XCTAssertEqual(la, da, accuracy: 0.001, "\(name) alpha differs between light/dark")
+        ]
+        for (appearance, retired) in [(UIUserInterfaceStyle.dark, retiredDark), (.light, retiredLight)] {
+            let traits = UITraitCollection(userInterfaceStyle: appearance)
+            for token in tokens {
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                UIColor(token.color).resolvedColor(with: traits).getRed(&r, green: &g, blue: &b, alpha: &a)
+                let hex = UInt32((r * 255).rounded()) << 16 | UInt32((g * 255).rounded()) << 8 | UInt32((b * 255).rounded())
+                XCTAssertFalse(retired.contains(hex), "\(token.name) resolved to retired bespoke hex 0x\(String(hex, radix: 16)) in \(appearance == .dark ? "dark" : "light")")
+            }
         }
     }
 
-    /// V1 Nous: hairline borders are SOLID #32373C — a hairline is the
-    /// restraint (no translucency). Was #2A2A3A @ 8% in Gold Fleet.
-    func testBorderIsSpecColorAtFullOpacity() {
-        let dark = UITraitCollection(userInterfaceStyle: .dark)
-        assertResolved(FleetTheme.border, hex: 0x32373C, alpha: 1, traits: dark, name: "border")
-    }
+    // MARK: - Status (semantic, V5 AA-fixed adaptive values retained per D5)
 
-    /// Status pills get a tinted background derived from the status color
-    /// (~20% tint) — unchanged by the pivot.
-    func testStatusPillTintIsTwentyPercent() {
+    func testStatusTokensKeepPinnedAdaptiveValues() {
         let dark = UITraitCollection(userInterfaceStyle: .dark)
-        assertResolved(
-            FleetTheme.statusPillTint(FleetTheme.statusOnline),
-            hex: 0x00C853, alpha: 0.2, traits: dark, name: "statusPillTint(online)"
-        )
+        let light = UITraitCollection(userInterfaceStyle: .light)
+
+        assertResolvedHex(FleetTheme.statusOnline, hex: 0x00C853, traits: dark, name: "statusOnline dark")
+        assertResolvedHex(FleetTheme.statusOnline, hex: 0x00753B, traits: light, name: "statusOnline light")
+        assertResolvedHex(FleetTheme.statusIdle, hex: 0xFFC107, traits: dark, name: "statusIdle dark")
+        assertResolvedHex(FleetTheme.statusIdle, hex: 0x856000, traits: light, name: "statusIdle light")
+        assertResolvedHex(FleetTheme.statusDegraded, hex: 0xFF5252, traits: dark, name: "statusDegraded dark")
+        assertResolvedHex(FleetTheme.statusDegraded, hex: 0xC02835, traits: light, name: "statusDegraded light")
+        assertResolvedHex(FleetTheme.statusOffline, hex: 0x8A8A9A, traits: dark, name: "statusOffline dark")
+        assertResolvedHex(FleetTheme.statusOffline, hex: 0x626879, traits: light, name: "statusOffline light")
     }
 
     /// V5 (t_b2628d33): the OFFLINE pill label renders textPrimary (the
-    /// statusOffline gray is ~4:1 on its own 20% tint, below AA for text).
-    /// Colored states keep their status color on the label.
+    /// statusOffline gray is below AA for text on its own tint). Colored
+    /// states keep their status color on the label. Unchanged by V7.
     func testStatusPillLabelColorPolicy() {
         XCTAssertEqual(FleetStatus.offline.labelColor, FleetTheme.textPrimary)
         XCTAssertEqual(FleetStatus.online.labelColor, FleetTheme.statusOnline)
         XCTAssertEqual(FleetStatus.idle.labelColor, FleetTheme.statusIdle)
         XCTAssertEqual(FleetStatus.degraded.labelColor, FleetTheme.statusDegraded)
-        // Differentiate-Without-Color reinforcement symbols exist per state.
         for status in FleetStatus.allCases {
             XCTAssertFalse(status.symbolName.isEmpty, "\(status.rawValue) needs a reinforcement symbol")
         }
     }
 
-    /// V5 (t_b2628d33): the Increase Contrast hairline helper — standard
-    /// contrast resolves the base token, increased resolves the strengthened
-    /// one. (Resolved as static tokens; the adaptivity itself is view-layer.)
-    func testBorderColorHelperPicksStrengthenedTokenUnderIncreasedContrast() {
+    func testStatusPillTintIsTwentyPercent() {
         let dark = UITraitCollection(userInterfaceStyle: .dark)
-        assertResolved(
-            FleetTheme.borderColor(colorSchemeContrast: .standard),
-            hex: 0x32373C, alpha: 1, traits: dark, name: "border(standard)"
-        )
-        assertResolved(
-            FleetTheme.borderColor(colorSchemeContrast: .increased),
-            hex: 0x5A646D, alpha: 1, traits: dark, name: "border(increased)"
+        assertResolvedHex(
+            FleetTheme.statusPillTint(FleetTheme.statusOnline),
+            hex: 0x00C853, alpha: 0.2, traits: dark, name: "statusPillTint(online)"
         )
     }
 
-    // MARK: - Radii (cards 16, rows 12, bubbles 18; pills fully rounded)
+    // MARK: - Radii (cards 16, rows 12, bubbles 18)
 
     func testRadiusScale() {
         XCTAssertEqual(FleetTheme.radiusCard, 16)
         XCTAssertEqual(FleetTheme.radiusRow, 12)
         XCTAssertEqual(FleetTheme.radiusBubble, 18)
-        // Pills are fully rounded — callers use .clipShape(Capsule()).
-        // The pill radius is therefore infinite by convention:
-        XCTAssertTrue(FleetTheme.radiusPill.isInfinite, "pill radius must stay fully-rounded (infinite)")
     }
 
     // MARK: - Spacing scale
@@ -251,66 +194,64 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetTheme.spacingXxl, 32)
     }
 
-    // MARK: - Typography (mono as identity; micro-labels; SF Pro body)
+    // MARK: - Typography (SF Pro + SF Mono; size/weight pins)
 
     func testTypographyScale() {
-        // Display/stats — 28pt bold, rendered MONO with tabular figures.
         XCTAssertEqual(FleetTheme.titleFontSize, 28)
         XCTAssertEqual(FleetTheme.statFontSize, 28)
         XCTAssertEqual(FleetTheme.titleFontWeight, .bold)
         XCTAssertEqual(FleetTheme.statFontWeight, .bold)
-
-        // Section headers folded onto the micro-label role (11pt semibold,
-        // UPPERCASE + tracking applied at call sites).
         XCTAssertEqual(FleetTheme.sectionHeaderFontSize, FleetTheme.microLabelFontSize)
         XCTAssertEqual(FleetTheme.sectionHeaderFontWeight, .semibold)
         XCTAssertEqual(FleetTheme.microLabelFontSize, 11)
-
-        // Wide tracking for the caps micro-label (~0.13em at 11pt).
         XCTAssertEqual(FleetTheme.microLabelTracking, 1.4, accuracy: 0.001)
-
-        // Body stays SF Pro.
         XCTAssertEqual(FleetTheme.secondaryFontSize, 13)
         XCTAssertEqual(FleetTheme.secondaryFontWeight, .regular)
-
-        // Mono roles for IDs / uptime / telemetry / terminal metadata rows.
         XCTAssertEqual(FleetTheme.monoFontSize, 13)
         XCTAssertEqual(FleetTheme.monoCaptionFontSize, 11)
     }
 
-    // MARK: - Mono type system (Courier Prime bundled, SF Mono fallback)
+    // MARK: - Accent chooser (V7.5)
 
-    /// The bundled Courier Prime faces must actually ship in the module
-    /// bundle and resolve through UIKit — the mono identity depends on them.
-    func testCourierPrimeIsBundledAndResolvable() {
-        XCTAssertTrue(FleetFonts.courierPrimeAvailable, "Courier Prime faces must resolve from the FleetUI bundle")
+    /// The vetted accent catalog: exactly the five approved candidates, in
+    /// display order, each with a stable raw value and adaptive dark/light hexes.
+    func testAccentCatalogIsVettedAndOrdered() {
+        XCTAssertEqual(FleetAccent.allCases.map(\.rawValue),
+                       ["blue", "gold", "amber", "indigo", "green"])
+        XCTAssertEqual(FleetAccent.default, .blue)
+    }
 
-        let regular = UIFont(name: FleetFonts.courierPrimeRegular, size: 13)
-        let bold = UIFont(name: FleetFonts.courierPrimeBold, size: 13)
-        XCTAssertNotNil(regular, "CourierPrime-Regular must resolve")
-        XCTAssertNotNil(bold, "CourierPrime-Bold must resolve")
-        XCTAssertEqual(regular?.familyName, "Courier Prime")
-        XCTAssertEqual(bold?.familyName, "Courier Prime")
+    /// Persistence: unknown/stale raw values fall back to the default; the
+    /// controller round-trips a pick through UserDefaults.
+    func testAccentControllerRoundTripAndUnknownFallback() {
+        let suite = UserDefaults(suiteName: "testAccentController")!
+        suite.removePersistentDomain(forName: "testAccentController")
+        let controller = FleetAccentController(defaults: suite)
+        XCTAssertEqual(controller.selection, .blue, "fresh install defaults to blue")
+
+        controller.selection = .gold
+        XCTAssertEqual(suite.string(forKey: FleetAccentController.persistKey), "gold")
+        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .gold,
+                       "new controller instance reads persisted pick")
+
+        suite.set("teal-not-a-real-accent", forKey: FleetAccentController.persistKey)
+        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .blue,
+                       "stale/unknown raw value falls back to default")
     }
 
     // MARK: - Helpers
 
-    private func assertResolved(
-        _ color: Color, hex: UInt32, alpha: CGFloat,
+    private func assertResolvedHex(
+        _ color: Color, hex: UInt32, alpha: CGFloat = 1,
         traits: UITraitCollection, name: String,
         file: StaticString = #filePath, line: UInt = #line
     ) {
         let resolved = UIColor(color).resolvedColor(with: traits)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
-        let expected = (
-            CGFloat((hex >> 16) & 0xFF) / 255,
-            CGFloat((hex >> 8) & 0xFF) / 255,
-            CGFloat(hex & 0xFF) / 255
-        )
-        XCTAssertEqual(r, expected.0, accuracy: 0.001, "\(name) red", file: file, line: line)
-        XCTAssertEqual(g, expected.1, accuracy: 0.001, "\(name) green", file: file, line: line)
-        XCTAssertEqual(b, expected.2, accuracy: 0.001, "\(name) blue", file: file, line: line)
+        XCTAssertEqual(r, CGFloat((hex >> 16) & 0xFF) / 255, accuracy: 0.001, "\(name) red", file: file, line: line)
+        XCTAssertEqual(g, CGFloat((hex >> 8) & 0xFF) / 255, accuracy: 0.001, "\(name) green", file: file, line: line)
+        XCTAssertEqual(b, CGFloat(hex & 0xFF) / 255, accuracy: 0.001, "\(name) blue", file: file, line: line)
         XCTAssertEqual(a, alpha, accuracy: 0.001, "\(name) alpha", file: file, line: line)
     }
 }

@@ -924,12 +924,27 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             ))
             streamBox.yield(.messageStart(sessionID: sessionID))
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "Hello from the scripted fleet. ", rendered: nil))
+            // D-2 fix (t_9ce36690): echo the PROMPT TEXT only — drop the
+            // appended @file:/@folder: ref TOKENS from the echoed text (the
+            // ref marker AND its path; refs stay visible in the user bubble
+            // + its tap-through chip, and the wire shape is unchanged — refs
+            // are staged server-side at pick time). Empirically (9-run
+            // experiment matrix), an assistant bubble — a textSelection-
+            // enabled Text — carrying a long unbreakable @file: path token
+            // makes every iOS 26 AX identifier-snapshot take >30s, wedging
+            // XCUITest queries (R10AttachmentTray line-79 timeout). Short
+            // plain-text echoes keep the "You said: <text>" contract
+            // asserted by HappyPath/P0-7.
+            let echoBase = text
+                .split(whereSeparator: \.isWhitespace)
+                .filter { !$0.contains("@file:") && !$0.contains("@folder:") }
+                .joined(separator: " ")
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "You said: ", rendered: nil))
-            streamBox.yield(.messageDelta(sessionID: sessionID, text: text, rendered: nil))
+            streamBox.yield(.messageDelta(sessionID: sessionID, text: echoBase, rendered: nil))
             streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
             streamBox.yield(.messageComplete(
                 sessionID: sessionID,
-                text: "Hello from the scripted fleet. You said: \(text)",
+                text: "Hello from the scripted fleet. You said: \(echoBase)",
                 status: nil,
                 error: nil
             ))
