@@ -88,6 +88,53 @@ public struct KanbanBoardSnapshot: Sendable, Equatable {
     public func cards(in column: String) -> [KanbanCard] { cardsByColumn[column] ?? [] }
 }
 
+// MARK: - Board list (t_624b81cd — B1 board selector)
+
+/// One board from `GET /api/plugins/kanban/boards` (per-device picker data).
+/// Wire shape verified against `plugins/kanban/dashboard/plugin_api.py`
+/// (list_boards): slug/name/is_current/total, unknown fields ignored.
+public struct KanbanBoardSummary: Sendable, Equatable, Identifiable, Decodable {
+    /// Board slug — the wire identifier every other endpoint takes
+    /// (`?board=<slug>`); also the identity of the summary.
+    public let slug: String
+    /// Human display name.
+    public let name: String
+    /// True when this is the gateway operator's ACTIVE board (the pointer
+    /// the app must never move — client-side selection only).
+    public let isCurrent: Bool
+    /// Live (non-archived) card count, when the server sent one.
+    public let total: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case slug, name
+        case isCurrent = "is_current"
+        case total
+    }
+
+    public init(slug: String, name: String, isCurrent: Bool, total: Int? = nil) {
+        self.slug = slug
+        self.name = name
+        self.isCurrent = isCurrent
+        self.total = total
+    }
+
+    public var id: String { slug }
+}
+
+/// The `GET /boards` response: every board plus the active slug.
+public struct KanbanBoardList: Sendable, Equatable, Decodable {
+    public let boards: [KanbanBoardSummary]
+    /// The gateway operator's active board slug (display-only for the app).
+    public let current: String?
+
+    private enum CodingKeys: String, CodingKey { case boards, current }
+
+    public init(boards: [KanbanBoardSummary], current: String?) {
+        self.boards = boards
+        self.current = current
+    }
+}
+
 // MARK: - Change events
 
 /// One board change event from the kanban event stream (the append-only
