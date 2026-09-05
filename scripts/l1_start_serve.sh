@@ -12,10 +12,16 @@ mkdir -p "$WORK"
 
 echo "=== L1: start persistent live gateway surface on :$PORT ==="
 
-# Refuse to double-start
-if lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "  already listening on :$PORT — reusing"
-  lsof -nP -iTCP:$PORT -sTCP:LISTEN -t | head -1 > "$WORK/.servepid"
+# Refuse to double-start. Scope the liveness check to LOOPBACK: a serve
+# bound to the tailnet IP on the same port is a DIFFERENT surface and must
+# not satisfy this check (t_8fd26e02/Q1: the unscoped check reused a
+# tailnet-bound listener while the app's 127.0.0.1:9119 endpoint was dead).
+# The token file is likewise only reusable when it belongs to OUR serve pid.
+if lsof -nP -iTCP@127.0.0.1:$PORT -sTCP:LISTEN >/dev/null 2>&1 \
+   && [ -f "$WORK/.token" ] && [ -f "$WORK/.servepid" ] \
+   && kill -0 "$(cat "$WORK/.servepid")" 2>/dev/null; then
+  echo "  already listening on 127.0.0.1:$PORT — reusing"
+  lsof -nP -iTCP@127.0.0.1:$PORT -sTCP:LISTEN -t | head -1 > "$WORK/.servepid"
   cat "$WORK/.servepid"
   exit 0
 fi
