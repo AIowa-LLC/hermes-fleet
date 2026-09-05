@@ -83,11 +83,27 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(resolvedHigh.description, expectedHigh.description)
     }
 
-    /// ONE accent: the app's single accent must resolve to systemBlue (the
-    /// safe default until Tony's swatch pick lands — then this pin follows).
+    /// ONE accent, now user-choosable: resolves to the controller's current
+    /// selection — systemBlue under the default (fresh-install) selection.
     func testAccentResolvesToSystemBlue() {
         for appearance in [UIUserInterfaceStyle.light, .dark] {
             assertSystemResolved(FleetTheme.accent, system: .systemBlue, appearance: appearance, name: "accent")
+        }
+    }
+
+    /// Non-default selections resolve to their adaptive pair, in both modes.
+    /// Drives the real seam (FleetAccentController.shared) — a suite-backed
+    /// controller instance would not affect FleetTheme.accent.
+    func testAccentFollowsUserSelection() {
+        let original = FleetAccentController.shared.selection
+        defer { FleetAccentController.shared.selection = original }   // load-bearing restore
+        FleetAccentController.shared.selection = .gold
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            let traits = UITraitCollection(userInterfaceStyle: appearance)
+            let resolved = UIColor(FleetTheme.accent).resolvedColor(with: traits)
+            let expected = UIColor(FleetAccent.gold.color).resolvedColor(with: traits)
+            XCTAssertEqual(resolved.description, expected.description,
+                           "accent must follow selection (gold), \(appearance == .dark ? "dark" : "light")")
         }
     }
 

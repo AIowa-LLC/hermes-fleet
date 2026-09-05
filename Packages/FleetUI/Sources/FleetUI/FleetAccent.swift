@@ -61,9 +61,12 @@ public enum FleetAccent: String, CaseIterable, Identifiable, Sendable {
 /// Holds the user's accent pick; @Observable so SwiftUI re-renders on change.
 /// Persistence: UserDefaults (non-secret preference — same posture as
 /// AppLockController's toggle; deliberately NOT Keychain).
+/// Not MainActor-isolated: the static FleetTheme.accent seam reads it from
+/// nonisolated contexts (Swift 6). All UI writes happen on the main thread.
+/// @unchecked Sendable is sound: stored state is a thread-safe UserDefaults
+/// plus a value-type selection; Observation's registrar is internally synced.
 @Observable
-@MainActor
-public final class FleetAccentController {
+public final class FleetAccentController: @unchecked Sendable {
     public static let persistKey = "fleet.settings.accent"
 
     /// Process-wide singleton used by the static FleetTheme.accent seam.

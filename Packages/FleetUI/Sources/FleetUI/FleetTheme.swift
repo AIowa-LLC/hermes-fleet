@@ -87,11 +87,14 @@ public enum FleetTheme {
             : Color(uiColor: .separator)
     }
 
-    // MARK: - Accent (ONE accent)
+    // MARK: - Accent (ONE accent, user-choosable — V7.5)
 
-    /// The single accent — links, active states, primary tint. System blue
-    /// until Tony's swatch reply lands (D5: one-line swap).
-    public static let accent: Color = Color(uiColor: .systemBlue)
+    /// The single accent — links, active states, primary tint. Resolves to
+    /// the user's persisted FleetAccent selection (Settings ▸ Appearance);
+    /// systemBlue until they pick otherwise.
+    public static var accent: Color {
+        FleetAccentController.shared.selection.color
+    }
 
     // MARK: - Status (semantic, V5 AA-fixed values retained)
 
