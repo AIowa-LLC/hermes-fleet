@@ -99,6 +99,107 @@ final class KanbanEventStreamClientTests: XCTestCase {
         }
     }
 
+    // MARK: Board list + board param (t_624b81cd — B1 selector)
+
+    func testBuildEventsURLIncludesBoardParam() throws {
+        let url = try XCTUnwrap(KanbanEventStreamClient.buildEventsURL(
+            base: try XCTUnwrap(URL(string: "http://<lan-ip>:9119")),
+            since: 7,
+            board: "r10-slug",
+            authentication: .none
+        ))
+        let comps = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertTrue(
+            (comps.queryItems ?? []).contains(URLQueryItem(name: "board", value: "r10-slug")),
+            "the WS handshake must pin the board slug"
+        )
+    }
+
+    func testBuildEventsURLOmitsBoardParamWhenNil() throws {
+        let url = try XCTUnwrap(KanbanEventStreamClient.buildEventsURL(
+            base: try XCTUnwrap(URL(string: "http://<lan-ip>:9119")),
+            since: 7,
+            board: nil,
+            authentication: .none
+        ))
+        let comps = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertFalse(
+            (comps.queryItems ?? []).contains { $0.name == "board" },
+            "nil board must mean the server's active board (no param)"
+        )
+    }
+
+    func testBuildBoardURLCarriesBoardQueryParam() throws {
+        let base = try XCTUnwrap(URL(string: "http://<lan-ip>:9119"))
+        // Pinned slug → ?board= in the query.
+        let pinned = try XCTUnwrap(KanbanEventStreamClient.buildBoardURL(base: base, board: "r10-slug"))
+        var comps = try XCTUnwrap(URLComponents(url: pinned, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(comps.path, "/api/plugins/kanban/board")
+        XCTAssertTrue((comps.queryItems ?? []).contains(URLQueryItem(name: "board", value: "r10-slug")))
+        // nil → bare path, server resolves its active board.
+        let active = try XCTUnwrap(KanbanEventStreamClient.buildBoardURL(base: base, board: nil))
+        comps = try XCTUnwrap(URLComponents(url: active, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(comps.path, "/api/plugins/kanban/board")
+        XCTAssertFalse((comps.queryItems ?? []).contains { $0.name == "board" })
+    }
+
+    func testFetchBoardsDecodesList() async throws {
+        let body = """
+        {"boards":[{"slug":"hermes-fleet-r10","name":"Hermes Fleet R10","is_current":true,"total":13},{"slug":"default","name":"Default","is_current":false,"total":0}],"current":"hermes-fleet-r10"}
+        """
+        let client = Self.makeClient(boardBody: Data(body.utf8), boardsBody: Data(body.utf8))
+        let list = try await client.fetchBoards()
+        XCTAssertEqual(list.current, "hermes-fleet-r10")
+        XCTAssertEqual(list.boards.map(\.slug), ["hermes-fleet-r10", "default"])
+        XCTAssertEqual(list.boards.first?.isCurrent, true)
+    }
+
+    func testFetchBoardsSurfacesHTTPError() async {
+        let client = Self.makeClient(
+            boardBody: Data("{}".utf8),
+            boardsBody: Data("{}".utf8), status: 503)
+        do {
+            _ = try await client.fetchBoards()
+            XCTFail("expected error")
+        } catch let error as KanbanBoardError {
+            XCTAssertEqual(error, .httpStatus(503))
+        } catch {
+            XCTFail("unexpected error type: \(error)")
+        }
+    }
+
+    func testSnapshotRequestCarriesBoardParam() async throws {
+        // The URLProtocol mock records the request URL: a pinned slug must
+        // ride the query string (?board=r10-slug).
+        let client = Self.makeClient(
+            boardBody: Data("{\"columns\":[],\"latest_event_id\":0}".utf8))
+        await client.pinBoard("r10-slug")
+        let watcher = await client.board
+        XCTAssertEqual(watcher, "r10-slug")
+        _ = try await client.snapshot()
+        let requested = try XCTUnwrap(BoardURLProtocol.lastRequestURL)
+        let comps = try XCTUnwrap(URLComponents(url: requested, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(comps.path, "/api/plugins/kanban/board")
+        XCTAssertTrue(
+            (comps.queryItems ?? []).contains(URLQueryItem(name: "board", value: "r10-slug")),
+            "snapshot fetch must carry the pinned board slug"
+        )
+    }
+
+    func testPinBoardResetsCursorAndClearsPinOnNil() async throws {
+        let client = Self.makeClient(
+            boardBody: Data("{\"columns\":[],\"latest_event_id\":77}".utf8))
+        _ = try await client.snapshot()
+        let before = await client.resumeCursor
+        XCTAssertEqual(before, 77, "snapshot adopts the event cursor")
+        await client.pinBoard("other-slug")
+        let afterPin = await client.resumeCursor
+        XCTAssertEqual(afterPin, 0, "pinning a different board must reset the cursor (its event ids are a different sequence)")
+        await client.pinBoard(nil)
+        let watcher = await client.board
+        XCTAssertNil(watcher, "nil pin must clear the selection (active board)")
+    }
+
     // MARK: Stream + reconnect (in-process WS fixture)
 
     func testStreamDeliversBatchesAndReconnectsWithCursor() async throws {
@@ -143,9 +244,15 @@ final class KanbanEventStreamClientTests: XCTestCase {
 
     // MARK: Test plumbing
 
-    private static func makeClient(boardBody: Data, status: Int = 200) -> KanbanEventStreamClient {
+    private static func makeClient(
+        boardBody: Data,
+        boardsBody: Data = Data("{}".utf8),
+        status: Int = 200
+    ) -> KanbanEventStreamClient {
         BoardURLProtocol.statusCode = status
         BoardURLProtocol.body = boardBody
+        BoardURLProtocol.boardsBody = boardsBody
+        BoardURLProtocol.lastRequestURL = nil
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [BoardURLProtocol.self]
         return KanbanEventStreamClient(
@@ -158,20 +265,26 @@ final class KanbanEventStreamClientTests: XCTestCase {
     }
 }
 
-/// URLProtocol mock answering `GET /api/plugins/kanban/board`.
+/// URLProtocol mock answering `GET /api/plugins/kanban/board` and
+/// `GET /api/plugins/kanban/boards` (t_624b81cd), recording request URLs.
 final class BoardURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var statusCode: Int = 200
     nonisolated(unsafe) static var body: Data = Data()
+    nonisolated(unsafe) static var boardsBody: Data = Data()
+    nonisolated(unsafe) static var lastRequestURL: URL?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        Self.lastRequestURL = request.url
+        let isBoardsList = request.url?.path.hasSuffix("/boards") == true
+        let payload = isBoardsList ? Self.boardsBody : Self.body
         let response = HTTPURLResponse(
             url: request.url!, statusCode: Self.statusCode,
             httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.body)
+        client?.urlProtocol(self, didLoad: payload)
         client?.urlProtocolDidFinishLoading(self)
     }
 
