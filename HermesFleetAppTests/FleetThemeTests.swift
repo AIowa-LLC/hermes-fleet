@@ -195,6 +195,34 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetTheme.monoCaptionFontSize, 11)
     }
 
+    // MARK: - Accent chooser (V7.5)
+
+    /// The vetted accent catalog: exactly the five approved candidates, in
+    /// display order, each with a stable raw value and adaptive dark/light hexes.
+    func testAccentCatalogIsVettedAndOrdered() {
+        XCTAssertEqual(FleetAccent.allCases.map(\.rawValue),
+                       ["blue", "gold", "amber", "indigo", "green"])
+        XCTAssertEqual(FleetAccent.default, .blue)
+    }
+
+    /// Persistence: unknown/stale raw values fall back to the default; the
+    /// controller round-trips a pick through UserDefaults.
+    func testAccentControllerRoundTripAndUnknownFallback() {
+        let suite = UserDefaults(suiteName: "testAccentController")!
+        suite.removePersistentDomain(forName: "testAccentController")
+        let controller = FleetAccentController(defaults: suite)
+        XCTAssertEqual(controller.selection, .blue, "fresh install defaults to blue")
+
+        controller.selection = .gold
+        XCTAssertEqual(suite.string(forKey: FleetAccentController.persistKey), "gold")
+        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .gold,
+                       "new controller instance reads persisted pick")
+
+        suite.set("teal-not-a-real-accent", forKey: FleetAccentController.persistKey)
+        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .blue,
+                       "stale/unknown raw value falls back to default")
+    }
+
     // MARK: - Helpers
 
     private func assertResolvedHex(
