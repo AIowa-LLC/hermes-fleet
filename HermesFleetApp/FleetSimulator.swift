@@ -192,16 +192,63 @@ final class ScriptedVoiceEngine: VoiceTranscribing, @unchecked Sendable {
 /// t_3b321b7b — scripted kanban board watcher (DEBUG simulator only): a
 /// small static board with a self-updating event stream so the read-only
 /// board view is walkable without a live gateway. Presentation data only.
+/// t_624b81cd: also scripts the board LIST + client-side pinning so the
+/// board selector is walkable deterministically (two boards, "R10
+/// Maintenance" active).
 private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Sendable {
     private let lock = NSLock()
     private var continuations: [UUID: AsyncStream<KanbanEventBatch>.Continuation] = [:]
+    private var pinned: String?
     /// UI-test knob: `HERMES_FLEET_KANBAN_LIVE_UPDATES=1` enables the scripted
     /// live-update ticker (default off — deterministic walkthroughs).
     private let liveUpdatesEnabled =
         ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] == "1"
 
+    private static let scriptedBoards = KanbanBoardList(
+        boards: [
+            KanbanBoardSummary(
+                slug: "hermes-fleet-r10", name: "R10 Maintenance",
+                isCurrent: true, total: 5),
+            KanbanBoardSummary(
+                slug: "side-quests", name: "Side Quests",
+                isCurrent: false, total: 2),
+        ],
+        current: "hermes-fleet-r10")
+
+    func fetchBoards() async throws -> KanbanBoardList {
+        Self.scriptedBoards
+    }
+
+    func pinBoard(_ slug: String?) async {
+        unlocked { pinned = slug }
+    }
+
     func snapshot() async throws -> KanbanBoardSnapshot {
-        KanbanBoardSnapshot(
+        let board: String? = unlocked { pinned }
+        // Side Quests (the non-active scripted board) gets a distinct,
+        // smaller snapshot so switching visibly changes the board content.
+        if board == "side-quests" {
+            return KanbanBoardSnapshot(
+                columns: ["todo", "done"],
+                cardsByColumn: [
+                    "todo": [
+                        KanbanCard(
+                            id: "t_side01", title: "Scripted: side quest one",
+                            status: "todo", assignee: "apple-dev",
+                            priority: 1, createdAt: 1_780_003_600, latestSummary: nil),
+                    ],
+                    "done": [
+                        KanbanCard(
+                            id: "t_side02", title: "Scripted: side quest two",
+                            status: "done", assignee: "apple-design",
+                            priority: 1, createdAt: 1_779_996_400, latestSummary: nil),
+                    ],
+                ],
+                latestEventID: 2,
+                now: 1_780_014_400
+            )
+        }
+        return KanbanBoardSnapshot(
             columns: ["triage", "todo", "ready", "running", "blocked", "review", "done"],
             cardsByColumn: [
                 "todo": [

@@ -34,6 +34,14 @@ public struct KanbanBoardView: View {
         .background(FleetTheme.background)
         .navigationTitle("Kanban")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // t_624b81cd (B1): board picker — client-side selection only.
+            // Switching re-targets snapshot + WS; the gateway operator's
+            // active-board pointer is never touched (no /boards/{slug}/switch).
+            ToolbarItem(placement: .navigationBarTrailing) {
+                boardPickerMenu(model: model)
+            }
+        }
         .task(id: boardGatewayID) {
             // (Re)bind the model whenever the board's source gateway changes
             // (first appear, registry edit, gateway removal).
@@ -71,6 +79,47 @@ public struct KanbanBoardView: View {
     }
 
     private var boardGatewayID: GatewayID? { boardGateway?.id }
+
+    // MARK: Board picker (t_624b81cd — B1)
+
+    /// Toolbar menu listing gateway boards: checkmark on the displayed
+    /// board, "active" note on the operator's current board. Hidden until
+    /// the boards list loads (single-board gateways look unchanged).
+    @ViewBuilder
+    private func boardPickerMenu(model: KanbanBoardViewModel?) -> some View {
+        if let model, !model.boards.isEmpty {
+            Menu {
+                ForEach(model.boards) { board in
+                    Button {
+                        Task {
+                            await model.selectBoard(
+                                board.slug == model.selectedBoard ? nil : board.slug)
+                        }
+                    } label: {
+                        HStack {
+                            if board.slug == model.selectedBoard {
+                                Label(board.name, systemImage: "checkmark")
+                            } else {
+                                Text(board.name)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: FleetTheme.spacingXs) {
+                    Image(systemName: "rectangle.stack")
+                    Text(model.displayBoardName)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+                .font(FleetTheme.secondaryFont.weight(.semibold))
+                .foregroundStyle(FleetTheme.accent)
+            }
+            .accessibilityIdentifier("fleet.kanban.board.picker")
+        }
+    }
 
     // MARK: Board
 

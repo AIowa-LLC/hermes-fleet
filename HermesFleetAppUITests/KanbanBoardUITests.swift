@@ -62,6 +62,102 @@ final class KanbanBoardUITests: XCTestCase {
         attachScreenshot(of: app, name: "kanban-board-live-updates")
     }
 
+    func testBoardPickerListsAndSwitchesBoards() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
+        entry.tap()
+
+        // The picker renders with the ACTIVE scripted board's name. (Reset
+        // first if a prior run left another board selected.)
+        let picker = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: 15),
+            "the board picker must render once the boards list loads")
+        if !picker.label.contains("R10 Maintenance") {
+            picker.tap()
+            let r10 = app.buttons["R10 Maintenance"].firstMatch
+            XCTAssertTrue(r10.waitForExistence(timeout: 10))
+            r10.tap()
+            let backToR10 = NSPredicate(format: "label CONTAINS %@", "R10 Maintenance")
+            XCTAssertEqual(
+                XCTWaiter().wait(
+                    for: [XCTNSPredicateExpectation(predicate: backToR10, object: picker)],
+                    timeout: 15),
+                .completed)
+        }
+        XCTAssertTrue(
+            picker.label.contains("R10 Maintenance"),
+            "the picker must show the active board's name (got: \(picker.label))")
+
+        // Open the menu: both scripted boards are listed.
+        picker.tap()
+        let sideQuests = app.buttons["Side Quests"]
+        XCTAssertTrue(
+            sideQuests.waitForExistence(timeout: 10),
+            "the picker menu must list the gateway's boards")
+
+        // Switch → the displayed board name (and its content) changes.
+        sideQuests.tap()
+        let switched = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
+        XCTAssertTrue(switched.waitForExistence(timeout: 10))
+        let named = NSPredicate(format: "label CONTAINS %@", "Side Quests")
+        let expectation = XCTNSPredicateExpectation(predicate: named, object: switched)
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [expectation], timeout: 15), .completed,
+            "the picker must show the newly selected board's name")
+
+        // Side Quests snapshot renders (its distinct card).
+        let sideCard = app.staticTexts["Scripted: side quest one"]
+        XCTAssertTrue(
+            sideCard.waitForExistence(timeout: 10),
+            "switching boards must re-target the snapshot (Side Quests card visible)")
+
+        attachScreenshot(of: app, name: "kanban-board-switched")
+    }
+
+    func testBoardSelectionSurvivesRelaunch() throws {
+        // Pass 1: switch to Side Quests (skip the tap if a prior test in
+        // this suite already left it selected — the picker toggles).
+        let app = XCUIApplication()
+        app.launch()
+        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        XCTAssertTrue(entry.waitForExistence(timeout: 15))
+        entry.tap()
+        let picker = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
+        XCTAssertTrue(picker.waitForExistence(timeout: 15))
+        if !picker.label.contains("Side Quests") {
+            picker.tap()
+            let sideQuests = app.buttons["Side Quests"].firstMatch
+            XCTAssertTrue(sideQuests.waitForExistence(timeout: 10))
+            sideQuests.tap()
+        }
+        let named = NSPredicate(format: "label CONTAINS %@", "Side Quests")
+        XCTAssertEqual(
+            XCTWaiter().wait(
+                for: [XCTNSPredicateExpectation(
+                    predicate: named,
+                    object: firstMatch(in: app, identifier: "fleet.kanban.board.picker"))],
+                timeout: 15),
+            .completed)
+
+        // Pass 2: relaunch — the selection persists (per-device UserDefaults).
+        app.terminate()
+        app.launch()
+        let entry2 = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        XCTAssertTrue(entry2.waitForExistence(timeout: 15))
+        entry2.tap()
+        let picker2 = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
+        XCTAssertTrue(picker2.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            picker2.label.contains("Side Quests"),
+            "the selected board must survive relaunch (got: \(picker2.label))")
+
+        attachScreenshot(of: app, name: "kanban-board-relaunch-persisted")
+    }
+
     // MARK: Helpers (same pattern as the other UI suites)
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
