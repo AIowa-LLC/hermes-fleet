@@ -363,7 +363,12 @@ public struct ConversationView: View {
                         // the Projects browser. Rendered OUTSIDE the bubble
                         // (the bubble combines its children for a11y — the
                         // R9-T6 lesson: .combine hides descendant buttons).
-                        if row.kind == .user || row.kind == .assistant {
+                        // D-2: rendered under USER rows only — the assistant
+                        // bubble's raw @file: text is what wedged iOS 26 AX
+                        // snapshots (see FleetSimulator D-2 fix note); the
+                        // user row's own refs (the ones the sender attached)
+                        // keep the tap-through affordance.
+                        if row.kind == .user {
                             fileRefChips(row)
                         }
                     }
@@ -443,25 +448,36 @@ public struct ConversationView: View {
         if !refs.isEmpty {
             HStack(spacing: 6) {
                 ForEach(refs, id: \.self) { ref in
-                    NavigationLink(value: FleetScreen.projects(route.gatewayID, focusPath: ref.displayPath)) {
-                        Label(ref.displayPath, systemImage: "doc")
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.accent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(FleetTheme.surfaceElevated, in: Capsule())
-                            .overlay(
-                                Capsule().strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1))
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Browse \(ref.displayPath)")
-                    .accessibilityIdentifier("fleet.conversation.fileref.\(ref.index)")
+                    fileRefChip(ref, row: row)
                 }
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
             .padding(.top, 2)
         }
+    }
+
+    /// One tap-through `@file:` chip under a user transcript row.
+    @ViewBuilder
+    private func fileRefChip(_ ref: FileRef, row: ConversationRow) -> some View {
+        NavigationLink(value: FleetScreen.projects(route.gatewayID, focusPath: ref.displayPath)) {
+            chipLabelBody(ref)
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityLabel("Browse \(ref.displayPath)")
+        .accessibilityIdentifier("fleet.conversation.fileref.\(ref.index)")
+    }
+
+    /// The chip capsule label body.
+    private func chipLabelBody(_ ref: FileRef) -> some View {
+        Label(ref.displayPath, systemImage: "doc")
+            .font(FleetTheme.monoCaptionFont)
+            .foregroundStyle(FleetTheme.accent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(FleetTheme.surfaceElevated, in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1))
     }
 
     /// One `@file:` / `@folder:` reference found in message text.

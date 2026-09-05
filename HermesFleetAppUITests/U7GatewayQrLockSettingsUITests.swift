@@ -92,29 +92,53 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
         app.buttons["fleet.gateways.form.cancel"].tap()
     }
 
-    // MARK: - FaceID lock screen renders the Gold Fleet wordmark
+    // MARK: - Lock screen renders the white-wing identity mark + unlock
+    //
+    // D-1 fix (t_9ce36690 / D5 §3): the lock screen is HIG-native — system
+    // background, white-wing identity mark ("lock-identity-mark"), app name
+    // in system type ("lock-app-name"), unlock control in system styling.
+    // POSITIVE assertions only (apple-qa guardrail: never green-by-deletion).
 
-    func testLockScreenRendersGoldWordmarkAndUnlock() throws {
+    func testLockScreenRendersIdentityMarkAndUnlock() throws {
         let app = XCUIApplication()
-        // Lock ON + scripted biometric success: the lock screen renders at
-        // cold launch, then releases to the roster.
+        // Lock ON + scripted biometric FAILURE with passcode fallback: the
+        // lock screen HOLDS (auto-auth at launch fails → passcode fallback
+        // renders), so every lock element is queryable deterministically.
+        // (With `success` the controller auto-unlocks within milliseconds of
+        // launch — the old test never actually asserted the lock screen.)
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "enabled"
-        app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "fail"
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
         app.launch()
 
-        // U7: the gold "Hermes Fleet" wordmark on the lock screen.
-        let wordmark = app.staticTexts["Hermes Fleet"]
-        XCTAssertTrue(wordmark.waitForExistence(timeout: 15),
-                      "lock screen should render the Hermes Fleet wordmark")
-        let unlock = app.buttons["fleet.app-lock.unlock"]
-        if unlock.exists {
-            attachScreenshot(of: app, name: "u7-lock-screen-gold")
-        }
+        // The white-wing identity mark (D-1) must be present.
+        let mark = app.descendants(matching: .any)
+            .matching(identifier: "lock-identity-mark").firstMatch
+        XCTAssertTrue(mark.waitForExistence(timeout: 15),
+                      "lock screen should render the white-wing identity mark")
 
-        // Scripted biometric success releases the gate (H1 path unchanged).
+        // The app name renders in system type directly under the mark.
+        let appName = app.descendants(matching: .any)
+            .matching(identifier: "lock-app-name").firstMatch
+        XCTAssertTrue(appName.waitForExistence(timeout: 10),
+                      "lock screen should render the app name under the mark")
+        XCTAssertTrue(appName.label.contains("Hermes Fleet"),
+                      "app-name label should read 'Hermes Fleet' (got: \(appName.label))")
+
+        // The unlock control is present in system styling. Under scripted
+        // biometric failure the controller is in passcode fallback, so the
+        // PASSCODE unlock control renders (the H1 acceptance surface).
+        let unlock = app.buttons["fleet.app-lock.passcode.unlock"]
+        XCTAssertTrue(unlock.waitForExistence(timeout: 10),
+                      "lock screen should render the unlock control")
+
+        attachScreenshot(of: app, name: "v7-lock-screen-identity-mark")
+
+        // Scripted passcode success releases the gate (H1 path unchanged):
+        // tap the passcode unlock control — the scripted provider succeeds.
+        unlock.tap()
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
-                      "scripted biometric success should unlock to the roster")
+                      "scripted passcode success should unlock to the roster")
     }
 
     // MARK: - Settings renders the gold brand header + App Lock toggle

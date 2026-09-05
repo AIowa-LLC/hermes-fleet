@@ -39,7 +39,9 @@ struct HermesFleetApp: App {
                     SplashOverlayView()
                 }
             }
-
+            // V7 (D5 §2): the ONE app-level accent — reaches sheets, covers
+            // and the lock overlay that sit outside FleetTabView's subtree.
+            .tint(FleetTheme.accent)
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)

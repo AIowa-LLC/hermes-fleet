@@ -22,11 +22,11 @@ public struct FleetSettingsView: View {
                 HStack(spacing: FleetTheme.spacingMd) {
                     Image(systemName: "circle.hexagongrid.fill")
                         .font(.system(size: 28))
-                        .foregroundStyle(FleetTheme.accentGold)
+                        .foregroundStyle(FleetTheme.accent)
                         .accessibilityHidden(true)
                     Text("Hermes Fleet")
                         .font(FleetTheme.titleFont)
-                        .foregroundStyle(FleetTheme.accentGold)
+                        .foregroundStyle(FleetTheme.accent)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // One combined element: the identifier carries the merged

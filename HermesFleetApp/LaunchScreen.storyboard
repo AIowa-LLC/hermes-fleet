@@ -15,17 +15,18 @@
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
-                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFill" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="LaunchArtwork" translatesAutoresizingMaskIntoConstraints="NO" id="abC-De-Fgh">
-                                <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" fixedFrame="YES" image="FleetWingMark" translatesAutoresizingMaskIntoConstraints="NO" id="abC-De-Fgh">
+                                <rect key="frame" x="146.5" y="376" width="100" height="100"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMinX="YES" flexibleMaxX="YES" flexibleMinY="YES" flexibleMaxY="YES"/>
                             </imageView>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
-                        <color key="backgroundColor" red="0.0392156862745098" green="0.0549019607843137" blue="0.0509803921568627" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <color key="backgroundColor" systemColor="systemBackgroundColor"/>
                         <constraints>
-                            <constraint firstItem="abC-De-Fgh" firstAttribute="leading" secondItem="Ze5-6b-2t3" secondAttribute="leading" id="x1-l1"/>
-                            <constraint firstItem="abC-De-Fgh" firstAttribute="trailing" secondItem="Ze5-6b-2t3" secondAttribute="trailing" id="x1-l2"/>
-                            <constraint firstItem="abC-De-Fgh" firstAttribute="top" secondItem="Ze5-6b-2t3" secondAttribute="top" id="x1-l3"/>
-                            <constraint firstItem="abC-De-Fgh" firstAttribute="bottom" secondItem="Ze5-6b-2t3" secondAttribute="bottom" id="x1-l4"/>
+                            <constraint firstItem="abC-De-Fgh" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="x1-cx"/>
+                            <constraint firstItem="abC-De-Fgh" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="x1-cy"/>
+                            <constraint firstItem="abC-De-Fgh" firstAttribute="width" constant="100" id="x1-w"/>
+                            <constraint firstItem="abC-De-Fgh" firstAttribute="height" constant="100" id="x1-h"/>
                         </constraints>
                     </view>
                 </viewController>
@@ -35,6 +36,6 @@
         </scene>
     </scenes>
     <resources>
-        <image name="LaunchArtwork" width="1320" height="2868"/>
+        <image name="FleetWingMark" width="1024" height="1024"/>
     </resources>
 </document>

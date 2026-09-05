@@ -1,13 +1,14 @@
 import SwiftUI
 
-/// Minimal app-lock overlay (H1 / R4).
+/// App-lock overlay (H1 / R4; D-1 V7 lock spec, t_9ce36690).
 ///
 /// Rendered at the root BEFORE any roster/conversation content when the
-/// `AppLockController` is not `.unlocked`. Token background with the Gold
-/// Fleet brand accent (U7 re-skin) — a gold lock glyph + wordmark + a single
-/// magenta unlock action. When biometrics fail or are unavailable the
-/// controller transitions to `.passcodeFallback` and this view automatically
-/// shows the passcode prompt (failed-biometric acceptance path).
+/// `AppLockController` is not `.unlocked`. HIG-native lock screen: system
+/// background, the white-wing identity mark in the upper third, the app name
+/// directly under it in system type (.title2 semibold, .label) — NOT gold,
+/// NOT custom font — and the existing unlock control in system styling.
+/// When biometrics fail or are unavailable the controller transitions to
+/// `.passcodeFallback` and this view shows the passcode prompt.
 ///
 /// The overlay is deliberately minimal: it gates access, it does not host
 /// fleet UI. All elements carry accessibility identifiers for the H1 UI test.
@@ -20,17 +21,29 @@ public struct AppLockView: View {
 
     public var body: some View {
         ZStack {
-            FleetTheme.background.ignoresSafeArea()
+            Color(uiColor: .systemBackground).ignoresSafeArea()
 
             VStack(spacing: FleetTheme.spacingXl) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(FleetTheme.accentGold)
-                    .accessibilityHidden(true)
+                // D-1 fix per D5 §3: the white-wing identity mark replaces
+                // the absent gold wordmark — system bg + white-wing mark +
+                // app name in system type (agreed in-room; NO gold restore).
+                // Bundle.module: the mark ships in FleetUI's package
+                // resources (AppLockView lives in FleetUI, not the app).
+                Image("FleetWingMark", bundle: .module)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 72, height: 72)
+                    // Exposed (NOT accessibilityHidden): the D5 spec requires
+                    // the mark queryable as "lock-identity-mark".
+                    .accessibilityLabel("Hermes Fleet")
+                    .accessibilityIdentifier("lock-identity-mark")
 
                 Text("Hermes Fleet")
-                    .font(FleetTheme.titleFont)
-                    .foregroundStyle(FleetTheme.accentGold)
+                    .font(.system(.title2, design: .default, weight: .semibold))
+                    .foregroundStyle(Color(uiColor: .label))
+                    .accessibilityIdentifier("lock-app-name")
+
+                Spacer(minLength: 0)
 
                 if controller.state == .passcodeFallback {
                     passcodePrompt
@@ -61,7 +74,6 @@ public struct AppLockView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accent)
             .controlSize(.large)
             .disabled(controller.state == .authenticating)
             .accessibilityIdentifier("fleet.app-lock.unlock")
@@ -89,7 +101,6 @@ public struct AppLockView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accent)
             .controlSize(.large)
             .disabled(controller.state == .authenticating)
             .accessibilityIdentifier("fleet.app-lock.passcode.unlock")

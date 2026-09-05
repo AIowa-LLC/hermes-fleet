@@ -1,7 +1,11 @@
 import XCTest
 
-/// P0-1 — the launch splash (Tony's artwork) must appear, hold for a minimum
-/// window, then cross-fade into the app UI (no instant tear into the roster).
+/// P0-1 / V7 re-pin (t_9ce36690 / D5 §4) — the launch splash: system
+/// background with the white-wing identity mark centered. The mark must
+/// appear, hold for a minimum window, then cross-fade into the app UI (no
+/// instant tear into the roster). No wordmark, no teal, no gold — the old
+/// full-bleed artwork pins (teal field + gold mark) are retired with the
+/// V6 artwork and live in git history.
 ///
 /// Drives the DEBUG build (scripted fleet, deterministic). The splash is a
 /// testable seam: `HERMES_FLEET_SPLASH=on` forces the overlay on even under
@@ -29,38 +33,24 @@ final class SplashUITests: XCTestCase {
         let launched = Date()
         app.launch()
 
-        // Query any element carrying the splash identifier (SwiftUI may
-        // surface the artwork as an image or another element type).
+        // V7 pin: the white-wing identity mark is on screen at launch
+        // (registers before the app tears into the main UI).
         let splash = app.descendants(matching: .any)["fleet.splash.artwork"].firstMatch
-
-        // The splash artwork must be on screen at launch (registers before
-        // the app tears into the main UI).
         XCTAssertTrue(splash.waitForExistence(timeout: 8),
-                      "splash artwork should appear at launch")
-        attachScreenshot(of: app, name: "p0-1-splash-visible")
+                      "splash white-wing mark should appear at launch")
+        attachScreenshot(of: app, name: "v7-splash-wing-mark")
 
-        // D3 full-bleed regression: the artwork must be FULL-BLEED
-        // (aspect-fill) — spanning the full screen width AND height with its
-        // top edge at the screen top, so there is no letterbox / "flat band"
-        // above the Dynamic Island. This supersedes the old P0-6 aspect-FIT
-        // letterbox contract (Tony's "flat at the top and cuts off" defect).
-        // The V6 art carries NO wordmark (HIG), so aspect-fill crops only
-        // empty #0A0E0D teal and the centered gold mark survives any aspect.
+        // The mark is a centered modest mark (not a full-bleed artwork): its
+        // frame must sit INSIDE the screen, roughly centered horizontally.
         let frame = splash.frame
         let screen = app.frame
-        // Full-bleed on both axes (a letterboxed aspect-FIT frame would be
-        // shorter than the screen or narrower than it).
-        XCTAssertGreaterThan(frame.width, screen.width * 0.99,
-                             "splash must span the full screen width — aspect-fit regression")
-        XCTAssertGreaterThan(frame.height, screen.height * 0.99,
-                             "splash must span the full screen height — letterbox regression")
-        // The top edge must reach the screen top: no flat band above the
-        // Dynamic Island (the D3 safe-area fix).
-        XCTAssertEqual(frame.minY, screen.minY, accuracy: 1.0,
-                       "splash top must reach the screen top (minY \(frame.minY) vs \(screen.minY))")
-        XCTAssertEqual(frame.minX, screen.minX, accuracy: 1.0,
-                       "splash must reach the left screen edge")
-        attachScreenshot(of: app, name: "d3-splash-fullbleed")
+        XCTAssertTrue(screen.insetBy(dx: -2, dy: -2).contains(frame),
+                      "splash mark frame (\(frame)) should sit inside the screen (\(screen))")
+        XCTAssertEqual(
+            frame.midX, screen.midX, accuracy: 4,
+            "splash mark should be horizontally centered (midX \(frame.midX) vs \(screen.midX))"
+
+        )
 
         // Then it must cross-fade OUT and release the app UI (it must NOT
         // linger forever). Budget: 4s hold + 0.35s fade + slack.
@@ -75,12 +65,13 @@ final class SplashUITests: XCTestCase {
         let window = Date().timeIntervalSince(launched)
         XCTAssertGreaterThan(
             window, 1.5,
-            "splash on-screen \(window)s from launch — expected a held minimum window, not an instant tear")
+            "splash on-screen \(window)s from launch — expected a held minimum window, not an instant tear"
+        )
 
         // After the splash, the app must be interactive — roster renders.
         XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
                       "roster should render after the splash fades")
-        attachScreenshot(of: app, name: "p0-1-roster-after-splash")
+        attachScreenshot(of: app, name: "v7-roster-after-splash")
     }
 
     private func attachScreenshot(of app: XCUIApplication, name: String) {
