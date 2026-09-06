@@ -42,13 +42,22 @@ echo "ws-ticket (no credential): $T0 (expect 401)"
 
 # 4. Audit evidence (optional — only when SSH audit config is provided).
 #    Boolean only — no tokens, no credentials, no IPs printed.
+#    Result honesty: the final verdict only claims audit verification when
+#    the audit leg actually ran AND found evidence. A skipped audit yields
+#    a SURFACE-ONLY verdict that says the audit was SKIPPED.
+AUDIT_RAN=0
 if [ -n "$AUDIT_HOST" ] && [ -n "$SSH_KEY" ] && [ -n "$AUDIT_LOG" ]; then
   AUDIT=$(ssh -o BatchMode=yes -i "$SSH_KEY" "$AUDIT_HOST" "grep -c '\"event\":\"login_success\",\"provider\":\"basic\"' \"$AUDIT_LOG\" 2>/dev/null || echo 0")
   echo "audit: login_success over TLS evidenced: $AUDIT time(s)"
   [[ "$AUDIT" -gt 0 ]] || fail "no successful TLS login in the gateway audit log" 9
+  AUDIT_RAN=1
 else
-  echo "audit: skipped (no HERMES_FLEET_AUDIT_SSH_KEY/_HOST/_LOG_PATH configured)"
+  echo "audit: SKIPPED (no HERMES_FLEET_AUDIT_SSH_KEY/_HOST/_LOG_PATH configured)"
 fi
 
-echo "E2E AUTH SURFACE VERIFIED: providers 200, login gated 401, ticket mint gated 401, TLS login_success in audit"
-echo "NOTE: full login+ws-ticket with the real credential = apple-qa gate 2 on the shipped artifact."
+if [ "$AUDIT_RAN" -eq 1 ]; then
+  echo "E2E AUTH VERIFIED (FULL): providers 200, login gated 401, ticket mint gated 401, TLS login_success in audit"
+else
+  echo "E2E AUTH SURFACE VERIFIED (SURFACE-ONLY): providers 200, login gated 401, ticket mint gated 401 — audit NOT checked (skipped)"
+fi
+echo "NOTE: full login+ws-ticket with the real credential = QA gate 2 on the shipped artifact."

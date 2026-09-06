@@ -266,15 +266,21 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
 
     // MARK: P0-4 — durable record persistence + launch restore
 
-    /// F2 (t_b678fb38): the fleet's converged default endpoint, supplied as
-    /// DATA, never compiled Swift topology. Resolution order:
-    /// 1. `HERMES_FLEET_DEFAULT_ENDPOINT` launch environment (QA / deploy
-    ///    lane override);
-    /// 2. the `FleetDefaultEndpoint` key in the app's Info.plist — shipped
-    ///    configuration, editable per build config, and a PUBLIC hostname
-    ///    (not private topology, not an ATS exception).
-    /// Nil/blank at both layers means "no migration configured" and the
-    /// restore proceeds with rows exactly as persisted.
+    /// LEGACY MIGRATION TARGET (F2-era; Issue #2 review re-scope): the
+    /// default endpoint legacy rows converge onto, supplied as DATA, never
+    /// compiled Swift topology. Resolution order:
+    /// 1. `HERMES_FLEET_DEFAULT_ENDPOINT` launch environment (explicit
+    ///    legacy-migration lane);
+    /// 2. the `FleetDefaultEndpoint` key in the app's Info.plist — a PUBLIC
+    ///    hostname only (not private topology, not an ATS exception).
+    /// Nil/blank at both layers means "no migration target configured".
+    ///
+    /// IMPORTANT: resolving a target alone does NOT enable migration.
+    /// Migration additionally requires `legacyEndpointMigrationEnabled`
+    /// (below) — an explicit, OFF-by-default opt-in. A default endpoint
+    /// merely being configured must never rewrite a user's persisted private
+    /// gateway (Hermes Fleet explicitly supports user-owned LAN/tailnet
+    /// gateways).
     nonisolated static var endpointMigrationDefault: String? {
         let env = ProcessInfo.processInfo.environment["HERMES_FLEET_DEFAULT_ENDPOINT"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -284,6 +290,18 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         return plist.isEmpty ? nil : plist
     }
 
+    /// LEGACY MIGRATION OPT-IN (Issue #2 review): OFF by default. When
+    /// false (the public/default runtime state), `restorePersistedGateways()`
+    /// NEVER rewrites persisted rows, no matter what endpoints they use —
+    /// user-owned private/LAN/tailnet gateways survive verbatim. When
+    /// explicitly enabled (the one-time legacy Fleet convergence lane), rows
+    /// whose hosts classify as legacy private shapes are re-pointed onto
+    /// `endpointMigrationDefault` via `EndpointMigration`.
+    nonisolated static var legacyEndpointMigrationEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LEGACY_MIGRATION"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "1"
+    }
+
     /// Rebuild the in-memory registry from the durable record store.
     /// Idempotent: records whose ID is already registered are skipped, so a
     /// re-run (or an overlap with seeding) never duplicates entries. Restored
@@ -291,14 +309,17 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// credential store — the record itself is presentation data only.
     public func restorePersistedGateways() async throws -> [FleetGateway] {
         guard let recordStore else { return [] }
-        // F2 (t_b678fb38): one-time endpoint convergence BEFORE the rebuild —
-        // persisted rows still pointing at a dead private-network spelling
-        // (LAN IP / tailnet IP / MagicDNS host / loopback) are re-pointed to
-        // the configured default endpoint. The address arrives as DATA from
-        // the composition root (launch environment), never compiled topology.
-        // Idempotent; a store failure here must NOT brick launch (same
-        // tolerance as the restore itself).
-        if let defaultEndpoint = Self.endpointMigrationDefault {
+        // LEGACY endpoint convergence (F2-era; Issue #2 review re-scope):
+        // runs ONLY when BOTH an explicit opt-in flag
+        // (HERMES_FLEET_LEGACY_MIGRATION=1) and a migration target are
+        // present — a deliberate one-time legacy-state migration lane. The
+        // public/default runtime never migrates: user-owned private/LAN/
+        // tailnet gateways survive restore verbatim. The target arrives as
+        /// DATA from configuration, never compiled topology. Idempotent; a
+        // store failure here must NOT brick launch (same tolerance as the
+        // restore itself).
+        if Self.legacyEndpointMigrationEnabled,
+           let defaultEndpoint = Self.endpointMigrationDefault {
             _ = try? await GatewayEndpointMigrationService(recordStore: recordStore)
                 .migrateAll(defaultEndpoint: defaultEndpoint)
         }

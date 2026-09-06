@@ -22,20 +22,9 @@ note() { printf '\n=== %s ===\n' "$1"; }
 ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); FAILURES+=("$1"); printf 'FAIL  %s\n' "$1"; }
 
-# Physical device: explicit env var, or unambiguous single connected iPhone.
-DEVICE="${HERMES_FLEET_DEVICE_ID:-}"
-if [ -z "$DEVICE" ]; then
-  CONNECTED=$(xcrun devicectl list devices 2>/dev/null \
-    | awk '/Available|connected|iPhone/{print}' | grep -c 'iPhone' || true)
-  if [ "${CONNECTED:-0}" -eq 1 ]; then
-    DEVICE=$(xcrun devicectl list devices 2>/dev/null | grep 'iPhone' | awk '{print $1}' | head -1)
-    echo "HERMES_FLEET_DEVICE_ID unset; using the single connected iPhone: $DEVICE"
-  else
-    echo "FAIL: no HERMES_FLEET_DEVICE_ID and iPhone count is not unambiguously 1 (found ${CONNECTED:-0})." >&2
-    echo "  Set HERMES_FLEET_DEVICE_ID to your device UDID (xcrun devicectl list devices)." >&2
-    exit 2
-  fi
-fi
+# Physical device: HERMES_FLEET_DEVICE_ID override, or unambiguous single
+# eligible paired iPhone via machine-readable devicectl discovery.
+DEVICE="$(resolve_fleet_device)" || exit $?
 DD="$REPO/build/DerivedDataU4Device"
 APP="$DD/Build/Products/Debug-iphoneos/HermesFleetApp.app"
 

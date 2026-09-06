@@ -4,18 +4,9 @@
 # (scripted-fleet markers ABSENT, production markers PRESENT) BEFORE install.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Physical device: explicit env var, or unambiguous single connected iPhone.
-DEST_ID="${HERMES_FLEET_DEVICE_ID:-}"
-if [ -z "$DEST_ID" ]; then
-  CONNECTED=$(xcrun devicectl list devices 2>/dev/null | grep -c 'iPhone' || true)
-  if [ "${CONNECTED:-0}" -eq 1 ]; then
-    DEST_ID=$(xcrun devicectl list devices 2>/dev/null | grep 'iPhone' | awk '{print $1}' | head -1)
-    echo "HERMES_FLEET_DEVICE_ID unset; using the single connected iPhone: $DEST_ID"
-  else
-    echo "FAIL: no HERMES_FLEET_DEVICE_ID and iPhone count is not unambiguously 1 (found ${CONNECTED:-0})." >&2
-    exit 2
-  fi
-fi
+# Physical device: HERMES_FLEET_DEVICE_ID override, or unambiguous single
+# eligible paired iPhone via machine-readable devicectl discovery.
+DEST_ID="$(resolve_fleet_device)"
 APP="build/T3DeviceDerivedData/Build/Products/Debug-iphoneos/HermesFleetApp.app"
 
 echo "=== xcodegen ==="

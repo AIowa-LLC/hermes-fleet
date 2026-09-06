@@ -126,7 +126,41 @@ final class EndpointMigrationTests: XCTestCase {
     func testCGNATRangeBoundaries() {
         XCTAssertTrue(EndpointMigration.isDeadHost("100.64.0.1"), "100.64/10 start is CGNAT")
         XCTAssertTrue(EndpointMigration.isDeadHost("100.127.255.254"), "100.64/10 end is CGNAT")
-        XCTAssertFalse(EndpointMigration.isDeadHost("100.63.255.254"), "just below CGNAT is not dead")
+        XCTAssertFalse(EndpointMigration.isDeadHost("100.63.255.255"), "just below CGNAT is not dead")
         XCTAssertFalse(EndpointMigration.isDeadHost("100.128.0.1"), "just above CGNAT is not dead")
+    }
+
+    // MARK: strict CGNAT IPv4 parsing (Issue #2 review: all four octets)
+
+    func testCGNATParserRequiresStrictIPv4Everywhere() {
+        // Numeric-looking HOSTNAMES must never classify as CGNAT — the
+        // parser validates every octet, not just the first two.
+        for host in ["100.64.gateway.example",
+                     "100.64.1.example",
+                     "100.64.999.1",            // octet > 255
+                     "100.64.-1.1",             // sign
+                     "100.64.+1.1",             // sign
+                     "100.64.01.1",              // leading zero (non-canonical)
+                     "100.64.1.1.1",             // five octets
+                     "100.64.1",                 // three octets
+                     "100.64..1",                // empty octet
+                     "100.64.1.",                // trailing dot = empty octet
+                     ".64.1.1",                  // leading dot = empty octet
+                     ""] {
+            XCTAssertFalse(EndpointMigration.isDeadHost(host),
+                           "malformed host must not classify CGNAT-dead: \(host)")
+        }
+    }
+
+    func testCGNATParserAcceptsValidInRangeAddresses() {
+        for host in ["100.64.0.1", "100.127.255.254", "100.64.255.255",
+                     "100.100.1.1", "100.127.0.0"] {
+            XCTAssertTrue(EndpointMigration.isDeadHost(host),
+                           "valid in-range CGNAT address must classify dead (legacy migration scope): \(host)")
+        }
+        // Valid IPv4 outside the range must not classify dead.
+        for host in ["100.63.255.255", "100.128.0.1", "101.64.0.1", "8.8.8.8"] {
+            XCTAssertFalse(EndpointMigration.isDeadHost(host), "out-of-range address must not classify dead: \(host)")
+        }
     }
 }

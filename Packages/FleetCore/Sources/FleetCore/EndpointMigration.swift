@@ -1,36 +1,38 @@
 import Foundation
 
-/// F2 (t_b678fb38) — one-time endpoint convergence for the HTTPS tunnel.
+/// F2 (t_b678fb38) — LEGACY one-time endpoint convergence mapping.
 ///
-/// Every persisted gateway row created before the tunnel pointed at a private
-/// network spelling of the same Arch gateway: LAN IP, tailnet IP, MagicDNS
-/// hostname, or loopback (the old compiled default). Those spellings are dead
-/// on the public path and — worse — the raw-IP forms were compiled into the
-/// app binary as ATS exceptions, leaking Tony's home network topology into
-/// every shipped IPA. F2 strips those exceptions, so EVERY spelling of those
-/// hosts (any port — the 8642 relay era AND the 9119 direct era) must be
-/// re-pointed or the row would silently fail ATS.
+/// Historical context: persisted gateway rows created before the fleet's
+/// HTTPS convergence pointed at private-network spellings of one specific
+/// legacy gateway (LAN IP, tailnet IP, MagicDNS hostname, or the old
+/// compiled loopback default). The original F2 pass re-pointed those rows
+/// onto a configured default endpoint.
 ///
-/// `migrateEndpoints(in:defaultEndpoint:)` re-points persisted rows off every
-/// dead host onto the configured default endpoint. The replacement address
-/// arrives as DATA (the caller reads it from configuration), never as compiled
-/// topology. Historically this type enumerated the fleet's literal dead hosts;
-/// for public release it now classifies dead hosts by SHAPE (private/loopback
-/// hosts via `PrivateNetwork`, plus tailnet `*.ts.net` names) — no private
-/// network values are compiled into the module.
+/// PUBLIC-RELEASE CONTRACT (Issue #2 review): this mapping is LEGACY
+/// MIGRATION, not generic private-endpoint rewriting. Hermes Fleet
+/// explicitly supports user-owned LAN/tailnet/loopback gateways, so the
+/// migration must only ever run when a caller deliberately requests legacy
+/// state migration (see `GatewayRegistryService` — the runner is gated
+/// behind an explicit opt-in flag that is OFF by default). With the flag
+/// absent, every persisted row — private, tailnet, or public — survives
+/// restore verbatim.
+///
+/// Dead-host classification is SHAPE-based (loopback/RFC1918 via
+/// `PrivateNetwork`, RFC 6598 CGNAT, `*.ts.net` MagicDNS names): no private
+/// network values are compiled into this module, and no public host is ever
+/// classified dead.
 ///
 /// Pure and network-free: the caller performs the store writes, so the
-/// mapping is fully unit-testable (F2 contract: idempotent, identity and
-/// display name preserved, unknown endpoints untouched).
+/// mapping is fully unit-testable (contract: idempotent, identity and
+/// display name preserved, public endpoints untouched).
 public enum EndpointMigration {
 
-    /// Historically-dead private-network HOST classes this fleet used before
-    /// user-owned HTTPS endpoints: loopback names, RFC1918/tailnet IPs, and
-    /// Tailscale MagicDNS `*.ts.net` names. Matched on the URL host (any
-    /// port, any scheme) via `PrivateNetwork` shape classification, so no
-    /// real private network values are compiled into the module. Public
-    /// hosts are NEVER dead — rows pointing at any public endpoint the user
-    /// configured survive migration untouched.
+    /// Private-network HOST shapes eligible for LEGACY migration: loopback
+    /// names, RFC1918/tailnet IPs, and Tailscale MagicDNS `*.ts.net` names.
+    /// Matched on the URL host (any port, any scheme). Public hosts are
+    /// NEVER dead — rows pointing at any public endpoint the user configured
+    /// survive migration untouched. This classification is only consulted
+    /// when legacy migration has been explicitly enabled by the caller.
     public static func isDeadHost(_ host: String) -> Bool {
         PrivateNetwork.isPrivateOrLoopbackHost(host)
             || isCarrierGradeNATIPv4(host)
@@ -38,13 +40,22 @@ public enum EndpointMigration {
     }
 
     /// RFC 6598 carrier-grade NAT (100.64.0.0/10) — the IPv4 block Tailscale
-    /// assigns tailnet addresses from. Strict four-octet decimal parse.
-    private static func isCarrierGradeNATIPv4(_ host: String) -> Bool {
+    /// assigns tailnet addresses from. Strict four-octet decimal parse
+    /// (mirrors `PrivateNetwork.isPrivateIPv4`): exactly four non-empty
+    /// decimal octets, each 0...255, no signs, no leading zeros/whitespace —
+    /// anything else (hostnames, malformed IPv4) is rejected.
+    static func isCarrierGradeNATIPv4(_ host: String) -> Bool {
         let octets = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard octets.count == 4,
-              let a = Int(octets[0]), let b = Int(octets[1]),
-              String(a) == octets[0], String(b) == octets[1] else { return false }
-        return a == 100 && b >= 64 && b <= 127
+        guard octets.count == 4 else { return false }
+        var parts: [Int] = []
+        for octet in octets {
+            guard !octet.isEmpty,
+                  let value = Int(octet),
+                  value >= 0, value <= 255,
+                  String(value) == octet else { return false }
+            parts.append(value)
+        }
+        return parts[0] == 100 && parts[1] >= 64 && parts[1] <= 127
     }
 
     /// The result of one row's migration decision.
@@ -71,7 +82,9 @@ public enum EndpointMigration {
         return host
     }
 
-    /// Decide one endpoint's migration outcome against `defaultEndpoint`.
+    /// Decide one endpoint's LEGACY migration outcome against
+    /// `defaultEndpoint`. Only meaningful when the caller has explicitly
+    /// enabled legacy migration.
     public static func classify(endpoint: String, defaultEndpoint: String) -> Outcome {
         guard let current = host(of: endpoint),
               let target = host(of: defaultEndpoint) else { return .untouched }
@@ -87,12 +100,15 @@ public enum EndpointMigration {
     /// unrecognized endpoints pass through verbatim; identity (`id`) and
     /// display name are always preserved.
     ///
+    /// LEGACY ONLY: callers must gate this behind an explicit legacy
+    /// migration opt-in (never a bare "a default endpoint is configured").
+    ///
     /// P0-9 strategy alignment: a `.loopbackToken` row being re-pointed onto
     /// the public tunnel gets its strategy migrated to `.usernamePassword`.
     /// Loopback-token auth is a trusted-private-network strategy — `?token=`
-    /// on the socket — and the converged tunnel rejects it outright (403,
-    /// QA-verified live). Leaving it would strand the row in a strategy that
-    /// can never authenticate; the tunnel's only working path is the
+    /// on the socket — and a converged HTTPS endpoint rejects it outright
+    /// (403, QA-verified live). Leaving it would strand the row in a strategy
+    /// that can never authenticate; the tunnel's only working path is the
     /// username/password cookie flow. Token strategies (`.sessionToken` /
     /// `.bearerToken`) are left to their honest failure copy — a future
     /// gateway may legitimately accept them, and the ws-ticket 401
