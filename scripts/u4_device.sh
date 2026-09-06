@@ -14,6 +14,8 @@
 set -u
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
+# shellcheck source=scripts/fleet_device.sh
+source "$(dirname "$0")/fleet_device.sh"
 PASS=0
 FAIL=0
 declare -a FAILURES=()
