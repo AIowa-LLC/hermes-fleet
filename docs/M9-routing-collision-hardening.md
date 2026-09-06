@@ -12,7 +12,7 @@ SEQUENCER dispatch after M8 FINAL PASS commit `b3dbd29`) + synthesis §7
 traversal") + spec §5.6 (fail closed on ambiguity) + §31/§36 (routing tests):
 **hardening of the routing layer against collision, ambiguity, and
 path/session-key traversal.** Built on M8 commit `b3dbd29` in repo
-`<repo-root>`.
+the repository root.
 
 Card scope line: *"collision-proof routing (Gateway A/default vs B/default
 distinct), fail-closed on ambiguity, path/session-key traversal guards.
@@ -142,7 +142,7 @@ simulator runtime · host macOS 26.6.2. Ran via `bash m9_validate.sh`
 | `swift test --package-path Packages/FleetCore` | **106 tests, 0 failures** (85 prior + 21 new) |
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors (1 pre-existing M1 `setLastInbound()` warning — untouched) |
 | `swift test --package-path Packages/FleetNetworking` | **135 tests, 0 failures** (123 prior + 12 new) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present; package references intact |
+| `xcodegen generate` | Regenerated; the development team present; package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 19 tests, 0 failures** (app + module-boundary composition, unchanged by M9) |
 | Secrets scan (M9 sources) | No keys/tokens/passwords; fixture tokens are literal test values |
@@ -156,7 +156,7 @@ Hardening evidence:
   `../x` / `a/b` / `a#b`; `setBots`/`upsertBot` drop unsafe slugs; fetchSessions/
   resume/submit/interrupt/history/status throw typed errors BEFORE transport;
   `addGateway` rejects unsafe gateway IDs ✓
-- valid keys unaffected: `researcher`, `apple-dev`, `<lan-ip>:8642`
+- valid keys unaffected: `researcher`, `apple-dev`, `192.168.50.58:8642`
   (derived endpoint ID) all pass; safe-route/safe-key calls still hit the
   connected-state path ✓
 - existing M2/M8 routing-collision + union-roster tests still green (no

@@ -5,11 +5,11 @@ Owner: Tony Simons (GitHub `asimons81`, org AIowa-LLC). Repo is private.
 
 ## Repo facts (verify before assuming — these drift)
 
-- **Path:** `<repo-root>` (<dev-workstation>)
+- **Path:** the repository root (the dev workstation)
 - **Project:** `HermesFleetApp.xcodeproj`, scheme `HermesFleetApp` — **generated
   from `project.yml` via xcodegen**. `project.yml` is the single source of
   truth: never hand-edit `project.pbxproj`. After changing `project.yml`, run
-  `xcodegen generate` (binary: `<homebrew-bin>/xcodegen`).
+  `xcodegen generate` (binary: `xcodegen`).
   `DEVELOPMENT_TEAM: 3JS22HX92T` must stay in BOTH `project.yml` and the
   pbxproj — a regen without it in `project.yml` silently wipes signing.
 - **Toolchain:** Xcode 26.x, Swift 6 language mode, iOS deployment target 26.0
@@ -52,13 +52,13 @@ Work is tracked on Hermes Kanban boards (`~/.hermes/kanban/boards/`):
 profiles own lanes: `apple-dev` (dev), `apple-qa` (independent review, never
 the author), `apple-release` (builds/TestFlight), `apple-design` (visual).
 Do not self-approve; QA must differ from author. If a card is blocked on a
-wave gate, the orchestrator (<dev-workstation> default profile) unblocks it.
+wave gate, the orchestrator (the dev workstation default profile) unblocks it.
 
 ## Quick commands
 
 ```bash
-cd <repo-root>
-export PATH="$HOME/bin:<homebrew-bin>:$PATH"
+cd $REPO
+export PATH="$HOME/bin:$HOME/homebrew/bin:$PATH"
 
 # Regenerate project after project.yml edits
 xcodegen generate

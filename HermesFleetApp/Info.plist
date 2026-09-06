@@ -9,14 +9,15 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- F2 (t_b678fb38): raw-IP / tailnet NSExceptionDomains stripped — the
-	     fleet converges on the public HTTPS tunnel. NSAllowsLocalNetworking
-	     stays for true-LAN http:// gateways (ATS permits loopback/local
-	     net ranges without per-domain exceptions). The converged default
-	     endpoint ships as CONFIGURATION DATA below, not as Swift topology
-	     and not as an ATS exception. -->
-	<key>FleetDefaultEndpoint</key>
-	<string>https://<legacy-fleet-endpoint></string>
+	<!-- F2 (t_b678fb38): raw-IP / tailnet NSExceptionDomains stripped. F2-era
+	     note: a compiled default endpoint was removed for public release —
+	     every user connects to THEIR OWN HTTPS-reachable Hermes gateway, so no
+	     endpoint ships in the default configuration. NSAllowsLocalNetworking
+	     stays for true-LAN http:// gateways (ATS permits loopback/local net
+	     ranges without per-domain exceptions). A `FleetDefaultEndpoint` key
+	     may still be injected per build configuration (public HTTPS origin
+	     only — enforced by ATSExceptionDriftTests), but it is absent by
+	     default. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Hermes Fleet uses the camera only to scan your gateway's pairing QR code. No photos or video are saved.</string>
 	<key>NSFaceIDUsageDescription</key>

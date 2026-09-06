@@ -161,10 +161,10 @@ final class ProjectsBrowserTests: XCTestCase {
         let seam = SeamDouble()
         seam.treeResult = .success(fixtureTree())
         let store = InMemoryProjectsSnapshotStore()
-        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "<dev-workstation>"))
+        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "workstation"))
 
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: store)
         await vm.start(profile: "default")
@@ -179,10 +179,10 @@ final class ProjectsBrowserTests: XCTestCase {
         let seam = SeamDouble()
         seam.treeResult = .failure(GatewayProjectsError.rpcFailed("gateway not configured"))
         let store = InMemoryProjectsSnapshotStore()
-        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "<dev-workstation>"))
+        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "workstation"))
 
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: store)
         await vm.start(profile: "default")
@@ -197,7 +197,7 @@ final class ProjectsBrowserTests: XCTestCase {
         let seam = SeamDouble()
         seam.treeResult = .success(ProjectsTree(projects: [], activeID: nil, scopedSessionIDs: []))
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: nil)
         await vm.start(profile: nil)
@@ -208,7 +208,7 @@ final class ProjectsBrowserTests: XCTestCase {
 
     func testFailClosedSeamSurfacesHonestError() async {
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: UnsupportedGatewayProjects(),
             snapshotStore: nil)
         await vm.start(profile: nil)
@@ -223,7 +223,7 @@ final class ProjectsBrowserTests: XCTestCase {
         seam.treeResult = .success(fixtureTree())
         seam.drillResult = .success(hydratedProject())
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: nil)
         await vm.start(profile: "default")
@@ -244,7 +244,7 @@ final class ProjectsBrowserTests: XCTestCase {
         seam.treeResult = .success(fixtureTree())
         seam.drillResult = .success(nil)
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: nil)
         await vm.start(profile: "default")
@@ -259,7 +259,7 @@ final class ProjectsBrowserTests: XCTestCase {
         seam.treeResult = .success(fixtureTree())
         seam.drillResult = .failure(GatewayProjectsError.rpcFailed("profile db locked (5061)"))
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: nil)
         await vm.start(profile: "default")
@@ -277,7 +277,7 @@ final class ProjectsBrowserTests: XCTestCase {
         let seam = SeamDouble()
         seam.treeResult = .success(fixtureTree())
         let vm = ProjectsBrowserViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             projects: seam,
             snapshotStore: FailingStore())
         await vm.start(profile: nil)
@@ -339,19 +339,19 @@ final class ConversationFileRefsTests: XCTestCase {
 final class FleetScreenProjectsRouteTests: XCTestCase {
 
     func testProjectsRouteCarriesFocusPath() {
-        let plain = FleetScreen.projects(GatewayID(rawValue: "<dev-workstation>"))
+        let plain = FleetScreen.projects(GatewayID(rawValue: "workstation"))
         let focused = FleetScreen.projects(
-            GatewayID(rawValue: "<dev-workstation>"),
+            GatewayID(rawValue: "workstation"),
             focusPath: "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift")
         XCTAssertNotEqual(plain, focused,
                           "a focused route is a distinct navigation value")
         XCTAssertEqual(
             focused,
             FleetScreen.projects(
-                GatewayID(rawValue: "<dev-workstation>"),
+                GatewayID(rawValue: "workstation"),
                 focusPath: "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift"))
         if case .projects(let gatewayID, let focusPath) = focused {
-            XCTAssertEqual(gatewayID.rawValue, "<dev-workstation>")
+            XCTAssertEqual(gatewayID.rawValue, "workstation")
             XCTAssertEqual(focusPath, "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift")
         } else {
             XCTFail("expected .projects case")

@@ -168,7 +168,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testLoadListsJobsScopedToProfile() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
 
         await vm.start(profile: "default")
 
@@ -181,7 +181,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testTogglePauseDisablesJobAndRecordShowsOutcome() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         await vm.setCronJob("job-1", enabled: false, profile: "default")
@@ -194,7 +194,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
     func testFireNowSurfacesUnsupportedActionAsNotice() async {
         let seam = ScriptedManagement()
         seam.setFireNowError(GatewayManagementError.unsupportedAction("unknown cron action: run"))
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         await vm.fireCronJob("job-1", profile: "default")
@@ -208,7 +208,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testFireNowSuccessSetsNoticeAndRefreshes() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         await vm.fireCronJob("job-1", profile: "default")
@@ -219,7 +219,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testDeleteRemovesJob() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         await vm.deleteCronJob("job-1", profile: "default")
@@ -230,7 +230,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testCreateAppendsJobFromDraft() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         await vm.createCronJob(
@@ -243,7 +243,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testCreateFailureKeepsFormErrorForSheet() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
         // Fail ONLY the create (set after the load succeeded).
         seam.failNext(GatewayManagementError.rpcFailed("bad schedule"))
@@ -260,7 +260,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
     func testLoadFailureSurfacesError() async {
         let seam = ScriptedManagement()
         seam.failNext(GatewayManagementError.rpcFailed("gateway not connected"))
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
 
         await vm.start(profile: "default")
 
@@ -272,7 +272,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testSkillsLoadRowsWithEnablement() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
 
         await vm.start(profile: "default")
 
@@ -293,7 +293,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testSkillToggleRoundTrips() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         await vm.setSkill("systematic-debugging", enabled: true, profile: "default")
@@ -308,7 +308,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
     /// keep the row (with its toggle) — disable must not be a one-way door.
     func testDisabledSkillSurvivesCatalogReload() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         // Disable a skill, then RELOAD the catalog the way a
@@ -329,7 +329,7 @@ final class ManagementPanesViewModelTests: XCTestCase {
 
     func testInFlightToggleGuardPreventsDoubleFire() async {
         let seam = ScriptedManagement()
-        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "<dev-workstation>"), management: seam)
+        let vm = ManagementPanesViewModel(gatewayID: .init(rawValue: "workstation"), management: seam)
         await vm.start(profile: "default")
 
         // A pending toggle for the same skill must not start a second wire

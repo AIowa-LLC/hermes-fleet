@@ -23,7 +23,7 @@ public struct PairingPayload: Sendable, Equatable, Codable {
 
     /// Format version discriminator.
     public let v: Int
-    /// Gateway endpoint origin (e.g. `http://<lan-ip>:8642`).
+    /// Gateway endpoint origin (e.g. `http://192.168.50.37:8642`).
     public let url: String
     /// Username half of the scoped pairing credential.
     public let username: String

@@ -43,7 +43,7 @@ final class LearningGraphSnapshotTests: XCTestCase {
 
     func testSnapshotRoundTripsIdenticalGraph() async throws {
         let store = try makeStore()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
         try await store.saveLearningGraphSnapshot(fixtureGraph(), for: gateway)
 
         let loaded = try await store.loadLearningGraphSnapshot(for: gateway)
@@ -57,7 +57,7 @@ final class LearningGraphSnapshotTests: XCTestCase {
 
     func testSaveReplacesPriorSnapshotPerGateway() async throws {
         let store = try makeStore()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
         try await store.saveLearningGraphSnapshot(fixtureGraph(), for: gateway)
 
         var next = fixtureGraph()
@@ -83,7 +83,7 @@ final class LearningGraphSnapshotTests: XCTestCase {
 
     func testSnapshotsAreScopedPerGateway() async throws {
         let store = try makeStore()
-        let mac = GatewayID(rawValue: "<dev-workstation>")
+        let mac = GatewayID(rawValue: "workstation")
         let arch = GatewayID(rawValue: "arch")
         try await store.saveLearningGraphSnapshot(fixtureGraph(), for: mac)
         try await store.saveLearningGraphSnapshot(
@@ -100,7 +100,7 @@ final class LearningGraphSnapshotTests: XCTestCase {
 
     func testDeleteRemovesOnlyThatGatewaySnapshot() async throws {
         let store = try makeStore()
-        let mac = GatewayID(rawValue: "<dev-workstation>")
+        let mac = GatewayID(rawValue: "workstation")
         let arch = GatewayID(rawValue: "arch")
         try await store.saveLearningGraphSnapshot(fixtureGraph(), for: mac)
         try await store.saveLearningGraphSnapshot(fixtureGraph(), for: arch)

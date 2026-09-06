@@ -30,7 +30,7 @@ final class ConversationViewModelTests: XCTestCase {
         ApprovalsCapable,
         @unchecked Sendable
     {
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
 
         // connectivity
         var statusValue: GatewayStatus = .online
@@ -257,7 +257,7 @@ final class ConversationViewModelTests: XCTestCase {
         let scripted = ScriptedSession()
         cache = try SwiftDataCacheStore.makeInMemory()
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
         let viewModel = ConversationViewModel(
@@ -504,7 +504,7 @@ final class ConversationViewModelTests: XCTestCase {
                 SessionMessage(role: .user, text: "cached question", timestamp: 1, rowID: "r1"),
                 SessionMessage(role: .assistant, text: "cached answer", timestamp: 2, rowID: "r2"),
             ]),
-            for: GatewayID(rawValue: "<dev-workstation>")
+            for: GatewayID(rawValue: "workstation")
         )
 
         await viewModel.start()
@@ -744,7 +744,7 @@ final class ConversationViewModelTests: XCTestCase {
         // verify the cache holds ALL 240 rows, not just the 200-row window.
         scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: "ok", error: nil))
         await flush()
-        let cached = try await cache.loadHistory(sessionID: "s-1", for: GatewayID(rawValue: "<dev-workstation>"))
+        let cached = try await cache.loadHistory(sessionID: "s-1", for: GatewayID(rawValue: "workstation"))
         XCTAssertEqual(cached?.messages.count, 240,
                        "P2-8: authoritative history must survive the display cap (cache holds all rows)")
     }

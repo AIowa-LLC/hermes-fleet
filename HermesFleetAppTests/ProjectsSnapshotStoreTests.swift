@@ -10,7 +10,7 @@ final class ProjectsSnapshotStoreTests: XCTestCase {
 
     func testRoundTripSavesAndLoadsLatest() async throws {
         let store = try SwiftDataCacheStore.makeInMemory()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
         let tree = ProjectsTree(
             projects: [
                 ProjectNode(
@@ -32,7 +32,7 @@ final class ProjectsSnapshotStoreTests: XCTestCase {
 
     func testReplaceSemanticsOneRowPerGateway() async throws {
         let store = try SwiftDataCacheStore.makeInMemory()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
         let first = ProjectsTree(projects: [], activeID: nil, scopedSessionIDs: [])
         var second = first
         second = ProjectsTree(

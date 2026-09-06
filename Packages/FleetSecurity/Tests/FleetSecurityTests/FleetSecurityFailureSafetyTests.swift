@@ -125,7 +125,7 @@ private final class ScriptedKeychainSession: KeychainSession, @unchecked Sendabl
 /// - deletion failures propagate instead of being suppressed.
 final class FleetSecurityFailureSafetyTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
 
     // MARK: KeychainCredentialStore
 

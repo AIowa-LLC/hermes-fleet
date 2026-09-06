@@ -33,16 +33,17 @@ final class OnboardingPromptTests: XCTestCase {
         XCTAssertTrue(text.contains("no TestFlight"))
     }
 
-    func testNetworkLegUsesNamedHttpsTunnel() {
-        // (2) NETWORK PATH — the public HTTPS tunnel by name, with a
-        // certificate check; no raw LAN/tailnet IP handed to the app.
+    func testNetworkLegDescribesUserOwnedHttpsEndpoint() {
+        // (2) NETWORK PATH — the user's OWN HTTPS-reachable endpoint, with a
+        // certificate check; no maintainer host, raw LAN/tailnet IP, or
+        // cleartext address in the prompt.
         let text = OnboardingPrompt.text
-        XCTAssertTrue(text.contains("https://<legacy-fleet-endpoint>"),
-                      "the named tunnel endpoint must appear")
-        XCTAssertTrue(text.contains("certificate"),
-                      "the agent must verify the tunnel certificate")
         XCTAssertTrue(text.contains("HTTPS"))
-        XCTAssertTrue(text.range(of: "<legacy-fleet-endpoint>")!.lowerBound
+        XCTAssertTrue(text.contains("I control"),
+                      "the endpoint must be user-owned, not maintainer-owned")
+        XCTAssertTrue(text.contains("certificate"),
+                      "the agent must verify the endpoint certificate")
+        XCTAssertTrue(text.range(of: "HTTPS")!.lowerBound
                       < text.range(of: "authentication request")!.lowerBound,
                       "network guidance must precede the verify leg")
     }
@@ -73,20 +74,21 @@ final class OnboardingPromptTests: XCTestCase {
 
     func testContainsNoSecretsOrEndpoints() throws {
         // Parameterization guard: cleartext http, private/tailnet IP literals,
-        // and credential shapes must never appear. The NAMED public tunnel is
-        // allowed (public DNS host, valid cert, gateway auth in front).
+        // and credential shapes must never appear. Describing the user's own
+        // HTTPS endpoint generically is allowed — naming any maintainer or
+        // per-user host is not.
         XCTAssertTrue(OnboardingPrompt.containsNoSecrets(),
                       "prompt contains a forbidden substring: \(OnboardingPrompt.forbiddenSubstrings.filter { OnboardingPrompt.text.contains($0) })")
     }
 
-    func testNoKnownTailnetOrPrivateDetails() {
-        // Belt-and-braces beyond the forbidden list: none of Tony's actual
-        // fleet identifiers may appear (the "parameterize, don't hardcode
-        // tailnet/LAN details" rule; the tunnel hostname is the deliberate
-        // v2 exception — it is the public path, not a private detail).
+    func testNoMaintainerOrPrivateDetails() {
+        // Belt-and-braces beyond the forbidden list: no maintainer identity,
+        // host, or private address shape may appear — the prompt describes
+        // the USER's endpoint generically (public release, prompt v3).
         let text = OnboardingPrompt.text
-        for banned in ["tailsc9f", "aiowa", "hermesfleet.gateway", "tonysimons.local", "9120", "100.100."] {
-            XCTAssertFalse(text.contains(banned), "prompt must not embed per-user detail \"\(banned)\"")
+        for banned in ["tonysimons", "aiowa", "hermesfleet.gateway",
+                       ".ts.net", "9120", "100.100.", "192.168."] {
+            XCTAssertFalse(text.contains(banned), "prompt must not embed maintainer or per-user detail \"\(banned)\"")
         }
     }
 

@@ -8,7 +8,7 @@ import FleetCore
 /// the per-gateway pin store, produce a typed verdict.
 final class TLSTrustEvaluatorTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
 
     private var gatewayPin: SPKIFingerprint {
         get throws {

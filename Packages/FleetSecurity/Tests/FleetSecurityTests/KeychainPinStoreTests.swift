@@ -109,7 +109,7 @@ private final class ScriptedKeychainSession: KeychainSession, @unchecked Sendabl
 /// NEVER delete-then-add), delete failures propagate.
 final class KeychainPinStoreTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
     private static let pinB64 = "0sshb6QBdnSVmS4d7pNB5MC4rowmN+JUeF0KQS/kpOk="
     private static let otherB64 = "85yFqwhKWLa3bnAIOCtS/8bmZ4pznYYnPPp7l9MD65o="
 

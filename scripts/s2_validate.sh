@@ -140,11 +140,13 @@ fi
 # line 168) — a B1-independent, pre-existing environmental flake. Reported here
 # as informational only; the S2 gate is the deterministic suite above.
 note "Live-gateway UI tests (P3Fix) — informational (environmental, not gated)"
-if nc -z -w 3 <lan-ip> 9120 >/dev/null 2>&1; then
-  echo "  LAN gateway <lan-ip>:9120 reachable; live-gateway UI tests require a"
+LAN_HOST="${HERMES_FLEET_LAN_HOST:-}"
+LAN_PORT="${HERMES_FLEET_LAN_PORT:-9120}"
+if [ -n "$LAN_HOST" ] && nc -z -w 3 "$LAN_HOST" "$LAN_PORT" >/dev/null 2>&1; then
+  echo "  gateway $LAN_HOST:$LAN_PORT reachable; live-gateway UI tests require a"
   echo "  clean simulator + the live surface (pre-existing flake on base, not B1)."
 else
-  echo "  LAN gateway <lan-ip>:9120 NOT reachable — live-gateway UI tests skipped."
+  echo "  gateway ${HERMES_FLEET_LAN_HOST:-unset}:$LAN_PORT NOT reachable — live-gateway UI tests skipped."
 fi
 
 # --- 7. Secrets scan (touched sources) ----------------------------------------

@@ -5,7 +5,7 @@
 # consumes. One invocation = one short-lived pairing code:
 #
 #   SECRET=$(openssl rand -hex 21)   # 42-char scoped pairing secret
-#   bash scripts/f2_generate_pairing_qr.sh http://<lan-ip>:8642 fleet-operator "$SECRET"
+#   bash scripts/f2_generate_pairing_qr.sh http://YOUR-GATEWAY:8642 fleet-operator "$SECRET"
 #
 # SECURITY (F2 card):
 #   - The QR is credential material on screen. Generate a FRESH scoped

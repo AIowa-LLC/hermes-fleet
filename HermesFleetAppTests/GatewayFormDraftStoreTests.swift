@@ -35,8 +35,8 @@ final class GatewayFormDraftStoreTests: XCTestCase {
     func testBeginEditSeedsNonSecretFieldsFromGateway() throws {
         let store = GatewayFormDraftStore()
         let gateway = FleetGateway(
-            id: GatewayID(rawValue: "<dev-workstation>"),
-            displayName: "MacBook M5",
+            id: GatewayID(rawValue: "workstation"),
+            displayName: "Workstation",
             endpoint: URL(string: "http://192.168.1.50:8642"),
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true)
         )
@@ -44,8 +44,8 @@ final class GatewayFormDraftStoreTests: XCTestCase {
         store.begin(pendingSheet: .edit(gateway.id), initial: gateway)
 
         XCTAssertTrue(store.isInProgress)
-        XCTAssertEqual(store.pendingSheet, .edit(GatewayID(rawValue: "<dev-workstation>")))
-        XCTAssertEqual(store.displayName, "MacBook M5")
+        XCTAssertEqual(store.pendingSheet, .edit(GatewayID(rawValue: "workstation")))
+        XCTAssertEqual(store.displayName, "Workstation")
         XCTAssertEqual(store.endpointText, "http://192.168.1.50:8642")
         XCTAssertEqual(store.strategy, .usernamePassword)
         // Secrets are never prefilled from the stored gateway.
@@ -60,7 +60,7 @@ final class GatewayFormDraftStoreTests: XCTestCase {
         store.begin(pendingSheet: .add, initial: nil)
 
         store.displayName = "Tailnet Gateway"
-        store.endpointText = "http://<tailnet-ip>:8642"
+        store.endpointText = "http://100.100.200.61:8642"
         store.strategy = .sessionToken
         store.tokenText = "long-generated-session-token-42chars..."
         store.saveError = "connection failed"
@@ -69,7 +69,7 @@ final class GatewayFormDraftStoreTests: XCTestCase {
         // FaceID re-locks, view teardown — the ROOT-OWNED store still holds
         // every field so the re-presented sheet restores them.
         XCTAssertEqual(store.displayName, "Tailnet Gateway")
-        XCTAssertEqual(store.endpointText, "http://<tailnet-ip>:8642")
+        XCTAssertEqual(store.endpointText, "http://100.100.200.61:8642")
         XCTAssertEqual(store.strategy, .sessionToken)
         XCTAssertEqual(store.tokenText, "long-generated-session-token-42chars...")
         XCTAssertEqual(store.saveError, "connection failed")
@@ -81,7 +81,7 @@ final class GatewayFormDraftStoreTests: XCTestCase {
     func testClearWipesDraftIncludingSecrets() {
         let store = GatewayFormDraftStore()
         store.begin(pendingSheet: .add, initial: nil)
-        store.displayName = "Gaming 4090"
+        store.displayName = "Render Box"
         store.endpointText = "http://192.168.1.77:8642"
         store.strategy = .usernamePassword
         store.usernameText = "fleetuser"

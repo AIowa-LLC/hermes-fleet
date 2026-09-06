@@ -92,7 +92,7 @@ iOS 26.5 simulator runtime · host macOS 26.6.2.
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors |
 | `swift test --package-path Packages/FleetNetworking` | **38 tests, 0 failures** (host) — codec 12, close-code 10, ticket 5, transport 11 |
 | `swift test --package-path Packages/FleetCore` | **8 tests, 0 failures** (host, unchanged) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact |
+| `xcodegen generate` | Regenerated; team ID present (4 hits); package references intact |
 | `xcodebuild ... build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild ... test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 11 tests, 0 failures** (FleetCoreLogic 5, ModuleBoundary 4 incl. `testNetworkingDependsOnCore`, AppComposition 2) |
 | Secrets scan | No keys/tokens/passwords in FleetNetworking sources; header name only, no values |

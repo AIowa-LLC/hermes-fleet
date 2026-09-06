@@ -18,13 +18,13 @@ final class R9ApprovalBannerUITests: XCTestCase {
 
     private func openConversation(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render before drilling into the conversation"
         )
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(
             app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
             "conversation canvas should open with a composer"

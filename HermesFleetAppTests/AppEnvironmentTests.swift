@@ -199,15 +199,15 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testLoadSeedsAndPublishesGateways() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
-            registration("gaming-4090", name: "Gaming 4090"),
+            registration("workstation", name: "Workstation"),
+            registration("render-box", name: "Render Box"),
         ])
 
         XCTAssertEqual(environment.gateways.map(\.id.rawValue).sorted(),
-                       ["gaming-4090", "<dev-workstation>"])
+                       ["render-box", "workstation"])
         // Fresh registry entries are idle until a connect attempt.
-        XCTAssertEqual(environment.connectionStates[GatewayID(rawValue: "<dev-workstation>")], .idle)
-        XCTAssertEqual(environment.connectionStates[GatewayID(rawValue: "gaming-4090")], .idle)
+        XCTAssertEqual(environment.connectionStates[GatewayID(rawValue: "workstation")], .idle)
+        XCTAssertEqual(environment.connectionStates[GatewayID(rawValue: "render-box")], .idle)
     }
 
     func testLoadSeedsOnlyWhenRegistryEmpty() async {
@@ -237,7 +237,7 @@ final class AppEnvironmentTests: XCTestCase {
                 TestConnection(gatewayID: gateway.id, result: .success(()))
             },
             health: TestHealthAccumulator(),
-            seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
+            seedRegistrations: [registration("workstation", name: "Workstation")]
         )
         await environment.load()
 
@@ -248,7 +248,7 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testHealthStatsRehydratePublishAndForget() async {
         let health = TestHealthAccumulator()
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         let seeded = GatewayHealthStats(
             currentState: .offline,
             firstObservedAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -267,7 +267,7 @@ final class AppEnvironmentTests: XCTestCase {
                 TestConnection(gatewayID: gateway.id, result: .success(()))
             }
         )
-        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        _ = try! await registry.addGateway(registration("workstation", name: "Workstation"))
         let roster = FleetRosterService(
             registry: registry,
             credentials: credentials,
@@ -302,9 +302,9 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testConnectTransitionsConnectingToConnected() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         XCTAssertEqual(environment.connectionStates[id], .idle)
 
         await environment.connect(to: id)
@@ -336,11 +336,11 @@ final class AppEnvironmentTests: XCTestCase {
                 TestConnection(gatewayID: gateway.id, result: .failure(.unreachable))
             },
             health: TestHealthAccumulator(),
-            seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
+            seedRegistrations: [registration("workstation", name: "Workstation")]
         )
         await environment.load()
 
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         await environment.connect(to: id)
         XCTAssertEqual(environment.connectionStates[id], .failed(.offline),
                        "unreachable connect → classified offline, never throws to UI")
@@ -348,9 +348,9 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testDisconnectIsSafeAndObservable() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         await environment.disconnect(from: id)
         XCTAssertEqual(environment.connectionStates[id], .disconnected,
@@ -364,9 +364,9 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testReconnectTearsDownThenConnects() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         await environment.connect(to: id)
         XCTAssertEqual(environment.connectionStates[id], .connected)
@@ -380,7 +380,7 @@ final class AppEnvironmentTests: XCTestCase {
         // second connect. The runtime must NEVER drive a second connect on an
         // already-connected gateway — connect-while-connected is a no-op and
         // the observable state stays .connected (never flips to .failed).
-        let connection = InvalidStateOnSecondConnect(gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+        let connection = InvalidStateOnSecondConnect(gatewayID: GatewayID(rawValue: "workstation"))
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
@@ -400,10 +400,10 @@ final class AppEnvironmentTests: XCTestCase {
             sessionList: TestSessionList(),
             connectionFactory: { gateway, _ in connection },
             health: TestHealthAccumulator(),
-            seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
+            seedRegistrations: [registration("workstation", name: "Workstation")]
         )
         await environment.load()
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         await environment.connect(to: id)
         XCTAssertEqual(environment.connectionStates[id], .connected)
@@ -427,18 +427,18 @@ final class AppEnvironmentTests: XCTestCase {
             skillCount: 12, hasAvatar: true
         )
         let (environment, _) = await makeEnvironment(
-            gateways: [registration("<dev-workstation>", name: "MacBook M5")],
+            gateways: [registration("workstation", name: "Workstation")],
             profiles: [profile]
         )
 
-        XCTAssertTrue(environment.bots(on: GatewayID(rawValue: "<dev-workstation>")).isEmpty,
+        XCTAssertTrue(environment.bots(on: GatewayID(rawValue: "workstation")).isEmpty,
                       "no snapshot before refresh → fail closed")
 
         await environment.refreshRoster()
 
-        let bots = environment.bots(on: GatewayID(rawValue: "<dev-workstation>"))
+        let bots = environment.bots(on: GatewayID(rawValue: "workstation"))
         XCTAssertEqual(bots.map(\.profileSlug.rawValue), ["default"])
-        XCTAssertEqual(bots.first?.route.gatewayID.rawValue, "<dev-workstation>",
+        XCTAssertEqual(bots.first?.route.gatewayID.rawValue, "workstation",
                        "owning gateway provenance preserved")
         XCTAssertNotNil(environment.rosterSnapshot)
         XCTAssertFalse(environment.isRefreshing)
@@ -448,7 +448,7 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testCacheSeamIsWiredObservable() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
         // Fresh in-memory cache → zero watermarks, observable on the runtime.
         XCTAssertEqual(environment.cachedWatermarkCount, 0)
@@ -458,29 +458,29 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testUpdateGatewayAppliesEdits() async throws {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         let updated = try await environment.updateGateway(
             id,
             edits: GatewayEdit(
-                displayName: "MacBook M5 Pro",
+                displayName: "Workstation Pro",
                 endpoint: URL(string: "http://127.0.0.1:8643")!
             )
         )
 
-        XCTAssertEqual(updated.displayName, "MacBook M5 Pro")
+        XCTAssertEqual(updated.displayName, "Workstation Pro")
         XCTAssertEqual(updated.endpoint?.absoluteString, "http://127.0.0.1:8643")
         // The observable gateway list reflects the edit.
-        XCTAssertEqual(environment.gateways.first?.displayName, "MacBook M5 Pro")
+        XCTAssertEqual(environment.gateways.first?.displayName, "Workstation Pro")
     }
 
     func testRemoveGatewayClearsObservableState() async throws {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         try await environment.removeGateway(id)
 
@@ -506,14 +506,14 @@ final class AppEnvironmentTests: XCTestCase {
     }
 
     func testRemoveGatewayDisconnectsActiveConnection() async throws {
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         let connection = RecordingConnection(gatewayID: id)
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { _, _ in connection }
         )
-        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        _ = try! await registry.addGateway(registration("workstation", name: "Workstation"))
         let roster = FleetRosterService(
             registry: registry,
             credentials: credentials,
@@ -545,9 +545,9 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testTestConnectionStoresReachableResult() async throws {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         try await environment.testConnection(to: id)
 
@@ -584,10 +584,10 @@ final class AppEnvironmentTests: XCTestCase {
                 TestConnection(gatewayID: gateway.id, result: .failure(.unreachable))
             },
             health: TestHealthAccumulator(),
-            seedRegistrations: [registration("<dev-workstation>", name: "MacBook M5")]
+            seedRegistrations: [registration("workstation", name: "Workstation")]
         )
         await environment.load()
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         try await environment.testConnection(to: id)  // no throw
 
@@ -598,7 +598,7 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testTestConnectionThrowsForAbsentGateway() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
         do {
             try await environment.testConnection(to: GatewayID(rawValue: "ghost"))
@@ -614,9 +614,9 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testSaveAndClearCredentialIsObservable() async throws {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         let initialHas = await environment.hasCredential(for: id)
         XCTAssertFalse(initialHas)
@@ -643,11 +643,11 @@ final class AppEnvironmentTests: XCTestCase {
             startedAt: 1_754_000_000, messageCount: 6, source: "ios"
         )
         let (environment, _) = await makeEnvironment(
-            gateways: [registration("<dev-workstation>", name: "MacBook M5")],
+            gateways: [registration("workstation", name: "Workstation")],
             sessionList: TestSessionList(sessions: [session])
         )
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
 
@@ -661,11 +661,11 @@ final class AppEnvironmentTests: XCTestCase {
 
     func testLoadSessionsRecordsClassifiedError() async {
         let (environment, _) = await makeEnvironment(
-            gateways: [registration("<dev-workstation>", name: "MacBook M5")],
+            gateways: [registration("workstation", name: "Workstation")],
             sessionList: TestSessionList(error: .notConnected)
         )
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
 
@@ -689,7 +689,7 @@ final class AppEnvironmentTests: XCTestCase {
                 TestConnection(gatewayID: gateway.id, result: .success(()))
             }
         )
-        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        _ = try! await registry.addGateway(registration("workstation", name: "Workstation"))
         _ = try! await registry.addGateway(registration("arch", name: "Arch"))
 
         let reachableProfile = ProfileDescriptor(
@@ -724,9 +724,9 @@ final class AppEnvironmentTests: XCTestCase {
         await environment.refreshRoster()
 
         let snapshot = try XCTUnwrap(environment.rosterSnapshot)
-        XCTAssertEqual(snapshot.reachableGateways.map(\.id.rawValue), ["<dev-workstation>"])
+        XCTAssertEqual(snapshot.reachableGateways.map(\.id.rawValue), ["workstation"])
         XCTAssertEqual(snapshot.unreachableGateways.map(\.id.rawValue), ["arch"])
-        XCTAssertEqual(environment.bots(on: GatewayID(rawValue: "<dev-workstation>")).count, 1,
+        XCTAssertEqual(environment.bots(on: GatewayID(rawValue: "workstation")).count, 1,
                        "reachable gateway's bots stay available during partial outage")
         XCTAssertTrue(environment.bots(on: GatewayID(rawValue: "arch")).isEmpty)
         if case .failed(let status, _) = snapshot.outcome(for: GatewayID(rawValue: "arch")) {
@@ -816,27 +816,27 @@ final class AppEnvironmentTests: XCTestCase {
                 TestConnection(gatewayID: gateway.id, result: .success(()))
             }
         )
-        _ = try! await registry.addGateway(registration("<dev-workstation>", name: "MacBook M5"))
+        _ = try! await registry.addGateway(registration("workstation", name: "Workstation"))
         let staleSnapshot = FleetRosterSnapshot(
             roster: FleetRoster(gateways: [
                 FleetGateway(
-                    id: GatewayID(rawValue: "<dev-workstation>"),
+                    id: GatewayID(rawValue: "workstation"),
                     displayName: "STALE-display-name"
                 ),
             ]),
             gatewayOutcomes: [
-                GatewayID(rawValue: "<dev-workstation>"): .loaded(profileCount: 1)
+                GatewayID(rawValue: "workstation"): .loaded(profileCount: 1)
             ]
         )
         let freshSnapshot = FleetRosterSnapshot(
             roster: FleetRoster(gateways: [
                 FleetGateway(
-                    id: GatewayID(rawValue: "<dev-workstation>"),
+                    id: GatewayID(rawValue: "workstation"),
                     displayName: "FRESH-display-name"
                 ),
             ]),
             gatewayOutcomes: [
-                GatewayID(rawValue: "<dev-workstation>"): .loaded(profileCount: 2)
+                GatewayID(rawValue: "workstation"): .loaded(profileCount: 2)
             ]
         )
         let gated = GatedRoster(snapshot: staleSnapshot, gated: true)
@@ -883,7 +883,7 @@ final class AppEnvironmentTests: XCTestCase {
     /// applied, `isRefreshing` false after.
     func testInOrderRosterRefreshUnchanged() async {
         let (environment, _) = await makeEnvironment(gateways: [
-            registration("<dev-workstation>", name: "MacBook M5"),
+            registration("workstation", name: "Workstation"),
         ])
         await environment.refreshRoster()
         XCTAssertNotNil(environment.rosterSnapshot)

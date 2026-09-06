@@ -21,13 +21,13 @@ final class RT4VoiceOverUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        // Navigate: Gateways → MacBook M5 → Default bot → a session.
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
+        // Navigate: Gateways → Workstation → Default bot → a session.
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10))
 
         // Send a task; the scripted fleet streams a canned answer.

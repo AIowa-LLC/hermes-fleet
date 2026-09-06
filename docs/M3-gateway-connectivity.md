@@ -9,7 +9,7 @@ review (apple-qa). M4 remains gated.
 Per the authorized card (USER AUTHORIZED M3 at 2026-08-29) and synthesis §20 /
 §22 mapping: compose M1 transport + M2 identity into **single-gateway
 connectivity**. Built on M2 commit `8810c8e` in repo
-`<repo-root>`.
+the repository root.
 
 Card scope line: *"connect one stock Hermes gateway, reachable/unreachable
 state, disconnect-no-crash, gateway.ready adoption. Acceptance: spec §31
@@ -111,7 +111,7 @@ iOS 26.5 simulator runtime · host macOS 26.6.2.
 | `swift test --package-path Packages/FleetCore` | **30 tests, 0 failures** (22 prior + 8 new) |
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors (pre-existing M1 `await setLastInbound()` warning not touched) |
 | `swift test --package-path Packages/FleetNetworking` | **56 tests, 0 failures** (46 prior + 10 new) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact |
+| `xcodegen generate` | Regenerated; the development team present (4 hits); package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED** (see evidence) |
 | Secrets scan (M3 sources) | No keys/tokens/passwords; fixture token is a literal test value only |

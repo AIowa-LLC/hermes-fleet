@@ -94,7 +94,7 @@ final class ConversationVoiceViewModelTests: XCTestCase {
         SessionHistoryProviding,
         @unchecked Sendable
     {
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
         var statusValue: GatewayStatus = .online
         var status: GatewayStatus { statusValue }
         var liveness: ConnectionLivenessSnapshot? { nil }
@@ -159,7 +159,7 @@ final class ConversationVoiceViewModelTests: XCTestCase {
         let voiceSeam = voice as? ScriptedVoice ?? ScriptedVoice()
         let cache = try! SwiftDataCacheStore.makeInMemory()
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
         let viewModel = ConversationViewModel(

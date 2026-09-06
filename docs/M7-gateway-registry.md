@@ -11,7 +11,7 @@ SEQUENCER dispatch after M6 FINAL PASS) + synthesis §20 Phase 5 (security)
 mapping + spec §31 Gateway / §12 model: **gateway registry management —
 add/edit/remove gateways, auth config, test connection, capability surface,
 Keychain credential storage.** Built on M6 commit `cc67b2d` in repo
-`<repo-root>`.
+the repository root.
 
 Card scope line: *"add/edit/remove gateways, auth config, test connection,
 capability surface, Keychain credential storage. Acceptance: spec §31 Gateway
@@ -33,7 +33,7 @@ Deliverables:
   deliberately NOT Codable), `CredentialStoring` seam + `CredentialStoreError`.
   Credentials never touch source/logs/UI — Keychain only (spec §16, §29).
 - **Keychain credential storage** (FleetSecurity) — `KeychainCredentialStore`
-  (GenericPassword, service `<legacy-personal-bundle-id>.gateway-credentials`,
+  (GenericPassword, service `com.aiowa.hermesfleet.gateway-credentials`,
   account = gateway ID, accessibility `WhenUnlockedThisDeviceOnly`, no iCloud
   sync) + `InMemoryCredentialStore` (test/preview double). The "Keychain safe"
   acceptance is asserted at the attribute level AND with a real simulator
@@ -171,7 +171,7 @@ simulator runtime · host macOS 26.6.2.
 | `swift test --package-path Packages/FleetSecurity` | **10 tests, 0 failures** (new FleetSecurityTests target) |
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors |
 | `swift test --package-path Packages/FleetNetworking` | **113 tests, 0 failures** (90 prior + 23 new GatewayRegistryServiceTests, incl. probe-teardown assertions) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present; package references intact |
+| `xcodegen generate` | Regenerated; the development team present; package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 18 tests, 0 failures** (15 prior + 3 new M7 boundary tests, incl. real simulator Keychain round-trip) |
 | Secrets scan (M7 sources) | No keys/tokens/passwords; fixture tokens are literal test values |

@@ -21,11 +21,11 @@ final class HermesFleetReconnectUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
-                      "Gateways screen should list MacBook M5")
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
+                      "Gateways screen should list Workstation")
 
         // Open the row menu, tap Disconnect.
-        let menu = app.descendants(matching: .any)["fleet.gateways.row.<dev-workstation>.menu"]
+        let menu = app.descendants(matching: .any)["fleet.gateways.row.workstation.menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 10), "row menu should exist")
         menu.tap()
         let disconnect = app.buttons["Disconnect"]
@@ -38,7 +38,7 @@ final class HermesFleetReconnectUITests: XCTestCase {
                       "row badge should show Disconnected after disconnect")
 
         // Reconnect via the same menu.
-        let menuAgain = app.descendants(matching: .any)["fleet.gateways.row.<dev-workstation>.menu"]
+        let menuAgain = app.descendants(matching: .any)["fleet.gateways.row.workstation.menu"]
         XCTAssertTrue(menuAgain.waitForExistence(timeout: 10))
         menuAgain.tap()
         let reconnect = app.buttons["Reconnect"]

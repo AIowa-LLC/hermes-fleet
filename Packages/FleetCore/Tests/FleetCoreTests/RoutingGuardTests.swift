@@ -13,8 +13,8 @@ final class RoutingGuardTests: XCTestCase {
 
     func testValidRouteComponentsPass() {
         for raw in ["default", "researcher", "apple-dev", "gateway-a",
-                    "<lan-ip>", "<lan-ip>:8642", "<dev-workstation>",
-                    "arch", "gaming-4090", "a_b_c", "0"] {
+                    "192.168.50.58", "192.168.50.58:8642", "workstation",
+                    "arch", "render-box", "a_b_c", "0"] {
             XCTAssertTrue(RoutingGuard.isValidRouteComponent(raw),
                           "expected '\(raw)' to be a safe route component")
         }
@@ -75,8 +75,8 @@ final class RoutingGuardTests: XCTestCase {
     // MARK: value-type safety surfaces
 
     func testGatewayIDSafetySurface() {
-        XCTAssertTrue(GatewayID(rawValue: "<dev-workstation>").isRoutingSafe)
-        XCTAssertTrue(GatewayID(rawValue: "<lan-ip>:8642").isRoutingSafe)
+        XCTAssertTrue(GatewayID(rawValue: "workstation").isRoutingSafe)
+        XCTAssertTrue(GatewayID(rawValue: "192.168.50.58:8642").isRoutingSafe)
         XCTAssertFalse(GatewayID(rawValue: "../gateway").isRoutingSafe)
         XCTAssertFalse(GatewayID(rawValue: "a/b").isRoutingSafe)
         XCTAssertFalse(GatewayID(rawValue: "a#b").isRoutingSafe)
@@ -89,11 +89,11 @@ final class RoutingGuardTests: XCTestCase {
     }
 
     func testRouteSafetySurface() {
-        let safe = Route(gatewayID: .init(rawValue: "<dev-workstation>"),
+        let safe = Route(gatewayID: .init(rawValue: "workstation"),
                          profileSlug: .init(rawValue: "default"))
         XCTAssertTrue(safe.isRoutingSafe)
 
-        let unsafeSlug = Route(gatewayID: .init(rawValue: "<dev-workstation>"),
+        let unsafeSlug = Route(gatewayID: .init(rawValue: "workstation"),
                                profileSlug: .init(rawValue: "../default"))
         XCTAssertFalse(unsafeSlug.isRoutingSafe)
 
@@ -103,11 +103,11 @@ final class RoutingGuardTests: XCTestCase {
     }
 
     func testRouteValidatingInitializerFailsClosed() {
-        let valid = Route(validating: .init(rawValue: "<dev-workstation>"),
+        let valid = Route(validating: .init(rawValue: "workstation"),
                           profileSlug: .init(rawValue: "default"))
         XCTAssertNotNil(valid)
 
-        XCTAssertNil(Route(validating: .init(rawValue: "<dev-workstation>"),
+        XCTAssertNil(Route(validating: .init(rawValue: "workstation"),
                            profileSlug: .init(rawValue: "../default")))
         XCTAssertNil(Route(validating: .init(rawValue: "a/b"),
                            profileSlug: .init(rawValue: "default")))
@@ -119,7 +119,7 @@ final class RoutingGuardTests: XCTestCase {
 
     func testSetBotsDropsUnsafeSlugs() {
         var roster = FleetRoster()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
 
         roster.setBots(on: gateway, from: [
             ProfileDescriptor(name: "researcher", path: "/home/r"),
@@ -134,7 +134,7 @@ final class RoutingGuardTests: XCTestCase {
 
     func testUpsertBotDropsUnsafeRoute() {
         var roster = FleetRoster()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
 
         // The safe bot is ingested; the unsafe one is dropped — the union
         // aggregation path (FleetRosterService) uses upsertBot, so this guard

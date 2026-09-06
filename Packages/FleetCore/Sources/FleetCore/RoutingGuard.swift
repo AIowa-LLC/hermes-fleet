@@ -27,7 +27,7 @@ public enum RoutingGuard {
     /// Rejects: empty, `.`, `..`, any `..` segment, `/`, `\`, whitespace,
     /// control characters, and `#` (the `Route.id` separator). Allows the
     /// characters that actually appear in fleet identities: letters, digits,
-    /// `-`, `_`, `.` (within a token, e.g. `<lan-ip>`), `:` (host:port
+    /// `-`, `_`, `.` (within a token, e.g. `192.168.50.58`), `:` (host:port
     /// derived IDs).
     public static func isValidRouteComponent(_ raw: String) -> Bool {
         guard !raw.isEmpty, raw != ".", raw != ".." else { return false }

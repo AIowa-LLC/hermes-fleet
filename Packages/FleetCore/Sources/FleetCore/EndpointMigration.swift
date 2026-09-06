@@ -14,26 +14,38 @@ import Foundation
 /// `migrateEndpoints(in:defaultEndpoint:)` re-points persisted rows off every
 /// dead host onto the configured default endpoint. The replacement address
 /// arrives as DATA (the caller reads it from configuration), never as compiled
-/// topology — this type knows the DEAD hosts (historical facts about this
-/// fleet, required to catch them) but not the live address.
+/// topology. Historically this type enumerated the fleet's literal dead hosts;
+/// for public release it now classifies dead hosts by SHAPE (private/loopback
+/// hosts via `PrivateNetwork`, plus tailnet `*.ts.net` names) — no private
+/// network values are compiled into the module.
 ///
 /// Pure and network-free: the caller performs the store writes, so the
 /// mapping is fully unit-testable (F2 contract: idempotent, identity and
 /// display name preserved, unknown endpoints untouched).
 public enum EndpointMigration {
 
-    /// Dead private-network HOSTS this fleet has used for the Arch gateway.
-    /// Matched on the URL host (any port, any cleartext scheme) so both the
-    /// old :8642 relay spellings and the F1-era :9119 direct spellings are
-    /// caught. Historical fleet facts, not live topology — the live address
-    /// is never compiled in.
-    public static let deadHosts: Set<String> = [
-        "<lan-ip>",                    // Arch LAN IP
-        "<tailnet-ip>",                  // Arch tailnet IP
-        "<private-host>",   // Arch MagicDNS host
-        "127.0.0.1",                       // compiled loopback default
-        "localhost",                       // loopback by name
-    ]
+    /// Historically-dead private-network HOST classes this fleet used before
+    /// user-owned HTTPS endpoints: loopback names, RFC1918/tailnet IPs, and
+    /// Tailscale MagicDNS `*.ts.net` names. Matched on the URL host (any
+    /// port, any scheme) via `PrivateNetwork` shape classification, so no
+    /// real private network values are compiled into the module. Public
+    /// hosts are NEVER dead — rows pointing at any public endpoint the user
+    /// configured survive migration untouched.
+    public static func isDeadHost(_ host: String) -> Bool {
+        PrivateNetwork.isPrivateOrLoopbackHost(host)
+            || isCarrierGradeNATIPv4(host)
+            || host.lowercased().hasSuffix(".ts.net")
+    }
+
+    /// RFC 6598 carrier-grade NAT (100.64.0.0/10) — the IPv4 block Tailscale
+    /// assigns tailnet addresses from. Strict four-octet decimal parse.
+    private static func isCarrierGradeNATIPv4(_ host: String) -> Bool {
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              let a = Int(octets[0]), let b = Int(octets[1]),
+              String(a) == octets[0], String(b) == octets[1] else { return false }
+        return a == 100 && b >= 64 && b <= 127
+    }
 
     /// The result of one row's migration decision.
     public enum Outcome: Equatable, Sendable {
@@ -64,7 +76,7 @@ public enum EndpointMigration {
         guard let current = host(of: endpoint),
               let target = host(of: defaultEndpoint) else { return .untouched }
         if current == target { return .alreadyCurrent }
-        if deadHosts.contains(current) { return .migrated }
+        if isDeadHost(current) { return .migrated }
         return .untouched
     }
 

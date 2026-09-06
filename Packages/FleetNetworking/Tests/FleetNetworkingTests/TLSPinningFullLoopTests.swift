@@ -9,7 +9,7 @@ import FleetCore
 /// the transport classifies a rejected MITM as a pin mismatch.
 final class TLSPinningFullLoopTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
 
     private func readyFrame() -> String {
         #"{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"skin":{},"change_events":true,"heartbeat":false,"replay_epoch":"t3"}}}"#

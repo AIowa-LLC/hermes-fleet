@@ -20,7 +20,7 @@ are historical foundation evidence, not current status.
 
 ## Repository / workspace
 
-- **Path:** `<repo-root>` (<dev-workstation>)
+- **Path:** the repository root (the dev workstation)
 - **Project:** generated from `project.yml` via xcodegen (single source of
   truth — never hand-edit the `.pbxproj`)
 - **Toolchain:** Xcode 26.6 (Build 17F113), Swift 6.3.3, iOS 17+ deployment,

@@ -47,7 +47,7 @@ final class FleetDashboardFormattingTests: XCTestCase {
 
     private func bot(lastSession: SessionSummary?) -> FleetBot {
         FleetBot(
-            route: Route(gatewayID: GatewayID(rawValue: "<dev-workstation>"), profileSlug: ProfileSlug(rawValue: "default")),
+            route: Route(gatewayID: GatewayID(rawValue: "workstation"), profileSlug: ProfileSlug(rawValue: "default")),
             displayName: "Default",
             latestSession: lastSession
         )

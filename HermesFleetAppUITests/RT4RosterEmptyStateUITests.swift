@@ -20,8 +20,8 @@ final class RT4RosterEmptyStateUITests: XCTestCase {
         app.launch()
 
         // The fleet still lists the seeded gateways (Home tab, real data).
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
-                      "Home should list MacBook M5 from the scripted fleet")
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
+                      "Home should list Workstation from the scripted fleet")
 
         // Open the fleet roster (Bots tab under the U3 tab shell).
         UITabNavigation.openBotsTab(app)

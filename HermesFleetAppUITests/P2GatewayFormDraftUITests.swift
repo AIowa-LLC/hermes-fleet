@@ -81,8 +81,8 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         // Scripted Face ID success unlocks to the fleet (DEBUG fleet's first
-        // gateway is MacBook M5).
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        // gateway is Workstation).
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "roster should render after scripted biometric unlock")
 
         // Open the Add-Gateway form and fill it in (the user's real workflow:
@@ -94,7 +94,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         nameField.tap()
         nameField.typeText("Tailnet Gateway")
         endpointField.tap()
-        endpointField.typeText("http://<tailnet-ip>:8642")
+        endpointField.typeText("http://100.100.200.61:8642")
 
         // Username & Password strategy + credentials.
         tap(firstMatch(in: app, identifier: "fleet.gateways.form.strategy"))
@@ -120,7 +120,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
                       "P0-2: Add-Gateway sheet must re-present after FaceID relock")
         XCTAssertEqual(nameField.value as? String, "Tailnet Gateway",
                        "P0-2: display name must survive the lock")
-        XCTAssertEqual(endpointField.value as? String, "http://<tailnet-ip>:8642",
+        XCTAssertEqual(endpointField.value as? String, "http://100.100.200.61:8642",
                        "P0-2: endpoint must survive the lock")
         XCTAssertEqual(usernameField.value as? String, "fleet-operator",
                        "P0-2: username must survive the lock")
@@ -149,7 +149,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "roster should render (lock disabled)")
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
@@ -158,11 +158,11 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
 
         // Endpoint paste button.
-        UIPasteboard.general.string = "http://<lan-ip>:8642"
+        UIPasteboard.general.string = "http://192.168.50.58:8642"
         let pasteEndpoint = firstMatch(in: app, identifier: "fleet.gateways.form.paste.endpoint")
         XCTAssertTrue(pasteEndpoint.waitForExistence(timeout: 5), "endpoint paste button should exist")
         paste(into: pasteEndpoint, app: app)
-        XCTAssertEqual(endpointField.value as? String, "http://<lan-ip>:8642",
+        XCTAssertEqual(endpointField.value as? String, "http://192.168.50.58:8642",
                        "endpoint paste button must fill the URL field")
 
         // Username & Password strategy → paste buttons for both.

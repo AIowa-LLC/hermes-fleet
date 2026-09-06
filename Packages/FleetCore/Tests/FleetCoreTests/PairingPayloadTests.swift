@@ -11,7 +11,7 @@ final class PairingPayloadTests: XCTestCase {
 
     func testRoundTripThroughCompactEncoder() throws {
         let payload = PairingPayload(
-            url: "http://<lan-ip>:8642",
+            url: "http://192.168.50.37:8642",
             username: "pair-op",
             password: "test-pairing-secret-000000000001"
         )
@@ -83,7 +83,7 @@ final class PairingPayloadTests: XCTestCase {
         // bytes. Compact JSON keeps realistic payloads in low versions
         // (dense modules, easier scans).
         let payload = PairingPayload(
-            url: "http://<tailnet-ip>:8642",
+            url: "http://100.100.200.61:8642",
             username: "fleet-operator",
             password: "test-pairing-secret-00000000000000000000000000001"
         )

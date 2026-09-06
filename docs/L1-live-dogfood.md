@@ -9,7 +9,7 @@ and the app's U2 add-gateway flow are proven independently.
 ## 1. Scope executed (per card body)
 
 - **PHASE 1 — discover endpoint:** inspected the Mac gateway (default profile
-  `hermes gateway run`, PID 87559) and the Arch gateway (`ssh <private-ssh-target>`,
+  `hermes gateway run`, PID 87559) and the Arch gateway (`ssh user@node-a`,
   systemd `hermes-gateway.service`). Mapped every surface that speaks the
   JSON-RPC `/api/ws` + `/api/auth/ws-ticket` protocol, plus the agent roster.
 - **PHASE 1b — verify reachability + real RPC surface:** started a real
@@ -52,7 +52,7 @@ and the app's U2 add-gateway flow are proven independently.
 | Surface | What it is | `/api/ws`? | `/api/auth/ws-ticket`? |
 |---|---|---|---|
 | `127.0.0.1:9900` | default-profile gateway daemon (PID 87559) — **agent roster JSON** (6 real profiles) | 404 | 404 |
-| `<tailnet-ip>:8642` | same daemon, Tailscale bind (api_server platform) | 404 | 404 |
+| `100.100.200.61:8642` | same daemon, Tailscale bind (api_server platform) | 404 | 404 |
 | `127.0.0.1:8642` | `hermes-webui/server.py` (PID 1235, loopback) | 401 (gated) | 401 |
 | `127.0.0.1:52875/63474/63597` | `hermes serve` instances (PIDs 87716/7263/8108, loopback) | 401/403 (gated) | 401 |
 
@@ -60,15 +60,15 @@ Key structural fact: **the gateway daemon itself does NOT serve the JSON-RPC
 `/api/ws` surface** — that protocol lives in `web_server.py` (the dashboard /
 `hermes serve`), and on this machine every running instance is **loopback-only
 and auth-gated** (401/403 without credentials). There is **no LAN-reachable
-`/api/ws` surface today** (nothing binds the Mac LAN IP <lan-ip>).
+`/api/ws` surface today** (nothing binds the Mac LAN IP 192.168.50.37).
 
 ### 3.2 Arch gateway (multi-gateway)
 
-- `ssh <private-ssh-target>`: **real second Hermes gateway**, systemd
+- `ssh user@node-a`: **real second Hermes gateway**, systemd
   `hermes-gateway.service`, running 3h+, multiplexing **10+ profiles**
   (coach, developer, growth, legal, media, ops, product, revenue, outreach,
-  qa, researcher), api_server on `<tailnet-ip>:8642` (Tailscale) +
-  LAN `<lan-ip>`.
+  qa, researcher), api_server on `100.127.200.89:8642` (Tailscale) +
+  LAN `192.168.50.20`.
 - **Not LAN-reachable for the JSON-RPC surface from the Mac:** Tailscale
   :8642 `/api/ws` → 404; LAN :8642 → timeout. Arch config also warns about
   unset env refs (`CLOUDFLARE_API_TOKEN`, `A2A_PEER_*`, `HERMES_GPT_BEARER_TOKEN`)
@@ -133,9 +133,9 @@ entered through the U2 UI can never be presented to the live gateway:
 1. **U2 UI writes the token to the wrong Keychain store.** The add/auth sheets
    call `environment.saveCredential` → `GatewayRegistryService.saveCredential`
    → `credentials.saveCredential` → **`KeychainCredentialStore`** (service
-   `<legacy-personal-bundle-id>.gateway-credentials`). But the production
+   `com.aiowa.hermesfleet.gateway-credentials`). But the production
    `.loopbackToken` authenticator reads **`KeychainTokenStore`** (service
-   `<legacy-personal-bundle-id>.tokens`) — a *different* Keychain service
+   `com.aiowa.hermesfleet.tokens`) — a *different* Keychain service
    (`FleetServiceGraph.makeAuthenticator`, `.loopbackToken` case). Nothing in
    the app ever calls `saveToken` (verified: the only `saveToken` hits are the
    store implementations + the UI button label). ⇒ the loopback token entered
@@ -160,7 +160,7 @@ card it is filed as a finding for apple-dev, **not fixed here**.
 
 ## 7. Distribution / device note (unchanged honesty)
 
-- Device (iPhone 16 Pro Max, `<physical-device-id>`) is paired/available; the live
+- A paired iPhone is available; the live
   walkthrough ran on the simulator because **no LAN-reachable `/api/ws` surface
   exists** on the Mac (gateway daemon doesn't serve it; serve/dashboard
   instances are loopback+gated). A LAN-bound surface would require binding +

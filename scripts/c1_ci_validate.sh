@@ -152,7 +152,15 @@ else
   grep -E 'error:|failed|Test Suite|Executed' /tmp/c1_xctest_ui.log | tail -25
 fi
 
-# --- 5. secrets scan (gitleaks) ----------------------------------------------
+# --- 5. public-safety residue guard (Issue #2, Pass B) ------------------------
+note "public-safety residue guard"
+if bash scripts/public_safety_guard.sh >/tmp/c1_guard.log 2>&1; then
+  ok "public-safety guard: tracked tree clean"
+else
+  bad "public-safety guard FAILED"; tail -20 /tmp/c1_guard.log
+fi
+
+# --- 6. secrets scan (gitleaks) ----------------------------------------------
 note "gitleaks detect"
 # Match CI's depth-1 checkout semantics: scan the TIP commit only. A local
 # full-history scan also flags F2's known fixture-password noise in the

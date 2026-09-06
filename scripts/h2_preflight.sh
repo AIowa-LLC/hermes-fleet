@@ -4,8 +4,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-echo "=== LAN gateway <lan-ip>:9120 ==="
-if nc -z -w 3 <lan-ip> 9120 2>/dev/null; then
+LAN_HOST="${HERMES_FLEET_LAN_HOST:?Set HERMES_FLEET_LAN_HOST to YOUR gateway LAN host}"
+LAN_PORT="${HERMES_FLEET_LAN_PORT:-9120}"
+echo "=== gateway $LAN_HOST:$LAN_PORT ==="
+if nc -z -w 3 "$LAN_HOST" "$LAN_PORT" 2>/dev/null; then
   echo "  UP (TCP connect ok)"
 else
   echo "  DOWN — UI test cannot run; is hermes serve LAN surface alive?"

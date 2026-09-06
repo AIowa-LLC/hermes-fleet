@@ -9,7 +9,7 @@ review (apple-qa). M3 remains gated.
 Per the authorized scope (2026-08-29) and synthesis §20 Phase 2 — "Fleet
 identity + roster": `GatewayID + ProfileSlug` identity, routing
 (`Gateway + Profile`), and the roster RPCs `profiles.list` / `session.list`.
-Built on M1 commit `236644f` in repo `<repo-root>`.
+Built on M1 commit `236644f` in repo the repository root.
 
 Deliverables per synthesis §20 P2:
 - **`Route`** — canonical routing identity `(GatewayID, ProfileSlug)`; a bare
@@ -111,7 +111,7 @@ iOS 26.5 simulator runtime · host macOS 26.6.2.
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors (1 pre-existing M1 warning: `await setLastInbound()` — not touched) |
 | `swift test --package-path Packages/FleetCore` | **22 tests, 0 failures** (8 prior + 14 new) |
 | `swift test --package-path Packages/FleetNetworking` | **46 tests, 0 failures** (38 prior + 8 new) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact |
+| `xcodegen generate` | Regenerated; the development team present (4 hits); package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 11 tests, 0 failures** (FleetCoreLogic 5, ModuleBoundary 4 incl. `testNetworkingDependsOnCore`, AppComposition 2) |
 | Secrets scan (M2 sources) | No keys/tokens/passwords; fixture token is a literal test value only |

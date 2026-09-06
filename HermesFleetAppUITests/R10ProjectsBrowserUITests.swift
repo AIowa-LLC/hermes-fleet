@@ -107,9 +107,9 @@ final class R10ProjectsBrowserUITests: XCTestCase {
 
         // Walk to the conversation the same way the reactions suite does.
         UITabNavigation.openGatewaysTab(app)
-        tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.<dev-workstation>").firstMatch)
-        tap(app.descendants(matching: .any).matching(identifier: "fleet.bots.row.<dev-workstation>#default").firstMatch)
-        tap(app.descendants(matching: .any).matching(identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1").firstMatch)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.workstation").firstMatch)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.bots.row.workstation#default").firstMatch)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.bot-detail.sessions.row.workstation.default.s1").firstMatch)
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation canvas should open")
 

@@ -10,7 +10,7 @@ final class CachedMessageReactionsTests: XCTestCase {
 
     func testReactionsRoundTripThroughCache() async throws {
         let store = try SwiftDataCacheStore.makeInMemory()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
         let history = SessionHistory(sessionID: "s-1", count: 2, messages: [
             SessionMessage(
                 role: .user,
@@ -37,7 +37,7 @@ final class CachedMessageReactionsTests: XCTestCase {
 
     func testEmptyReactionsListRoundTripsAsEmpty() async throws {
         let store = try SwiftDataCacheStore.makeInMemory()
-        let gateway = GatewayID(rawValue: "<dev-workstation>")
+        let gateway = GatewayID(rawValue: "workstation")
         let history = SessionHistory(sessionID: "s-2", count: 1, messages: [
             SessionMessage(role: .user, text: "cleared", rowID: "21", reactions: []),
         ])

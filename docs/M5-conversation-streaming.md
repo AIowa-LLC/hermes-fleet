@@ -10,7 +10,7 @@ Per the authorized card (USER AUTHORIZED M5 at 2026-08-29) and synthesis §20
 Phase 3 mapping: **conversation streaming** — `session.create` / `session.resume`
 / `prompt.submit` / `session.interrupt` plus streamed turn-event rendering
 (`message.*`, `tool.*`, `status.*`, `thinking/reasoning.*`, `message.complete`).
-Built on M4 commit `2a71cf7` in repo `<repo-root>`.
+Built on M4 commit `2a71cf7` in repo the repository root.
 
 Card scope line: *"session.create/resume, prompt.submit, render
 message/tool/status/thinking/reasoning events, message.complete, interrupt.
@@ -153,7 +153,7 @@ simulator runtime · host macOS 26.6.2.
 |---|---|
 | `swift test --package-path Packages/FleetCore` | **54 tests, 0 failures** (41 prior + 13 new ConversationDomainTests) |
 | `swift test --package-path Packages/FleetNetworking` | **77 tests, 0 failures** (64 prior + 13 new ConversationClientTests) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact; pbxproj unchanged by regen |
+| `xcodegen generate` | Regenerated; the development team present (4 hits); package references intact; pbxproj unchanged by regen |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED, 14 tests / 0 failures** (13 prior + testConversationSeamIsConstructibleInComposition) |
 | Secrets scan (M5 sources) | Clean (only doc-comment word "tokens", no credentials) |

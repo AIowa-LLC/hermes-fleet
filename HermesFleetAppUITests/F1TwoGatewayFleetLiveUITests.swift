@@ -7,8 +7,8 @@ import XCTest
 /// live transports — P0-5 lesson). Two gateways registered through the real
 /// U2 form, no hardcoding:
 ///
-///   #1 Mac   — http://<tailnet-ip>:9120   (tailnet surface)
-///   #2 Arch  — http://<tailnet-ip>:9119   (tailnet surface, F1)
+///   #1 Mac   — http://100.100.200.61:9120   (tailnet surface)
+///   #2 Arch  — http://100.127.200.89:9119   (tailnet surface, F1)
 ///
 /// Credential safety: username/password pairs are read at runtime from
 /// /tmp/hermes_lan_surface/.cred (Mac #1) and /tmp/f1_arch_gateway/.cred
@@ -21,7 +21,7 @@ final class F1TwoGatewayFleetLiveUITests: XCTestCase {
     // tailnet (override with the real hosts). The DEFAULTS are the P0-7
     // loopback-forwarder surfaces (sim local-network privacy blocks direct
     // tailnet access — T2/P0-7 documented wall):
-    //   19120 -> <tailnet-ip>:9120  (Mac #1)   19119 -> <tailnet-ip>:9119 (Arch #2)
+    //   19120 -> 100.100.200.61:9120  (Mac #1)   19119 -> 100.127.200.89:9119 (Arch #2)
     private let macEndpoint = ProcessInfo.processInfo.environment["F1_MAC_ENDPOINT"]
         ?? "http://127.0.0.1:19120"
     private let macName = "Mac #1"

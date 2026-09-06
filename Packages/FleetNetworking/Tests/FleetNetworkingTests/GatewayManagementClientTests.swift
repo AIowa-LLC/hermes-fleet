@@ -150,7 +150,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let jobs = try await client.listCronJobs(profile: "default")
 
         XCTAssertEqual(jobs.count, 2, "include_disabled list returns paused rows too")
@@ -199,7 +199,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let jobs = try await client.listCronJobs(profile: nil)
         XCTAssertTrue(jobs.isEmpty)
 
@@ -237,7 +237,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let updated = try await client.setCronJob("job-7742", enabled: false, profile: "default")
 
         XCTAssertEqual(updated.jobID, "job-7742")
@@ -274,7 +274,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let updated = try await client.setCronJob("job-7743", enabled: true, profile: nil)
         XCTAssertEqual(updated.isEnabled, true)
         let (_, params) = await captured.last
@@ -312,7 +312,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
 
         do {
             try await client.fireCronJob("job-7742", profile: "default")
@@ -353,7 +353,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         // Must not throw.
         try await client.fireCronJob("job-7742", profile: nil)
     }
@@ -386,7 +386,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         try await client.deleteCronJob("job-7742", profile: "default")
 
         let (method, params) = await captured.last
@@ -433,7 +433,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let created = try await client.createCronJob(
             draft: CronJobDraft(name: "Evening recap", schedule: "every day at 21:00", prompt: "Recap the day."),
             profile: "default")
@@ -491,7 +491,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let catalog = try await client.skillsCatalog(profile: "default")
 
         let rows = catalog.rows
@@ -555,7 +555,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let catalog = try await client.skillsCatalog(profile: "default")
 
         // The describe-only skill keeps a row, disabled, with its toggle.
@@ -618,7 +618,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
 
         // ENABLE a disabled skill: the replacement disabled list drops it.
         let enabled = try await client.setSkill("systematic-debugging", enabled: true, profile: "default")
@@ -656,7 +656,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.setSkill("codex", enabled: false, profile: "nope")
             XCTFail("describe 4064 must throw profileNotFound")
@@ -690,7 +690,7 @@ final class GatewayManagementClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayManagementClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let jobs = try await client.listCronJobs(profile: nil)
         XCTAssertTrue(jobs.isEmpty, "a non-array jobs value decodes as no jobs — fail soft")
     }

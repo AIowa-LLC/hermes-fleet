@@ -25,15 +25,15 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        // Drill to Bot detail (MacBook M5 → Default).
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        // Drill to Bot detail (Workstation → Default).
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")
 
         // First entry into the existing session "Fleet setup".
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "Conversation canvas opens")
 
@@ -52,7 +52,7 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(composer.waitForExistence(timeout: 10),
                       "Re-entered conversation canvas opens")
 
@@ -82,8 +82,8 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")

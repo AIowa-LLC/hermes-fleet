@@ -13,7 +13,7 @@ import FleetNetworking
 /// so the partial-outage classification is deterministic.
 final class FleetRosterServiceTests: XCTestCase {
 
-    private let gatewayA = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayA = GatewayID(rawValue: "workstation")
     private let gatewayB = GatewayID(rawValue: "arch")
     private let endpointA = URL(string: "http://127.0.0.1:8642")!
     private let endpointB = URL(string: "http://127.0.0.1:9900")!

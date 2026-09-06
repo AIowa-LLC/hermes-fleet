@@ -4,12 +4,12 @@ import XCTest
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
 /// on the iOS Simulator. The simulator app is held from the Mac's OWN IPs
-/// (both LAN <lan-ip> and tailnet <tailnet-ip>) by iOS local-network
+/// (both LAN 192.168.50.37 and tailnet 100.100.200.61) by iOS local-network
 /// privacy — the P3-accepted workaround is a Host+Origin-rewriting loopback
 /// forwarder, so this test reaches BOTH real surfaces through the forwarders
-/// started by scripts/t2_uitest_run.sh:
-///   19120 -> <tailnet-ip>:9120 (TAILNET surface)
-///   19121 -> <lan-ip>:9120   (LAN surface)
+/// started by a TCP forwarder (scripts/t2_tcp_forward.py):
+///   19120 -> 100.100.200.61:9120 (TAILNET surface)
+///   19121 -> 192.168.50.37:9120   (LAN surface)
 /// and:
 ///   1. add the tailnet gateway via the U2 UI (username/password from .cred)
 ///   2. Test Connection -> Connected (Reachable), not Unreachable
@@ -20,15 +20,15 @@ import XCTest
 ///      prompt -> receive the streamed answer
 ///   6. screenshots at every step land in the .xcresult for evidence.
 ///
-/// The direct tailnet endpoint (<tailnet-ip>:9120) itself is verified by
-/// scripts/t2_tailnet_probe.sh (full auth chain + live conversation turn +
+/// The direct tailnet endpoint (100.100.200.61:9120) itself is verified by
+/// an HTTP auth-chain probe (full auth chain + live conversation turn +
 /// serve log frames) — the ATS exception for 100.x lives in Info.plist so a
 /// REAL device on the tailnet can reach it directly.
 ///
 /// Credential safety: the real username/password are read at runtime from
 /// /tmp/hermes_lan_surface/.cred (0600) and are NEVER printed, logged, or
 /// committed. The clean session id is read from /tmp/t2_session.json (written
-/// by scripts/t2_tailnet_probe.sh).
+/// against the forwarder surface).
 final class T2FixTailnetGatewayUITests: XCTestCase {
 
     private let tailnetEndpoint = "http://127.0.0.1:19120"

@@ -20,8 +20,8 @@ import XCTest
 /// /tmp/hermes_lan_surface/.cred (0600) and NEVER printed or committed.
 final class B1LiveBoardPickerUITests: XCTestCase {
 
-    private let endpoint = "http://<lan-ip>:9120"
-    private let gatewayID = "<lan-ip>:9120"
+    private let endpoint = "http://192.168.50.37:9120"
+    private let gatewayID = "192.168.50.37:9120"
     private let gwName = "B1 QA LAN"
 
     // Real board names on the live gateway (verified via GET /boards).

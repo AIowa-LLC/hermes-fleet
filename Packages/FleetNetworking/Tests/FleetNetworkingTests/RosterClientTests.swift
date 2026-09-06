@@ -194,7 +194,7 @@ final class RosterClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayRosterClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let profiles = try await client.fetchProfiles()
         XCTAssertEqual(profiles.count, 1)
         XCTAssertEqual(profiles[0].name, "default")
@@ -232,7 +232,7 @@ final class RosterClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayRosterClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let profiles = try await client.fetchProfiles()
         XCTAssertEqual(profiles.count, 3)
         let byName = Dictionary(uniqueKeysWithValues: profiles.map { ($0.name, $0) })
@@ -244,7 +244,7 @@ final class RosterClientTests: XCTestCase {
     func testFetchProfilesNotConnectedThrows() async {
         let transport = makeTransport(serverPort: 1)
         let client = GatewayRosterClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.fetchProfiles()
             XCTFail("expected notConnected")
@@ -290,8 +290,8 @@ final class RosterClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayRosterClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
-        let route = Route(gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let route = Route(gatewayID: GatewayID(rawValue: "workstation"),
                           profileSlug: ProfileSlug(rawValue: "researcher"))
         let sessions = try await client.fetchSessions(for: route, limit: 50)
         XCTAssertEqual(sessions.count, 1)
@@ -305,9 +305,9 @@ final class RosterClientTests: XCTestCase {
 
     func testFetchSessionsRejectsUnsafeRouteBeforeTransport() async {
         let client = GatewayRosterClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: makeTransport(serverPort: 1))
-        let route = Route(gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+        let route = Route(gatewayID: GatewayID(rawValue: "workstation"),
                           profileSlug: ProfileSlug(rawValue: "../etc"))
         do {
             _ = try await client.fetchSessions(for: route, limit: 20)
@@ -323,9 +323,9 @@ final class RosterClientTests: XCTestCase {
 
     func testFetchSessionsSafeRouteStillChecksConnection() async {
         let client = GatewayRosterClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: makeTransport(serverPort: 1))
-        let route = Route(gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+        let route = Route(gatewayID: GatewayID(rawValue: "workstation"),
                           profileSlug: ProfileSlug(rawValue: "researcher"))
         do {
             _ = try await client.fetchSessions(for: route, limit: 20)

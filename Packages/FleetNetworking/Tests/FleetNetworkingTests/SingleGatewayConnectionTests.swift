@@ -13,7 +13,7 @@ final class SingleGatewayConnectionTests: XCTestCase {
     /// A connection bound to an in-process server port with the given gateway id.
     private func makeConnection(
         serverPort: UInt16,
-        gatewayID: GatewayID = GatewayID(rawValue: "<dev-workstation>"),
+        gatewayID: GatewayID = GatewayID(rawValue: "workstation"),
         connectTimeout: Duration = .seconds(10)
     ) -> SingleGatewayConnection {
         let base = URL(string: "http://127.0.0.1:\(serverPort)")!
@@ -81,7 +81,7 @@ final class SingleGatewayConnectionTests: XCTestCase {
         try await connection.connect()
 
         let gateway = await connection.currentGateway()
-        XCTAssertEqual(gateway.id.rawValue, "<dev-workstation>")
+        XCTAssertEqual(gateway.id.rawValue, "workstation")
         XCTAssertEqual(gateway.connectionState, .connected)
         XCTAssertEqual(gateway.replayEpoch, "epoch-1")
         XCTAssertEqual(gateway.capabilities, ["heartbeat", "change_events"])
@@ -147,7 +147,7 @@ final class SingleGatewayConnectionTests: XCTestCase {
             configuration: config
         )
         let connection = SingleGatewayConnection(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: base,
             transport: transport

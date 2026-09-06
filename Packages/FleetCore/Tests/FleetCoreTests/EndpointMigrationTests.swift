@@ -11,12 +11,12 @@ import XCTest
 /// unparseable default endpoint disables the migration entirely.
 final class EndpointMigrationTests: XCTestCase {
 
-    private let tunnel = "https://fleet.example.dev"
+    private let tunnel = "https://gateway.example.net"
 
-    private func record(_ endpoint: String, id: String = "arch") -> StoredGatewayRecord {
+    private func record(_ endpoint: String, id: String = "gw") -> StoredGatewayRecord {
         StoredGatewayRecord(
             id: id,
-            displayName: "Arch Lab",
+            displayName: "Lab Gateway",
             endpoint: endpoint,
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true),
             authConfigured: true
@@ -26,22 +26,22 @@ final class EndpointMigrationTests: XCTestCase {
     // MARK: every dead spelling migrates (both relay-era and direct-era ports)
 
     func testLANIP8642Migrates() {
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://<lan-ip>:8642", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://192.168.50.20:8642", defaultEndpoint: tunnel), .migrated)
     }
 
     func testTailnetIP8642Migrates() {
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://<tailnet-ip>:8642", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://100.127.200.89:8642", defaultEndpoint: tunnel), .migrated)
     }
 
     func testTailnetIP9119Migrates() {
         // F1-era direct spelling — its ATS exception is stripped, so leaving
         // it would silently fail ATS on device.
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://<tailnet-ip>:9119", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://100.127.200.89:9119", defaultEndpoint: tunnel), .migrated)
     }
 
     func testMagicDNSHostMigrates() {
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://<private-host>", defaultEndpoint: tunnel), .migrated)
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://<private-host>:9119", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://node-a.tailnet-example.ts.net", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://node-a.tailnet-example.ts.net:9119", defaultEndpoint: tunnel), .migrated)
     }
 
     func testLoopbackMigrates() {
@@ -50,19 +50,18 @@ final class EndpointMigrationTests: XCTestCase {
     }
 
     func testCaseInsensitiveHost() {
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://ARCHLINUX-1.TAILA00FDC.TS.NET:9119", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://NODE-A.TAILNET-EXAMPLE.TS.NET:9119", defaultEndpoint: tunnel), .migrated)
     }
 
     // MARK: idempotence + unknown rows
 
     func testAlreadyCurrentIsIdempotent() {
         XCTAssertEqual(EndpointMigration.classify(endpoint: tunnel, defaultEndpoint: tunnel), .alreadyCurrent)
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "https://fleet.example.dev:443", defaultEndpoint: tunnel), .alreadyCurrent)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "https://gateway.example.net:443", defaultEndpoint: tunnel), .alreadyCurrent)
     }
 
     func testUnknownHostUntouched() {
-        // Another gateway (e.g. the Mac dogfood lane) must survive verbatim.
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://<tailnet-ip>:9120", defaultEndpoint: tunnel), .untouched)
+        // A PUBLIC gateway the user configured must survive verbatim.
         XCTAssertEqual(EndpointMigration.classify(endpoint: "https://other.example.com:9119", defaultEndpoint: tunnel), .untouched)
     }
 
@@ -75,13 +74,13 @@ final class EndpointMigrationTests: XCTestCase {
 
     func testMigrateEndpointsRewritesOnlyDeadRows() {
         let records = [
-            record("http://<tailnet-ip>:8642", id: "arch-relay"),
-            record("http://<tailnet-ip>:9120", id: "mac-dogfood"),
+            record("http://100.127.200.89:8642", id: "gw-relay"),
+            record("https://other.example.com:9119", id: "other-gateway"),
             record(tunnel, id: "already"),
         ]
         let migrated = EndpointMigration.migrateEndpoints(in: records, defaultEndpoint: tunnel)
         XCTAssertEqual(migrated[0].endpoint, tunnel)
-        XCTAssertEqual(migrated[1].endpoint, "http://<tailnet-ip>:9120", "unknown hosts must survive verbatim")
+        XCTAssertEqual(migrated[1].endpoint, "https://other.example.com:9119", "public hosts must survive verbatim")
         XCTAssertEqual(migrated[2].endpoint, tunnel)
     }
 
@@ -96,7 +95,7 @@ final class EndpointMigrationTests: XCTestCase {
     }
 
     func testMigrateEndpointsIsIdempotent() {
-        let records = [record("http://<lan-ip>:8642")]
+        let records = [record("http://192.168.50.20:8642")]
         let once = EndpointMigration.migrateEndpoints(in: records, defaultEndpoint: tunnel)
         let twice = EndpointMigration.migrateEndpoints(in: once, defaultEndpoint: tunnel)
         XCTAssertEqual(once, twice, "second run must be a no-op")
@@ -109,15 +108,25 @@ final class EndpointMigrationTests: XCTestCase {
         XCTAssertEqual(EndpointMigration.migrateEndpoints(in: records, defaultEndpoint: "not a url"), records)
     }
 
-    // MARK: the dead-host list itself
+    // MARK: the dead-host classification itself
 
-    func testDeadHostsCarryNoLiveTopology() {
-        // The dead spellings are historical facts; the LIVE endpoint must
-        // never be compiled into FleetCore. Guard: the module's dead list
-        // must not contain any https origin.
-        for origin in EndpointMigration.deadHosts {
-            XCTAssertFalse(origin.lowercased().hasPrefix("https://"),
-                           "live topology leaked into the compiled dead-host list: \(origin)")
+    func testDeadHostClassificationCarriesNoLiveTopology() {
+        // Dead classification is SHAPE-based (private/loopback/CGNAT/ts.net).
+        // Guards: no LIVE endpoint is compiled in (the classifier never marks
+        // a public host dead), and every historical spelling shape is caught.
+        for host in ["192.168.50.20", "100.127.200.89", "node-a.tailnet-example.ts.net",
+                     "127.0.0.1", "localhost", "100.100.200.61"] {
+            XCTAssertTrue(EndpointMigration.isDeadHost(host), "historical shape must classify dead: \(host)")
         }
+        for host in ["gateway.example.net", "example.com", "1.1.1.1"] {
+            XCTAssertFalse(EndpointMigration.isDeadHost(host), "public host must NEVER classify dead: \(host)")
+        }
+    }
+
+    func testCGNATRangeBoundaries() {
+        XCTAssertTrue(EndpointMigration.isDeadHost("100.64.0.1"), "100.64/10 start is CGNAT")
+        XCTAssertTrue(EndpointMigration.isDeadHost("100.127.255.254"), "100.64/10 end is CGNAT")
+        XCTAssertFalse(EndpointMigration.isDeadHost("100.63.255.254"), "just below CGNAT is not dead")
+        XCTAssertFalse(EndpointMigration.isDeadHost("100.128.0.1"), "just above CGNAT is not dead")
     }
 }

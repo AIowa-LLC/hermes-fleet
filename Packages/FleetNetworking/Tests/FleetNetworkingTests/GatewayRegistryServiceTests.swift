@@ -12,7 +12,7 @@ import FleetNetworking
 /// the service's error classification is deterministic.
 final class GatewayRegistryServiceTests: XCTestCase {
 
-    private let gatewayA = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayA = GatewayID(rawValue: "workstation")
     private let endpointA = URL(string: "http://127.0.0.1:8642")!
 
     // MARK: helpers
@@ -119,7 +119,7 @@ final class GatewayRegistryServiceTests: XCTestCase {
         { gateway, _ in StubConnection(gatewayID: gateway.id, connectResult: .failure(error)) }
     }
 
-    private func register(_ service: GatewayRegistryService, id: GatewayID = GatewayID(rawValue: "<dev-workstation>")) async throws {
+    private func register(_ service: GatewayRegistryService, id: GatewayID = GatewayID(rawValue: "workstation")) async throws {
         _ = try await service.addGateway(GatewayRegistration(id: id, displayName: "MacBook", endpoint: endpointA))
     }
 
@@ -437,7 +437,7 @@ final class GatewayRegistryServiceTests: XCTestCase {
                 endpoint: gateway.endpoint, transport: transport)
         }
         let service = makeService(credentials: TestCredentialStore(), factory: factory)
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         try await register(service, id: id)
 
         let result = try await service.testConnection(to: id)

@@ -7,8 +7,8 @@ import Foundation
 /// production, in-memory in tests).
 final class TLSPinDomainTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
-    private let otherGateway = GatewayID(rawValue: "<private-host>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
+    private let otherGateway = GatewayID(rawValue: "node-a")
 
     // MARK: SPKIFingerprint value type
 

@@ -10,7 +10,7 @@ Per the authorized card (USER BATCH-AUTHORIZED M6–M15 at 2026-08-29;
 SEQUENCER dispatch after M10 FINAL PASS commit `1e4bbeb`) + synthesis §11
 (AuthenticationProvider abstraction) + spec §16 (Authentication Architecture) +
 §29 (Logging) + §31 Security: **auth hardening + redaction.** Built on M10
-commit `1e4bbeb` in repo `<repo-root>`.
+commit `1e4bbeb` in repo the repository root.
 
 Card scope line: *"single-use WS ticket (30s TTL) + loopback token; 4401
 re-auth no silent retry; redaction; no credentials in logs/cache/UI.
@@ -153,7 +153,7 @@ simulator runtime · host macOS 26.6.2. Ran via `bash m11_validate.sh`
 | `swift test --package-path Packages/FleetNetworking` | **149 tests, 0 failures** (135 prior + 14 new AuthenticationHardeningTests) |
 | `swift build` / `swift test` FleetSecurity | 20 tests, 0 failures (regression, unchanged) |
 | `swift build` / `swift test` FleetPersistence | 15 tests, 0 failures (regression, unchanged) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present; package refs intact |
+| `xcodegen generate` | Regenerated; the development team present; package refs intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 28 tests, 0 failures** (24 prior + 4 new M11 boundary) |
 | Secrets scan (M11 sources) | No hardcoded secret-like literals; fixture values are test-only |

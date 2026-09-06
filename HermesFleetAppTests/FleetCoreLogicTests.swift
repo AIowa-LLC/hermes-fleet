@@ -4,9 +4,9 @@ import FleetCore
 /// FleetCore value-type logic, exercised through the iOS app test host.
 final class FleetCoreLogicTests: XCTestCase {
     func testGatewayIDEqualityAndHash() {
-        let a = GatewayID(rawValue: "<dev-workstation>")
-        let b = GatewayID(rawValue: "<dev-workstation>")
-        let c = GatewayID(rawValue: "gaming-4090")
+        let a = GatewayID(rawValue: "workstation")
+        let b = GatewayID(rawValue: "workstation")
+        let c = GatewayID(rawValue: "render-box")
 
         XCTAssertEqual(a, b)
         XCTAssertNotEqual(a, c)
@@ -14,7 +14,7 @@ final class FleetCoreLogicTests: XCTestCase {
     }
 
     func testGatewayIDCodableRoundTrip() throws {
-        let value = GatewayID(rawValue: "<dev-workstation>")
+        let value = GatewayID(rawValue: "workstation")
         let data = try JSONEncoder().encode(value)
         let decoded = try JSONDecoder().decode(GatewayID.self, from: data)
         XCTAssertEqual(decoded, value)

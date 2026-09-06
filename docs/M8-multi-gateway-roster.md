@@ -10,7 +10,7 @@ Per the authorized card (USER BATCH-AUTHORIZED M6–M15 at 2026-08-29;
 SEQUENCER dispatch after M7 FINAL PASS commit `090c3f7`) + synthesis §13
 (Fleet aggregation) + §20 Phase 7 mapping + spec §31 Multi-Gateway / §32 DoD:
 **multi-gateway union fleet roster with partial-outage resilience.** Built on
-M7 commit `090c3f7` in repo `<repo-root>`.
+M7 commit `090c3f7` in repo the repository root.
 
 Card scope line: *"union fleet roster preserving owning gateway; one
 unreachable gateway must not break another; Fleet stays useful partially.
@@ -134,7 +134,7 @@ simulator runtime · host macOS 26.6.2. Ran via `bash m8_validate.sh`.
 | `swift test --package-path Packages/FleetCore` | **85 tests, 0 failures** (77 prior + 8 new FleetRosterDomainTests) |
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors (1 pre-existing M1 `setLastInbound()` warning — untouched) |
 | `swift test --package-path Packages/FleetNetworking` | **123 tests, 0 failures** (113 prior + 10 new FleetRosterServiceTests) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact |
+| `xcodegen generate` | Regenerated; the development team present (4 hits); package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 19 tests, 0 failures** (18 prior + testFleetRosterSeamIsConstructibleInComposition) |
 | Secrets scan (M8 sources) | No keys/tokens/passwords; fixture tokens are literal test values |

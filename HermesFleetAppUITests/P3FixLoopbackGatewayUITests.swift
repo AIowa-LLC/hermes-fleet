@@ -2,7 +2,7 @@ import XCTest
 
 /// t_eb5455f2 isolation proof: the FULL app auth+connect code path reaches
 /// Connected against the REAL LAN gateway, via a loopback forwarder the
-/// simulator CAN reach (127.0.0.1:9120 -> <lan-ip>:9120). The simulator
+/// simulator CAN reach (127.0.0.1:9120 -> 192.168.50.37:9120). The simulator
 /// app is gated from the Mac's own LAN IP by iOS local-network privacy, but
 /// 127.0.0.1 is reachable (proven by L1 tests). This drives the same
 /// Username & Password flow + real creds through the SAME code path P3 used.

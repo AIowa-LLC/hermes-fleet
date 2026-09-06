@@ -197,7 +197,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let graph = try await client.learningGraph(profile: nil)
 
         // Wire ask: the grid runs we never paint are O(frames) — ask for the
@@ -267,7 +267,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let graph = try await client.learningGraph(profile: "default")
 
         XCTAssertTrue(graph.buckets.isEmpty)
@@ -314,7 +314,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let graph = try await client.learningGraph(profile: nil)
 
         XCTAssertTrue(graph.buckets.isEmpty, "no learning yet is a valid state, not an error")
@@ -342,7 +342,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.learningGraph(profile: nil)
             XCTFail("malformed envelope must throw")
@@ -382,7 +382,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let detail = try await client.nodeDetail(id: "test-driven-development")
 
         XCTAssertEqual(detail.id, "test-driven-development")
@@ -418,7 +418,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.nodeDetail(id: "ghost")
             XCTFail("ok:false must throw nodeNotFound")
@@ -448,7 +448,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.learningGraph(profile: nil)
             XCTFail("rpc error must throw rpcFailed")
@@ -486,7 +486,7 @@ final class GatewayLearningClientTests: XCTestCase {
         // NOTE: no connect() here — the client must do it.
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let graph = try await client.learningGraph(profile: nil)
         XCTAssertEqual(graph.summary.totalCount, 0)
         defer { Task { await transport.disconnect() } }
@@ -522,7 +522,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let message = try await client.editNode(
             id: "memory:memory:3", content: "# chunk\n\nedited body")
 
@@ -558,7 +558,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.editNode(id: "memory:memory:3", content: "  ")
             XCTFail("ok:false must throw mutationFailed")
@@ -597,7 +597,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let message = try await client.deleteNode(id: "test-driven-development")
 
         XCTAssertEqual(
@@ -633,7 +633,7 @@ final class GatewayLearningClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayLearningClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.deleteNode(id: "apple-product-factory")
             XCTFail("ok:false must throw mutationFailed")

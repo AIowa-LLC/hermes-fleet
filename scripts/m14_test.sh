@@ -6,7 +6,17 @@ cd "$(dirname "$0")/.."   # repo root
 
 SCHEME="HermesFleetApp"
 DD="build/M14DerivedData"
-UDID="393F1335-2DB1-48BD-96B9-A38B1EA488A4"   # iPhone 17 Pro (booted)
+UDID="${HERMES_FLEET_SIM_ID:-}"
+if [ -z "$UDID" ]; then
+  UDID=$(xcrun simctl list devices booted 2>/dev/null | grep -oE '[0-9A-F-]{36}' | head -1)
+fi
+if [ -z "$UDID" ]; then
+  UDID=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | grep -oE '[0-9A-F-]{36}')
+fi
+if [ -z "$UDID" ]; then
+  echo "FAIL: no booted/available iPhone simulator and no HERMES_FLEET_SIM_ID." >&2
+  exit 2
+fi
 
 echo "=== hosted unit tests (app + cross-module boundary) ==="
 xcodebuild \

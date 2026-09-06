@@ -1,5 +1,5 @@
 #!/bin/bash
-# U4 own-device dogfood — fresh free-team sideload on the iPhone 16 Pro Max.
+# U4 own-device dogfood — fresh free-team sideload on the connected iPhone.
 #
 # Builds the app for iphoneos (Debug, free personal team 3JS22HX92T),
 # verifies codesigning metadata by reference (no key material), FRESH-installs
@@ -10,6 +10,7 @@
 # ~7-day profile rotation; no paid-tier claims are made.
 #
 # TOOLING: script file only, run with `bash scripts/u4_device.sh`
+#   HERMES_FLEET_DEVICE_ID=<UDID> bash scripts/u4_device.sh
 set -u
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
@@ -21,7 +22,20 @@ note() { printf '\n=== %s ===\n' "$1"; }
 ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); FAILURES+=("$1"); printf 'FAIL  %s\n' "$1"; }
 
-DEVICE="<physical-device-id>"
+# Physical device: explicit env var, or unambiguous single connected iPhone.
+DEVICE="${HERMES_FLEET_DEVICE_ID:-}"
+if [ -z "$DEVICE" ]; then
+  CONNECTED=$(xcrun devicectl list devices 2>/dev/null \
+    | awk '/Available|connected|iPhone/{print}' | grep -c 'iPhone' || true)
+  if [ "${CONNECTED:-0}" -eq 1 ]; then
+    DEVICE=$(xcrun devicectl list devices 2>/dev/null | grep 'iPhone' | awk '{print $1}' | head -1)
+    echo "HERMES_FLEET_DEVICE_ID unset; using the single connected iPhone: $DEVICE"
+  else
+    echo "FAIL: no HERMES_FLEET_DEVICE_ID and iPhone count is not unambiguously 1 (found ${CONNECTED:-0})." >&2
+    echo "  Set HERMES_FLEET_DEVICE_ID to your device UDID (xcrun devicectl list devices)." >&2
+    exit 2
+  fi
+fi
 DD="$REPO/build/DerivedDataU4Device"
 APP="$DD/Build/Products/Debug-iphoneos/HermesFleetApp.app"
 
@@ -68,7 +82,7 @@ fi
 echo "  application-identifier: $(echo "$ENT" | grep -A1 'application-identifier' | tail -1 | tr -d ' \t')"
 
 # --- 3. FRESH install (uninstall any prior copy first) -----------------------
-note "Fresh install (uninstall then install) on iPhone 16 Pro Max"
+note "Fresh install (uninstall then install) on the device"
 xcrun devicectl device uninstall app --device "$DEVICE" com.aiowa.hermesfleet >/tmp/u4_device_uninstall.log 2>&1 && \
   ok "prior install removed (fresh state)" || ok "no prior install to remove (fresh state)"
 sleep 2
@@ -85,7 +99,7 @@ if echo "$LAUNCH_OUT" | grep -qiE 'launch.*(succeeded|success|bundle|pid)|proces
   ok "app launched: $(echo "$LAUNCH_OUT" | tail -2 | tr '\n' ' ')"
 else
   # A locked device (passcode/Face ID required) denies launch at the OS level.
-  # This is a HARDWARE state on Tony's personal device, not a build/sign/install
+  # This is a HARDWARE state on the physical device, not a build/sign/install
   # problem — record it honestly and retry once after a short settle.
   if echo "$LAUNCH_OUT" | grep -qiE 'unlock|locked'; then
     echo "  WARN: device reports locked — cannot launch without physical unlock."

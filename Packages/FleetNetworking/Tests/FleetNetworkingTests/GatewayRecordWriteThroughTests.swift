@@ -11,8 +11,8 @@ import FleetCore
 /// disconnected, auth flags re-derived from the credential store).
 final class GatewayRecordWriteThroughTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<tailnet-ip>:9120")
-    private let endpoint = URL(string: "http://<tailnet-ip>:9120")!
+    private let gatewayID = GatewayID(rawValue: "100.100.200.61:9120")
+    private let endpoint = URL(string: "http://100.100.200.61:9120")!
 
     // MARK: fixtures
 
@@ -82,7 +82,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         let (service, records, _) = await makeService()
 
         _ = try await service.addGateway(GatewayRegistration(
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: endpoint,
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: false)
         ))
@@ -90,7 +90,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         let stored = try await records.loadGatewayRecords()
         XCTAssertEqual(stored.count, 1, "Add must write through to the record store")
         XCTAssertEqual(stored.first?.id, gatewayID.rawValue)
-        XCTAssertEqual(stored.first?.displayName, "Arch Lab")
+        XCTAssertEqual(stored.first?.displayName, "Lab Node")
         XCTAssertEqual(stored.first?.endpoint, endpoint.absoluteString)
         XCTAssertEqual(stored.first?.authConfiguration.strategy, .usernamePassword)
     }
@@ -99,7 +99,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         let (service, records, _) = await makeService()
 
         let gateway = try await service.addGateway(GatewayRegistration(
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: endpoint
         ))
         try await service.saveCredential(
@@ -133,7 +133,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
 
     func testRemoveDeletesPersistedRecord() async throws {
         let (service, records, _) = await makeService()
-        _ = try await service.addGateway(GatewayRegistration(displayName: "Arch Lab", endpoint: endpoint))
+        _ = try await service.addGateway(GatewayRegistration(displayName: "Lab Node", endpoint: endpoint))
 
         try await service.removeGateway(gatewayID)
 
@@ -143,7 +143,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
 
     func testClearCredentialUpdatesPersistedRecord() async throws {
         let (service, records, _) = await makeService()
-        let gateway = try await service.addGateway(GatewayRegistration(displayName: "Arch Lab", endpoint: endpoint))
+        let gateway = try await service.addGateway(GatewayRegistration(displayName: "Lab Node", endpoint: endpoint))
         try await service.saveCredential(GatewayCredential(rawValue: "user:fake"), for: gateway.id)
 
         try await service.clearCredential(for: gateway.id)
@@ -160,7 +160,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
             id: gatewayID.rawValue,
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: endpoint.absoluteString,
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true),
             authConfigured: true
@@ -178,7 +178,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         XCTAssertEqual(restored.map(\.id), [gatewayID], "restore must re-register the stored gateway")
         let all = await service.allGateways()
         XCTAssertEqual(all.count, 1)
-        XCTAssertEqual(all.first?.displayName, "Arch Lab")
+        XCTAssertEqual(all.first?.displayName, "Lab Node")
         XCTAssertEqual(all.first?.endpoint, endpoint)
         XCTAssertEqual(all.first?.connectionState, .disconnected, "restored gateways are marked disconnected")
         XCTAssertEqual(all.first?.authConfiguration.strategy, .usernamePassword)
@@ -190,7 +190,7 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
             id: gatewayID.rawValue,
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: endpoint.absoluteString
         ))
         let (service, _, _) = await makeService(records: records)

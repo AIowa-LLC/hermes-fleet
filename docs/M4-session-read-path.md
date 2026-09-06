@@ -9,7 +9,7 @@ review (apple-qa). M5 remains gated.
 Per the authorized card (USER AUTHORIZED M4 at 2026-08-29) and synthesis §20
 Phase 2 mapping: **session read path** — `session.list` / `session.history` /
 `session.status`, read-only. Built on M3 commit `7d1874b` in repo
-`<repo-root>`.
+the repository root.
 
 Card scope line: *"session.list/history/status read-only; observation NEVER
 implies ownership (no mutating calls from read screens). Acceptance: spec §31
@@ -138,7 +138,7 @@ simulator runtime · host macOS 26.6.2.
 | `swift test --package-path Packages/FleetCore` | **41 tests, 0 failures** (30 prior + 11 new) |
 | `swift build --package-path Packages/FleetNetworking` | Build complete, 0 errors (pre-existing M1 `await setLastInbound()` warning not touched) |
 | `swift test --package-path Packages/FleetNetworking` | **64 tests, 0 failures** (56 prior + 8 new) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact |
+| `xcodegen generate` | Regenerated; the development team present (4 hits); package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED** (see evidence) |
 | Secrets scan (M4 sources) | No keys/tokens/passwords; fixture token is a literal test value only |

@@ -9,11 +9,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+LAN_HOST="${HERMES_FLEET_LAN_HOST:?Set HERMES_FLEET_LAN_HOST to YOUR gateway LAN host}"
+LAN_PORT="${HERMES_FLEET_LAN_PORT:-9120}"
 PORT=19121
 FWD_PID=""
 if ! nc -z -w 2 127.0.0.1 "$PORT" 2>/dev/null; then
-  echo "starting forwarder $PORT -> <lan-ip>:9120"
-  python3 scripts/t2_tcp_forward.py "$PORT" <lan-ip> 9120 > /tmp/h2_ping_fwd.log 2>&1 &
+  echo "starting forwarder $PORT -> $LAN_HOST:$LAN_PORT"
+  python3 scripts/t2_tcp_forward.py "$PORT" "$LAN_HOST" "$LAN_PORT" > /tmp/h2_ping_fwd.log 2>&1 &
   FWD_PID=$!
   sleep 1
 fi

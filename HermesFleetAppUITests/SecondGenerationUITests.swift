@@ -13,7 +13,7 @@ final class SecondGenerationUITests: XCTestCase {
     func testChatsPreserveRouteAndOpenSession() {
         let app = launch()
         app.tabBars.buttons["Chats"].tap()
-        let session = app.buttons["fleet.chats.session.<dev-workstation>#default/<dev-workstation>.default.s1"]
+        let session = app.buttons["fleet.chats.session.workstation#default/workstation.default.s1"]
         XCTAssertTrue(session.waitForExistence(timeout: 20))
         session.tap()
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15) || app.textViews["fleet.conversation.composer"].exists)
@@ -34,7 +34,7 @@ final class SecondGenerationUITests: XCTestCase {
         let app = launch()
         app.tabBars.buttons["Workspace"].tap()
         XCTAssertTrue(app.navigationBars["Workspace"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["fleet.workspace.gateway.<dev-workstation>"].exists)
+        XCTAssertTrue(app.buttons["fleet.workspace.gateway.workstation"].exists)
         capture("revamp-workspace")
         app.buttons["fleet.command-center.open"].tap()
         XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 5))

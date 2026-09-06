@@ -12,3 +12,23 @@ xcuserdata/
 .build/
 .swiftpm/
 Package.resolved
+
+# Local agent/automation scratch state (never ship)
+.hermes/
+.worktrees/
+.schema
+
+# Xcode generated user-facing extras
+*.xcresult
+xcodespeed/
+
+# SwiftCoverage / test artifacts
+*.profraw
+
+# OS
+.DS_Store
+
+# Local environment overrides (endpoints, device IDs, credentials)
+.env
+.env.*
+!.env.example

@@ -3,7 +3,7 @@
 # the token store the loopback authenticator reads (TokenStoring). If not,
 # loopback tokens can never be provisioned through the app — the finding.
 set -u
-REPO=~/code/hermes-fleet-ios
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "=== L1: token-store provisioning paths ==="
 echo "--- saveToken callers (excluding store impls + tests) ---"

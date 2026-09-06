@@ -14,9 +14,9 @@ import FleetCore
 final class GatewayRecordPersistenceTests: XCTestCase {
 
     private func sampleRecord(
-        id: String = "<tailnet-ip>:9120",
-        displayName: String = "Arch Lab",
-        endpoint: String = "http://<tailnet-ip>:9120"
+        id: String = "100.100.200.61:9120",
+        displayName: String = "Lab Node",
+        endpoint: String = "http://100.100.200.61:9120"
     ) -> StoredGatewayRecord {
         StoredGatewayRecord(
             id: id,

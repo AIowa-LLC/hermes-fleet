@@ -46,7 +46,7 @@ final class WSTicketClientTests: XCTestCase {
         TicketMintURLProtocol.body = Data(#"{"ticket":"abc123","ttl_seconds":30}"#.utf8)
 
         let client = WSTicketClient(
-            baseURL: URL(string: "http://<lan-ip>:9119")!,
+            baseURL: URL(string: "http://192.168.50.58:9119")!,
             sessionToken: "loopback-token",
             urlSession: session
         )
@@ -67,7 +67,7 @@ final class WSTicketClientTests: XCTestCase {
         TicketMintURLProtocol.body = Data("{}".utf8)
 
         let client = WSTicketClient(
-            baseURL: URL(string: "http://<lan-ip>:9119")!,
+            baseURL: URL(string: "http://192.168.50.58:9119")!,
             sessionToken: nil,
             urlSession: session
         )
@@ -88,7 +88,7 @@ final class WSTicketClientTests: XCTestCase {
         TicketMintURLProtocol.body = Data(#"{"ticket":"abc123"}"#.utf8)
 
         let client = WSTicketClient(
-            baseURL: URL(string: "http://<lan-ip>:9119")!,
+            baseURL: URL(string: "http://192.168.50.58:9119")!,
             sessionToken: nil,
             urlSession: session
         )
@@ -107,7 +107,7 @@ final class WSTicketClientTests: XCTestCase {
         TicketMintURLProtocol.body = Data("not-json".utf8)
 
         let client = WSTicketClient(
-            baseURL: URL(string: "http://<lan-ip>:9119")!,
+            baseURL: URL(string: "http://192.168.50.58:9119")!,
             sessionToken: nil,
             urlSession: session
         )

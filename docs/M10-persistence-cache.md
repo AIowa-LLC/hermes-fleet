@@ -11,7 +11,7 @@ SEQUENCER dispatch after M8/M9 FINAL PASS) + synthesis §12 (Persistence /
 cache) + synthesis §11 (auth) + spec §31 Security: **Keychain token/ticket
 store + SwiftData non-secret cache (history + seq watermarks +
 replay_epoch); NSFileProtectionComplete; no tokens in cache.** Built on M9
-commit `ec7808f` in repo `<repo-root>`.
+commit `ec7808f` in repo the repository root.
 
 Card scope line: *"Keychain token/ticket store + SwiftData non-secret cache
 (history + seq watermarks + replay_epoch); NSFileProtectionComplete; no tokens
@@ -26,7 +26,7 @@ Deliverables:
   protocol, never on the concrete Keychain implementation. Tokens/tickets live
   ONLY in Keychain (spec §16, synthesis §11/§12).
 - **`KeychainTokenStore`** (FleetSecurity) — concrete `TokenStoring`:
-  GenericPassword, service `<legacy-personal-bundle-id>.tokens`, account =
+  GenericPassword, service `com.aiowa.hermesfleet.tokens`, account =
   peer gateway ID, accessibility `WhenUnlockedThisDeviceOnly`, no iCloud sync
   (synthesis §12). `baseAttributes` public for attribute assertions.
 - **`InMemoryTokenStore`** (FleetSecurity) — test/preview double of the same
@@ -169,7 +169,7 @@ simulator runtime · host macOS 26.6.2. Ran via `bash m10_validate.sh`
 | `swift test --package-path Packages/FleetSecurity` | **20 tests, 0 failures** (10 prior + 10 new FleetSecurityTokenTests) |
 | `swift build --package-path Packages/FleetPersistence` | Build complete, 0 errors |
 | `swift test --package-path Packages/FleetPersistence` | **15 tests, 0 failures** (new FleetPersistenceTests target) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present; package references intact |
+| `xcodegen generate` | Regenerated; the development team present; package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED — 24 tests, 0 failures** (19 prior + 5 new M10 boundary tests) |
 | Secrets scan (M10 sources) | No hardcoded secret-like literals; fixture tokens are literal test values |

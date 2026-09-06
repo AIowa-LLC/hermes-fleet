@@ -12,7 +12,7 @@ import FleetCore
 /// challenge-extraction path is proven by the live TLS fixture suite).
 final class PinningTrustHandlerTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
 
     private var gatewayPin: SPKIFingerprint {
         get throws { try XCTUnwrap(SPKIFingerprint(base64: TLSFixtureIdentities.gatewaySPKIBase64)) }

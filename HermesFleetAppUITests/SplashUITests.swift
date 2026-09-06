@@ -69,7 +69,7 @@ final class SplashUITests: XCTestCase {
         )
 
         // After the splash, the app must be interactive — roster renders.
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
                       "roster should render after the splash fades")
         attachScreenshot(of: app, name: "v7-roster-after-splash")
     }

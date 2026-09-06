@@ -173,7 +173,7 @@ final class ConversationToolingTests: XCTestCase {
 
     /// Scripted conversation session capturing createSession's model params.
     private struct ScriptedToolingSession: ConversationSessionProviding, ConversationToolingCapable {
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
         let recording: RecordingConversation
         let toolingProvider: any ConversationToolingProviding
 
@@ -182,7 +182,7 @@ final class ConversationToolingTests: XCTestCase {
         func connect() async throws {}
         func disconnect() async {}
         func currentGateway() async -> FleetGateway {
-            FleetGateway(id: gatewayID, displayName: "<dev-workstation>", endpoint: nil)
+            FleetGateway(id: gatewayID, displayName: "workstation", endpoint: nil)
         }
         func reauthenticate() async throws {}
 
@@ -192,7 +192,7 @@ final class ConversationToolingTests: XCTestCase {
         var history: any SessionHistoryProviding { EmptyHistory() }
 
         private struct NoopReplay: ReplayProviding {
-            let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+            let gatewayID = GatewayID(rawValue: "workstation")
             func watermarks() async -> [SessionEventWatermark] { [] }
             func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
         }
@@ -212,7 +212,7 @@ final class ConversationToolingTests: XCTestCase {
         let session = ScriptedToolingSession(recording: recording, toolingProvider: tooling)
         let cache = try! SwiftDataCacheStore.makeInMemory()
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
         let vm = ConversationViewModel(
@@ -226,7 +226,7 @@ final class ConversationToolingTests: XCTestCase {
 
     func testStickyPickRidesSessionCreateOnly() async {
         // Clear any persisted pick from a previous test run.
-        let key = "fleet.modelpick.<dev-workstation>"
+        let key = "fleet.modelpick.workstation"
         UserDefaults.standard.removeObject(forKey: key)
         defer { UserDefaults.standard.removeObject(forKey: key) }
 
@@ -250,32 +250,32 @@ final class ConversationToolingTests: XCTestCase {
 
         // Persistence: a fresh tooling VM restores the same pick.
         let restored = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         XCTAssertEqual(restored.selectedModel?.model, "gpt-5")
         XCTAssertEqual(restored.createModelParams.model, "gpt-5")
         XCTAssertEqual(restored.createModelParams.provider, "openrouter")
     }
 
     func testStickyPickPersistsAcrossVMRestartAndResetClears() async {
-        let key = "fleet.modelpick.<dev-workstation>"
+        let key = "fleet.modelpick.workstation"
         UserDefaults.standard.removeObject(forKey: key)
         defer { UserDefaults.standard.removeObject(forKey: key) }
 
         let tooling = ScriptedTooling()
         let pick = ModelChoice(model: "hermes", provider: "nous", providerName: "Nous Research", isCurrent: true)
         let first = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         first.select(pick)
 
         let second = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         XCTAssertEqual(second.selectedModel?.id, pick.id, "sticky pick survives a VM rebuild")
 
         // Reset clears it (follow-profile-default).
         second.select(nil)
         XCTAssertNil(second.selectedModel)
         let third = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         XCTAssertNil(third.selectedModel, "reset clears the persisted pick")
     }
 
@@ -283,7 +283,7 @@ final class ConversationToolingTests: XCTestCase {
         let tooling = ScriptedTooling()
         tooling.modelChoicesError = ConversationError.notConnected
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         await vm.loadModelChoices()
         XCTAssertNil(vm.modelChoices)
         XCTAssertNotNil(vm.modelLoadError)
@@ -292,7 +292,7 @@ final class ConversationToolingTests: XCTestCase {
     func testModelChoicesLoadAndMarkCurrent() async {
         let tooling = ScriptedTooling()
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         await vm.loadModelChoices()
         XCTAssertEqual(vm.modelChoices?.count, 2)
         XCTAssertEqual(vm.modelChoices?.first?.model, "hermes")
@@ -318,7 +318,7 @@ final class ConversationToolingTests: XCTestCase {
     func testUsageTickFeedsMeterAndRPCSettles() async {
         let tooling = ScriptedTooling()
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         vm.bind(sessionID: "s-1")
 
         // No snapshot → unknown.
@@ -340,7 +340,7 @@ final class ConversationToolingTests: XCTestCase {
 
     func testNoGaugeSnapshotIsHonestUnknown() {
         let vm = ConversationToolingViewModel(
-            tooling: ScriptedTooling(), gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: ScriptedTooling(), gatewayID: GatewayID(rawValue: "workstation"))
         // server.py:7542: no context fields → unknown, never 0%.
         vm.applyUsage(SessionUsageSnapshot(model: "hermes", input: 10, output: 5, total: 15, calls: 1))
         XCTAssertFalse(vm.usage?.hasContextGauge ?? true)
@@ -350,7 +350,7 @@ final class ConversationToolingTests: XCTestCase {
     func testBreakdownDecodesPerCategoryTokens() async {
         let tooling = ScriptedTooling()
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         vm.bind(sessionID: "s-1")
         await vm.loadBreakdown()
         XCTAssertEqual(vm.breakdown?.categories.count, 2)
@@ -369,7 +369,7 @@ final class ConversationToolingTests: XCTestCase {
     func testSteerQueuedSurfacesNotice() async {
         let tooling = ScriptedTooling()
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         vm.bind(sessionID: "s-1")
 
         await vm.steer(text: "keep it short")
@@ -384,7 +384,7 @@ final class ConversationToolingTests: XCTestCase {
     func testRenameAdoptsResolvedTitle() async {
         let tooling = ScriptedTooling()
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         vm.bind(sessionID: "s-1")
 
         let resolved = await vm.rename(title: "Fleet review")
@@ -399,7 +399,7 @@ final class ConversationToolingTests: XCTestCase {
     func testForkReturnsNewSessionAndFailureSurfacesError() async {
         let tooling = ScriptedTooling()
         let vm = ConversationToolingViewModel(
-            tooling: tooling, gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: tooling, gatewayID: GatewayID(rawValue: "workstation"))
         vm.bind(sessionID: "s-1")
 
         let branch = await vm.fork(name: nil)
@@ -419,7 +419,7 @@ final class ConversationToolingTests: XCTestCase {
             }
         }
         let failing = ConversationToolingViewModel(
-            tooling: NothingToBranch(), gatewayID: GatewayID(rawValue: "<dev-workstation>"))
+            tooling: NothingToBranch(), gatewayID: GatewayID(rawValue: "workstation"))
         failing.bind(sessionID: "s-1")
         let none = await failing.fork(name: nil)
         XCTAssertNil(none)

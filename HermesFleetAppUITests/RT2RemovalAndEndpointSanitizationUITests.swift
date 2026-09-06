@@ -8,7 +8,7 @@ import XCTest
 ///   `user:pass@host` endpoint is rejected (Save stays disabled), so
 ///   credential material never leaves the field.
 ///
-/// Drives the DEBUG build (scripted fleet — <dev-workstation>, gaming-4090, arch),
+/// Drives the DEBUG build (scripted fleet — workstation, render-box, arch),
 /// so the flows are deterministic.
 final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
@@ -24,15 +24,15 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         // Seed fleet present.
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
-                      "Gateways screen should list MacBook M5")
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
+                      "Gateways screen should list Workstation")
 
         // Swipe the row left to reveal the destructive Remove action.
-        let row = firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>")
+        let row = firstMatch(in: app, identifier: "fleet.gateways.row.workstation")
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.swipeLeft()
 
-        let remove = firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>.remove")
+        let remove = firstMatch(in: app, identifier: "fleet.gateways.row.workstation.remove")
         XCTAssertTrue(remove.waitForExistence(timeout: 5), "Remove action should appear after swipe")
         remove.tap()
 
@@ -53,7 +53,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
         // Swipe again and confirm removal.
         row.swipeLeft()
-        let removeAgain = firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>.remove")
+        let removeAgain = firstMatch(in: app, identifier: "fleet.gateways.row.workstation.remove")
         XCTAssertTrue(removeAgain.waitForExistence(timeout: 5))
         removeAgain.tap()
         let confirm = firstMatch(in: app, identifier: "fleet.gateways.remove.confirm")
@@ -67,7 +67,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
         let undo = firstMatch(in: app, identifier: "fleet.gateways.remove.undo")
         XCTAssertTrue(undo.waitForExistence(timeout: 5), "undo affordance should appear after removal")
         undo.tap()
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
                       "undo should restore the gateway")
         attachScreenshot(of: app, name: "rt2-p1-8-removal-confirm-undo")
     }
@@ -89,7 +89,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
         // user:pass@host is not a valid ORIGIN — Save must stay disabled so
         // credential material never leaves the text field.
-        endpointField.typeText("http://alice:supersecret@<lan-ip>:9120")
+        endpointField.typeText("http://alice:supersecret@192.168.50.58:9120")
         let save = app.buttons["fleet.gateways.form.save"].firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertFalse(save.isEnabled,

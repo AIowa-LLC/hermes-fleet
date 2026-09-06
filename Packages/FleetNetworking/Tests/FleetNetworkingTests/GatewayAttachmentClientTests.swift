@@ -121,7 +121,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let staged = try await client.attachFile(
             sessionID: "s-1",
             name: "notes.md",
@@ -167,7 +167,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.attachFile(
                 sessionID: "s-1", name: "x.bin",
@@ -201,7 +201,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.attachFile(
                 sessionID: "s-1", name: "notes.md",
@@ -250,7 +250,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let staged = try await client.attachImageBytes(
             sessionID: "s-1",
             filename: "photo.png",
@@ -297,7 +297,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.attachImageBytes(
                 sessionID: "s-1", filename: "big.png",
@@ -346,7 +346,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let pdf = Data("%PDF-1.4\n%fixture\n".utf8)
         let staged = try await client.attachPDF(
             sessionID: "s-1",
@@ -396,7 +396,7 @@ final class GatewayAttachmentClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayAttachmentClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let state = try await client.detachImage(
             sessionID: "s-1", path: "/srv/hermes/images/upload_20260904_120000_1.png")
 

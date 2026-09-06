@@ -112,16 +112,16 @@ Screenshots: `build/u4-sim-step1-open.png` … `build/u4-sim-step10-switch.png`;
 conversation canvas: `build/u4-xcresult/<attachment>.png` (exported from the
 XCUITest xcresult, `manifest.json` alongside).
 
-## 6. Own-device free-team sideload — iPhone 16 Pro Max (scripts/u4_device.sh)
+## 6. Own-device free-team sideload — a paired iPhone (scripts/u4_device.sh)
 
-Fresh install (uninstall → install) on Tony's iPhone 16 Pro Max
-(`<physical-device-id>`).
+Fresh install (uninstall → install) on the developer's iPhone
+(a paired iPhone (UDID redacted — device selection is parameterized via `HERMES_FLEET_DEVICE_ID`)).
 
 | Item | Result |
 |---|---|
-| Build Debug-iphoneos (free team <personal-team-id>, automatic) | **BUILD SUCCEEDED** |
-| Codesign identity (by reference, no key material) | `Apple Development: <personal Apple ID> (<personal-cert-id>)`, TeamIdentifier `<personal-team-id>`, Identifier `<legacy-personal-bundle-id>` |
-| Entitlements | `application-identifier <personal-team-id>.<legacy-personal-bundle-id>`, `get-task-allow=true`, `com.apple.developer.team-identifier <personal-team-id>` |
+| Build Debug-iphoneos (free personal team, automatic) | **BUILD SUCCEEDED** |
+| Codesign identity (by reference, no key material) | a personal Apple Development identity (redacted), TeamIdentifier (redacted), Identifier `the app bundle identifier` |
+| Entitlements | `application-identifier` (team-qualified, redacted), `get-task-allow=true`, `com.apple.developer.team-identifier` (redacted) |
 | Embedded provisioning profile | present (free-team development) |
 | Fresh install (uninstall → install) | succeeded |
 | **Launch** | **BLOCKED — device physically locked** (see §7) |
@@ -143,17 +143,17 @@ this same device when unlocked. Launch/process-verification is recorded as
 
 ## 8. Distribution-readiness — HOLD (as expected, stated honestly)
 
-- Team `<personal-team-id>` = Tony's **free personal team** (Apple ID
-  <personal Apple ID>). No paid Apple Developer Program membership.
+- The personal team = Tony's **free personal team** (Apple ID
+  a personal Apple ID (redacted)). No paid Apple Developer Program membership.
 - Codesigning identities: 1 valid Apple Development cert
-  (`<personal-cert-serial>...`, Apple Development: <personal Apple ID>); **0 Distribution
+  (`(serial redacted)...`, a personal Apple Development identity); **0 Distribution
   / Developer ID certs** (one revoked Apple Development cert present and
   unused).
 - No notarytool credential profile; no App Store Connect access; ~7-day
   free-team profile rotation.
 - Supported distribution path today: **own-device sideload** (as executed in
   §6). TestFlight, App Store, Developer ID, and ad-hoc-for-others all remain
-  **HOLD** until Tony's paid membership decision + certs + ASC setup.
+  **HOLD** until a paid-membership decision + certs + ASC setup.
 - This is a decision boundary for Tony, not a manufactured release PASS.
 
 ## 9. Verdict

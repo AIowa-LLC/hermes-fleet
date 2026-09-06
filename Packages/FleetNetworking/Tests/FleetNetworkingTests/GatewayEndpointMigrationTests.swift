@@ -69,9 +69,9 @@ final class GatewayEndpointMigrationTests: XCTestCase {
     func testRestoreMigratesDeadSpellingToDefault() async throws {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
-            id: "<tailnet-ip>:8642",
-            displayName: "Arch Lab",
-            endpoint: "http://<tailnet-ip>:8642",
+            id: "100.127.200.89:8642",
+            displayName: "Lab Node",
+            endpoint: "http://100.127.200.89:8642",
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true),
             authConfigured: true
         ))
@@ -85,7 +85,7 @@ final class GatewayEndpointMigrationTests: XCTestCase {
 
         XCTAssertEqual(restored.count, 1)
         XCTAssertEqual(restored[0].endpoint, URL(string: tunnel))
-        XCTAssertEqual(restored[0].id, GatewayID(rawValue: "<tailnet-ip>:8642"),
+        XCTAssertEqual(restored[0].id, GatewayID(rawValue: "100.127.200.89:8642"),
                        "identity must be preserved through migration")
         let stored = try await records.loadGatewayRecords()
         XCTAssertEqual(stored[0].endpoint, tunnel, "migration must write through to the store")
@@ -96,7 +96,7 @@ final class GatewayEndpointMigrationTests: XCTestCase {
     func testRestoreMigrationIsIdempotent() async throws {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
-            id: "arch", displayName: "Arch Lab", endpoint: tunnel
+            id: "arch", displayName: "Lab Node", endpoint: tunnel
         ))
         setenv("HERMES_FLEET_DEFAULT_ENDPOINT", tunnel, 1)
         defer { unsetenv("HERMES_FLEET_DEFAULT_ENDPOINT") }
@@ -117,7 +117,7 @@ final class GatewayEndpointMigrationTests: XCTestCase {
     func testNoDefaultEndpointLeavesRowsVerbatim() async throws {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
-            id: "arch", displayName: "Arch Lab", endpoint: "http://127.0.0.1:8642"
+            id: "arch", displayName: "Lab Node", endpoint: "http://127.0.0.1:8642"
         ))
         unsetenv("HERMES_FLEET_DEFAULT_ENDPOINT")
         // Ensure the plist layer cannot leak the app's configured default

@@ -11,7 +11,7 @@ import FleetCore
 /// keychain (account/service/accessibility/no-sync), so CI stays hermetic.
 final class FleetSecurityKeychainTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
 
     // MARK: InMemoryCredentialStore — contract semantics
 
@@ -90,7 +90,7 @@ final class FleetSecurityKeychainTests: XCTestCase {
 
     func testInMemoryStoreIsolationPerGateway() async throws {
         let store = InMemoryCredentialStore()
-        let other = GatewayID(rawValue: "gaming-4090")
+        let other = GatewayID(rawValue: "render-box")
         try await store.saveCredential(GatewayCredential(rawValue: "token-m5"), for: gatewayID)
         let otherCredential = try await store.loadCredential(for: other)
         XCTAssertNil(otherCredential, "gateways do not share credentials")
@@ -112,7 +112,7 @@ final class FleetSecurityKeychainTests: XCTestCase {
 
     func testKeychainAccountIsGatewayID() {
         let attributes = KeychainCredentialStore.baseAttributes(account: gatewayID.rawValue)
-        XCTAssertEqual(attributes[kSecAttrAccount as String] as? String, "<dev-workstation>")
+        XCTAssertEqual(attributes[kSecAttrAccount as String] as? String, "workstation")
     }
 
     func testKeychainAccessibilityWhenUnlockedThisDeviceOnly() {

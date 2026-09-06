@@ -145,7 +145,7 @@ final class ConversationFixtureLoopTests: XCTestCase {
 
         let transport = makeTransport(serverPort: server.listeningPort)
         let conversationSession = GatewayConversationSession(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:\(server.listeningPort)")!,
             transport: transport
@@ -155,7 +155,7 @@ final class ConversationFixtureLoopTests: XCTestCase {
             session: conversationSession,
             cache: cache,
             route: Route(
-                gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+                gatewayID: GatewayID(rawValue: "workstation"),
                 profileSlug: ProfileSlug(rawValue: "default")
             ),
             sessionID: nil,
@@ -240,7 +240,7 @@ final class ConversationFixtureLoopTests: XCTestCase {
 
         let transport = makeTransport(serverPort: server.listeningPort)
         let conversationSession = GatewayConversationSession(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:\(server.listeningPort)")!,
             transport: transport
@@ -249,7 +249,7 @@ final class ConversationFixtureLoopTests: XCTestCase {
             session: conversationSession,
             cache: try SwiftDataCacheStore.makeInMemory(),
             route: Route(
-                gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+                gatewayID: GatewayID(rawValue: "workstation"),
                 profileSlug: ProfileSlug(rawValue: "default")
             ),
             sessionID: nil,
@@ -319,13 +319,13 @@ final class ConversationFixtureLoopTests: XCTestCase {
         // The SHARED per-gateway conversation session, as cached by
         // AppEnvironment.conversationSession(for:) — one transport per gateway.
         let conversationSession = GatewayConversationSession(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:\(server.listeningPort)")!,
             transport: makeTransport(serverPort: server.listeningPort)
         )
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
 

@@ -134,7 +134,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let choices = try await client.modelChoices(sessionID: "abc12345")
 
         XCTAssertEqual(choices.count, 4, "every model of every provider row")
@@ -183,7 +183,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         _ = try await client.modelChoices(sessionID: nil)
 
         let (_, params) = await captured.last
@@ -225,7 +225,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let usage = try await client.usage(sessionID: "abc12345")
         XCTAssertEqual(usage.model, "hermes")
         XCTAssertEqual(usage.input, 12_000)
@@ -263,7 +263,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let usage = try await client.usage(sessionID: "abc12345")
         XCTAssertNil(usage.contextUsed)
         XCTAssertNil(usage.contextMax)
@@ -287,7 +287,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { server.stop() }
 
         let transport = makeTransport(serverPort: server.listeningPort)
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let stream = client.events
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
@@ -338,7 +338,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let breakdown = try await client.contextBreakdown(sessionID: "abc12345")
         XCTAssertEqual(breakdown.categories.count, 2)
         XCTAssertEqual(breakdown.categories.first?.id, "system_prompt")
@@ -373,7 +373,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let queued = try await client.steer(sessionID: "abc12345", text: "use fewer tools")
         XCTAssertTrue(queued)
 
@@ -404,7 +404,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let queued = try await client.steer(sessionID: "abc12345", text: "nudge")
         XCTAssertFalse(queued, "rejected steer is a surfaced false, not a thrown error")
     }
@@ -431,7 +431,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let title = try await client.renameSession(sessionID: "abc12345", title: "Fleet review")
         XCTAssertEqual(title, "Fleet review")
 
@@ -476,7 +476,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let branch = try await client.branchSession(sessionID: "abc12345", name: "side quest")
         XCTAssertEqual(branch.sessionID, "deadbeef")
         XCTAssertEqual(branch.storedSessionID, "s-branch-1")
@@ -514,7 +514,7 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationToolingClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.modelChoices(sessionID: nil)
             XCTFail("expected rpcFailed")

@@ -19,7 +19,7 @@ import XCTest
 ///
 /// Credential safety: username/password are read at runtime from
 /// /tmp/hermes_lan_surface/.cred (0600) and NEVER printed, logged, or
-/// committed. Run via scripts/p07_live_verify.sh (forwarder + build + run +
+/// committed. Run via the live LAN/tailnet forwarder pattern (scripts/h2_uitest.sh) +
 /// evidence export).
 final class P0_7LiveTailnetUITests: XCTestCase {
 

@@ -137,7 +137,7 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
         // Scripted passcode success releases the gate (H1 path unchanged):
         // tap the passcode unlock control — the scripted provider succeeds.
         unlock.tap()
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "scripted passcode success should unlock to the roster")
     }
 
