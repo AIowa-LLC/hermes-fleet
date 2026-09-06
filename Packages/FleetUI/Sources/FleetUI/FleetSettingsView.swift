@@ -12,6 +12,9 @@ public struct FleetSettingsView: View {
     private let controller: AppLockController
     private let accentController: FleetAccentController
 
+    /// C2: presents the always-reachable agent setup prompt sheet.
+    @State private var showingSetupPrompt = false
+
     public init(controller: AppLockController,
                 accentController: FleetAccentController = FleetAccentController.shared) {
         self.controller = controller
@@ -59,6 +62,26 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(FleetTheme.textSecondary)
             }
 
+            // C2: the ALWAYS-REACHABLE door to the agent setup prompt. The
+            // old onboarding entry only existed in the empty-gateways state,
+            // so it silently vanished for anyone with a configured gateway.
+            Section {
+                Button {
+                    showingSetupPrompt = true
+                } label: {
+                    Label("Agent Setup Prompt", systemImage: "text.badge.star")
+                        .foregroundStyle(FleetTheme.textPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("fleet.settings.setup-prompt")
+            } header: {
+                Text("Agent")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            } footer: {
+                Text("Copy or share the versioned setup prompt for your Hermes agent.")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+
             // V7.5: the ONE accent is user-choosable — vetted catalog only
             // (no free-text hex; teal permanently banned, brand rule).
             Section {
@@ -95,6 +118,10 @@ public struct FleetSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(FleetTheme.background.ignoresSafeArea())
         .tint(FleetTheme.accent)
+        // C2: the setup-prompt door — standard sheet presentation.
+        .sheet(isPresented: $showingSetupPrompt) {
+            SetupPromptSheet()
+        }
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
     }

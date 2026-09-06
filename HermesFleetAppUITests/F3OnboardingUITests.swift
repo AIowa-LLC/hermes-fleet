@@ -59,7 +59,7 @@ final class F3OnboardingUITests: XCTestCase {
         toggle.tap()
         XCTAssertTrue(app.staticTexts["The prompt you'll send"].waitForExistence(timeout: 10),
                       "prompt preview must open")
-        XCTAssertTrue(app.staticTexts["1. Install: I have the TestFlight app."].exists ||
+        XCTAssertTrue(app.staticTexts["1. Install: I sideload Hermes Fleet from my Mac"].exists ||
                       app.descendants(matching: .any)
                         .matching(identifier: "fleet.onboarding.prompt-text").firstMatch.exists,
                       "full prompt text must render")

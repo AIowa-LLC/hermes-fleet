@@ -1,66 +1,68 @@
 import Foundation
 
-/// F3 — the agent bootstrap prompt shown on the onboarding screen.
+/// F3/C2 — the agent bootstrap prompt shown from Settings ▸ Agent Setup Prompt
+/// (and the empty-gateways onboarding screen).
 ///
 /// The prompt is a VERSIONED ARTIFACT that ships with the app (design note
-/// from the task card): it must track install-path changes (TestFlight →
-/// App Store, QR pairing later), so `version` is the single field to bump
-/// when the mission changes and the tests pin the wording shape — not exact
-/// prose — so copy edits don't churn the suite.
+/// from the task card): it must track install-path changes, so `version` is
+/// the single field to bump when the mission changes and the tests pin the
+/// wording shape — not exact prose — so copy edits don't churn the suite.
 ///
-/// SECURITY: the prompt contains NO secrets — no URLs, usernames, passwords,
-/// tailnet names, LAN addresses, or any per-user detail. It is parameterized
-/// by design ("my phone", "the tailnet") so it works for a user whose agent
-/// runs on ANY Hermes box, not just one specific setup. `OnboardingPromptTests`
-/// enforces this mechanically (see `containsNoSecrets`).
+/// v2 (C2): TestFlight + Tailscale/LAN legs replaced by the shipping flow —
+/// Wi-Fi dev sideloads and the public HTTPS tunnel. The tunnel endpoint is
+/// deliberately NAMED (it is a public DNS host with a valid certificate and
+/// gateway auth in front — not a secret); raw LAN/tailnet IPs and cleartext
+/// http remain forbidden.
 public enum OnboardingPrompt {
 
     /// Mission revision — bump when the agent mission changes (install path,
-    /// credential scheme, network guidance). v1 = F3 TestFlight + Tailscale.
-    public static let version: Int = 1
+    /// credential scheme, network guidance). v1 = F3 TestFlight + Tailscale;
+    /// v2 = C2 Wi-Fi sideload + HTTPS tunnel (<legacy-fleet-endpoint>).
+    public static let version: Int = 2
 
     /// The full copyable bootstrap prompt (< ~200 words, per the card).
     public static let text: String = """
         I'm setting up Hermes Fleet, the iPhone app for my Hermes fleet. Set it up \
         end-to-end and reply with exactly what I need.
 
-        1. Install: I have the TestFlight app. Confirm I'm enrolled as a tester \
-        for app 6807148674 (Hermes Fleet) and send me the invite link if I'm not.
-        2. Network: make the gateway reachable from my phone. Prefer Tailscale: \
-        check the tailnet, that my phone is on it, and that the gateway endpoint \
-        answers there. If Tailscale isn't available, use the LAN: same Wi-Fi, \
-        gateway bound to the LAN IP. Plain http over LAN is unencrypted — warn me \
-        if that's the path.
+        1. Install: I sideload Hermes Fleet from my Mac over Wi-Fi — no TestFlight. \
+        If my phone needs a newer build, build and install it.
+        2. Network: the gateway must be reachable over the public HTTPS tunnel at \
+        https://<legacy-fleet-endpoint>. Confirm the tunnel answers from the open \
+        internet with a valid certificate, and that no raw LAN or tailnet IP is \
+        handed to the app.
         3. Credentials: create a scoped app credential for Hermes Fleet with \
         zero-print hygiene — write values only to a 0600 file or the reply, never \
         to logs.
         4. Verify: confirm the endpoint answers an authentication request from \
         the network path my phone will use.
         5. Reply with exactly: the URL, the username, the password, and one line \
-        telling me to accept the TestFlight invite and install Hermes Fleet.
+        telling me to open Hermes Fleet on my phone and add the gateway.
         """
 
     /// Mission-coverage keyword sets — the unit tests assert each is present
     /// so a copy edit can't silently drop a mission leg (card acceptance:
     /// install / network / credentials / reply / verify).
     public static let missionKeywords: [[String]] = [
-        ["TestFlight", "6807148674"],          // (1) app install
-        ["Tailscale", "tailnet"],              // (2) network path, preferred
-        ["LAN", "unencrypted"],                // (2) LAN fallback + warning
-        ["scoped", "credential"],              // (3) credential mint
-        ["0600", "logs"],                      // (3) zero-print hygiene
-        ["URL", "username", "password"],       // (5) reply shape
-        ["authentication request"],            // (6) verify from phone's path
+        ["Wi-Fi", "sideload"],                   // (1) app install path
+        ["<legacy-fleet-endpoint>"],                // (2) named tunnel endpoint
+        ["HTTPS", "tunnel", "certificate"],      // (2) transport + cert check
+        ["scoped", "credential"],                // (3) credential mint
+        ["0600", "logs"],                        // (3) zero-print hygiene
+        ["URL", "username", "password"],         // (5) reply shape
+        ["authentication request"],              // (4) verify from phone's path
     ]
 
-    /// Substrings that must NEVER appear in the prompt (parameterization
-    /// guard): no scheme://host:port endpoints, no obviously-embedded secret
-    /// material. Mechanical backstop for the "no secrets embedded" criterion.
+    /// Substrings that must NEVER appear in the prompt: cleartext http,
+    /// private/tailnet address literals (the public tunnel is the path — a
+    /// raw IP would reintroduce exactly the non-portable endpoint the tunnel
+    /// replaced), and embedded credential shapes. `https://` is allowed for
+    /// the named tunnel host.
     public static let forbiddenSubstrings: [String] = [
-        "http://", "https://",   // endpoints are the agent's job to discover
-        "100.100.",              // tailnet address blocks
-        "192.168.", "10.", "127.0.0.1",  // LAN/loopback literals
-        "password:", "token:",   // embedded credential shapes
+        "http://",                        // cleartext endpoints
+        "100.100.",                       // tailnet address blocks
+        "192.168.", "10.", "127.0.0.1",   // LAN/loopback literals
+        "password:", "token:",            // embedded credential shapes
     ]
 
     /// Conciseness bar from the card (~200 words). Word count of `text`.

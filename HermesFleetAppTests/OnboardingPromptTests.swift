@@ -2,12 +2,12 @@ import XCTest
 import SwiftUI
 import FleetUI
 
-/// F3 — agent bootstrap prompt content tests.
+/// F3/C2 — agent bootstrap prompt content tests.
 ///
 /// The prompt is a versioned artifact that ships with the app: these tests
 /// pin its SHAPE (mission coverage, hygiene, conciseness, non-empty) so copy
-/// edits are safe, but silently dropping a mission leg or embedding an
-/// endpoint/secret fails the build.
+/// edits are safe, but silently dropping a mission leg or embedding a
+/// cleartext/private endpoint fails the build.
 @MainActor
 final class OnboardingPromptTests: XCTestCase {
 
@@ -24,21 +24,27 @@ final class OnboardingPromptTests: XCTestCase {
         }
     }
 
-    func testInstallLegNamesTestFlightAndAppID() {
-        // (1) APP INSTALL — TestFlight invite guidance with the app id.
-        XCTAssertTrue(OnboardingPrompt.text.contains("TestFlight"))
-        XCTAssertTrue(OnboardingPrompt.text.contains("6807148674"))
+    func testInstallLegNamesWiFiSideloadWithoutTestFlight() {
+        // (1) APP INSTALL — Wi-Fi sideload is the path; TestFlight is called
+        // out only to tell the agent NOT to use it.
+        let text = OnboardingPrompt.text
+        XCTAssertTrue(text.contains("Wi-Fi"))
+        XCTAssertTrue(text.contains("sideload"))
+        XCTAssertTrue(text.contains("no TestFlight"))
     }
 
-    func testNetworkLegPrefersTailscaleWithLanFallback() {
-        // (2) NETWORK PATH — Tailscale preferred, LAN fallback, cleartext warn.
+    func testNetworkLegUsesNamedHttpsTunnel() {
+        // (2) NETWORK PATH — the public HTTPS tunnel by name, with a
+        // certificate check; no raw LAN/tailnet IP handed to the app.
         let text = OnboardingPrompt.text
-        XCTAssertLessThan(
-            text.range(of: "Tailscale")!.lowerBound,
-            text.range(of: "LAN")!.lowerBound,
-            "Tailscale must be presented as the PREFERRED path before the LAN fallback"
-        )
-        XCTAssertTrue(text.contains("unencrypted"), "LAN http fallback must carry the cleartext warning")
+        XCTAssertTrue(text.contains("https://<legacy-fleet-endpoint>"),
+                      "the named tunnel endpoint must appear")
+        XCTAssertTrue(text.contains("certificate"),
+                      "the agent must verify the tunnel certificate")
+        XCTAssertTrue(text.contains("HTTPS"))
+        XCTAssertTrue(text.range(of: "<legacy-fleet-endpoint>")!.lowerBound
+                      < text.range(of: "authentication request")!.lowerBound,
+                      "network guidance must precede the verify leg")
     }
 
     func testCredentialLegDemandsScopedCredentialWithZeroPrintHygiene() {
@@ -51,7 +57,7 @@ final class OnboardingPromptTests: XCTestCase {
     }
 
     func testReplyLegRequestsExactlyURLUsernamePassword() {
-        // (5) REPLY — exactly URL, username, password + install instruction.
+        // (5) REPLY — exactly URL, username, password + open-the-app guidance.
         let text = OnboardingPrompt.text
         XCTAssertTrue(text.contains("URL"))
         XCTAssertTrue(text.contains("username"))
@@ -63,22 +69,23 @@ final class OnboardingPromptTests: XCTestCase {
         XCTAssertTrue(OnboardingPrompt.text.contains("authentication request"))
     }
 
-    // MARK: Hygiene — no secrets, no per-user details
+    // MARK: Hygiene — no secrets, no private endpoints
 
     func testContainsNoSecretsOrEndpoints() throws {
-        // Parameterization guard: the prompt must work for a user whose agent
-        // runs on ANY Hermes box — no embedded endpoints, tailnet/LAN
-        // literals, or credential shapes.
+        // Parameterization guard: cleartext http, private/tailnet IP literals,
+        // and credential shapes must never appear. The NAMED public tunnel is
+        // allowed (public DNS host, valid cert, gateway auth in front).
         XCTAssertTrue(OnboardingPrompt.containsNoSecrets(),
                       "prompt contains a forbidden substring: \(OnboardingPrompt.forbiddenSubstrings.filter { OnboardingPrompt.text.contains($0) })")
     }
 
     func testNoKnownTailnetOrPrivateDetails() {
         // Belt-and-braces beyond the forbidden list: none of Tony's actual
-        // fleet identifiers may appear (the card's "parameterize, don't
-        // hardcode tailnet/LAN details" rule).
+        // fleet identifiers may appear (the "parameterize, don't hardcode
+        // tailnet/LAN details" rule; the tunnel hostname is the deliberate
+        // v2 exception — it is the public path, not a private detail).
         let text = OnboardingPrompt.text
-        for banned in ["tailsc9f", "aiowa", "hermesfleet.gateway", "tonysimons", "9120"] {
+        for banned in ["tailsc9f", "aiowa", "hermesfleet.gateway", "tonysimons.local", "9120", "100.100."] {
             XCTAssertFalse(text.contains(banned), "prompt must not embed per-user detail \"\(banned)\"")
         }
     }
@@ -104,6 +111,12 @@ final class OnboardingPromptTests: XCTestCase {
         // View-init smoke (same bar as FleetComponentsTests): the onboarding
         // screen builds with its presenter seam.
         let view = GatewayOnboardingView(onEnterValues: {})
+        XCTAssertNotNil(view.body)
+    }
+
+    func testSetupPromptSheetInitializes() {
+        // C2: the Settings-hosted setup-prompt sheet builds standalone.
+        let view = SetupPromptSheet()
         XCTAssertNotNil(view.body)
     }
 
