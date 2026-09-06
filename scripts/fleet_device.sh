@@ -7,10 +7,21 @@
 #
 # Discovery is machine-readable (devicectl --json-output is the ONLY
 # script-supported interface per Apple): we parse the JSON directly for
-# hardwareProperties.deviceType == "iPhone", platform iOS, and an
-# available/paired connection state. Columnar `devicectl list` output is
-# never parsed — device names may contain spaces, so the first whitespace
-# field is not a reliable identifier.
+# hardwareProperties.deviceType == "iPhone", platform iOS, paired, AND
+# currently available. Columnar `devicectl list` output is never parsed —
+# device names may contain spaces, so the first whitespace field is not a
+# reliable identifier.
+#
+# AVAILABILITY (Xcode 26.6 CoreDevice JSON, observed empirically): there is
+# no literal "available" field. The machine-readable availability state is
+# derived from connectionProperties:
+#   - available device:  transportType present ("localNetwork" or "wired" —
+#     both are valid development connections; no specific transport is
+#     assumed) and tunnelState != "unavailable" (e.g. "disconnected");
+#   - unavailable device: tunnelState == "unavailable" and NO transportType.
+# Pairing alone is NOT availability — a paired-but-unreachable iPhone must
+# never be selected and must never create a false MULTIPLE against a valid
+# available iPhone.
 #
 # Fails clearly (exit 2) when no eligible device or multiple eligible
 # devices exist and no explicit override is set.
@@ -37,10 +48,11 @@ resolve_fleet_device() {
     return 2
   fi
 
-  # Python one-shot parse: eligible = iPhone + iOS platform + paired.
-  # (CoreDevice reports locally-paired iPhones as eligible targets; state
-  # strings observed: "available (paired)". Unavailable/unpaired rows are
-  # excluded by requiring pairingState == paired.)
+  # Python one-shot parse: eligible = physical iPhone + iOS platform +
+  # paired + CURRENTLY AVAILABLE. Availability is derived from the
+  # CoreDevice connection state (see header): tunnelState != "unavailable"
+  # AND a transportType present (wired or localNetwork both count — no
+  # specific transport is assumed).
   local result
   result=$(python3 - "$json_file" <<'PYEOF'
 import json, sys
@@ -55,9 +67,13 @@ eligible = []
 for d in devs:
     hp = d.get("hardwareProperties", {})
     cp = d.get("connectionProperties", {})
+    transport = cp.get("transportType")
+    tunnel = cp.get("tunnelState")
     if (hp.get("deviceType") == "iPhone"
             and hp.get("platform") == "iOS"
-            and cp.get("pairingState") == "paired"):
+            and cp.get("pairingState") == "paired"
+            and tunnel is not None and tunnel != "unavailable"
+            and transport):
         eligible.append(d.get("identifier", ""))
 if len(eligible) == 1:
     print(eligible[0])
@@ -71,7 +87,7 @@ PYEOF
 
   case "$result" in
     NONE)
-      echo "FAIL: no eligible physical iPhone found (paired iOS devices: 0)." >&2
+      echo "FAIL: no AVAILABLE paired physical iPhone found (paired-but-unreachable devices are excluded)." >&2
       echo "  Connect/pair a device, or set HERMES_FLEET_DEVICE_ID explicitly." >&2
       return 2
       ;;
