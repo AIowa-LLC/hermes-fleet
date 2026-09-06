@@ -146,15 +146,15 @@ final class GatewayRegistryDomainTests: XCTestCase {
 
     func testGatewayIDDerivedFromEndpoint() {
         XCTAssertEqual(
-            GatewayID(endpoint: URL(string: "http://<lan-ip>:8642")!).rawValue,
-            "<lan-ip>:8642")
+            GatewayID(endpoint: URL(string: "http://192.168.50.58:8642")!).rawValue,
+            "192.168.50.58:8642")
         XCTAssertEqual(
-            GatewayID(endpoint: URL(string: "https://<dev-workstation>:9119")!).rawValue,
-            "<dev-workstation>:9119")
+            GatewayID(endpoint: URL(string: "https://workstation:9119")!).rawValue,
+            "workstation:9119")
         // Deterministic: same endpoint → same ID.
         XCTAssertEqual(
-            GatewayID(endpoint: URL(string: "http://<dev-workstation>:9119")!),
-            GatewayID(endpoint: URL(string: "http://<dev-workstation>:9119")!))
+            GatewayID(endpoint: URL(string: "http://workstation:9119")!),
+            GatewayID(endpoint: URL(string: "http://workstation:9119")!))
     }
 
     // MARK: GatewayStatus(connectivityError:) — §13 probe classification

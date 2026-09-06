@@ -2,8 +2,8 @@
 """t_f54b722e (T2): TCP forwarder 127.0.0.1:<local> -> <remote>:9120 with Host
 header rewrite, cloned from the P3-accepted p3fix_tcp_forward.py pattern.
 
-Why: the iOS Simulator app is held from the Mac's OWN IPs (<lan-ip> LAN and
-<tailnet-ip> tailnet) by iOS local-network privacy even after the ATS fix
+Why: the iOS Simulator app is held from the Mac's own LAN/tailnet IPs by iOS
+local-network privacy even after the ATS fix
 (the providers GET hangs with no response/error; P3 documented the same wall
 and the accepted simulator proof was a loopback forwarder). This tunnel lets
 the SAME app code path (username/password -> ws-ticket -> WS -> conversation)

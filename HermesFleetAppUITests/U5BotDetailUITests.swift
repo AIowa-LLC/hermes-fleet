@@ -30,13 +30,13 @@ final class U5BotDetailUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         // Drill into the healthy scripted gateway's bot list.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
-                      "Bots screen should list the Default bot on MacBook M5")
+                      "Bots screen should list the Default bot on Workstation")
 
         // U5 row: the row id is stable; the combined row carries name +
         // route + pill text (children combined).
-        let row = firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default")
+        let row = firstMatch(in: app, identifier: "fleet.bots.row.workstation#default")
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "the per-gateway bot list must render a U5 row")
         // Real status pill from the scripted bot's activity (Idle in the
@@ -56,7 +56,7 @@ final class U5BotDetailUITests: XCTestCase {
         UITabNavigation.openBotsTab(app)
 
         // The union roster lists the scripted fleet's real bot rows.
-        let row = firstMatch(in: app, identifier: "fleet.roster.row.<dev-workstation>#default")
+        let row = firstMatch(in: app, identifier: "fleet.roster.row.workstation#default")
         XCTAssertTrue(row.waitForExistence(timeout: 15),
                       "the union roster must render a U5 bot row")
         attachScreenshot(of: app, name: "u5-roster-rows-gold")
@@ -69,8 +69,8 @@ final class U5BotDetailUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
 
         // Persistent header card.
         let header = firstMatch(in: app, identifier: "fleet.bot-detail.header")
@@ -79,7 +79,7 @@ final class U5BotDetailUITests: XCTestCase {
         // The header combines its children: name + canonical route both
         // merge into the header's own accessibility label.
         XCTAssertTrue(
-            header.label.contains("<dev-workstation>#default"),
+            header.label.contains("workstation#default"),
             "the header must show the canonical route (label: \(header.label))"
         )
 
@@ -96,7 +96,7 @@ final class U5BotDetailUITests: XCTestCase {
 
         // Chat is the default: session rows are visible without switching.
         XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1")
+            firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1")
                 .waitForExistence(timeout: 10),
             "Chat (default) must show the session rows"
         )
@@ -108,8 +108,8 @@ final class U5BotDetailUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
         // Switch to Details: the identity card renders.
@@ -128,11 +128,11 @@ final class U5BotDetailUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(
             app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
             "a session tap from the Chat segment must open the conversation canvas"

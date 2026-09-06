@@ -15,7 +15,7 @@ final class SwiftDataCacheStoreTests: XCTestCase {
         try SwiftDataCacheStore.makeInMemory()
     }
 
-    private let m5 = GatewayID(rawValue: "<dev-workstation>")
+    private let m5 = GatewayID(rawValue: "workstation")
     private let arch = GatewayID(rawValue: "arch")
 
     // MARK: History

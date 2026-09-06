@@ -25,25 +25,25 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         // Step 1+2: open the app, see the machines (gateways) available.
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
-                      "Gateways screen should list MacBook M5")
-        XCTAssertTrue(app.staticTexts["Gaming 4090"].exists, "Gateways screen should list Gaming 4090")
-        XCTAssertTrue(app.staticTexts["Arch Lab"].exists, "Gateways screen should list Arch Lab")
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
+                      "Gateways screen should list Workstation")
+        XCTAssertTrue(app.staticTexts["Render Box"].exists, "Gateways screen should list Render Box")
+        XCTAssertTrue(app.staticTexts["Lab Node"].exists, "Gateways screen should list Lab Node")
 
-        // Step 3: select a Bot on a specific machine (MacBook M5 → Default).
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
+        // Step 3: select a Bot on a specific machine (Workstation → Default).
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
-                      "Bots screen should list the Default bot on MacBook M5")
+                      "Bots screen should list the Default bot on Workstation")
         XCTAssertTrue(app.staticTexts["Researcher"].exists,
-                      "Bots screen should list the Researcher bot on MacBook M5")
+                      "Bots screen should list the Researcher bot on Workstation")
 
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
 
         // Step 4: open a conversation from Bot detail (session "Fleet setup").
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render the identity section")
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
                       "Conversation canvas should open with a composer")
 
@@ -87,10 +87,10 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
         // Return to the fleet: pop back to the gateway's Bots screen, then back
@@ -99,18 +99,18 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Researcher"].waitForExistence(timeout: 10),
                       "Bots screen should reappear after first back")
         tapBack(in: app)
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
 
-        // Switch machine: select a Bot on a different machine (Gaming 4090).
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.gaming-4090"))
+        // Switch machine: select a Bot on a different machine (Render Box).
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.render-box"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
-                      "Gaming 4090 should expose its Default bot")
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.gaming-4090#default"))
+                      "Render Box should expose its Default bot")
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.render-box#default"))
         let gamingRoute = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", "gaming-4090#default"))
+            .matching(NSPredicate(format: "label CONTAINS %@", "render-box#default"))
             .firstMatch
         XCTAssertTrue(gamingRoute.waitForExistence(timeout: 10),
-                      "Bot detail should show the canonical Gaming 4090 route")
+                      "Bot detail should show the canonical Render Box route")
     }
 
     // MARK: - Helpers

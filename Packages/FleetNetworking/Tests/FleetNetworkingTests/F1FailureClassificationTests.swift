@@ -33,7 +33,7 @@ final class F1FailureClassificationTests: XCTestCase {
     }
 
     func testAuthSurface404ClassifiesUnsupportedNotOffline() {
-        // The exact Tony case: <tailnet-ip>:8642 answers TCP but 404s every
+        // The exact Tony case: 100.127.200.89:8642 answers TCP but 404s every
         // app route. The endpoint ANSWERED — "Unreachable" is a lie.
         XCTAssertEqual(
             GatewayStatus(connectivityError: .authSurfaceHTTP(404)),

@@ -10,7 +10,7 @@ Per the authorized card (USER BATCH-AUTHORIZED M6–M15 at 2026-08-29) +
 synthesis §20 Phase 4 mapping: **reconnect + replay engine** — per-session seq
 watermarks, `session.events.since`, replay_epoch comparison, truncated refetch
 `session.history`, replay-hold dedupe. Built on M5 commit `6f48cbe` in repo
-`<repo-root>`.
+the repository root.
 
 Card scope line: *"reconnect+replay engine (per-session seq watermarks,
 session.events.since, replay_epoch, truncated refetch session.history,
@@ -148,7 +148,7 @@ simulator runtime · host macOS 26.6.2.
 |---|---|
 | `swift test --package-path Packages/FleetCore` | **59 tests, 0 failures** (54 prior + 5 new ReplayDomainTests) |
 | `swift test --package-path Packages/FleetNetworking` | **90 tests, 0 failures** (77 prior + 13 new ReconnectReplayTests) |
-| `xcodegen generate` | Regenerated; team `<personal-team-id>` present (4 hits); package references intact |
+| `xcodegen generate` | Regenerated; the development team present (4 hits); package references intact |
 | `xcodebuild build` (iOS Simulator, iPhone 17 Pro) | **BUILD SUCCEEDED** |
 | `xcodebuild test` (iOS Simulator, iPhone 17 Pro) | **TEST SUCCEEDED, 15 tests / 0 failures** (14 prior + testReplaySeamIsConstructibleInComposition) |
 | Secrets scan (M6 sources) | No keys/tokens/passwords; fixture tickets are literal test values |

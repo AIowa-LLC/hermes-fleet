@@ -295,7 +295,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let tree = try await client.projectTree(profile: "default")
 
         // Params: optional profile scope only (preview_limit/session_limit
@@ -370,7 +370,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let tree = try await client.projectTree(profile: nil)
 
         XCTAssertTrue(tree.projects.isEmpty, "empty profile DB is an honest blank, not an error")
@@ -404,7 +404,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         _ = try await client.projectTree(profile: nil)
 
         let (_, params) = await captured.last
@@ -435,7 +435,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let project = try await client.projectSessions(projectID: "proj-fleet", profile: "default")
 
         let (method, params) = await captured.last
@@ -476,7 +476,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let project = try await client.projectSessions(projectID: "missing", profile: nil)
         XCTAssertNil(project, "project:null decodes as nil — the UI shows its empty state")
     }
@@ -491,7 +491,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.projectSessions(projectID: "", profile: nil)
             XCTFail("expected projectRequired (server 5063 mirrored client-side)")
@@ -531,7 +531,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let items = try await client.completePath(word: "@file:Packages/Fle", cwd: "/Users/dev/code/fleet-ios")
 
         // Params: {word, cwd?} — exactly what methods_complete.py:42-44 reads.
@@ -558,7 +558,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let items = try await client.completePath(word: "", cwd: nil)
         XCTAssertTrue(items.isEmpty, "empty word is the server's own {items: []} fast path (methods_complete.py:42-44) — no RPC needed")
     }
@@ -585,7 +585,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.projectTree(profile: nil)
             XCTFail("expected malformedResponse")
@@ -617,7 +617,7 @@ final class GatewayProjectsClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayProjectsClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.projectTree(profile: nil)
             XCTFail("expected rpcFailed")

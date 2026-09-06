@@ -21,14 +21,14 @@ final class U6ConversationSkinUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        // Drill to the scripted conversation: MacBook M5 → Default → session s1.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        // Drill to the scripted conversation: Workstation → Default → session s1.
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render before drilling into the conversation"
         )
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
 
         // U6 bot header on the conversation canvas.
         let header = firstMatch(in: app, identifier: "fleet.conversation.header")
@@ -54,9 +54,9 @@ final class U6ConversationSkinUITests: XCTestCase {
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.<dev-workstation>.default.s1"))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
                       "Conversation canvas should open with a composer")
 

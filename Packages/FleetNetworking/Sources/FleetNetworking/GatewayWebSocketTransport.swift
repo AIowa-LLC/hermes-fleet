@@ -760,8 +760,25 @@ public actor GatewayWebSocketTransport: HermesTransport {
         // Ignore a failure from a session that is no longer current — the
         // reconnect already replaced it and its own loop owns teardown (P4).
         guard let current = session, isSame(current, failedSession) else { return }
-        // Prefer the close code captured by the delegate; fall back to error mapping.
-        if let code = failedSession.lastCloseCode {
+        // Prefer the close code captured by the delegate; fall back to error
+        // mapping. RACE GUARD: URLSession can surface the receive error
+        // BEFORE the delegate's didCloseWith records the code — the two
+        // notifications arrive on independent queues with no ordering
+        // guarantee. The classification is terminal (teardown state is
+        // never revisited), so mis-ordering would permanently misclassify
+        // an application close (e.g. 4401 → auth-required) as an abnormal
+        // offline. Briefly yield for the delegate notification (bounded:
+        // a socket-death close NEVER delivers a code — the maximum wait is
+        // wasted latency, and only on an already-failed connection).
+        var code = failedSession.lastCloseCode
+        if code == nil {
+            for _ in 0..<10 {
+                try? await Task.sleep(nanoseconds: 20_000_000) // 20ms x 10 = 200ms ceiling
+                code = failedSession.lastCloseCode
+                if code != nil { break }
+            }
+        }
+        if let code {
             let reason = CloseCodeMapping.reason(forRawCode: code)
             await teardown(reason, error: TransportError.connectionClosed(reason))
         } else {

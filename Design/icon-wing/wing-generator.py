@@ -14,7 +14,7 @@ PNG and SVG layers are the same wing.
 import os
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-OUT = "<repo-root>/Design/icon-wing"
+OUT = os.path.dirname(os.path.abspath(__file__))
 os.makedirs(OUT, exist_ok=True)
 
 # V6 palette

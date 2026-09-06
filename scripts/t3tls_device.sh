@@ -4,7 +4,11 @@
 # (scripted-fleet markers ABSENT, production markers PRESENT) BEFORE install.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-DEST_ID="<physical-device-id>"
+# shellcheck source=scripts/fleet_device.sh
+source "$(dirname "$0")/fleet_device.sh"
+# Physical device: HERMES_FLEET_DEVICE_ID override, or unambiguous single
+# eligible paired iPhone via machine-readable devicectl discovery.
+DEST_ID="$(resolve_fleet_device)"
 APP="build/T3DeviceDerivedData/Build/Products/Debug-iphoneos/HermesFleetApp.app"
 
 echo "=== xcodegen ==="

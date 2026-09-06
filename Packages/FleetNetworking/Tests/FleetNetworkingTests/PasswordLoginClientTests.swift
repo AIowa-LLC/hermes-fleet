@@ -76,7 +76,7 @@ final class PasswordLoginClientTests: XCTestCase {
 
     func testLoginDiscoversProviderThenCapturesSessionCookie() async throws {
         let client = PasswordLoginClient(
-            baseURL: URL(string: "http://<lan-ip>:9120")!,
+            baseURL: URL(string: "http://192.168.50.37:9120")!,
             urlSession: session)
 
         let cookie = try await client.login(username: "tony", password: "pw-123")
@@ -127,7 +127,7 @@ final class PasswordLoginClientTests: XCTestCase {
         PasswordFlowURLProtocol.loginStatus = 401
         defer { PasswordFlowURLProtocol.loginStatus = 200 }
         let client = PasswordLoginClient(
-            baseURL: URL(string: "http://<lan-ip>:9120")!,
+            baseURL: URL(string: "http://192.168.50.37:9120")!,
             urlSession: session)
         do {
             _ = try await client.login(username: "tony", password: "wrong")
@@ -191,7 +191,7 @@ final class PasswordFlowAuthenticatorTests: XCTestCase {
             gatewayID: GatewayID(rawValue: "lan-gateway"),
             strategy: .usernamePassword,
             credentialStore: store,
-            baseURL: URL(string: "http://<lan-ip>:9120")!,
+            baseURL: URL(string: "http://192.168.50.37:9120")!,
             urlSession: session)
 
         let result = try await auth.authenticate()
@@ -220,7 +220,7 @@ final class PasswordFlowAuthenticatorTests: XCTestCase {
             gatewayID: GatewayID(rawValue: "lan-gateway"),
             strategy: .usernamePassword,
             credentialStore: store,
-            baseURL: URL(string: "http://<lan-ip>:9120")!)
+            baseURL: URL(string: "http://192.168.50.37:9120")!)
         do {
             _ = try await auth.authenticate()
             XCTFail("expected missingUsername")

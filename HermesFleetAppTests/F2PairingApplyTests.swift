@@ -19,15 +19,15 @@ final class F2PairingApplyTests: XCTestCase {
     func testApplyPairingFillsEntireDraft() throws {
         let store = makeStoreWithAddDraft()
         let payload = PairingPayload(
-            url: "http://<lan-ip>:8642",
+            url: "http://192.168.50.37:8642",
             username: "fleet-operator",
             password: "test-pairing-secret-00000000000000000000000000001"
         )
 
         try store.applyPairing(payload.encoded())
 
-        XCTAssertEqual(store.displayName, "<lan-ip>", "display name derives from the endpoint host")
-        XCTAssertEqual(store.endpointText, "http://<lan-ip>:8642")
+        XCTAssertEqual(store.displayName, "192.168.50.37", "display name derives from the endpoint host")
+        XCTAssertEqual(store.endpointText, "http://192.168.50.37:8642")
         XCTAssertEqual(store.strategy, .usernamePassword)
         XCTAssertEqual(store.usernameText, "fleet-operator")
         XCTAssertEqual(store.passwordText, "test-pairing-secret-00000000000000000000000000001")

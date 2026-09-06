@@ -33,14 +33,14 @@ extension AppCompositionTests {
     /// The device-Debug branch (production graph) cannot be unit-tested here
     /// — it is enforced by `#if DEBUG && targetEnvironment(simulator)` around
     /// FleetSimulator (the fake fleet cannot even COMPILE into a device
-    /// build) and by the device-binary check in scripts/p05_device_deploy.sh.
+    /// build) and by the device-binary gate in the device build scripts (see scripts/u4_device.sh).
     @MainActor
     func testDefaultEnvironmentOnSimulatorIsScriptedFleet() async {
         let environment = FleetServiceGraph.makeDefaultEnvironment()
         await environment.load()
         let ids = environment.gateways.map(\.id.rawValue)
         XCTAssertTrue(
-            ids.contains("<dev-workstation>"),
+            ids.contains("workstation"),
             "simulator default environment must seed the scripted fleet (got: \(ids))"
         )
     }

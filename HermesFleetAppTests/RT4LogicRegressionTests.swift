@@ -21,8 +21,8 @@ final class RT4LogicRegressionTests: XCTestCase {
     /// (fix): healthy gateways with no bots contribute no section, so the
     /// sections array is empty → the No Bots state shows.
     func testP25AllHealthyZeroBotRosterHasNoSections() {
-        let macbook = makeGateway("<dev-workstation>")
-        let gaming = makeGateway("gaming-4090")
+        let macbook = makeGateway("workstation")
+        let gaming = makeGateway("render-box")
         let roster = FleetRoster(gateways: [macbook, gaming], bots: [])
         let snapshot = FleetRosterSnapshot(
             roster: roster,
@@ -40,7 +40,7 @@ final class RT4LogicRegressionTests: XCTestCase {
 
     /// Healthy gateways WITH bots still produce sections (mixed fleet).
     func testP25HealthyBotsStillProduceSections() {
-        let macbook = makeGateway("<dev-workstation>")
+        let macbook = makeGateway("workstation")
         let bot = FleetBot.bot(on: macbook.id, descriptor: ProfileDescriptor(
             name: "default", path: "~/.hermes/profiles/default",
             isDefault: true, model: "hermes", provider: "nous",
@@ -63,7 +63,7 @@ final class RT4LogicRegressionTests: XCTestCase {
     /// (partial-outage resilience must not regress).
     func testP25OutageSectionPreservedWhenHealthyGatewaysEmpty() {
         let arch = makeGateway("arch")
-        let macbook = makeGateway("<dev-workstation>")
+        let macbook = makeGateway("workstation")
         let roster = FleetRoster(gateways: [arch, macbook], bots: [])
         let snapshot = FleetRosterSnapshot(
             roster: roster,

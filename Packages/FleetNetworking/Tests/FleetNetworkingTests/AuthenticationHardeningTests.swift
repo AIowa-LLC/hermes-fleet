@@ -79,11 +79,11 @@ final class AuthenticationHardeningTests: XCTestCase {
 
     func testWSTicketClientDescriptionNeverIncludesSessionToken() {
         let client = WSTicketClient(
-            baseURL: URL(string: "http://<lan-ip>:9119")!,
+            baseURL: URL(string: "http://192.168.50.58:9119")!,
             sessionToken: "loopback-secret-token")
         XCTAssertFalse(client.description.contains("loopback-secret"))
         XCTAssertFalse("\(client)".contains("loopback-secret"))
-        XCTAssertTrue(client.description.contains("<lan-ip>"))
+        XCTAssertTrue(client.description.contains("192.168.50.58"))
     }
 
     // MARK: GatewayAuthenticator — ticket path
@@ -95,7 +95,7 @@ final class AuthenticationHardeningTests: XCTestCase {
             }
         }
         let auth = GatewayAuthenticator(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             strategy: .sessionToken,
             ticketMinter: Minter())
         let result = try await auth.authenticate()
@@ -114,7 +114,7 @@ final class AuthenticationHardeningTests: XCTestCase {
             }
         }
         let auth = GatewayAuthenticator(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             strategy: .sessionToken,
             ticketMinter: ExpiredMinter())
         do {
@@ -131,9 +131,9 @@ final class AuthenticationHardeningTests: XCTestCase {
 
     func testAuthenticatorLoopbackTokenPath() async throws {
         let store = StubCredentialStore()
-        try await store.saveCredential(GatewayCredential(rawValue: "loop-token"), for: GatewayID(rawValue: "<dev-workstation>"))
+        try await store.saveCredential(GatewayCredential(rawValue: "loop-token"), for: GatewayID(rawValue: "workstation"))
         let auth = GatewayAuthenticator(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             strategy: .loopbackToken,
             credentialStore: store)
         let result = try await auth.authenticate()
@@ -145,7 +145,7 @@ final class AuthenticationHardeningTests: XCTestCase {
 
     func testAuthenticatorLoopbackMissingThrows() async {
         let auth = GatewayAuthenticator(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             strategy: .loopbackToken,
             credentialStore: StubCredentialStore())
         do {
@@ -174,7 +174,7 @@ final class AuthenticationHardeningTests: XCTestCase {
             }
         )
         let gateway = try await registry.addGateway(GatewayRegistration(
-            id: GatewayID(rawValue: "<dev-workstation>"),
+            id: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:9119")!,
             authConfiguration: GatewayAuthConfiguration(strategy: .loopbackToken, credentialStored: false)
@@ -210,9 +210,9 @@ final class AuthenticationHardeningTests: XCTestCase {
         let session = URLSession(configuration: config)
 
         let store = StubCredentialStore()
-        try await store.saveCredential(GatewayCredential(rawValue: "dashboard-session-token"), for: GatewayID(rawValue: "<dev-workstation>"))
+        try await store.saveCredential(GatewayCredential(rawValue: "dashboard-session-token"), for: GatewayID(rawValue: "workstation"))
         let auth = GatewayAuthenticator(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             strategy: .sessionToken,
             credentialStore: store,
             baseURL: URL(string: "http://127.0.0.1:9119")!,
@@ -233,7 +233,7 @@ final class AuthenticationHardeningTests: XCTestCase {
 
     func testAuthenticatorNonePath() async throws {
         let auth = GatewayAuthenticator(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             strategy: .none)
         let result = try await auth.authenticate()
         XCTAssertEqual(result, .none)
@@ -323,7 +323,7 @@ final class AuthenticationHardeningTests: XCTestCase {
                 connectTimeout: .seconds(2), requestTimeout: .seconds(5))
         )
         let connection = SingleGatewayConnection(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:\(server.listeningPort)")!,
             transport: transport)

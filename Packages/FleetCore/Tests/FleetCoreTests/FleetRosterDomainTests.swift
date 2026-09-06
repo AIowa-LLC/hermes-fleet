@@ -7,7 +7,7 @@ import XCTest
 /// stays useful partially).
 final class FleetRosterDomainTests: XCTestCase {
 
-    private let gwA = GatewayID(rawValue: "<dev-workstation>")
+    private let gwA = GatewayID(rawValue: "workstation")
     private let gwB = GatewayID(rawValue: "arch")
 
     private func bot(_ slug: String, on gatewayID: GatewayID) -> FleetBot {
@@ -117,9 +117,9 @@ final class FleetRosterDomainTests: XCTestCase {
         snapshot.roster.upsertGateway(loadedGateway(gwA, name: "MacBook"))
         snapshot.roster.upsertBot(bot("b", on: gwB))
         snapshot.roster.upsertBot(bot("a", on: gwA))
-        XCTAssertEqual(snapshot.roster.allGateways.map(\.id.rawValue), ["arch", "<dev-workstation>"])
+        XCTAssertEqual(snapshot.roster.allGateways.map(\.id.rawValue), ["arch", "workstation"])
         XCTAssertEqual(
             snapshot.roster.allBots.map(\.route.id),
-            ["arch#b", "<dev-workstation>#a"])
+            ["arch#b", "workstation#a"])
     }
 }

@@ -73,7 +73,7 @@ final class AttachmentStagingViewModelTests: XCTestCase {
     // MARK: - Session double exposing the capability
 
     private final class AttachCapableSession: ConversationSessionProviding, AttachmentStagingCapable, @unchecked Sendable {
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
         let attachmentsBox = ScriptedAttachments()
         var status: GatewayStatus { .online }
         var liveness: ConnectionLivenessSnapshot? { nil }
@@ -115,7 +115,7 @@ final class AttachmentStagingViewModelTests: XCTestCase {
 
         var replay: any ReplayProviding { ReplayDouble() }
         private struct ReplayDouble: ReplayProviding {
-            let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+            let gatewayID = GatewayID(rawValue: "workstation")
             func watermarks() async -> [SessionEventWatermark] { [] }
             func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
         }
@@ -136,7 +136,7 @@ final class AttachmentStagingViewModelTests: XCTestCase {
         let session = AttachCapableSession()
         let cache = try SwiftDataCacheStore.makeInMemory()
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default"))
         let viewModel = ConversationViewModel(
             session: session,

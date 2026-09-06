@@ -133,7 +133,7 @@ final class MemoryGraphTests: XCTestCase {
     func testScrubRevealCutsBucketsChronologically() async throws {
         let graph = fixtureGraph(nodeCount: 24) // 8 buckets
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: ScriptedLearningSeam(graph: graph),
             snapshotStore: nil)
         await vm.start(profile: nil)
@@ -159,7 +159,7 @@ final class MemoryGraphTests: XCTestCase {
         let seam = ScriptedLearningSeam(graph: graph)
         let store = InMemorySnapshotStore()
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: store)
         await vm.start(profile: "default")
@@ -176,7 +176,7 @@ final class MemoryGraphTests: XCTestCase {
         let seam = FailingLearningSeam()
         let store = InMemorySnapshotStore()
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: store)
         await vm.start(profile: nil)
@@ -189,9 +189,9 @@ final class MemoryGraphTests: XCTestCase {
         let graph = fixtureGraph(nodeCount: 12)
         let seam = FailingLearningSeam()
         let store = InMemorySnapshotStore()
-        try await store.save(graph, for: GatewayID(rawValue: "<dev-workstation>"))
+        try await store.save(graph, for: GatewayID(rawValue: "workstation"))
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: store)
         await vm.start(profile: nil)
@@ -207,7 +207,7 @@ final class MemoryGraphTests: XCTestCase {
         let graph = fixtureGraph(nodeCount: 12)
         let seam = ScriptedLearningSeam(graph: graph)
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: nil)
         await vm.start(profile: nil)
@@ -222,7 +222,7 @@ final class MemoryGraphTests: XCTestCase {
     func testEditNodeReloadsGraphAndSurfacesMessage() async throws {
         let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: nil)
         await vm.start(profile: nil)
@@ -242,7 +242,7 @@ final class MemoryGraphTests: XCTestCase {
         let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
         seam.editRefusal = "empty memory — use delete to remove it"
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: nil)
         await vm.start(profile: nil)
@@ -260,7 +260,7 @@ final class MemoryGraphTests: XCTestCase {
         let seam = ScriptedLearningSeam(graph: fixtureGraph(nodeCount: 12))
         let store = InMemorySnapshotStore()
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: store)
         await vm.start(profile: nil)
@@ -286,7 +286,7 @@ final class MemoryGraphTests: XCTestCase {
         seam.deleteRefusal =
             "'apple-product-factory' is pinned — unpin it first (hermes curator unpin apple-product-factory)"
         let vm = MemoryGraphViewModel(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             learning: seam,
             snapshotStore: nil)
         await vm.start(profile: nil)

@@ -54,7 +54,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
     // MARK: - Session double exposing the capability
 
     private final class ReactionCapableSession: ConversationSessionProviding, ReactionCapable, @unchecked Sendable {
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
         let reactionsBox = ScriptedReactions()
         var status: GatewayStatus { .online }
         var liveness: ConnectionLivenessSnapshot? { nil }
@@ -100,7 +100,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
 
         var replay: any ReplayProviding { ReplayDouble() }
         private struct ReplayDouble: ReplayProviding {
-            let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+            let gatewayID = GatewayID(rawValue: "workstation")
             func watermarks() async -> [SessionEventWatermark] { [] }
             func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
         }
@@ -128,7 +128,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
         session.conversationDouble.setResumeMessages(resumeMessages)
         let cache = try SwiftDataCacheStore.makeInMemory()
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default"))
         let viewModel = ConversationViewModel(
             session: session,
@@ -321,7 +321,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
         let session = PlainSession()
         let cache = try SwiftDataCacheStore.makeInMemory()
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default"))
         let viewModel = ConversationViewModel(
             session: session,
@@ -342,7 +342,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
     /// only (no ReactionCapable), so the VM's one-cast falls through to the
     /// fail-closed default.
     private final class PlainSession: ConversationSessionProviding, @unchecked Sendable {
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
         var status: GatewayStatus { .online }
         var liveness: ConnectionLivenessSnapshot? { nil }
         func adoptedReady() async -> GatewayReadyAdoption? {
@@ -373,7 +373,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
             func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
         }
         private struct PlainReplay: ReplayProviding {
-            let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+            let gatewayID = GatewayID(rawValue: "workstation")
             func watermarks() async -> [SessionEventWatermark] { [] }
             func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
         }

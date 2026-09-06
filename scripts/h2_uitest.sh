@@ -6,7 +6,7 @@
 # No secrets printed (creds are read at runtime by the test from
 # /tmp/hermes_lan_surface/.cred).
 set -u
-REPO=<repo-root>
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO" || exit 1
 
 SIM="iPhone 17 Pro"
@@ -18,13 +18,15 @@ mkdir -p "$E" "$E/screenshots"
 rm -rf "$DD" "$XCRESULT"
 
 # Forwarder (P3-accepted pattern): the simulator app cannot reach the Mac's
-# own LAN IP <lan-ip> due to iOS local-network privacy; loopback IS
-# reachable. 19121 -> LAN surface with Host header rewrite.
+# own LAN IP (HERMES_FLEET_LAN_HOST, default 127.0.0.1) due to iOS
+# local-network privacy; loopback IS reachable. 19121 -> LAN surface with
+# Host header rewrite.
 FWD_PIDS=""
+LAN_HOST="${HERMES_FLEET_LAN_HOST:?Set HERMES_FLEET_LAN_HOST to YOUR gateway LAN host — this script targets no infrastructure by default}"
 if ! nc -z -w 2 127.0.0.1 19121 2>/dev/null; then
-  python3 scripts/t2_tcp_forward.py 19121 <lan-ip> 9120 >> /tmp/h2_fwd_19121.log 2>&1 &
+  python3 scripts/t2_tcp_forward.py 19121 "$LAN_HOST" "${HERMES_FLEET_LAN_PORT:-9120}" >> /tmp/h2_fwd_19121.log 2>&1 &
   FWD_PIDS="$FWD_PIDS $!"
-  echo "  forwarder 19121 -> <lan-ip>:9120 started (pid $!)"
+  echo "  forwarder 19121 -> $LAN_HOST:${HERMES_FLEET_LAN_PORT:-9120} started (pid $!)"
 else
   echo "  forwarder 19121 already up"
 fi
@@ -71,13 +73,16 @@ else
 fi
 
 echo "=== [3/5] LAN gateway reachability check ==="
-python3 - <<'PYEOF'
-import urllib.request
+LAN_PORT="${HERMES_FLEET_LAN_PORT:-9120}"
+LAN_URL="http://$LAN_HOST:$LAN_PORT"
+python3 - "$LAN_URL" <<'PYEOF'
+import sys, urllib.request
+url = sys.argv[1]
 try:
-    r = urllib.request.urlopen("http://<lan-ip>:9120/", timeout=5)
-    print(f"  LAN <lan-ip>:9120 HTTP {r.status}")
+    r = urllib.request.urlopen(url + "/", timeout=5)
+    print(f"  gateway {url} HTTP {r.status}")
 except Exception as e:
-    print(f"  WARN: LAN <lan-ip>:9120 unreachable: {e}")
+    print(f"  WARN: gateway {url} unreachable: {e}")
 PYEOF
 
 echo "=== [4/5] Run H2HealthDashboardUITests (Release) ==="

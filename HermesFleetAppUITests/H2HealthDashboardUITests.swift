@@ -6,7 +6,7 @@ import XCTest
 /// Drives the RELEASE app (production graph: real Keychain + live transport +
 /// file-backed SwiftData cache) on the iOS Simulator. Like T2, the simulator
 /// app reaches the Mac's LAN surface through the loopback forwarder
-/// (19121 -> <lan-ip>:9120) started by scripts/h2_uitest.sh.
+/// (19121 -> 192.168.50.37:9120) started by scripts/h2_uitest.sh.
 ///
 /// Flow:
 ///   1. add the LAN gateway via the U2 UI (username/password from .cred)

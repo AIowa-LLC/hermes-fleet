@@ -43,7 +43,7 @@ final class U4DashboardUITests: XCTestCase {
 
         // Registry truth: the scripted fleet's gateway renders by row id
         // (scroll into view — SwiftUI ScrollViews expose content lazily).
-        let row = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.gateway.<dev-workstation>"), in: app)
+        let row = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.gateway.workstation"), in: app)
         XCTAssertTrue(row.exists, "a registered gateway must render a dashboard row")
         // The row combines its children; name + endpoint subtitle both render.
         XCTAssertTrue(
@@ -57,8 +57,8 @@ final class U4DashboardUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        // Roster truth: a real bot row (<dev-workstation>#default) with subtitle.
-        let row = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.bot.<dev-workstation>#default"), in: app)
+        // Roster truth: a real bot row (workstation#default) with subtitle.
+        let row = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.bot.workstation#default"), in: app)
         XCTAssertTrue(row.exists, "a roster bot must render an Known Bots row")
         // Honest last-active from the scripted latest session (never
         // fabricated uptime): the subtitle contains "· ".

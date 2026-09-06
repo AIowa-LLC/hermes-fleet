@@ -91,8 +91,8 @@ final class GatewayPersistenceRelaunchTests: XCTestCase {
         )
     }
 
-    private let dogfoodEndpoint = URL(string: "http://<tailnet-ip>:9120")!
-    private let dogfoodID = GatewayID(rawValue: "<tailnet-ip>:9120")
+    private let dogfoodEndpoint = URL(string: "http://100.100.200.61:9120")!
+    private let dogfoodID = GatewayID(rawValue: "100.100.200.61:9120")
 
     // MARK: the P0-4 acceptance
 
@@ -108,7 +108,7 @@ final class GatewayPersistenceRelaunchTests: XCTestCase {
         )
         let env1 = makeEnvironment(registry: registry1)
         let added = try await env1.addGateway(GatewayRegistration(
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: dogfoodEndpoint,
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: false)
         ))
@@ -128,7 +128,7 @@ final class GatewayPersistenceRelaunchTests: XCTestCase {
         await env2.load()
 
         XCTAssertEqual(env2.gateways.map(\.id), [dogfoodID], "gateway must survive relaunch")
-        XCTAssertEqual(env2.gateways.first?.displayName, "Arch Lab")
+        XCTAssertEqual(env2.gateways.first?.displayName, "Lab Node")
         XCTAssertEqual(env2.gateways.first?.endpoint, dogfoodEndpoint)
         XCTAssertEqual(
             env2.connectionStates[dogfoodID], .idle,
@@ -144,7 +144,7 @@ final class GatewayPersistenceRelaunchTests: XCTestCase {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
             id: dogfoodID.rawValue,
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: dogfoodEndpoint.absoluteString
         ))
 

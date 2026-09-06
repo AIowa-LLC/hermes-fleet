@@ -46,7 +46,7 @@ final class H1AppLockUITests: XCTestCase {
         attachScreenshot(of: app, name: "h1-cold-launch-LOCKED")
 
         // Roster/conversation content must NOT render behind the lock.
-        XCTAssertFalse(app.staticTexts["MacBook M5"].exists,
+        XCTAssertFalse(app.staticTexts["Workstation"].exists,
                        "roster content must not render while the app is locked")
 
         // Use Passcode → scripted passcode success → content renders.
@@ -70,7 +70,7 @@ final class H1AppLockUITests: XCTestCase {
         // button still exists) and a slow post-unlock roster render (button
         // already gone — keep waiting, never re-tap a vanished lock screen).
         let retryDeadline = Date().addingTimeInterval(20)
-        var rosterVisible = app.staticTexts["MacBook M5"].waitForExistence(timeout: 5)
+        var rosterVisible = app.staticTexts["Workstation"].waitForExistence(timeout: 5)
         while !rosterVisible, Date() < retryDeadline {
             if passcodeButton.exists {
                 // First tap raced the transition — the passcode view is still
@@ -78,7 +78,7 @@ final class H1AppLockUITests: XCTestCase {
                 // has settled (bounded retries keep this deterministic).
                 passcodeButton.tap()
             }
-            rosterVisible = app.staticTexts["MacBook M5"].waitForExistence(timeout: 5)
+            rosterVisible = app.staticTexts["Workstation"].waitForExistence(timeout: 5)
         }
         XCTAssertTrue(rosterVisible,
                       "roster should render after a successful passcode unlock")
@@ -94,8 +94,8 @@ final class H1AppLockUITests: XCTestCase {
         app.launch()
 
         // Scripted biometric success → the gate releases and the roster
-        // renders (the DEBUG fleet's first gateway is MacBook M5).
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        // renders (the DEBUG fleet's first gateway is Workstation).
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "scripted biometric success should unlock to the roster")
         attachScreenshot(of: app, name: "h1-biometric-success-unlocked")
     }
@@ -112,7 +112,7 @@ final class H1AppLockUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "roster reachable after default-ON lock + biometric unlock")
 
         // Open Settings (U3: a root tab, no longer a Gateways sheet) → the
@@ -139,7 +139,7 @@ final class H1AppLockUITests: XCTestCase {
         app.terminate()
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "roster should render immediately when the toggle is OFF")
         XCTAssertFalse(app.buttons["fleet.app-lock.passcode.unlock"].exists,
                        "no lock screen when the persisted toggle is OFF")

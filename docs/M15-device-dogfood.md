@@ -42,21 +42,21 @@ Total package tests: **309, 0 failures**.
 - Screenshot: `docs/M15-dogfood-simulator.png` — app renders "Hermes Fleet" title, "No Gateways"
   empty state, Black/White/Signal Red theme, correct M14 identity.
 
-## 5. Own-device build + install (free-team sideload, iPhone 16 Pro Max)
+## 5. Own-device build + install (free-team sideload, a paired iPhone)
 
 - Build: `xcodebuild -sdk iphoneos -destination 'generic/platform=iOS' -allowProvisioningUpdates`
-  `CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<personal-team-id>` — **BUILD SUCCEEDED**.
+  `CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=(personal team, redacted)` — **BUILD SUCCEEDED**.
 - Artifact: `build/DerivedDataM15Device/Build/Products/Debug-iphoneos/HermesFleetApp.app`
-- Codesign (by reference, no key material): Authority `Apple Development: <personal Apple ID> (<personal-cert-id>)`,
-  TeamIdentifier `<personal-team-id>`, Identifier `<legacy-personal-bundle-id>`.
-- Entitlements: `application-identifier <personal-team-id>.<legacy-personal-bundle-id>`,
-  `get-task-allow=true` (development), `com.apple.developer.team-identifier <personal-team-id>`.
-- Embedded provisioning profile: present (free-team development profile, team <personal-team-id>).
-- Install: `devicectl device install app` → **succeeded** on iPhone 16 Pro Max
-  (`<physical-device-id>`).
-- Launch: `devicectl device process launch <legacy-personal-bundle-id>` → **launched**; process
+- Codesign (by reference, no key material): Authority a personal Apple Development identity (redacted),
+  TeamIdentifier (redacted), Identifier `the app bundle identifier`.
+- Entitlements: `application-identifier` (team-qualified, redacted),
+  `get-task-allow=true` (development), `com.apple.developer.team-identifier` (redacted).
+- Embedded provisioning profile: present (free-team development profile, a free personal team (ID redacted)).
+- Install: `devicectl device install app` → **succeeded** on a paired iPhone
+  (a paired iPhone (UDID redacted — device selection is parameterized via `HERMES_FLEET_DEVICE_ID`)).
+- Launch: `devicectl device process launch the app bundle identifier` → **launched**; process
   confirmed running in `devicectl device info processes` (HermesFleetApp, PID observed).
-- Installed app record: `Hermes Fleet   <legacy-personal-bundle-id>   0.1.0   1`.
+- Installed app record: `Hermes Fleet   the app bundle identifier   0.1.0   1`.
 
 Checksums (recorded locally, no secrets):
 - device binary sha256: `e9dae3e4e7a871a79a722d07626fa53663f7726851f6fefab1922ba92ae01109`
@@ -83,7 +83,7 @@ The 10-step §32 walkthrough was attempted on the booted simulator (same build a
 
 **Why:** M5–M11 delivered the **service-layer seams and protocols at package level** (FleetCore/
 FleetNetworking: transport, replay, roster, conversation, registry, auth — all tested, 309 green),
-and the gateway is reachable (127.0.0.1:8642, <tailnet-ip>:8642, 127.0.0.1:9900 all open), but
+and the gateway is reachable (127.0.0.1:8642, 100.100.200.61:8642, 127.0.0.1:9900 all open), but
 the **app target's UI composition never wires those services into screens**. The installed app shows
 the M14-themed "No Gateways" empty dashboard. The M15 milestone gates on §32 DoD, which requires the
 conversation/multi-gateway UI that is not yet implemented in the app target.
@@ -97,7 +97,7 @@ This is a genuine capability gap in the current build, not a tooling or environm
 
 ## 7. Distribution-readiness note — HOLD (as expected)
 
-- Team `<personal-team-id>` = Tony's **free personal team** (Apple ID <personal Apple ID>).
+- Signing used a **free personal team** (IDs redacted for the public tree).
 - Codesigning identities: 1 valid Apple Development cert; **0 Distribution / Developer ID certs**.
 - No notarytool credential profile; no App Store Connect access; 7-day free-team profile rotation.
 - Own-device sideload (as executed here) is the supported path; TestFlight / App Store / Developer ID

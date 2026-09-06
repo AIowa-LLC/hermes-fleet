@@ -76,7 +76,7 @@ final class S3CleartextWarningUITests: XCTestCase {
         nameField.tap()
         nameField.typeText("LAN Gateway")
         endpointField.tap()
-        endpointField.typeText("http://<lan-ip>:9120")
+        endpointField.typeText("http://192.168.50.37:9120")
 
         // No warning for an RFC1918 private host; Save enabled immediately.
         let warning = firstMatch(in: app, identifier: "fleet.gateways.form.cleartext-warning")

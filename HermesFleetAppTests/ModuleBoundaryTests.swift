@@ -11,10 +11,10 @@ import FleetUI
 @MainActor
 final class ModuleBoundaryTests: XCTestCase {
     func testNetworkingDependsOnCore() {
-        let gateway = FleetGateway(id: GatewayID(rawValue: "<dev-workstation>"), displayName: "MacBook")
+        let gateway = FleetGateway(id: GatewayID(rawValue: "workstation"), displayName: "MacBook")
         XCTAssertEqual(
             FleetNetworkingPlaceholder.describe(gateway),
-            "<dev-workstation> · MacBook"
+            "workstation · MacBook"
         )
     }
 
@@ -23,7 +23,7 @@ final class ModuleBoundaryTests: XCTestCase {
     }
 
     func testPersistenceDependsOnCore() {
-        let gateway = FleetGateway(id: GatewayID(rawValue: "gaming-4090"), displayName: "4090")
+        let gateway = FleetGateway(id: GatewayID(rawValue: "render-box"), displayName: "4090")
         XCTAssertEqual(FleetPersistencePlaceholder.displayName(of: gateway), "4090")
     }
 
@@ -55,7 +55,7 @@ final class ModuleBoundaryTests: XCTestCase {
             configuration: config
         )
         let connection: any GatewayConnectivityProviding = SingleGatewayConnection(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: base,
             transport: transport
@@ -85,7 +85,7 @@ final class ModuleBoundaryTests: XCTestCase {
             configuration: config
         )
         let readClient: any SessionHistoryProviding = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport
         )
         // Not connected → the read path classifies, it does not hang or mutate.
@@ -119,7 +119,7 @@ final class ModuleBoundaryTests: XCTestCase {
             configuration: config
         )
         let conversation: any ConversationProviding = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport
         )
         // Not connected → the mutating seam classifies; it does not hang.
@@ -152,11 +152,11 @@ final class ModuleBoundaryTests: XCTestCase {
             configuration: config
         )
         let history: any SessionHistoryProviding = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport
         )
         let replay: any ReplayProviding = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: history
         )
@@ -188,7 +188,7 @@ final class ModuleBoundaryTests: XCTestCase {
             }
         )
         let endpoint = URL(string: "http://127.0.0.1:9119")!
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         let gateway = try await service.addGateway(
             GatewayRegistration(id: id, displayName: "MacBook", endpoint: endpoint))
         XCTAssertEqual(gateway.displayName, "MacBook")
@@ -217,7 +217,7 @@ final class ModuleBoundaryTests: XCTestCase {
         // The "Keychain safe" acceptance (spec §16/§27/§31 Security): gateway
         // credentials use GenericPassword, WhenUnlockedThisDeviceOnly, no
         // iCloud sync — asserted from the exact attributes the store builds.
-        let attributes = KeychainCredentialStore.baseAttributes(account: "<dev-workstation>")
+        let attributes = KeychainCredentialStore.baseAttributes(account: "workstation")
         XCTAssertEqual(attributes[kSecClass as String] as? String, kSecClassGenericPassword as String)
         XCTAssertEqual(
             attributes[kSecAttrAccessible as String] as? String,
@@ -276,7 +276,7 @@ final class ModuleBoundaryTests: XCTestCase {
 
         // Two registered gateways, both unreachable via stubs.
         _ = try await registry.addGateway(GatewayRegistration(
-            id: GatewayID(rawValue: "<dev-workstation>"), displayName: "MacBook",
+            id: GatewayID(rawValue: "workstation"), displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:8642")!))
         _ = try await registry.addGateway(GatewayRegistration(
             id: GatewayID(rawValue: "arch"), displayName: "Arch",
@@ -288,7 +288,7 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(snapshot.reachableGateways.count, 0)
         XCTAssertEqual(snapshot.unreachableGateways.count, 2)
         XCTAssertEqual(
-            snapshot.outcome(for: GatewayID(rawValue: "<dev-workstation>")),
+            snapshot.outcome(for: GatewayID(rawValue: "workstation")),
             .failed(status: .offline, detail: "gateway unreachable"))
         XCTAssertEqual(snapshot.outcome(for: GatewayID(rawValue: "arch")),
             .failed(status: .offline, detail: "gateway unreachable"))
@@ -303,7 +303,7 @@ final class ModuleBoundaryTests: XCTestCase {
         // §31 Security; synthesis §12): tokens use GenericPassword,
         // WhenUnlockedThisDeviceOnly, no iCloud sync — asserted from the exact
         // attributes the store builds.
-        let attributes = KeychainTokenStore.baseAttributes(account: "<dev-workstation>")
+        let attributes = KeychainTokenStore.baseAttributes(account: "workstation")
         XCTAssertEqual(attributes[kSecClass as String] as? String, kSecClassGenericPassword as String)
         XCTAssertEqual(
             attributes[kSecAttrAccessible as String] as? String,
@@ -375,7 +375,7 @@ final class ModuleBoundaryTests: XCTestCase {
 
         let store = try SwiftDataCacheStore.makeFileBacked(
             storeURL: dir.appendingPathComponent("cache.store"))
-        let m5 = GatewayID(rawValue: "<dev-workstation>")
+        let m5 = GatewayID(rawValue: "workstation")
         let arch = GatewayID(rawValue: "arch")
 
         let history = SessionHistory(sessionID: "s1", count: 1, messages: [
@@ -393,7 +393,7 @@ final class ModuleBoundaryTests: XCTestCase {
         let epoch = try await store.loadReplayEpoch(for: m5)
         XCTAssertEqual(epoch, "epoch-9")
 
-        // Unrelated gateway untouched by reset of <dev-workstation>.
+        // Unrelated gateway untouched by reset of workstation.
         try await store.saveReplayEpoch("arch-epoch", for: arch)
         try await store.resetForReplayEpochChange(gatewayID: m5)
         let archEpoch = try await store.loadReplayEpoch(for: arch)
@@ -563,7 +563,7 @@ final class ModuleBoundaryTests: XCTestCase {
             }
         )
         _ = try await registry.addGateway(GatewayRegistration(
-            id: GatewayID(rawValue: "<dev-workstation>"), displayName: "MacBook",
+            id: GatewayID(rawValue: "workstation"), displayName: "MacBook",
             endpoint: URL(string: "http://127.0.0.1:8642")!))
 
         let sessionList: any SessionListProviding = GatewaySessionListService(
@@ -574,7 +574,7 @@ final class ModuleBoundaryTests: XCTestCase {
             }
         )
         let route = Route(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
         )
         do {
@@ -607,7 +607,7 @@ final class ModuleBoundaryTests: XCTestCase {
             configuration: config
         )
         let session: any ConversationSessionProviding = GatewayConversationSession(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             displayName: "MacBook",
             endpoint: base,
             transport: transport
@@ -656,7 +656,7 @@ final class ModuleBoundaryTests: XCTestCase {
 
         let store = try SwiftDataCacheStore.makeFileBacked(
             storeURL: dir.appendingPathComponent("cache.store"))
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
 
         let first: any ConnectionHealthAccumulating = GatewayHealthStatsAccumulator(store: store)
         await first.record(.connectStarted, for: id)

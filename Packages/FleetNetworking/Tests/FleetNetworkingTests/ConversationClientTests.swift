@@ -95,7 +95,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let session = try await client.createSession(title: "Research", profile: "default", model: "deepseek-v4-flash", provider: "nous", cols: 80)
 
         XCTAssertEqual(session.sessionID, "abc12345")
@@ -139,7 +139,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let session = try await client.createSession(title: nil, profile: nil, model: nil, provider: nil, cols: nil)
         XCTAssertEqual(session.messageCount, 2)
         XCTAssertEqual(session.messages.count, 2)
@@ -177,7 +177,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let session = try await client.resumeSession(sessionID: "sess-001")
         XCTAssertEqual(session.sessionID, "sess-001")
         XCTAssertEqual(session.storedSessionID, "stored-001")
@@ -208,7 +208,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.resumeSession(sessionID: "stale")
             XCTFail("expected sessionNotFound")
@@ -238,7 +238,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             // A safe, non-empty id passes the M9 client guard and reaches the
             // gateway, which answers 4006 "session_id required" → mapped to
@@ -276,7 +276,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let submission = try await client.submitPrompt(sessionID: "sess-001", text: "summarize the plan")
         XCTAssertTrue(submission.isStreaming)
         XCTAssertEqual(captured.sessionID, "sess-001")
@@ -302,7 +302,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.submitPrompt(sessionID: "gone", text: "hi")
             XCTFail("expected sessionNotFound")
@@ -336,7 +336,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let result = try await client.interrupt(sessionID: "sess-001")
         XCTAssertTrue(result.isInterrupted)
         XCTAssertNil(result.turnIsolation)
@@ -347,7 +347,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testAllConversationRPCRsNotConnectedWhenTransportNotConnected() async {
         let transport = makeTransport(serverPort: 1) // never connected
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
 
         let calls: [() async throws -> Void] = [
             { _ = try await client.createSession(title: nil, profile: nil, model: nil, provider: nil, cols: nil) },
@@ -403,7 +403,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
 
         // Subscribe BEFORE submitting so no streamed event is missed.
         let collector = EventCollector()
@@ -485,7 +485,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let collector = EventCollector()
         let subscription = Task {
             for await event in client.events { collector.append(event) }
@@ -532,7 +532,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let collector = EventCollector()
         let subscription = Task {
             for await event in client.events { collector.append(event) }
@@ -585,7 +585,7 @@ final class ConversationClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
 
         // Subscribe and iterate the stream concurrently with the RPCs; the
         // subscription itself must not emit any request.
@@ -622,7 +622,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testResumeSessionRejectsUnsafeSessionKeyBeforeTransport() async {
         let client = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.resumeSession(sessionID: "../x")
             XCTFail("expected invalidSessionKey")
@@ -635,7 +635,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testResumeSessionRejectsEmptyKeyBeforeTransport() async {
         let client = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.resumeSession(sessionID: "")
             XCTFail("expected invalidSessionKey")
@@ -648,7 +648,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testSubmitPromptRejectsUnsafeSessionKeyBeforeTransport() async {
         let client = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.submitPrompt(sessionID: "a/b", text: "hi")
             XCTFail("expected invalidSessionKey")
@@ -663,7 +663,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testInterruptRejectsUnsafeSessionKeyBeforeTransport() async {
         let client = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.interrupt(sessionID: "..\\x")
             XCTFail("expected invalidSessionKey")
@@ -678,7 +678,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testCreateSessionRejectsUnsafeProfileBeforeTransport() async {
         let client = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.createSession(title: nil, profile: "../x", model: nil, provider: nil, cols: nil)
             XCTFail("expected invalidSessionKey")
@@ -693,7 +693,7 @@ final class ConversationClientTests: XCTestCase {
 
     func testCreateSessionSafeProfileStillChecksConnection() async {
         let client = GatewayConversationClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.createSession(title: nil, profile: "researcher", model: nil, provider: nil, cols: nil)
             XCTFail("expected notConnected")

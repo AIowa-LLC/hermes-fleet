@@ -6,7 +6,7 @@ import FleetNetworking
 /// P0-9 (t_635bbf99) — tunnel auth-strategy mismatch classification.
 ///
 /// The QA-verified live-wire defect: the converged tunnel
-/// (<legacy-fleet-endpoint>) authenticates ONLY via the username/password
+/// (the HTTPS gateway) authenticates ONLY via the username/password
 /// cookie flow. A stored token strategy mints ws-ticket with the
 /// `X-Hermes-Session-Token` header, and the tunnel answers
 /// HTTP 401 `{"reason":"no_cookie"}`. Before P0-9 that collapsed into
@@ -210,7 +210,7 @@ final class P0NineAuthStrategyMismatchTests: XCTestCase {
         // The migration now aligns that strategy to usernamePassword.
         let record = StoredGatewayRecord(
             id: "arch",
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: "http://127.0.0.1:8642",
             authConfiguration: GatewayAuthConfiguration(strategy: .loopbackToken, credentialStored: true),
             authConfigured: true
@@ -227,13 +227,13 @@ final class P0NineAuthStrategyMismatchTests: XCTestCase {
         // now covers the failure); rows already on the default endpoint and
         // unknown rows are untouched (idempotence + other-gateway safety).
         let tokenRow = StoredGatewayRecord(
-            id: "tok", displayName: "Tok", endpoint: "http://<lan-ip>:8642",
+            id: "tok", displayName: "Tok", endpoint: "http://192.168.50.20:8642",
             authConfiguration: GatewayAuthConfiguration(strategy: .sessionToken, credentialStored: true))
         let currentRow = StoredGatewayRecord(
             id: "cur", displayName: "Cur", endpoint: "https://fleet.example.dev",
             authConfiguration: GatewayAuthConfiguration(strategy: .loopbackToken, credentialStored: true))
         let strangerRow = StoredGatewayRecord(
-            id: "other", displayName: "Other", endpoint: "http://<tailnet-ip>:9120",
+            id: "other", displayName: "Other", endpoint: "https://other-gateway.example.net:9120",
             authConfiguration: GatewayAuthConfiguration(strategy: .loopbackToken, credentialStored: true))
         let migrated = EndpointMigration.migrateEndpoints(
             in: [tokenRow, currentRow, strangerRow],

@@ -28,7 +28,7 @@ final class U3TabNavigationUITests: XCTestCase {
 
         // Home is the initial tab and shows the real dashboard (the scripted
         // fleet's gateways render in the summary section — real data only).
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "Home should render the fleet dashboard with real scripted-fleet data")
         XCTAssertTrue(app.navigationBars["Command"].exists, "Home tab is initially selected")
         attachScreenshot(of: app, name: "u3-home-five-tabs")
@@ -39,7 +39,7 @@ final class U3TabNavigationUITests: XCTestCase {
         app.launch()
 
         UITabNavigation.openBotsTab(app)
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
                       "the roster should list the scripted fleet's gateway sections")
         attachScreenshot(of: app, name: "u3-bots-roster")
     }
@@ -62,7 +62,7 @@ final class U3TabNavigationUITests: XCTestCase {
         // Real data only: the scripted fleet's gateways render a row each —
         // with honest "no activity recorded yet" lines until real connection
         // events accumulate (no fabricated timeline).
-        let row = firstMatch(in: app, identifier: "fleet.activity.row.<dev-workstation>")
+        let row = firstMatch(in: app, identifier: "fleet.activity.row.workstation")
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "Activity must list the scripted fleet's gateways from real data")
         attachScreenshot(of: app, name: "u3-activity-real-summary")
@@ -91,10 +91,10 @@ final class U3TabNavigationUITests: XCTestCase {
 
         // Drill in on the Gateways tab: gateway → bots → bot detail.
         UITabNavigation.openGatewaysTab(app)
-        XCTAssertTrue(app.staticTexts["MacBook M5"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.<dev-workstation>"))
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
+        tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.<dev-workstation>#default"))
+        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")

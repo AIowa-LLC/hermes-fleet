@@ -1,28 +1,29 @@
 import XCTest
 @testable import HermesFleetApp
 
-/// F2 (t_b678fb38) — LIVE tunnel probe: proves the app binary reaches the
-/// converged public HTTPS surface (`https://<legacy-fleet-endpoint>`) with NO
-/// ATS exceptions needed — the default ATS policy itself allows it.
+/// LIVE endpoint probe: proves the app binary reaches an HTTPS gateway
+/// surface with NO ATS exceptions needed — the default ATS policy itself
+/// allows it.
 ///
-/// F1 history: this probe asserted the private tailnet hosts were reachable
-/// through their (now-stripped) raw-IP NSExceptionDomains entries. F2
-/// converges the fleet on the tunnel; the pre-auth providers endpoint must
-/// answer 200 over TLS from the app sandbox with zero per-domain ATS
-/// configuration.
+/// OPT-IN: the probe requires `HERMES_FLEET_LIVE_ENDPOINT` (a public HTTPS
+/// origin you control) in the test-runner environment. When the variable is
+/// absent the probe SKIPs — it never falls back to any compiled or
+/// maintainer-owned endpoint.
 ///
-/// DEVICE-ONLY: `#if !targetEnvironment(simulator)` so the simulator-based
-/// CI unit bundle auto-excludes it (the probe requires the live tunnel).
-/// Run on device:
+/// F1/F2 history: this probe asserted a maintainer-owned tunnel and private
+/// tailnet hosts. The public-release pass made the endpoint fully external:
+/// run it against your own gateway with
+///   HERMES_FLEET_LIVE_ENDPOINT=https://your-gateway.example.net \
 ///   xcodebuild test -destination 'platform=iOS,id=<UDID>' \
 ///     -only-testing:HermesFleetAppTests/F1LiveATSProbeTests
 #if !targetEnvironment(simulator)
 final class F1LiveATSProbeTests: XCTestCase {
 
-    /// The converged endpoint, read from the app's shipped configuration
-    /// (data, not a compiled Swift literal).
+    /// The live endpoint, supplied explicitly via environment (never a
+    /// compiled or maintainer-owned literal).
     private var endpoint: String {
-        Bundle.main.object(forInfoDictionaryKey: "FleetDefaultEndpoint") as? String ?? ""
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_ENDPOINT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     private func probe(_ endpoint: String) async throws {
@@ -36,7 +37,10 @@ final class F1LiveATSProbeTests: XCTestCase {
                        "\(endpoint) must be reachable over HTTPS under DEFAULT ATS (got \(http.statusCode)) — the converged tunnel is down or ATS-regressed")
     }
 
-    func testTunnelProvidersReachableOverHTTPS() async throws {
+    func testLiveProvidersReachableOverHTTPS() async throws {
+        guard !endpoint.isEmpty else {
+            throw XCTSkip("HERMES_FLEET_LIVE_ENDPOINT not set — live ATS probe is opt-in (point it at your own HTTPS gateway)")
+        }
         try await probe(endpoint)
     }
 }

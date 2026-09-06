@@ -126,7 +126,7 @@ public struct FleetTabView: View {
         if autoNav == "workspace" { selection = .workspace }
         if autoNav == "control" { selection = .control }
         if autoNav == "command-center" { showingCommandCenter = true }
-        let gateway = environment.gateways.first { $0.id.rawValue == "<dev-workstation>" } ?? environment.gateways.first
+        let gateway = environment.gateways.first { $0.id.rawValue == "workstation" } ?? environment.gateways.first
         if let gateway {
             switch autoNav {
             case "cron": paths[.home] = [.cron(gateway.id)]

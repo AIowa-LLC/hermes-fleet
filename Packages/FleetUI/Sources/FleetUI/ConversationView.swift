@@ -1266,7 +1266,7 @@ private struct ConversationBubbleView: View {
                 health: PreviewHealthAccumulator()
             ),
             route: Route(
-                gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+                gatewayID: GatewayID(rawValue: "workstation"),
                 profileSlug: ProfileSlug(rawValue: "default")
             ),
             sessionID: nil

@@ -2,7 +2,7 @@
 # F2 (t_b678fb38) E2E auth verification against the live HTTPS tunnel.
 #
 # Verifies the app's auth surface over TLS, as far as possible WITHOUT the
-# fleet password (delivered to Tony via Telegram only):
+# gateway password:
 #   1. GET  /api/auth/providers  (pre-auth discovery)          -> 200
 #   2. POST /auth/password-login (wrong credential)            -> 401
 #   3. POST /api/auth/ws-ticket  (no credential)               -> 401
@@ -14,9 +14,10 @@
 # ARTIFACT by apple-qa (F2 QA gate 2) using Tony's credential.
 set -uo pipefail
 
-HOST="https://<legacy-fleet-endpoint>"
-SSH_KEY="$HOME/.ssh/id_ed25519"
-ARCH="<private-ssh-target>"
+HOST="${HERMES_FLEET_LIVE_ENDPOINT:?Set HERMES_FLEET_LIVE_ENDPOINT to YOUR HTTPS gateway origin — this probe targets no infrastructure by default}"
+SSH_KEY="${HERMES_FLEET_AUDIT_SSH_KEY:-}"
+AUDIT_HOST="${HERMES_FLEET_AUDIT_SSH_HOST:-}"
+AUDIT_LOG="${HERMES_FLEET_AUDIT_LOG_PATH:-}"
 
 fail() { echo "FAIL: $1"; exit "${2:-1}"; }
 
@@ -39,12 +40,24 @@ T0=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$HOST/api/aut
 echo "ws-ticket (no credential): $T0 (expect 401)"
 [[ "$T0" == "401" ]] || fail "ticket mint not credential-gated" 7
 
-# 4. Audit evidence: a real basic login over TLS succeeded (the
-#    orchestrator's verification with the live credential). Boolean only —
-#    no tokens, no credentials, no IPs printed.
-AUDIT=$(ssh -o BatchMode=yes -i "$SSH_KEY" "$ARCH" 'grep -c "\"event\":\"login_success\",\"provider\":\"basic\",\"user_id\":\"hermes-fleet\"" /home/tony/.hermes/logs/dashboard-auth.log 2>/dev/null || echo 0')
-echo "audit: login_success over TLS evidenced: $AUDIT time(s)"
-[[ "$AUDIT" -gt 0 ]] || fail "no successful TLS login in the gateway audit log" 9
+# 4. Audit evidence (optional — only when SSH audit config is provided).
+#    Boolean only — no tokens, no credentials, no IPs printed.
+#    Result honesty: the final verdict only claims audit verification when
+#    the audit leg actually ran AND found evidence. A skipped audit yields
+#    a SURFACE-ONLY verdict that says the audit was SKIPPED.
+AUDIT_RAN=0
+if [ -n "$AUDIT_HOST" ] && [ -n "$SSH_KEY" ] && [ -n "$AUDIT_LOG" ]; then
+  AUDIT=$(ssh -o BatchMode=yes -i "$SSH_KEY" "$AUDIT_HOST" "grep -c '\"event\":\"login_success\",\"provider\":\"basic\"' \"$AUDIT_LOG\" 2>/dev/null || echo 0")
+  echo "audit: login_success over TLS evidenced: $AUDIT time(s)"
+  [[ "$AUDIT" -gt 0 ]] || fail "no successful TLS login in the gateway audit log" 9
+  AUDIT_RAN=1
+else
+  echo "audit: SKIPPED (no HERMES_FLEET_AUDIT_SSH_KEY/_HOST/_LOG_PATH configured)"
+fi
 
-echo "E2E AUTH SURFACE VERIFIED: providers 200, login gated 401, ticket mint gated 401, TLS login_success in audit"
-echo "NOTE: full login+ws-ticket with the real credential = apple-qa gate 2 on the shipped artifact."
+if [ "$AUDIT_RAN" -eq 1 ]; then
+  echo "E2E AUTH VERIFIED (FULL): providers 200, login gated 401, ticket mint gated 401, TLS login_success in audit"
+else
+  echo "E2E AUTH SURFACE VERIFIED (SURFACE-ONLY): providers 200, login gated 401, ticket mint gated 401 — audit NOT checked (skipped)"
+fi
+echo "NOTE: full login+ws-ticket with the real credential = QA gate 2 on the shipped artifact."

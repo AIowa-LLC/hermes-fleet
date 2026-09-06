@@ -16,7 +16,7 @@ final class DomainTests: XCTestCase {
     }
 
     func testFleetGatewayIdentifiable() {
-        let id = GatewayID(rawValue: "<dev-workstation>")
+        let id = GatewayID(rawValue: "workstation")
         let gateway = FleetGateway(id: id, displayName: "MacBook")
         XCTAssertEqual(gateway.id, id)
         XCTAssertEqual(gateway.displayName, "MacBook")

@@ -76,13 +76,13 @@ final class F1FailureCopyTests: XCTestCase {
         // The detail string is non-secret by construction, but the copy must
         // not repeat the endpoint either — the row already shows it redacted.
         let cases: [(GatewayStatus, String?)] = [
-            (.offline, "connection to <tailnet-ip>:8642 timed out"),
+            (.offline, "connection to 100.127.200.89:8642 timed out"),
             (.unsupported, "auth endpoint returned HTTP 404"),
             (.authenticationRequired, "auth endpoint returned HTTP 401"),
         ]
         for (status, detail) in cases {
             let copy = GatewayFailureCopy.detail(status: status, detail: detail)
-            XCTAssertFalse(copy.contains("<tailnet-ip>"),
+            XCTAssertFalse(copy.contains("100.127.200.89"),
                           "copy must not echo the endpoint host: \(copy)")
             XCTAssertFalse(copy.contains("8642"),
                           "copy must not echo the endpoint port: \(copy)")

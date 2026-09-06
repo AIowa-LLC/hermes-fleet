@@ -271,7 +271,7 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayReplayClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayReplayClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         _ = try await client.fetchEventsSince(sessionID: "s1", lastSeen: 3)
         XCTAssertEqual(captured.sessionID, "s1")
         XCTAssertEqual(captured.lastSeen, 3)
@@ -330,7 +330,7 @@ final class ReconnectReplayTests: XCTestCase {
         XCTAssertEqual(wmBefore, 3)
 
         let engine = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: StubHistoryProvider()
         )
@@ -409,7 +409,7 @@ final class ReconnectReplayTests: XCTestCase {
         await waitUntil({ await transport.watermark(for: "s1") == 1 }, timeout: .seconds(3))
 
         let engine = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: StubHistoryProvider()
         )
@@ -471,7 +471,7 @@ final class ReconnectReplayTests: XCTestCase {
         await waitUntil({ await transport.watermark(for: "s1") == 3 }, timeout: .seconds(3))
 
         let engine = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: historyStub
         )
@@ -509,7 +509,7 @@ final class ReconnectReplayTests: XCTestCase {
         await waitUntil({ await transport.watermark(for: "s1") == 7 }, timeout: .seconds(3))
 
         let engine = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: StubHistoryProvider()
         )
@@ -559,7 +559,7 @@ final class ReconnectReplayTests: XCTestCase {
         await waitUntil({ await transport.watermark(for: "s1") == 3 }, timeout: .seconds(3))
 
         let engine = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: StubHistoryProvider()
         )
@@ -591,7 +591,7 @@ final class ReconnectReplayTests: XCTestCase {
     func testReplayAfterReconnectNotConnectedThrows() async {
         let transport = makeTransport(serverPort: 1) // never connected
         let engine = GatewayReplayEngine(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"),
+            gatewayID: GatewayID(rawValue: "workstation"),
             transport: transport,
             history: StubHistoryProvider()
         )

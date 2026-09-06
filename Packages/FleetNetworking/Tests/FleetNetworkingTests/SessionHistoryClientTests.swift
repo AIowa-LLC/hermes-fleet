@@ -95,7 +95,7 @@ final class SessionHistoryClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let history = try await client.fetchSessionHistory(sessionID: "sess-001")
 
         XCTAssertEqual(history.sessionID, "sess-001")
@@ -145,7 +145,7 @@ final class SessionHistoryClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         _ = try await client.fetchSessionHistory(sessionID: "sess-abc")
         XCTAssertEqual(captured.sessionID, "sess-abc")
     }
@@ -170,7 +170,7 @@ final class SessionHistoryClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.fetchSessionHistory(sessionID: "stale")
             XCTFail("expected sessionNotFound")
@@ -184,7 +184,7 @@ final class SessionHistoryClientTests: XCTestCase {
     func testFetchSessionHistoryNotConnectedThrows() async {
         let transport = makeTransport(serverPort: 1) // never connected
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.fetchSessionHistory(sessionID: "s")
             XCTFail("expected notConnected")
@@ -229,7 +229,7 @@ final class SessionHistoryClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let status = try await client.fetchSessionStatus(sessionID: "sess-abc")
         XCTAssertEqual(status.sessionID, "sess-abc")
         XCTAssertEqual(status.model, "deepseek-v4-flash")
@@ -261,7 +261,7 @@ final class SessionHistoryClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let status = try await client.fetchSessionStatus(sessionID: "sess-from-caller")
         XCTAssertEqual(status.sessionID, "sess-from-caller")
         XCTAssertEqual(status.agentRunning, false)
@@ -287,7 +287,7 @@ final class SessionHistoryClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.fetchSessionStatus(sessionID: "s")
             XCTFail("expected malformedPayload")
@@ -342,7 +342,7 @@ final class SessionHistoryClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+        let gatewayID = GatewayID(rawValue: "workstation")
         let historyClient = GatewaySessionHistoryClient(gatewayID: gatewayID, transport: transport)
         let rosterClient = GatewayRosterClient(gatewayID: gatewayID, transport: transport)
         let route = Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "default"))
@@ -377,7 +377,7 @@ final class SessionHistoryClientTests: XCTestCase {
 
     func testFetchSessionHistoryRejectsUnsafeSessionKeyBeforeTransport() async {
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.fetchSessionHistory(sessionID: "../etc")
             XCTFail("expected invalidSessionKey")
@@ -392,7 +392,7 @@ final class SessionHistoryClientTests: XCTestCase {
 
     func testFetchSessionStatusRejectsUnsafeSessionKeyBeforeTransport() async {
         let client = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: makeTransport(serverPort: 1))
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
         do {
             _ = try await client.fetchSessionStatus(sessionID: "a/b")
             XCTFail("expected invalidSessionKey")

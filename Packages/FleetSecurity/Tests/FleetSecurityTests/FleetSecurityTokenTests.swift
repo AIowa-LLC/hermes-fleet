@@ -12,7 +12,7 @@ import FleetCore
 /// (account/service/accessibility/no-sync), so CI stays hermetic.
 final class FleetSecurityTokenTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayID = GatewayID(rawValue: "workstation")
 
     // MARK: InMemoryTokenStore — contract semantics
 
@@ -47,7 +47,7 @@ final class FleetSecurityTokenTests: XCTestCase {
 
     func testInMemoryTokenStoreIsolationPerPeer() async throws {
         let store = InMemoryTokenStore()
-        let other = GatewayID(rawValue: "gaming-4090")
+        let other = GatewayID(rawValue: "render-box")
         try await store.saveToken(StoredToken(rawValue: "ticket-m5"), for: gatewayID)
         let otherToken = try await store.loadToken(for: other)
         XCTAssertNil(otherToken, "peers do not share tokens")
@@ -69,7 +69,7 @@ final class FleetSecurityTokenTests: XCTestCase {
 
     func testKeychainTokenAccountIsPeerGatewayID() {
         let attributes = KeychainTokenStore.baseAttributes(account: gatewayID.rawValue)
-        XCTAssertEqual(attributes[kSecAttrAccount as String] as? String, "<dev-workstation>")
+        XCTAssertEqual(attributes[kSecAttrAccount as String] as? String, "workstation")
     }
 
     func testKeychainTokenAccessibilityWhenUnlockedThisDeviceOnly() {

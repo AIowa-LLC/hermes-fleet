@@ -1359,25 +1359,25 @@ private struct ScriptedHistory: SessionHistoryProviding {
 enum ScriptedFleet {
     static let registrations: [GatewayRegistration] = [
         GatewayRegistration(
-            id: GatewayID(rawValue: "<dev-workstation>"),
-            displayName: "MacBook M5",
+            id: GatewayID(rawValue: "workstation"),
+            displayName: "Workstation",
             endpoint: URL(string: "http://127.0.0.1:8642")!
         ),
         GatewayRegistration(
-            id: GatewayID(rawValue: "gaming-4090"),
-            displayName: "Gaming 4090",
+            id: GatewayID(rawValue: "render-box"),
+            displayName: "Render Box",
             endpoint: URL(string: "http://127.0.0.1:9900")!
         ),
         GatewayRegistration(
             id: GatewayID(rawValue: "arch"),
-            displayName: "Arch Lab",
+            displayName: "Lab Node",
             endpoint: URL(string: "http://127.0.0.1:9910")!
         ),
     ]
 
     static func profiles(on gatewayID: GatewayID) -> [ProfileDescriptor] {
         switch gatewayID.rawValue {
-        case "<dev-workstation>":
+        case "workstation":
             return [
                 ProfileDescriptor(
                     name: "default", path: "~/.hermes/profiles/default",
@@ -1392,7 +1392,7 @@ enum ScriptedFleet {
                     lastSession: ScriptedFleet.session(on: "researcher")
                 ),
             ]
-        case "gaming-4090":
+        case "render-box":
             return [
                 ProfileDescriptor(
                     name: "default", path: "~/.hermes/profiles/default",
@@ -1408,11 +1408,11 @@ enum ScriptedFleet {
 
     static func sessions(on route: Route) -> [SessionSummary] {
         switch route.gatewayID.rawValue {
-        case "<dev-workstation>":
+        case "workstation":
             return [
                 ScriptedFleet.session(on: "default"),
                 SessionSummary(
-                    id: "<dev-workstation>.default.s2", title: "Replay plan review",
+                    id: "workstation.default.s2", title: "Replay plan review",
                     preview: "Discussing the reconnect/replay design.", startedAt: 1_755_000_000,
                     messageCount: 24, source: "ios"
                 ),
@@ -1424,7 +1424,7 @@ enum ScriptedFleet {
 
     private static func session(on slug: String) -> SessionSummary {
         SessionSummary(
-            id: "<dev-workstation>.\(slug).s1", title: "Fleet setup",
+            id: "workstation.\(slug).s1", title: "Fleet setup",
             preview: "Initial conversation about the Hermes fleet.",
             startedAt: 1_754_000_000, messageCount: 6, source: "ios"
         )

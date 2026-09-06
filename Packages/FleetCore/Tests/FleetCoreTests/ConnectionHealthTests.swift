@@ -43,7 +43,7 @@ private final class ManualClock: @unchecked Sendable {
 
 final class ConnectionHealthTests: XCTestCase {
 
-    private let id = GatewayID(rawValue: "<dev-workstation>")
+    private let id = GatewayID(rawValue: "workstation")
 
     private func makeAccumulator(
         store: HealthStatsStoring,

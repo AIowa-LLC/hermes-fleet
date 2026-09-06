@@ -142,7 +142,7 @@ final class LastEventIDResumeTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         _ = try await client.resumeSession(sessionID: "s1", lastEventID: 17)
         XCTAssertEqual(captured.sessionID, "s1")
         XCTAssertEqual(captured.lastSeen, 17, "resume must carry the client's last-received event id")
@@ -199,7 +199,7 @@ final class LastEventIDResumeTests: XCTestCase {
         defer { server.stop() }
 
         let transport = makeTransport(serverPort: server.listeningPort)
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
 
         // ONE subscription for the whole test: the transport's event channel
         // survives teardown (P4), so the same pipe carries conn1's live
@@ -283,7 +283,7 @@ final class LastEventIDResumeTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.resumeEvents(since: 40, sessionID: "s1")
             XCTFail("expected gapUnrecoverable — truncated replay must never pass silently")

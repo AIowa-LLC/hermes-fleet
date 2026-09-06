@@ -102,7 +102,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayReactionClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let result = try await client.react(
             sessionID: "abc12345",
             target: .durable(rowID: "42"),
@@ -151,7 +151,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayReactionClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let result = try await client.react(
             sessionID: "abc12345",
             target: .newest(role: "assistant"),
@@ -190,7 +190,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayReactionClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let result = try await client.react(
             sessionID: "abc12345",
             target: .durable(rowID: "42"),
@@ -229,7 +229,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayReactionClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.react(sessionID: "abc12345", target: .durable(rowID: "999"), emoji: "👍")
             XCTFail("expected messageNotFound")
@@ -262,7 +262,7 @@ final class GatewayReactionClientTests: XCTestCase {
             defer { Task { await transport.disconnect() } }
 
             let client = GatewayReactionClient(
-                gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+                gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
             do {
                 _ = try await client.react(sessionID: "abc12345", target: .durable(rowID: "1"), emoji: "👍")
                 XCTFail("expected \(expected) for code \(code)")
@@ -292,7 +292,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayReactionClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.react(sessionID: "reaped", target: .durable(rowID: "1"), emoji: "👍")
             XCTFail("expected sessionNotFound")
@@ -327,7 +327,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayReactionClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.react(sessionID: "abc12345", target: .durable(rowID: "1"), emoji: "👍")
             XCTFail("expected malformedResponse")
@@ -380,7 +380,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let history = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let decoded = try await history.fetchSessionHistory(sessionID: "abc12345")
 
         XCTAssertEqual(decoded.messages.count, 2)
@@ -426,7 +426,7 @@ final class GatewayReactionClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let history = GatewaySessionHistoryClient(
-            gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let decoded = try await history.fetchSessionHistory(sessionID: "abc12345")
 
         XCTAssertEqual(decoded.messages.count, 1)

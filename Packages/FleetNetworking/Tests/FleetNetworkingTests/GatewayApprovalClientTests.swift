@@ -99,7 +99,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         let transport = makeTransport(serverPort: server.listeningPort)
         // Subscribe BEFORE connecting — the push frames fan out at open; a
         // subscriber registered after connect() would miss them.
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let stream = client.events
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
@@ -140,7 +140,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         defer { server.stop() }
 
         let transport = makeTransport(serverPort: server.listeningPort)
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let stream = client.events
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
@@ -184,7 +184,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let resolved = try await client.respond(
             sessionID: "abc12345", requestID: "req-0001", choice: .once, all: false
         )
@@ -222,7 +222,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let enabled = try await client.setSessionYolo(true, sessionID: "abc12345")
         XCTAssertTrue(enabled)
 
@@ -261,7 +261,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let pending = try await client.pendingApprovals(sessionID: "abc12345")
         XCTAssertEqual(pending.count, 1)
         XCTAssertEqual(pending.first?.requestID, "req-p1")
@@ -285,7 +285,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "<dev-workstation>"), transport: transport)
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let stream = client.events
         try await withTimeout(.seconds(3)) {
             for await event in stream {

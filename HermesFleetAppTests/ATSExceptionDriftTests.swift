@@ -8,7 +8,7 @@ import FleetCore
 /// `http://` and needed per-host `NSExceptionDomains` entries — raw private
 /// IPs and the tailnet hostname compiled into every shipped binary, leaking
 /// Tony's home network topology into the IPA. F2 converges the fleet on the
-/// public HTTPS tunnel (https://<legacy-fleet-endpoint>) and strips every
+/// public HTTPS tunnel and strips every
 /// raw-IP/private-host exception.
 ///
 /// This suite locks the converged state so a future plist rewrite cannot
@@ -47,9 +47,13 @@ final class ATSExceptionDriftTests: XCTestCase {
 
     /// The converged default endpoint must be a public HTTPS origin — never
     /// a private IP, loopback, or tailnet host, and never cleartext.
-    func testDefaultEndpointIsPublicHTTPS() throws {
-        let raw = try XCTUnwrap(info["FleetDefaultEndpoint"] as? String,
-                                "FleetDefaultEndpoint (F2 migration data) missing from Info.plist")
+    func testDefaultEndpointIsOptionalPublicHTTPS() throws {
+        let raw = (info["FleetDefaultEndpoint"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty {
+            // Default public configuration: NO compiled endpoint — every user
+            // connects to their own HTTPS-reachable gateway.
+            return
+        }
         let url = try XCTUnwrap(URL(string: raw), "FleetDefaultEndpoint is not a URL: \(raw)")
         XCTAssertEqual(url.scheme?.lowercased(), "https",
                        "FleetDefaultEndpoint must be HTTPS (cleartext defaults are forbidden)")

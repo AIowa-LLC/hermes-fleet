@@ -13,9 +13,9 @@ authenticating against a real gateway:
 
 1. **Store split** — the U2 UI writes via
    `saveCredential → GatewayRegistryService.saveCredential → KeychainCredentialStore`
-   (service `<legacy-personal-bundle-id>.gateway-credentials`), but the
+   (service `com.aiowa.hermesfleet.gateway-credentials`), but the
    production `.loopbackToken` authenticator read
-   `KeychainTokenStore` (service `<legacy-personal-bundle-id>.tokens`) via
+   `KeychainTokenStore` (service `com.aiowa.hermesfleet.tokens`) via
    `tokenStore.loadToken`. Nothing in the app ever calls `saveToken` →
    `AuthenticationError.missingLoopbackToken` → classified offline.
 2. **Strategy force-override** — `GatewayRegistryService.saveCredential`

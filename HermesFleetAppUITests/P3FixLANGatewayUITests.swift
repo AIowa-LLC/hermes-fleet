@@ -4,7 +4,7 @@ import XCTest
 /// live LAN gateway using the **Username & Password** strategy.
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
-/// on the simulator against the real LAN gateway at <lan-ip>:9120 (the
+/// on the simulator against the real LAN gateway at 192.168.50.37:9120 (the
 /// same code path P3 used). Adds the gateway via the U2 UI with username +
 /// password, then asserts the in-app live probe classifies it **Connected**
 /// (not Unreachable/offline) — the exact acceptance the installed app
@@ -15,9 +15,9 @@ import XCTest
 /// NEVER printed, logged, asserted, or committed.
 final class P3FixLANGatewayUITests: XCTestCase {
 
-    private let endpoint = "http://<lan-ip>:9120"
+    private let endpoint = "http://192.168.50.37:9120"
     private let displayName = "Mac LAN"
-    private let gatewayID = "<lan-ip>:9120"
+    private let gatewayID = "192.168.50.37:9120"
 
     override func setUpWithError() throws {
         continueAfterFailure = false

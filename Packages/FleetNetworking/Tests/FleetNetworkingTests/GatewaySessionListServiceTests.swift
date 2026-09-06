@@ -12,7 +12,7 @@ import FleetNetworking
 /// M9 routing guard.
 final class GatewaySessionListServiceTests: XCTestCase {
 
-    private let gatewayA = GatewayID(rawValue: "<dev-workstation>")
+    private let gatewayA = GatewayID(rawValue: "workstation")
 
     // MARK: helpers
 
