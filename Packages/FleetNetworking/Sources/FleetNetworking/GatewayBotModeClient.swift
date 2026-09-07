@@ -171,6 +171,35 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
 
     // MARK: - assets
 
+    public func supportsAvatarUpload(_ profile: String) async -> Bool {
+        // This reserved invalid asset is rejected before any asset mutation
+        // by the current contract. Unknown methods/policies fail closed.
+        do {
+            if !isTransportReady { try await transport.connect() }
+            _ = try await transport.request(method: "profiles.set_asset", params: .object([
+                "name": .string(profile), "asset": .string("fleet-capability-probe")
+            ]))
+        } catch let error as JSONRPCError { return error.code == 4066 }
+        catch { return false }
+        return false
+    }
+
+    public func supportsPortraitGeneration() async -> Bool {
+        guard let reply = try? await request(method: "image.generate", params: .object(["probe": .bool(true)])) else { return false }
+        return reply["available"]?.boolValue == true
+    }
+
+    public func generatePortrait(prompt: String) async throws -> Data {
+        let reply = try await request(method: "image.generate", params: .object([
+            "prompt": .string(prompt), "aspect_ratio": .string("square"), "max_bytes": .number(2_000_000)
+        ]))
+        guard reply["available"]?.boolValue == true, reply["success"]?.boolValue == true,
+              let url = reply["image_data"]?.stringValue ?? reply["image"]?.stringValue,
+              url.hasPrefix("data:image/"), let bytes = Self.decodeDataURL(url),
+              bytes.count <= 2_000_000 else { throw BotPortraitError.invalidImage }
+        return bytes
+    }
+
     public func getAvatar(profile: String) async throws -> Data? {
         let result = try await request(method: "profiles.get_asset", params: .object([
             "name": .string(profile),
@@ -187,18 +216,19 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
             "asset": .string("avatar"),
             "data": .string(dataURL),
         ]))
-        _ = result
+        guard result["ok"]?.boolValue == true else { throw BotModeProfileError.rpcFailed("Avatar was not saved") }
     }
 
     /// `profiles.set_asset {clear: true}` — remove the avatar asset
     /// (methods_profiles.py:595-630; `{ok, asset, size: 0, removed}`).
     public func clearAvatarAsset(profile: String) async throws {
         guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
-        _ = try await request(method: "profiles.set_asset", params: .object([
+        let result = try await request(method: "profiles.set_asset", params: .object([
             "name": .string(profile),
             "asset": .string("avatar"),
             "clear": .bool(true),
         ]))
+        guard result["ok"]?.boolValue == true else { throw BotModeProfileError.rpcFailed("Avatar was not cleared") }
     }
 
     /// BotProfileManaging seam: upload avatar (same wire call as setAvatar).

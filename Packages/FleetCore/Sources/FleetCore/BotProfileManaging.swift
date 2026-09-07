@@ -8,6 +8,10 @@ import Foundation
 /// DEBUG simulator provides a scripted double (the established
 /// `BotModeChatProviding` pattern).
 public protocol BotProfileManaging: Sendable {
+    func supportsAvatarUpload(_ profile: String) async -> Bool
+    func supportsPortraitGeneration() async -> Bool
+    func generatePortrait(prompt: String) async throws -> Data
+
     /// `profiles.describe` — full editable surface for one profile.
     func describeProfile(_ profile: String) async throws -> BotProfileDescription
 
@@ -149,4 +153,23 @@ public enum BotDeleteGate: Hashable, Sendable {
     /// The single honest default for the current gateway generation.
     public static let currentGatewayGeneration: BotDeleteGate =
         .unsupported(reason: "Bot deletion needs the Hermes web dashboard — the chat connection cannot delete profiles safely.")
+}
+
+public extension BotProfileManaging {
+    func supportsAvatarUpload(_ profile: String) async -> Bool { false }
+    func supportsPortraitGeneration() async -> Bool { false }
+    func generatePortrait(prompt: String) async throws -> Data {
+        throw BotPortraitError.unavailable
+    }
+}
+
+public enum BotPortraitError: Error, LocalizedError, Sendable {
+    case unavailable
+    case invalidImage
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable: return "Portrait generation is unavailable on this gateway."
+        case .invalidImage: return "The gateway did not return a supported portrait image."
+        }
+    }
 }

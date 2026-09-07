@@ -18,6 +18,7 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
 
     /// Presentation name; never used for routing.
     public var displayName: String
+    public var hasAvatar: Bool
 
     /// Model/provider summary as reported by the gateway.
     public var model: String?
@@ -50,6 +51,7 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
     public init(
         route: Route,
         displayName: String,
+        hasAvatar: Bool = false,
         model: String? = nil,
         provider: String? = nil,
         profileDescription: String? = nil,
@@ -64,6 +66,7 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
     ) {
         self.route = route
         self.displayName = displayName
+        self.hasAvatar = hasAvatar
         self.model = model
         self.provider = provider
         self.profileDescription = profileDescription
@@ -88,6 +91,7 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
         FleetBot(
             route: Route(gatewayID: gatewayID, profileSlug: descriptor.slug),
             displayName: descriptor.resolvedDisplayName,
+            hasAvatar: descriptor.hasAvatar,
             model: descriptor.model,
             provider: descriptor.provider,
             profileDescription: descriptor.profileDescription,

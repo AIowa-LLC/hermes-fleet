@@ -35,6 +35,10 @@ public final class BotManagementController {
 
     // MARK: Injected seams
 
+    @ObservationIgnored private var avatarLoads: Set<Route> = []
+    @ObservationIgnored private var avatarFetchedAt: [Route: Date] = [:]
+    @ObservationIgnored private var avatarSlots = 0
+    @ObservationIgnored private var avatarWaiters: [CheckedContinuation<Void, Never>] = []
     private let factory: FleetBotProfileFactory?
     @ObservationIgnored private var seams: [GatewayID: any BotProfileManaging] = [:]
     private var gatewayProvider: @MainActor () -> [FleetGateway]
@@ -197,10 +201,27 @@ public final class BotManagementController {
     /// Fetch avatar bytes for a bot (display cache; authoritative flag is
     /// roster hasAvatar). Uses the profiles.get_asset surface.
     public func loadAvatar(for bot: FleetBot) async {
-        guard avatarDataByRoute[bot.route] == nil else { return }
-        guard let seam = seam(for: bot.route.gatewayID) else { return }
+        guard bot.hasAvatar else {
+            avatarDataByRoute[bot.route] = nil
+            avatarFetchedAt[bot.route] = nil
+            return
+        }
+        guard !avatarLoads.contains(bot.route),
+              Date().timeIntervalSince(avatarFetchedAt[bot.route] ?? .distantPast) > 300,
+              let seam = seam(for: bot.route.gatewayID) else { return }
+        avatarLoads.insert(bot.route)
+        if avatarSlots >= 4 {
+            await withCheckedContinuation { avatarWaiters.append($0) }
+        } else { avatarSlots += 1 }
+        defer {
+            avatarLoads.remove(bot.route)
+            if avatarWaiters.isEmpty { avatarSlots -= 1 }
+            else { avatarWaiters.removeFirst().resume() }
+        }
+        guard !Task.isCancelled else { return }
+        avatarFetchedAt[bot.route] = Date()
         if let data = try? await seam.avatarData(bot.route.profileSlug.rawValue),
-           !data.isEmpty {
+           !data.isEmpty, data.count <= 2_000_000 {
             avatarDataByRoute[bot.route] = data
         }
     }

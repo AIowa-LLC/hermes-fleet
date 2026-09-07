@@ -267,7 +267,7 @@ final class BotManagementDomainTests: XCTestCase {
             .shape("hexagon"))
         XCTAssertEqual(
             BotAvatarIdentity.face(hasAvatar: false, shape: nil, identityName: "x"),
-            .initials)
+            .shape(BotAvatarIdentity.defaultShape(forName: "x")))
         XCTAssertEqual(
             BotAvatarIdentity.face(hasAvatar: false, shape: "blobatar", identityName: "sam"),
             .blob(seed: "sam", kind: nil))

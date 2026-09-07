@@ -148,7 +148,7 @@ public struct CreateRoomSheet: View {
         } label: {
             FleetCard {
                 HStack(spacing: FleetTheme.spacingMd) {
-                    BotAvatar(displayName: candidate.displayName)
+                    BotAvatar(bot: environment.bot(for: candidate.route), management: environment.botManagement)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(candidate.displayName)
                             .font(.body.weight(.semibold))

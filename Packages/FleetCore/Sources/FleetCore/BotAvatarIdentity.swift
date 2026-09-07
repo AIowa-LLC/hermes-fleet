@@ -31,8 +31,8 @@ public enum BotAvatarIdentity {
     /// hash = (hash * 31 + charCode) >>> 0 over the legacy 7-shape set).
     public static func defaultShape(forName name: String) -> String {
         var hash: UInt32 = 0
-        for scalar in name.unicodeScalars {
-            hash = (hash &* 31 &+ UInt32(truncatingIfNeeded: scalar.value))
+        for scalar in name.utf16 {
+            hash = (hash &* 31 &+ UInt32(truncatingIfNeeded: scalar))
         }
         return defaultShapes[Int(hash % UInt32(defaultShapes.count))]
     }
@@ -61,7 +61,7 @@ public enum BotAvatarIdentity {
     ) -> Face {
         if hasAvatar { return .image }
         guard let shape, !shape.isEmpty else {
-            return .initials
+            return identityName.isEmpty ? .initials : .shape(defaultShape(forName: identityName))
         }
         if isBlobShape(shape) {
             return parseBlobShape(shape, fallbackSeed: identityName)

@@ -213,7 +213,7 @@ public struct FleetDashboardView: View {
     private func botRow(_ bot: FleetBot) -> some View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(displayName: bot.displayName)
+                BotAvatar(bot: bot, management: environment.botManagement)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bot.displayName)
                         .font(.body.weight(.semibold))

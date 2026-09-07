@@ -89,7 +89,7 @@ public struct BotDetailView: View {
         FleetCard {
             VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 HStack(spacing: FleetTheme.spacingMd) {
-                    BotAvatar(displayName: bot.displayName)
+                    BotAvatar(bot: bot, management: environment.botManagement)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(bot.displayName)
                             .font(.body.weight(.semibold))

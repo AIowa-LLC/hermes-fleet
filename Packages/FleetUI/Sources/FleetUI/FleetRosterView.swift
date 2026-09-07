@@ -154,6 +154,7 @@ public struct FleetRosterView: View {
                     ForEach(section.bots) { bot in
                         NavigationLink(value: FleetScreen.botDetail(bot.route)) {
                             BotRowView(
+                management: environment.botManagement,
                                 bot: bot,
                                 presence: .unreachable,
                                 anchor: BotRosterPresentation.activityAnchor(for: bot),
@@ -221,6 +222,7 @@ public struct FleetRosterView: View {
     ) -> some View {
         NavigationLink(value: FleetScreen.botDetail(bot.route)) {
             BotRowView(
+                management: environment.botManagement,
                 bot: bot,
                 presence: environment.botPresence(for: bot.route),
                 anchor: BotRosterPresentation.activityAnchor(for: bot),
@@ -438,6 +440,7 @@ public struct FleetRosterView: View {
 /// A bot row (slice 2 anatomy): avatar | title (+dup label) + preview/time |
 /// status pill; dimmed when hidden-revealed or a ghost.
 struct BotRowView: View {
+    let management: BotManagementController
     let bot: FleetBot
     let presence: BotPresence
     let anchor: BotRosterPresentation.ActivityAnchor
@@ -447,7 +450,7 @@ struct BotRowView: View {
     var body: some View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(displayName: BotRosterPresentation.displayTitle(for: bot))
+                BotAvatar(bot: bot, management: management)
                     .opacity(dimmed ? 0.4 : 1)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {

@@ -158,6 +158,8 @@ public struct EditBotSheet: View {
     @State private var provider = ""
     @State private var hidden = false
     @State private var pinned = false
+    @State private var avatarShape = ""
+    @State private var avatarColor = ""
     @State private var draftDescription: BotProfileDescription?
     @State private var baselineMetadata = BotModeMetadata()
     @State private var metadataRevision: Int?
@@ -178,6 +180,19 @@ public struct EditBotSheet: View {
         NavigationStack {
             Form {
                 metadataSection
+                Section("Avatar") {
+                    BotAvatarEditor(environment: environment, bot: bot)
+                    Picker("Shape", selection: $avatarShape) {
+                        Text("Deterministic default").tag("")
+                        ForEach(Array(Set(BotAvatarIdentity.pickerShapes + [avatarShape, "blobatar"]).subtracting([""])).sorted(), id: \.self) {
+                            Text($0.capitalized).tag($0)
+                        }
+                    }.accessibilityIdentifier("fleet.bot.avatar.shape")
+                    TextField("Color (#RRGGBB)", text: $avatarColor)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("fleet.bot.avatar.color")
+                }
                 soulSection
                 modelSection
                 if let description = draftDescription {
@@ -342,6 +357,8 @@ public struct EditBotSheet: View {
         descriptionText = meta?.descriptionText ?? bot.profileDescription ?? ""
         hidden = meta?.hidden ?? false
         pinned = meta?.pinned ?? false
+        avatarShape = meta?.shape ?? ""
+        avatarColor = meta?.color ?? ""
         baselineMetadata = meta ?? BotModeMetadata()
         metadataRevision = bot.uiMetaRevisions?[BotModeContract.botsMetaKey]
         sectionID = meta?.sectionID
@@ -365,6 +382,8 @@ public struct EditBotSheet: View {
         defer { isSubmitting = false }
         errorMessage = nil
         var metadata = baselineMetadata
+        metadata.shape = avatarShape.isEmpty ? nil : avatarShape
+        metadata.color = avatarColor.isEmpty ? nil : avatarColor
         metadata.title = title.isEmpty ? nil : title
         metadata.descriptionText = descriptionText.isEmpty ? nil : descriptionText
         metadata.hidden = hidden == (baselineMetadata.hidden ?? false) ? baselineMetadata.hidden : hidden
