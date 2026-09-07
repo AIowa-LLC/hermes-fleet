@@ -1,5 +1,12 @@
 import Foundation
 
+/// Slice 4: room-chat command seam factory (app-side adapter over the
+/// per-gateway groups client; returns nil for gateways with no endpoint).
+public typealias FleetRoomCommandFactory = @Sendable (FleetGateway) -> (any RoomChatCommanding)?
+
+/// Slice 4: driver-status seam factory (groups.state driver_status decode).
+public typealias FleetRoomDriverStatusFactory = @Sendable (FleetGateway) -> (any RoomDriverStatusProviding)?
+
 /// Normalized room discovery seam — one abstraction over both room
 /// generations (addendum: "Core/service abstraction must normalize rooms
 /// while explicitly preserving source/provenance").

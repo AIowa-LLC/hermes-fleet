@@ -254,6 +254,13 @@ public final class AppEnvironment {
     /// Slice 2: room-source factory (app-side union provider).
     private let roomSourceFactory: FleetRoomSourceFactory?
     @ObservationIgnored private var roomSources: [GatewayID: any FleetRoomSourceProviding] = [:]
+    /// Slice 4: room-chat command seam factory (app-side `groups.*`
+    /// adapter; scripted in DEBUG/tests).
+    private let roomCommandFactory: FleetRoomCommandFactory?
+    @ObservationIgnored private var roomCommands: [GatewayID: any RoomChatCommanding] = [:]
+    /// Slice 4: driver-status seam factory (groups.state driver_status).
+    private let roomDriverStatusFactory: FleetRoomDriverStatusFactory?
+    @ObservationIgnored private var roomDriverStatuses: [GatewayID: any RoomDriverStatusProviding] = [:]
     /// R9-T7: learning seam factory (memory graph) — one per gateway (the
     /// concrete `GatewayLearningClient` in production, scripted in
     /// DEBUG/tests).
@@ -321,6 +328,8 @@ public final class AppEnvironment {
         botModeChatFactory: FleetBotModeChatFactory? = nil,
         botProfileFactory: FleetBotProfileFactory? = nil,
         roomSourceFactory: FleetRoomSourceFactory? = nil,
+        roomCommandFactory: FleetRoomCommandFactory? = nil,
+        roomDriverStatusFactory: FleetRoomDriverStatusFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
@@ -344,6 +353,8 @@ public final class AppEnvironment {
         self.seedRegistrations = seedRegistrations
         self.voiceEngineFactory = voiceEngineFactory
         self.roomSourceFactory = roomSourceFactory
+        self.roomCommandFactory = roomCommandFactory
+        self.roomDriverStatusFactory = roomDriverStatusFactory
         self.botManagement = BotManagementController(factory: botProfileFactory)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
     }
@@ -450,6 +461,74 @@ public final class AppEnvironment {
     /// Rooms for one gateway (empty when unknown — honest absence).
     public func rooms(for gatewayID: GatewayID) -> [FleetRoom] {
         roomsByGateway[gatewayID] ?? []
+    }
+
+    // MARK: Slice 4 — room chat (D15/D16)
+
+    /// The lazily-built room-command seam for a gateway (nil = fail-closed:
+    /// controls hidden/disabled-with-explanation).
+    public func roomCommandSeam(for gatewayID: GatewayID) -> (any RoomChatCommanding)? {
+        if let existing = roomCommands[gatewayID] { return existing }
+        guard let factory = roomCommandFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }),
+              let seam = factory(gateway) else { return nil }
+        roomCommands[gatewayID] = seam
+        return seam
+    }
+
+    /// The lazily-built driver-status seam for a gateway.
+    public func roomDriverStatusSeam(for gatewayID: GatewayID) -> (any RoomDriverStatusProviding)? {
+        if let existing = roomDriverStatuses[gatewayID] { return existing }
+        guard let factory = roomDriverStatusFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }),
+              let seam = factory(gateway) else { return nil }
+        roomDriverStatuses[gatewayID] = seam
+        return seam
+    }
+
+    /// Builds a room-chat view model for one room (seams from this gateway).
+    public func makeRoomChatViewModel(room: FleetRoom) -> RoomChatViewModel {
+        RoomChatViewModel(
+            room: room,
+            commands: roomCommandSeam(for: room.id.gatewayID),
+            driverStatus: roomDriverStatusSeam(for: room.id.gatewayID))
+    }
+
+    /// True when a gateway's rooms advertise `groups.create` — gates the
+    /// Create Room entry (unsupported gateway: honest update-required
+    /// explanation, not a dead button).
+    public func canCreateRooms(on gatewayID: GatewayID) -> Bool {
+        rooms(for: gatewayID).contains { room in
+            room.id.provenance == .hosted
+                && room.hosted?.advertisedMethods?.contains("groups.create") == true
+                && room.hosted?.driverAvailable == true
+        }
+    }
+
+    /// Creates a hosted room via the gateway's command seam. Throws the
+    /// typed failure (unsupported old gateway → update explanation).
+    public func createRoom(
+        gatewayID: GatewayID, name: String, members: [RoomMemberCandidate]
+    ) async throws -> FleetRoom {
+        guard let seam = roomCommandSeam(for: gatewayID) else {
+            throw RoomCommandFailure.notConnected
+        }
+        let wireMembers = HostedRoomMemberCodec.wireMembers(members, gatewayID: gatewayID)
+        let roomID = try await seam.createRoom(name: name, members: wireMembers)
+        // Reveal the room immediately from the authoritative create result.
+        let room = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+            name: name,
+            members: members.map {
+                FleetRoomMember(name: $0.displayName, handle: $0.route.profileSlug.rawValue)
+            },
+            hosted: HostedRoomState(
+                authorityGatewayID: gatewayID.rawValue,
+                authorityEpoch: 1,
+                advertisedMethods: nil,
+                driverAvailable: false))
+        Task { await loadRooms() }
+        return room
     }
 
     /// Section registries for every gateway (best-effort).

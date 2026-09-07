@@ -122,7 +122,7 @@ UI_CLASSES=(
   F3OnboardingUITests C2SetupPromptUITests KanbanBoardUITests R9ApprovalBannerUITests
   R9ConversationToolingUITests R9ManagementPanesUITests R9MemoryGraphUITests R10AttachmentTrayUITests
   R10MessageReactionsUITests R10ProjectsBrowserUITests R10VoiceUITests R10MemoryGraphEditUITests
-  FleetSettingsAccentUITests BotRoutinesUITests
+  FleetSettingsAccentUITests BotRoutinesUITests RoomChatUITests
 )
 rm -rf /tmp/hermes-c1-results
 mkdir -p /tmp/hermes-c1-results

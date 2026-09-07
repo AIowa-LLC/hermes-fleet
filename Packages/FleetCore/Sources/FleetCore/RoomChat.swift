@@ -32,6 +32,8 @@ public protocol RoomChatCommanding: Sendable {
     func retry(roomID: String, taskID: String) async throws
     /// `groups.approve` (choice "once" | "deny").
     func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws
+    /// `groups.create` (idempotent on id+name+members) → room_id.
+    func createRoom(name: String, members: [[String: String]]) async throws -> String
 }
 
 /// Client-facing copy of the `groups.log` page (FleetNetworking decodes the

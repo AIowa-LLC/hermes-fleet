@@ -107,6 +107,14 @@ extension FleetServiceGraph {
             roomSourceFactory: { gateway in
                 ScriptedRoomSource(gatewayID: gateway.id)
             },
+            // Slice 4: interactive room engine (durable log, send/rename/
+            // disband/stop/retry/approve counters) — DEBUG simulator only.
+            roomCommandFactory: { gateway in
+                ScriptedRoomEngine.shared
+            },
+            roomDriverStatusFactory: { gateway in
+                ScriptedRoomEngine.shared
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
@@ -1851,45 +1859,263 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
 
 /// Slice 2: scripted room source — one hosted room + one legacy room on the
 /// workstation fixture so both provenances render with distinct identities.
+/// Slice 4: the hosted room is INTERACTIVE (backed by `ScriptedRoomEngine`)
+/// so create/open/message/rename/disband/stop/retry/approve are walkable
+/// deterministically in the simulator + UI tests. The legacy room stays
+/// observational (addendum).
 struct ScriptedRoomSource: FleetRoomSourceProviding {
     let gatewayID: GatewayID
 
     func rooms() async -> [FleetRoom] {
         guard gatewayID.rawValue == "workstation" else { return [] }
-        return [
+        var rooms: [FleetRoom] = [await ScriptedRoomEngine.shared.hostedRoom(gatewayID: gatewayID)]
+        rooms += await ScriptedRoomEngine.shared.createdRoomRows(gatewayID: gatewayID)
+        if await ScriptedRoomEngine.shared.legacyRoomVisible {
+            rooms.append(legacyRoom(gatewayID: gatewayID))
+        }
+        return rooms
+    }
+
+    private func legacyRoom(gatewayID: GatewayID) -> FleetRoom {
+        FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: gatewayID, key: "name:Research Crew"),
+            name: "Research Crew",
+            members: [FleetRoomMember(name: "Researcher")],
+            recentLog: [
+                FleetRoomMessage(
+                    id: "l1",
+                    from: .init(kind: .member, name: "Researcher"),
+                    text: "Older room managed from Desktop.",
+                    at: 1_757_100_000_000),
+            ]
+        )
+    }
+}
+
+/// Slice 4 scripted engine: an in-memory hosted room faithful to the
+/// gateway's groups.* semantics (durable log by seq, idempotent send,
+/// tombstoned disband, stop/retry/approve counters) — deterministic UI-test
+/// fixture, DEBUG simulator only. Env knobs (UI tests):
+/// - `HERMES_FLEET_ROOM_FAILURE=1` — the room's transcript carries a typed
+///   `turn.failed` (provider_auth_or_access) + a pending retry action.
+/// - `HERMES_FLEET_ROOM_APPROVAL=1` — a needs-you approval is pending.
+actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
+    static let shared = ScriptedRoomEngine()
+
+    private var _events: [HostedRoomEventValue] = []
+    private var _seq = 0
+    private var _roomName = "Launch Crew"
+    private var _disbanded = false
+    private var _legacyRoomVisible = true
+    private var _createdRooms: [String] = []
+    private var _sendCount = 0
+    private var _renameCount = 0
+    private var _stopCount = 0
+    private var _retryCount = 0
+    private var _approveChoices: [String] = []
+    private var _pendingApproval: RoomPendingApproval?
+    private var _pendingRetry: RoomPendingRetry?
+    private var _lastCreatedMembers: [[String: String]] = []
+    private var _createdRoomNames: [String: String] = [:]
+
+    private init() {
+        let seed = Self.makeSeed()
+        _events = seed.events
+        _seq = seed.seq
+        _pendingRetry = seed.pendingRetry
+        _pendingApproval = seed.pendingApproval
+    }
+
+    /// Pure seed builder (callable from nonisolated init AND isolated reset).
+    private static func makeSeed()
+        -> (events: [HostedRoomEventValue], seq: Int,
+            pendingApproval: RoomPendingApproval?, pendingRetry: RoomPendingRetry?) {
+        var events: [HostedRoomEventValue] = []
+        var seq = 0
+        func append(
+            kind: String, actorKind: String, actorID: String, actorProfile: String? = nil,
+            text: String?, reason: String? = nil
+        ) {
+            seq += 1
+            events.append(HostedRoomEventValue(
+                roomID: "room-alpha", seq: seq, eventID: "se-\(seq)", kind: kind,
+                actorKind: actorKind, actorID: actorID, actorProfile: actorProfile,
+                payloadText: text, reasonCode: reason, createdAt: Date().timeIntervalSince1970))
+        }
+        append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
+        append(kind: "message.member", actorKind: "member", actorID: "researcher",
+               actorProfile: "researcher", text: "Draft is ready for review.")
+        var pendingRetry: RoomPendingRetry?
+        var pendingApproval: RoomPendingApproval?
+        let env = ProcessInfo.processInfo.environment
+        if env["HERMES_FLEET_ROOM_FAILURE"] == "1" {
+            append(kind: "turn.failed", actorKind: "gateway", actorID: "gateway",
+                   actorProfile: "researcher",
+                   text: "Provider rejected the request (auth).",
+                   reason: "provider_auth_or_access")
+            pendingRetry = RoomPendingRetry(taskID: "task-fail-1")
+        }
+        if env["HERMES_FLEET_ROOM_APPROVAL"] == "1" {
+            pendingApproval = RoomPendingApproval(
+                memberID: "researcher", taskID: "task-appr-1", executionGeneration: 2,
+                requestID: "req-1",
+                approval: ["prompt": .string("Allow the researcher to run the web tool?")])
+        }
+        return (events, seq, pendingApproval, pendingRetry)
+    }
+
+    /// Full reset to the deterministic seed (per-test isolation).
+    func reset() {
+        _roomName = "Launch Crew"
+        _disbanded = false
+        _legacyRoomVisible = true
+        _createdRooms = []
+        _sendCount = 0
+        _renameCount = 0
+        _stopCount = 0
+        _retryCount = 0
+        _approveChoices = []
+        _lastCreatedMembers = []
+        let seed = Self.makeSeed()
+        _events = seed.events
+        _seq = seed.seq
+        _pendingApproval = seed.pendingApproval
+        _pendingRetry = seed.pendingRetry
+    }
+
+    var roomKey: String { "room-alpha" }
+    var roomNameValue: String { _roomName }
+    var isDisbanded: Bool { _disbanded }
+    var legacyRoomVisible: Bool { _legacyRoomVisible }
+    var sendCount: Int { _sendCount }
+    var stopCount: Int { _stopCount }
+    var retryCount: Int { _retryCount }
+    var renameCount: Int { _renameCount }
+    var approveChoices: [String] { _approveChoices }
+    var createdRoomIDs: [String] { _createdRooms }
+    var lastCreatedMembers: [[String: String]] { _lastCreatedMembers }
+
+    /// Seed a legacy same-name room (distinctness fixture) on/off.
+    func setLegacyRoomVisible(_ visible: Bool) {
+        _legacyRoomVisible = visible
+    }
+
+    func hostedRoom(gatewayID: GatewayID) -> FleetRoom {
+        FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomKey),
+            name: _roomName,
+            members: [
+                FleetRoomMember(name: "Researcher", handle: "researcher"),
+                FleetRoomMember(name: "Default", handle: "default"),
+            ],
+            hosted: HostedRoomState(
+                authorityGatewayID: gatewayID.rawValue,
+                authorityEpoch: 1,
+                latestSeq: _seq,
+                advertisedMethods: [
+                    "groups.create", "groups.send", "groups.rename", "groups.log",
+                    "groups.disband", "groups.stop", "groups.retry", "groups.approve",
+                ],
+                driverAvailable: !_disbanded))
+    }
+
+    @discardableResult
+    private func append(
+        kind: String, actorKind: String, actorID: String, actorProfile: String? = nil,
+        text: String?, reason: String? = nil
+    ) -> HostedRoomEventValue {
+        _seq += 1
+        let event = HostedRoomEventValue(
+            roomID: roomKey, seq: _seq, eventID: "se-\(_seq)", kind: kind,
+            actorKind: actorKind, actorID: actorID, actorProfile: actorProfile,
+            payloadText: text, reasonCode: reason, createdAt: Date().timeIntervalSince1970)
+        _events.append(event)
+        return event
+    }
+
+    // MARK: RoomChatCommanding
+
+    func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
+        let window = _events.filter { $0.roomID == roomID && $0.seq > sinceSeq }
+        return RoomLogPageSlice(
+            events: Array(window.prefix(limit)),
+            cursor: _seq,
+            latestSeq: _seq,
+            hasMore: window.count > limit,
+            authorityGatewayID: "workstation",
+            authorityEpoch: 1)
+    }
+
+    func send(roomID: String, text: String, threadID: String?) async throws -> Int {
+        _sendCount += 1
+        append(kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
+        return _seq
+    }
+
+    func rename(roomID: String, name: String) async throws {
+        _renameCount += 1
+        _roomName = name
+        append(kind: "room.renamed", actorKind: "system", actorID: "system", text: name)
+    }
+
+    func disband(roomID: String) async throws {
+        _disbanded = true
+        append(kind: "room.disbanded", actorKind: "system", actorID: "system", text: nil)
+    }
+
+    func stop(roomID: String) async throws -> Int {
+        _stopCount += 1
+        append(kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
+        return 1
+    }
+
+    func retry(roomID: String, taskID: String) async throws {
+        _retryCount += 1
+        _pendingRetry = nil
+    }
+
+    func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws {
+        _approveChoices.append(choice)
+        _pendingApproval = nil
+    }
+
+    func createRoom(name: String, members: [[String: String]]) async throws -> String {
+        let roomID = "room-\(_createdRooms.count + 1)"
+        _createdRooms.append(roomID)
+        _createdRoomNames[roomID] = name
+        _lastCreatedMembers = members
+        append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
+        return roomID
+    }
+
+    /// FleetRoom rows for created rooms (fresh log per room; frozen roster
+    /// from the wire members).
+    func createdRoomRows(gatewayID: GatewayID) -> [FleetRoom] {
+        _createdRooms.map { roomID in
             FleetRoom(
-                id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: "room-alpha"),
-                name: "Launch Crew",
-                members: [
-                    FleetRoomMember(name: "Researcher", handle: "researcher"),
-                    FleetRoomMember(name: "Default", handle: "default"),
-                ],
-                recentLog: [
-                    FleetRoomMessage(
-                        id: "m1",
-                        from: .init(kind: .member, name: "Researcher"),
-                        text: "Draft is ready for review.",
-                        at: 1_757_200_000),
-                ],
+                id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+                name: _createdRoomNames[roomID] ?? roomID,
+                members: [],
                 hosted: HostedRoomState(
                     authorityGatewayID: gatewayID.rawValue,
                     authorityEpoch: 1,
-                    advertisedMethods: ["groups.send", "groups.stop", "groups.log"],
-                    driverAvailable: true)
-            ),
-            FleetRoom(
-                id: FleetRoomID(provenance: .desktopLegacy, gatewayID: gatewayID, key: "name:Research Crew"),
-                name: "Research Crew",
-                members: [FleetRoomMember(name: "Researcher")],
-                recentLog: [
-                    FleetRoomMessage(
-                        id: "l1",
-                        from: .init(kind: .member, name: "Researcher"),
-                        text: "Older room managed from Desktop.",
-                        at: 1_757_100_000_000),
-                ]
-            ),
-        ]
+                    advertisedMethods: [
+                        "groups.create", "groups.send", "groups.rename", "groups.log",
+                        "groups.disband", "groups.stop", "groups.retry", "groups.approve",
+                    ],
+                    driverAvailable: true))
+        }
+    }
+
+    // MARK: RoomDriverStatusProviding
+
+    func driverStatus(roomID: String) async throws -> RoomDriverStatus? {
+        RoomDriverStatus(
+            working: false,
+            blocked: _pendingApproval != nil || _pendingRetry != nil,
+            counts: [:],
+            pendingRetries: _pendingRetry.map { [$0] } ?? [],
+            pendingApprovals: _pendingApproval.map { [$0] } ?? [])
     }
 }
 

@@ -177,6 +177,8 @@ enum FleetServiceGraph {
             botModeChatFactory: makeBotModeChatFactory(credentialStore: credentialStore, pinStore: pinStore),
             botProfileFactory: makeBotProfileFactory(credentialStore: credentialStore, pinStore: pinStore),
             roomSourceFactory: makeRoomSourceFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomCommandFactory: makeRoomCommandFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomDriverStatusFactory: makeRoomDriverStatusFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health,
             // R9-T1: the approval banner's FaceID gate rides the SAME
             // LocalAuthentication seam as the app lock (release: real
@@ -389,6 +391,43 @@ enum FleetServiceGraph {
                 legacy: DesktopLegacyRoomProvider(gatewayID: gateway.id, transport: transport),
                 profileReader: client
             )
+        }
+    }
+
+    /// Slice 4: per-gateway room-command seam — `groups.*` over the shared
+    /// authenticated transport, mapped to FleetCore typed failures.
+    nonisolated private static func makeRoomCommandFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomCommandFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayRoomCommandAdapter(
+                gatewayID: gateway.id,
+                client: GatewayGroupsClient(gatewayID: gateway.id, transport: transport))
+        }
+    }
+
+    /// Slice 4: per-gateway driver-status seam (`groups.state`).
+    nonisolated private static func makeRoomDriverStatusFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomDriverStatusFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayRoomDriverStatusAdapter(gatewayID: gateway.id, transport: transport)
         }
     }
 

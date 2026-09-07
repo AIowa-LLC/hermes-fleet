@@ -102,6 +102,8 @@ public struct FleetTabView: View {
             BotDetailView(environment: environment, route: route)
         case .botRoutines(let route):
             BotRoutinesView(environment: environment, route: route)
+        case .room(let room):
+            RoomChatView(room: room, environment: environment)
         case .conversation(let route, let sessionID):
             ConversationView(environment: environment, route: route, sessionID: sessionID)
         case .health:

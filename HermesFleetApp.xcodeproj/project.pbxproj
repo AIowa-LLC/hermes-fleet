@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0098E9FDF89D44B5CE8F7285 /* P3FixLANGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA506D7F4BC4CAA5FA1860A /* P3FixLANGatewayUITests.swift */; };
+		023319986EDBAC88CE708F61 /* RoomChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B14422ADBAE78872C49B68E /* RoomChatViewModelTests.swift */; };
 		0648A50441FEDC7FB3FE592C /* BotChatTapUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE013E4BDC8AF9FA7B7A6BB /* BotChatTapUITests.swift */; };
 		0C15E01E38955F7B74F335F5 /* RT2RemovalAndEndpointSanitizationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0788C641C3AD0C32972980 /* RT2RemovalAndEndpointSanitizationUITests.swift */; };
 		0C26BBF27EF90EACF7C2DB65 /* GatewayFormDraftStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */; };
@@ -70,6 +71,7 @@
 		A2B84AE3662AEC98EC77C3EE /* RT4RosterEmptyStateUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34781F74AFD460D82B873234 /* RT4RosterEmptyStateUITests.swift */; };
 		A4CA210EB6511D75124029EF /* ConversationVoiceViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2627C9CB0E1C1E3476D9EB00 /* ConversationVoiceViewModelTests.swift */; };
 		A61B399EE4B0054EF82EA89C /* AppCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7F6E782B2770F110FAB14A9 /* AppCompositionTests.swift */; };
+		A7EE0E2701530A9A184F5BB6 /* RoomChatUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E4A0FF7E8350A8E2BA6F853 /* RoomChatUITests.swift */; };
 		A97BFFDDA3101E30242FF257 /* R10ProjectsBrowserUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E135D8699F0110CA5792B32 /* R10ProjectsBrowserUITests.swift */; };
 		AB02B84E3EE16C4A0E9F47F1 /* ProjectsSnapshotStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261A5784C89B6D7B55044B5F /* ProjectsSnapshotStoreTests.swift */; };
 		ABD9FAEBC67BC5E829AE92F6 /* VoiceIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36FAEE832413ACBA6AF7F206 /* VoiceIO.swift */; };
@@ -130,6 +132,7 @@
 		0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H1AppLockUITests.swift; sourceTree = "<group>"; };
 		0A603A8D0B8049916523C335 /* AppLockProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockProviders.swift; sourceTree = "<group>"; };
 		0D4835804962F3C2C39A75BE /* F1TwoGatewayFleetLiveUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = F1TwoGatewayFleetLiveUITests.swift; sourceTree = "<group>"; };
+		0E4A0FF7E8350A8E2BA6F853 /* RoomChatUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomChatUITests.swift; sourceTree = "<group>"; };
 		0EDD0C9EA5DA66D6FA4D2F1C /* F1FailureCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = F1FailureCopyTests.swift; sourceTree = "<group>"; };
 		0F3B4DCFA36A97723EE623AB /* FleetCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetCore; path = Packages/FleetCore; sourceTree = SOURCE_ROOT; };
 		10E6E3D880ED0ED902488681 /* U5BotDetailUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U5BotDetailUITests.swift; sourceTree = "<group>"; };
@@ -190,6 +193,7 @@
 		90F4785CD8BD260DF07E65DF /* R9ApprovalBannerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ApprovalBannerUITests.swift; sourceTree = "<group>"; };
 		920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecondGenerationUITests.swift; sourceTree = "<group>"; };
 		9A05382B633430B51638CBE2 /* FleetWing.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = FleetWing.icon; sourceTree = "<group>"; };
+		9B14422ADBAE78872C49B68E /* RoomChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomChatViewModelTests.swift; sourceTree = "<group>"; };
 		9BAF2911DD7A9A273ED1D5D2 /* FleetComponentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetComponentsTests.swift; sourceTree = "<group>"; };
 		A6325589D12BB7792035231F /* P0_7LiveTailnetUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P0_7LiveTailnetUITests.swift; sourceTree = "<group>"; };
 		A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U7GatewayQrLockSettingsUITests.swift; sourceTree = "<group>"; };
@@ -290,6 +294,7 @@
 				068164FABF60AF462ACB6CA2 /* OnboardingPromptTests.swift */,
 				53074EB2159A1156DFDF11FD /* ProjectsBrowserTests.swift */,
 				261A5784C89B6D7B55044B5F /* ProjectsSnapshotStoreTests.swift */,
+				9B14422ADBAE78872C49B68E /* RoomChatViewModelTests.swift */,
 				3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */,
 				D8DF5B94BC0B059D55DDF707 /* ScriptedCreateFlowTests.swift */,
 				66AF4A028601A68EE4122718 /* SimulatorCreateFlowTests.swift */,
@@ -388,6 +393,7 @@
 				57784BC2C1A8BD4D890F4D33 /* R10MessageReactionsUITests.swift */,
 				5E135D8699F0110CA5792B32 /* R10ProjectsBrowserUITests.swift */,
 				8E4B9CA2708C4F6346F45A41 /* R10VoiceUITests.swift */,
+				0E4A0FF7E8350A8E2BA6F853 /* RoomChatUITests.swift */,
 				AA0788C641C3AD0C32972980 /* RT2RemovalAndEndpointSanitizationUITests.swift */,
 				C16ABB40EB8195A89AAF2A6C /* RT4FormSaveFailureUITests.swift */,
 				34781F74AFD460D82B873234 /* RT4RosterEmptyStateUITests.swift */,
@@ -595,6 +601,7 @@
 				316AD24DA48B5B359159BC3E /* ProjectsBrowserTests.swift in Sources */,
 				AB02B84E3EE16C4A0E9F47F1 /* ProjectsSnapshotStoreTests.swift in Sources */,
 				8D5D7A4794C4F5C1DEE340BD /* RT4LogicRegressionTests.swift in Sources */,
+				023319986EDBAC88CE708F61 /* RoomChatViewModelTests.swift in Sources */,
 				2A799A76FD4BAA877BA8F2AD /* ScriptedCreateFlowTests.swift in Sources */,
 				CDE183B24E366CE77571FB9D /* SimulatorCreateFlowTests.swift in Sources */,
 				7CAFFD3B36AB1B7B3EEEFFCD /* SplashConfigurationTests.swift in Sources */,
@@ -640,6 +647,7 @@
 				EC633F89B6F3E540C837E1A2 /* RT4FormSaveFailureUITests.swift in Sources */,
 				A2B84AE3662AEC98EC77C3EE /* RT4RosterEmptyStateUITests.swift in Sources */,
 				F14069A7319C17D2D0651D4F /* RT4VoiceOverUITests.swift in Sources */,
+				A7EE0E2701530A9A184F5BB6 /* RoomChatUITests.swift in Sources */,
 				5F465EC10BBE403B4835C88E /* S3CleartextWarningUITests.swift in Sources */,
 				CEE35FD50C2E188BB54260A7 /* SecondGenerationUITests.swift in Sources */,
 				82725A689F83E414C95BE70C /* SplashUITests.swift in Sources */,

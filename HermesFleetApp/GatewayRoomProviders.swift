@@ -121,6 +121,199 @@ struct EmptyRoomSource: FleetRoomSourceProviding {
     func rooms() async -> [FleetRoom] { [] }
 }
 
+/// Slice 4: production room-command adapter — the FleetCore
+/// `RoomChatCommanding` seam over the per-gateway `GatewayGroupsClient`.
+/// Every mapping is exact (methods_groups.py at upstream 08b140d); typed
+/// `GroupsError`s cross as FleetCore `RoomCommandFailure`s so FleetUI never
+/// imports FleetNetworking.
+struct GatewayRoomCommandAdapter: RoomChatCommanding {
+    let gatewayID: GatewayID
+    private let client: GatewayGroupsClient
+
+    init(gatewayID: GatewayID, client: GatewayGroupsClient) {
+        self.gatewayID = gatewayID
+        self.client = client
+    }
+
+    func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
+        do {
+            let page = try await client.log(roomID: roomID, sinceSeq: sinceSeq, limit: limit)
+            return RoomLogPageSlice(
+                events: page.events.map(Self.value),
+                cursor: page.cursor,
+                latestSeq: page.latestSeq,
+                hasMore: page.hasMore,
+                authorityGatewayID: page.authority.gatewayID,
+                authorityEpoch: page.authority.epoch)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func send(roomID: String, text: String, threadID: String?) async throws -> Int {
+        do {
+            return try await client.send(roomID: roomID, text: text, threadID: threadID).seq
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func rename(roomID: String, name: String) async throws {
+        do {
+            _ = try await client.rename(roomID: roomID, name: name)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func disband(roomID: String) async throws {
+        do {
+            try await client.disband(roomID: roomID)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func stop(roomID: String) async throws -> Int {
+        do {
+            return try await client.stop(roomID: roomID)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func retry(roomID: String, taskID: String) async throws {
+        do {
+            _ = try await client.retry(roomID: roomID, taskID: taskID)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func approve(
+        roomID: String, action: RoomPendingApproval, choice: String
+    ) async throws {
+        do {
+            _ = try await client.approve(
+                roomID: roomID,
+                memberID: action.memberID,
+                taskID: action.taskID,
+                executionGeneration: action.executionGeneration,
+                choice: choice,
+                requestID: action.requestID ?? "")
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    func createRoom(name: String, members: [[String: String]]) async throws -> String {
+        let wireMembers: [JSONValue] = members.map { member in
+            var object: [String: JSONValue] = [:]
+            for (key, value) in member { object[key] = .string(value) }
+            return JSONValue.object(object)
+        }
+        do {
+            return try await client.createRoom(name: name, members: wireMembers, profile: nil).roomID
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    /// FleetNetworking event row → FleetCore value (payload text + actor
+    /// extras are decoded here; unknown payload fields are dropped, not
+    /// invented).
+    static func value(_ event: HostedRoomEvent) -> HostedRoomEventValue {
+        HostedRoomEventValue(
+            roomID: event.roomID,
+            seq: event.seq,
+            eventID: event.eventID,
+            kind: event.kind,
+            actorKind: event.actorKind,
+            actorID: event.actorID,
+            payloadText: event.text.isEmpty ? nil : event.text,
+            createdAt: event.createdAt)
+    }
+
+    static func map(_ error: Error) -> RoomCommandFailure {
+        guard let groupsError = error as? GroupsError else {
+            if let rpc = error as? JSONRPCError {
+                return .rpcFailed(rpc.message, rpc.code)
+            }
+            return .notConnected
+        }
+        switch groupsError {
+        case .unsupportedMethod(let m): return .unsupportedMethod(m)
+        case .foreignAuthority(let m): return .foreignAuthority(m)
+        case .confirmRequired(let m): return .confirmRequired(m)
+        case .rpcFailed(let m): return .rpcFailed(m, 0)
+        case .notConnected: return .notConnected
+        case .malformedPayload(let m): return .rpcFailed(m, 0)
+        }
+    }
+}
+
+/// Slice 4: driver-status adapter — `groups.state` → normalized
+/// `driver_status` (pending retry/approval actions, hosted_room_service.py
+/// status() shape).
+struct GatewayRoomDriverStatusAdapter: RoomDriverStatusProviding {
+    let gatewayID: GatewayID
+    private let transport: GatewayWebSocketTransport
+
+    init(gatewayID: GatewayID, transport: GatewayWebSocketTransport) {
+        self.gatewayID = gatewayID
+        self.transport = transport
+    }
+
+    func driverStatus(roomID: String) async throws -> RoomDriverStatus? {
+        guard case .connected = transport.state else {
+            throw RoomCommandFailure.notConnected
+        }
+        let result: JSONValue
+        do {
+            result = try await transport.request(
+                method: "groups.state",
+                params: .object(["room_id": .string(roomID)]))
+        } catch let error as JSONRPCError {
+            throw GatewayRoomCommandAdapter.map(error)
+        }
+        guard let status = result["driver_status"]?.objectValue else { return nil }
+        let actions = status["pending_actions"]?.arrayValue ?? []
+        var retries: [RoomPendingRetry] = []
+        var approvals: [RoomPendingApproval] = []
+        for action in actions {
+            guard let object = action.objectValue, let kind = object["kind"]?.stringValue else {
+                continue
+            }
+            if kind == "retry", let taskID = object["task_id"]?.stringValue {
+                retries.append(RoomPendingRetry(taskID: taskID))
+            } else if kind == "approval",
+                      let taskID = object["task_id"]?.stringValue,
+                      let memberID = object["member_id"]?.stringValue {
+                approvals.append(RoomPendingApproval(
+                    memberID: memberID,
+                    taskID: taskID,
+                    executionGeneration: object["execution_generation"]?.numberValue.map(Int.init) ?? 0,
+                    runID: object["run_id"]?.stringValue,
+                    sessionID: object["session_id"]?.stringValue,
+                    requestID: object["request_id"]?.stringValue,
+                    approval: ModernProfilesDecoder.toMetadataValue(object["approval"] ?? .object([:])).objectValue ?? [:]))
+            }
+        }
+        var counts: [String: Int] = [:]
+        if let countsObject = status["counts"]?.objectValue {
+            for (key, value) in countsObject {
+                counts[key] = value.numberValue.map(Int.init) ?? 0
+            }
+        }
+        return RoomDriverStatus(
+            working: status["working"]?.boolValue ?? false,
+            blocked: status["blocked"]?.boolValue ?? false,
+            counts: counts,
+            pendingRetries: retries,
+            pendingApprovals: approvals)
+    }
+}
+
 /// Fail-closed bot-profile seam for gateways without an endpoint.
 struct UnsupportedBotProfileManagement: BotProfileManaging {
     func describeProfile(_ profile: String) async throws -> BotProfileDescription {

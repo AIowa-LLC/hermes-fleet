@@ -30,6 +30,7 @@ public struct FleetRosterView: View {
     @State private var revealingHidden = false
     @State private var showingCreate = false
     @State private var sectionsGateway: FleetGateway?
+    @State private var createRoomGateway: FleetGateway?
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -58,6 +59,13 @@ public struct FleetRosterView: View {
                     }
                     .accessibilityIdentifier("fleet.roster.create")
                     ForEach(environment.gateways) { gateway in
+                        Button {
+                            createRoomGateway = gateway
+                        } label: {
+                            Label("Create Room — \(gateway.displayName)", systemImage: "person.3")
+                        }
+                        .disabled(!environment.canCreateRooms(on: gateway.id))
+                        .accessibilityIdentifier("fleet.roster.createroom.\(gateway.id.rawValue)")
                         Button {
                             sectionsGateway = gateway
                         } label: {
@@ -96,6 +104,9 @@ public struct FleetRosterView: View {
         }
         .sheet(item: $sectionsGateway) { gateway in
             SectionsManagementSheet(environment: environment, gateway: gateway)
+        }
+        .sheet(item: $createRoomGateway) { gateway in
+            CreateRoomSheet(environment: environment, gateway: gateway) { _ in }
         }
         .searchable(text: $searchText, prompt: "Bots, rooms, gateways")
         .task {
@@ -269,9 +280,12 @@ public struct FleetRosterView: View {
             SectionHeader(title: "Rooms")
                 .accessibilityIdentifier("fleet.roster.rooms")
             ForEach(visible) { room in
-                RoomRowView(room: room)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("fleet.room.row.\(room.id.key)")
+                NavigationLink(value: FleetScreen.room(room)) {
+                    RoomRowView(room: room)
+                }
+                .buttonStyle(.fleetPressable)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.room.row.\(room.id.key)")
             }
         }
     }
