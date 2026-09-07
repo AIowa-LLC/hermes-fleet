@@ -63,6 +63,16 @@ public struct GatewayManagementClient: GatewayManagementProviding {
             "schedule": .string(schedule),
             "prompt": .string(prompt),
         ]
+        // Slice 3 (D13): routine creates carry the bot-chat deliver target
+        // (methods_tools.py:1048-1052 — 'bot-chat[:name]'; empty keeps the
+        // gateway default). repeat is digits-only upstream; nil omits it.
+        if let deliver = draft.deliver?.trimmingCharacters(in: .whitespaces),
+           !deliver.isEmpty {
+            params["deliver"] = .string(deliver)
+        }
+        if let repeatCount = draft.repeatCount {
+            params["repeat"] = .number(Double(repeatCount))
+        }
         if let profile { params["profile"] = .string(profile) }
         let result = try await request(method: "cron.manage", params: .object(params))
         // Create answers the row at top level AND under "job"
@@ -209,7 +219,7 @@ public struct GatewayManagementClient: GatewayManagementProviding {
         result["jobs"]?.arrayValue?.compactMap(Self.decodeJob) ?? []
     }
 
-    /// A `_format_job` row (cronjob_tools.py:753-791).
+    /// A `_format_job` row (cronjob_job_args.py:346-391).
     static func decodeJob(_ value: JSONValue?) -> CronJob? {
         guard let o = value?.objectValue,
               let jobID = o["job_id"]?.stringValue, !jobID.isEmpty else { return nil }
@@ -222,7 +232,12 @@ public struct GatewayManagementClient: GatewayManagementProviding {
             lastStatus: o["last_status"]?.stringValue,
             isEnabled: o["enabled"]?.boolValue ?? true,
             state: o["state"]?.stringValue ?? "",
-            promptPreview: o["prompt_preview"]?.stringValue
+            promptPreview: o["prompt_preview"]?.stringValue,
+            deliver: o["deliver"]?.stringValue,
+            repeatDisplay: o["repeat"]?.stringValue,
+            lastFireError: o["last_fire_error"]?.stringValue,
+            lastDeliveryError: o["last_delivery_error"]?.stringValue,
+            pausedReason: o["paused_reason"]?.stringValue
         )
     }
 

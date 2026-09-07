@@ -53,6 +53,18 @@ public struct CronJob: Identifiable, Hashable, Sendable {
     public let state: String
     /// Up-to-100-char prompt preview (already truncated server-side).
     public let promptPreview: String?
+    /// Delivery target on the job record (`_format_job` `deliver`,
+    /// cronjob_job_args.py:358 — e.g. "bot-chat", "bot-chat:researcher",
+    /// "local", "telegram"). Slice 3: routines surface the bot-chat target.
+    public let deliver: String?
+    /// Repeat display (`_repeat_display` — "forever" / "once" / "3 times").
+    public let repeatDisplay: String?
+    /// Last FIRE failure detail (`last_fire_error`) — nil when healthy.
+    public let lastFireError: String?
+    /// Last DELIVERY failure detail (`last_delivery_error`) — nil when healthy.
+    public let lastDeliveryError: String?
+    /// Paused reason (`paused_reason`) — nil unless the job was paused with one.
+    public let pausedReason: String?
 
     public init(
         jobID: String,
@@ -63,7 +75,12 @@ public struct CronJob: Identifiable, Hashable, Sendable {
         lastStatus: String? = nil,
         isEnabled: Bool = true,
         state: String = "",
-        promptPreview: String? = nil
+        promptPreview: String? = nil,
+        deliver: String? = nil,
+        repeatDisplay: String? = nil,
+        lastFireError: String? = nil,
+        lastDeliveryError: String? = nil,
+        pausedReason: String? = nil
     ) {
         self.jobID = jobID
         self.name = name
@@ -74,6 +91,11 @@ public struct CronJob: Identifiable, Hashable, Sendable {
         self.isEnabled = isEnabled
         self.state = state
         self.promptPreview = promptPreview
+        self.deliver = deliver
+        self.repeatDisplay = repeatDisplay
+        self.lastFireError = lastFireError
+        self.lastDeliveryError = lastDeliveryError
+        self.pausedReason = pausedReason
     }
 
     public var id: String { jobID }
@@ -181,11 +203,25 @@ public struct CronJobDraft: Hashable, Sendable {
     public var name: String
     public var schedule: String
     public var prompt: String
+    /// Delivery target (cron.manage `add` param; methods_tools.py:1048-1052
+    /// — e.g. "bot-chat", "bot-chat:researcher"). Nil/empty keeps the
+    /// gateway's default.
+    public var deliver: String?
+    /// Run count (`repeat` param — digits only upstream; nil = forever).
+    public var repeatCount: Int?
 
-    public init(name: String = "", schedule: String = "", prompt: String = "") {
+    public init(
+        name: String = "",
+        schedule: String = "",
+        prompt: String = "",
+        deliver: String? = nil,
+        repeatCount: Int? = nil
+    ) {
         self.name = name
         self.schedule = schedule
         self.prompt = prompt
+        self.deliver = deliver
+        self.repeatCount = repeatCount
     }
 
     /// Client-side validity (the server re-validates): a job needs a name,
