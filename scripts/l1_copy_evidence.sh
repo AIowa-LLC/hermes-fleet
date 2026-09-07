@@ -1,7 +1,9 @@
 #!/bin/bash
-# L1: copy exported xcresult screenshots to stable evidence filenames.
+# Copy exported L1 xcresult screenshots to stable evidence filenames.
 set -u
-cd ~/code/hermes-fleet-ios
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
 SRC=build/l1/attachments_1788073234
 OUT=build/l1
 mkdir -p "$OUT"

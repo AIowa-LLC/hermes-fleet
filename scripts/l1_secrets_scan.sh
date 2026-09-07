@@ -1,14 +1,14 @@
 #!/bin/bash
-# L1: secrets hygiene scan before committing — flag any hardcoded token-like
-# literals in the new L1 files. The test token is generated at runtime, chmod
-# 600, never printed; nothing should be hardcoded.
+# L1 secrets-hygiene scan. Flag hardcoded token-like literals in L1 files.
+# Test credentials are expected to be generated at runtime and never committed.
 set -u
-cd ~/code/hermes-fleet-ios
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
 
 echo "=== L1: pre-commit secrets scan ==="
 FILES=$(git status --short | grep -E '^\?\?' | awk '{print $2}' | grep -E 'L1|l1')
 for f in $FILES; do
-  # look for long random-looking literals, token= assignments, or bearer values
   HITS=$(grep -nE "([A-Za-z0-9_-]{24,})|token *= *['\"][^'\"]{12,}|bearer [A-Za-z0-9]" "$f" 2>/dev/null | grep -vE "tokenPath|tokenField|testToken|\.token|tokens|sessionToken|tokenText|HERMES_DASHBOARD_SESSION_TOKEN|readTestToken|L1_TOKEN|ws-ticket|ticket=" | head -5)
   if [ -n "$HITS" ]; then
     echo "  $f:"

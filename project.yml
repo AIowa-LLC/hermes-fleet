@@ -47,20 +47,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.aiowa.hermesfleet
         PRODUCT_NAME: HermesFleetApp
         GENERATE_INFOPLIST_FILE: YES
-        # Partial Info.plist (ATS local-networking exception) merged with the
-        # generated INFOPLIST_KEY_* keys (P3 LAN-gateway fix).
+        # Partial Info.plist values are merged with generated INFOPLIST_KEY_*
+        # settings. Local-network access and privacy usage strings live there.
         INFOPLIST_FILE: HermesFleetApp/Info.plist
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Hermes Fleet
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
         ASSETCATALOG_COMPILER_APPICON_NAME: FleetWing
         ENABLE_PREVIEWS: YES
-        # F1 (t_e41b16e0): back to Automatic development signing for the
-        # local WiFi dev-build lane (Tony's batch auth: local builds, NOT
-        # TestFlight). The Manual/App-Store v2 profile from build-7 prep
-        # (48b4308) is rejected by devicectl on-device ("Beta profile
-        # without the proper entitlement"). Release/TestFlight lanes
-        # override these per-invocation as before.
+        # Automatic signing supports local development. Distribution workflows
+        # may override signing settings per invocation when appropriate.
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 3JS22HX92T
 
@@ -69,10 +65,8 @@ targets:
     platform: iOS
     sources:
       - HermesFleetAppTests
-      # The shared in-process gateway fixture lives in the FleetNetworking
-      # package's test target; compile the SAME file into the app test bundle
-      # so hosted (iOS-simulator) tests drive real transports against it
-      # (single source of truth, U3 fixture full-loop suite).
+      # Compile the shared in-process gateway fixture into the hosted app test
+      # bundle so integration tests exercise the same transport fixture source.
       - path: Packages/FleetNetworking/Tests/FleetNetworkingTests/InProcessWebSocketServer.swift
     dependencies:
       - target: HermesFleetApp
@@ -106,9 +100,8 @@ schemes:
       targets:
         - HermesFleetAppTests
         - HermesFleetAppUITests
-  # F1: device-hosted unit tests without the UI-test bundle — the xctrunner
-  # target needs an Xcode account session to mint its profile, which is not
-  # always available headless. Unit tests sign with the app's profile.
+  # Device-hosted unit-test scheme without the UI-test bundle. This keeps
+  # unit-only validation available when an XCUITest runner is unnecessary.
   HermesFleetAppUnitTests:
     build:
       targets:

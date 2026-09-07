@@ -1,9 +1,10 @@
 #!/bin/bash
-# L1 fix (t_c0bfc604): copy the exported xcresult screenshots from the L1-fix
-# Release XCUITest run to stable evidence filenames under build/l1-fix/.
-# Does NOT touch the original L1 evidence under build/l1/.
+# Copy exported L1-fix xcresult screenshots to stable evidence filenames under build/l1-fix/.
+# The original L1 evidence under build/l1/ is left untouched.
 set -u
-cd ~/code/hermes-fleet-ios
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
 SRC="build/l1-fix-final-1788076017"
 OUT="build/l1-fix"
 mkdir -p "$OUT"

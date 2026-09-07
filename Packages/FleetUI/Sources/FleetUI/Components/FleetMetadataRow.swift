@@ -4,8 +4,7 @@ import UIKit
 #endif
 
 /// Pixel-hairline height (1pt on non-Retina, 0.5pt on Retina+). UIKit-only;
-/// macOS host-side builds get the fixed 0.5pt (convenience only — the
-/// product targets iOS).
+/// macOS host-side builds get the fixed 0.5pt convenience value.
 @available(iOS 13.0, macOS 10.15, *)
 private var hairlineHeight: CGFloat {
     #if canImport(UIKit)
@@ -15,10 +14,8 @@ private var hairlineHeight: CGFloat {
     #endif
 }
 
-/// V1 (Nous direction) — terminal `KEY:` metadata row: muted mono key,
-/// bright mono value, hairline divider underneath. The Nous voice for
-/// metadata: status read like a process table (content-only styling, no
-/// fake data).
+/// Terminal-style `KEY:` metadata row with a muted monospaced key, primary
+/// monospaced value, and optional hairline divider.
 public struct FleetMetadataRow: View {
     private let key: String
     private let value: String
@@ -27,10 +24,9 @@ public struct FleetMetadataRow: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     /// - Parameters:
-    ///   - key: metadata key, rendered `KEY:` — muted secondary mono,
-    ///     automatically uppercased.
-    ///   - value: metadata value — bright primary mono.
-    ///   - showDivider: hairline divider underneath (default true).
+    ///   - key: metadata key, rendered uppercased with a trailing colon.
+    ///   - value: metadata value.
+    ///   - showDivider: whether to render the hairline divider underneath.
     public init(_ key: String, _ value: String, showDivider: Bool = true) {
         self.key = key
         self.value = value
@@ -65,7 +61,7 @@ public struct FleetMetadataRow: View {
     VStack(spacing: 0) {
         FleetMetadataRow("SEED", "0x1F98431c8")
         FleetMetadataRow("UPTIME", "17d 04:12:33")
-        FleetMetadataRow("ROUTE", "@tonys-mbp/hermes-fleet-01")
+        FleetMetadataRow("ROUTE", "@workstation/hermes-fleet-01")
     }
     .padding()
     .background(FleetTheme.background)

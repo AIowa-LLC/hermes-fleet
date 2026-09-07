@@ -1,16 +1,13 @@
 import SwiftUI
 import FleetCore
 
-/// R9-T1/T2 — the mid-session approval banner: a dangerous command is
-/// blocked awaiting Tony's decision. DANGER surface (statusDegraded), mono
-/// command preview, DENY friction-free (one tap), APPROVE biometric-gated
-/// with a scope menu (once / session / always — only the choices the gateway
-/// offered). Nous Direction A tokens; gold stays off (danger ≠ wordmark).
+/// Mid-session approval banner for commands that require an explicit user
+/// decision. Denial is one tap; approval is biometric-gated and offers only
+/// the scopes supplied by the gateway.
 public struct ApprovalBanner: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Bindable var model: ApprovalViewModel
-    /// Deny tap (the friction-free path) — owned by the parent so the
-    /// banner itself stays presentational.
+    /// Deny tap owned by the parent so the banner remains presentational.
     var onDeny: () -> Void
 
     public init(model: ApprovalViewModel, onDeny: @escaping () -> Void) {
@@ -39,7 +36,7 @@ public struct ApprovalBanner: View {
             }
             .accessibilityIdentifier("approval.banner.title")
 
-            // Command preview — mono (telemetry identity), client-redacted.
+            // Client-redacted command preview.
             Text(request.command)
                 .font(FleetTheme.monoFont)
                 .foregroundStyle(FleetTheme.textPrimary)
@@ -78,8 +75,8 @@ public struct ApprovalBanner: View {
             }
 
             HStack(spacing: FleetTheme.spacingMd) {
-                // DENY — friction-free by design (one tap, no biometrics,
-                // no confirmation). The safe answer is never the hard one.
+                // Denial stays friction-free: one tap, no biometric prompt or
+                // confirmation step.
                 Button(role: .destructive) {
                     onDeny()
                 } label: {
@@ -90,8 +87,8 @@ public struct ApprovalBanner: View {
                 .buttonStyle(.fleetPressable)
                 .accessibilityIdentifier("approval.deny")
 
-                // APPROVE — biometric-gated. Scope menu offers only the
-                // choices the gateway sent (default once/deny).
+                // Approval is biometric-gated and exposes only gateway-offered
+                // scopes.
                 approveMenu(for: request)
             }
         }
@@ -111,8 +108,8 @@ public struct ApprovalBanner: View {
         .accessibilityLabel("Approval required. Command: \(request.command)")
     }
 
-    /// Approve with scope: tap = Approve once (the common case); the menu
-    /// offers session/always only when the gateway offered them.
+    /// Tap approves once; the menu adds broader scopes only when offered by
+    /// the gateway.
     @ViewBuilder
     private func approveMenu(for request: ApprovalRequest) -> some View {
         let offered = Set(request.choices)

@@ -1,7 +1,9 @@
 #!/bin/bash
-# L1: list xcresult attachments (handles nested manifest structure).
+# List L1 xcresult attachments, including nested manifest structures.
 set -u
-cd ~/code/hermes-fleet-ios
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
 OUT=${1:-build/l1/attachments_1788073234}
 python3 - "$OUT" <<'PYEOF'
 import json, os, sys

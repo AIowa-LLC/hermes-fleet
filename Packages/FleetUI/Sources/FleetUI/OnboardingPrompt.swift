@@ -1,28 +1,18 @@
 import Foundation
 
-/// F3/C2 — the agent bootstrap prompt shown from Settings ▸ Agent Setup Prompt
-/// (and the empty-gateways onboarding screen).
+/// Agent bootstrap prompt shown from Settings > Agent Setup Prompt and from
+/// the empty-gateways onboarding screen.
 ///
-/// The prompt is a VERSIONED ARTIFACT that ships with the app (design note
-/// from the task card): it must track install-path changes, so `version` is
-/// the single field to bump when the mission changes and the tests pin the
-/// wording shape — not exact prose — so copy edits don't churn the suite.
-///
-/// v1 (F3): TestFlight + Tailscale legs. v2 (C2): Wi-Fi sideload + a named
-/// maintainer tunnel. v3 (public release): the endpoint leg is now fully
-/// user-owned — the operator exposes THEIR OWN Hermes gateway over HTTPS
-/// (e.g. via a TLS tunnel to a domain they control). No maintainer or
-/// per-user hostname is named in the prompt; raw LAN/tailnet IPs and
-/// cleartext http remain forbidden.
+/// The prompt is versioned with the app. Bump `version` whenever the install
+/// path, credential scheme, or network guidance changes. Tests pin its mission
+/// coverage and safety properties rather than exact prose.
 public enum OnboardingPrompt {
 
-    /// Mission revision — bump when the agent mission changes (install path,
-    /// credential scheme, network guidance). v1 = TestFlight + Tailscale;
-    /// v2 = Wi-Fi sideload + maintainer tunnel; v3 = Wi-Fi sideload +
-    /// user-owned HTTPS endpoint.
+    /// Current mission revision. Version 3 uses Wi-Fi sideloading and a
+    /// user-owned HTTPS gateway endpoint.
     public static let version: Int = 3
 
-    /// The full copyable bootstrap prompt (< ~200 words, per the card).
+    /// Full copyable bootstrap prompt.
     public static let text: String = """
         I'm setting up Hermes Fleet, the iPhone app for my Hermes fleet. Set it up \
         end-to-end and reply with exactly what I need.
@@ -42,38 +32,34 @@ public enum OnboardingPrompt {
         telling me to open Hermes Fleet on my phone and add the gateway.
         """
 
-    /// Mission-coverage keyword sets — the unit tests assert each is present
-    /// so a copy edit can't silently drop a mission leg (card acceptance:
-    /// install / network / credentials / reply / verify).
+    /// Mission-coverage keyword sets. Tests assert each is present so copy
+    /// edits cannot silently drop a required onboarding step.
     public static let missionKeywords: [[String]] = [
-        ["Wi-Fi", "sideload"],                   // (1) app install path
-        ["HTTPS", "endpoint", "I control"],     // (2) user-owned endpoint
-        ["HTTPS", "certificate"],                // (2) transport + cert check
-        ["scoped", "credential"],                // (3) credential mint
-        ["0600", "logs"],                        // (3) zero-print hygiene
-        ["URL", "username", "password"],         // (5) reply shape
-        ["authentication request"],              // (4) verify from phone's path
+        ["Wi-Fi", "sideload"],
+        ["HTTPS", "endpoint", "I control"],
+        ["HTTPS", "certificate"],
+        ["scoped", "credential"],
+        ["0600", "logs"],
+        ["URL", "username", "password"],
+        ["authentication request"],
     ]
 
-    /// Substrings that must NEVER appear in the prompt: cleartext http,
-    /// private/tailnet address literals (the endpoint must be the user's own
-    /// reachable HTTPS origin — a raw IP would reintroduce exactly the
-    /// non-portable endpoint problem), and embedded credential shapes.
-    /// `https://` is allowed for describing the user's endpoint scheme.
+    /// Substrings that must never appear in the prompt. The bootstrap mission
+    /// describes a user-owned reachable HTTPS origin rather than embedding a
+    /// private address or credential shape.
     public static let forbiddenSubstrings: [String] = [
-        "http://",                        // cleartext endpoints
-        "100.100.",                       // tailnet address blocks
-        "192.168.", "10.", "127.0.0.1",   // LAN/loopback literals
-        "password:", "token:",            // embedded credential shapes
+        "http://",
+        "100.100.",
+        "192.168.", "10.", "127.0.0.1",
+        "password:", "token:",
     ]
 
-    /// Conciseness bar from the card (~200 words). Word count of `text`.
+    /// Word count used by the conciseness test.
     public static var wordCount: Int {
         text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
     }
 
-    /// Whether the prompt passes its own mechanical hygiene checks
-    /// (mission coverage + no forbidden substrings). Exercised by tests.
+    /// Mechanical hygiene check exercised by tests.
     public static func containsNoSecrets() -> Bool {
         forbiddenSubstrings.allSatisfy { !text.contains($0) }
     }

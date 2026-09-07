@@ -2,11 +2,10 @@ import XCTest
 import FleetCore
 import FleetUI
 
-/// F1 (t_e41b16e0) — cause-differentiated connection-failure copy
-/// (apple-design D1 audit). Every failure surface renders the SAME mapping
-/// from the classified §13 status to a one-line, sentence-case, actionable
-/// sentence. The compact pill label stays short; the CAUSE lives in the
-/// detail line. No raw endpoint or secret is ever echoed.
+/// Cause-differentiated connection-failure copy. Every failure surface renders
+/// the same mapping from classified gateway status to a concise, actionable
+/// sentence. Compact status labels stay short; the detail line carries the
+/// cause without echoing endpoints or secrets.
 final class F1FailureCopyTests: XCTestCase {
 
     func testTimeoutCopySaysTimeoutAndIsActionable() {
@@ -20,7 +19,8 @@ final class F1FailureCopyTests: XCTestCase {
     }
 
     func testWrongPort404CopySaysAnsweredButNotServing() {
-        // The exact Tony case: 8642 answers TCP but 404s every app route.
+        // A reachable TCP port that returns HTTP 404 is an unsupported gateway
+        // surface, not a timeout.
         let copy = GatewayFailureCopy.detail(
             status: .unsupported,
             detail: "auth endpoint returned HTTP 404")
@@ -39,13 +39,10 @@ final class F1FailureCopyTests: XCTestCase {
         XCTAssertTrue(copy.contains("Re-authenticate"), copy)
     }
 
-    // MARK: P0-9 (t_635bbf99) — strategy-mismatch copy is cause-specific
-
     func testAuthStrategyMismatchCopySaysUsernamePasswordNotToken() {
-        // The exact tunnel defect: ws-ticket 401 {"reason":"no_cookie"} —
-        // the saved sign-in method is a token, but this gateway only accepts
-        // username & password. Generic "Re-authenticate" guidance would loop
-        // the same failure, so the copy must name the fix.
+        // A token-based sign-in against a gateway that requires username and
+        // password should name the strategy mismatch instead of suggesting the
+        // same authentication attempt again.
         let copy = GatewayFailureCopy.detail(
             status: .authenticationRequired,
             detail: "auth rejected: no_cookie")
@@ -73,8 +70,6 @@ final class F1FailureCopyTests: XCTestCase {
     }
 
     func testCopyNeverEchoesEndpointHost() {
-        // The detail string is non-secret by construction, but the copy must
-        // not repeat the endpoint either — the row already shows it redacted.
         let cases: [(GatewayStatus, String?)] = [
             (.offline, "connection to 100.127.200.89:8642 timed out"),
             (.unsupported, "auth endpoint returned HTTP 404"),

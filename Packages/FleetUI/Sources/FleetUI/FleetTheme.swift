@@ -3,41 +3,40 @@ import SwiftUI
 import UIKit
 #endif
 
-/// V7 HIG-native theme (t_9ce36690 / D5 spec, 2026-09-04): every bespoke
-/// palette token is DELETED — no descendants. Surfaces, text, borders and the
-/// single accent resolve through system semantic colors, so light/dark,
-/// Increase Contrast and platform evolution come from the OS, not from us.
+/// Shared UI tokens for the current Hermes Fleet interface.
 ///
-/// Drift guard: `FleetThemeTests` now pins SYSTEM resolution — each FleetTheme
-/// color must resolve identically to its corresponding system color in BOTH
-/// light and dark appearances. Any future bespoke drift fails there.
+/// Surfaces, text, borders, and the default interaction palette resolve through
+/// system semantic colors so light/dark appearance, Increase Contrast, and
+/// platform evolution remain native to iOS. These tokens describe the current
+/// implementation; they are not a frozen brand or visual-direction contract.
 ///
-/// Brand anchor: the white-wing icon (HermesFleetApp/FleetWing.icon) is
-/// FINAL. The only brand color in the app is the single accent below
-/// (system blue pending Tony's swatch pick).
+/// `FleetThemeTests` guards semantic-color resolution in light and dark
+/// appearances. Future visual work may intentionally evolve this layer as long
+/// as accessibility and semantic-state behavior remain explicit and tested.
 public enum FleetColors {
-    // MARK: Status (semantic status, not brand skin — V5 AA-fixed adaptive
-    // values retained per D5; revisit in the V7.5 AX pass only).
+    // MARK: Status
+
+    // Semantic status colors are implementation tokens rather than brand
+    // colors. They remain adaptive and are pinned by accessibility tests.
     public static let statusOnline: UInt32 = 0x00C853    // Running/Online pills
     public static let statusIdle: UInt32 = 0xFFC107      // Idle pills
     public static let statusDegraded: UInt32 = 0xFF5252  // Degraded/error pills
     public static let statusOffline: UInt32 = 0x8A8A9A   // Offline pills
 
-    // Status light-mode counterparts (V5 AA fixes, unchanged).
     public static let statusOnlineLight: UInt32 = 0x00753B
     public static let statusIdleLight: UInt32 = 0x856000
     public static let statusDegradedLight: UInt32 = 0xC02835
     public static let statusOfflineLight: UInt32 = 0x626879
 }
 
-/// HIG-native theme: system surfaces, semantic labels, separators, SF type,
-/// ONE system accent. No custom hex anywhere outside semantic status.
+/// Current system-native theme implementation: semantic surfaces, labels,
+/// separators, typography, a user-selectable accent, and explicit status
+/// colors. Visual identity may evolve independently of these APIs.
 public enum FleetTheme {
 
     #if canImport(UIKit)
-    /// Adaptive sRGB color from 0xRRGGBB values — retained ONLY for the
-    /// semantic status tokens (their adaptive values are pinned by tests).
-    /// Not for brand/skin colors (V7: those are gone).
+    /// Adaptive sRGB color from 0xRRGGBB values, used for semantic status
+    /// tokens whose light/dark values are pinned by tests.
     private static func adaptive(dark: UInt32, light: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
             let hex = traits.userInterfaceStyle == .dark ? dark : light
@@ -48,21 +47,20 @@ public enum FleetTheme {
     }
     #endif
 
-    // MARK: - Neutrals (system surfaces)
+    // MARK: - Neutrals
 
     public static let background: Color = Color(uiColor: .systemBackground)
     public static let surface: Color = Color(uiColor: .secondarySystemBackground)
     public static let surfaceElevated: Color = Color(uiColor: .tertiarySystemBackground)
 
-    // MARK: - Text (semantic labels)
+    // MARK: - Text
 
     public static let textPrimary: Color = Color(uiColor: .label)
     public static let textSecondary: Color = Color(uiColor: .secondaryLabel)
     public static let textMuted: Color = Color(uiColor: .tertiaryLabel)
 
-    /// V5 increase-contrast remap, system era: with Increase Contrast the
-    /// card surface lifts to the high-contrast system background. System
-    /// colors remap automatically; this token keeps the explicit seam.
+    /// Contrast-aware card surface. System colors remap automatically; this
+    /// explicit seam keeps increased-contrast behavior testable.
     public static let surfaceIncreased: Color = {
         #if canImport(UIKit)
         Color(uiColor: UIColor { traits in
@@ -76,27 +74,25 @@ public enum FleetTheme {
         #endif
     }()
 
-    /// Hairline separators: the system separator.
+    /// Hairline separators use the system separator.
     public static let border: Color = Color(uiColor: .separator)
 
-    /// Contrast-aware hairline: the standard separator, strengthened to the
-    /// opaque separator when the user enables Increase Contrast.
+    /// Strengthen the separator when Increase Contrast is enabled.
     public static func borderColor(colorSchemeContrast: ColorSchemeContrast) -> Color {
         colorSchemeContrast == .increased
             ? Color(uiColor: .opaqueSeparator)
             : Color(uiColor: .separator)
     }
 
-    // MARK: - Accent (ONE accent, user-choosable — V7.5)
+    // MARK: - Accent
 
-    /// The single accent — links, active states, primary tint. Resolves to
-    /// the user's persisted FleetAccent selection (Settings ▸ Appearance);
-    /// systemBlue until they pick otherwise.
+    /// Links, active states, and primary tint resolve to the persisted accent
+    /// selected in Settings > Appearance.
     public static var accent: Color {
         FleetAccentController.shared.selection.color
     }
 
-    // MARK: - Status (semantic, V5 AA-fixed values retained)
+    // MARK: - Status
 
     #if canImport(UIKit)
     public static let statusOnline: Color = adaptive(dark: FleetColors.statusOnline, light: FleetColors.statusOnlineLight)
@@ -129,39 +125,39 @@ public enum FleetTheme {
     public static let spacingXl: CGFloat = 24
     public static let spacingXxl: CGFloat = 32
 
-    // MARK: - Typography (SF Pro + SF Mono — Q1 default, D5)
+    // MARK: - Typography
 
-    /// Screen titles — system large title, rounded, bold.
+    /// Screen titles: system large title, rounded, bold.
     public static let titleFont: Font = .system(.largeTitle, design: .rounded, weight: .bold)
     public static let titleFontSize: CGFloat = 28
     public static let titleFontWeight: Font.Weight = .bold
 
-    /// Section headers — caption2 semibold; callers apply
-    /// `.textCase(.uppercase)` + `microLabelTracking`.
+    /// Section headers: caption2 semibold; callers apply uppercase casing and
+    /// `microLabelTracking` when appropriate.
     public static let sectionHeaderFont: Font = .caption2.weight(sectionHeaderFontWeight)
     public static let sectionHeaderFontSize: CGFloat = FleetTheme.microLabelFontSize
     public static let sectionHeaderFontWeight: Font.Weight = .semibold
 
-    /// Stat numbers — system title, tabular figures.
+    /// Stat numbers: system title with tabular figures.
     public static let statFont: Font = .system(.title, design: .rounded, weight: .semibold).monospacedDigit()
     public static let statFontSize: CGFloat = 28
     public static let statFontWeight: Font.Weight = .bold
 
-    /// Secondary text — footnote regular.
+    /// Secondary text: footnote regular.
     public static let secondaryFont: Font = .footnote.weight(secondaryFontWeight)
     public static let secondaryFontSize: CGFloat = 13
     public static let secondaryFontWeight: Font.Weight = .regular
 
-    /// UPPERCASE micro-label — caption2 semibold caps, tracking at call site.
+    /// Uppercase micro-label: caption2 semibold caps, tracking at call site.
     public static let microLabelFont: Font = .caption2.weight(.semibold)
     public static let microLabelFontSize: CGFloat = 11
     public static let microLabelTracking: CGFloat = 1.4
 
-    /// Mono body — SF Mono (system monospaced design), text-style scaled.
+    /// Monospaced body text.
     public static let monoFont: Font = .system(.footnote, design: .monospaced)
     public static let monoFontSize: CGFloat = 13
 
-    /// Mono caption — SF Mono caption2-class.
+    /// Monospaced compact caption text.
     public static let monoCaptionFont: Font = .system(.caption2, design: .monospaced)
     public static let monoCaptionFontSize: CGFloat = 11
 }

@@ -1,7 +1,9 @@
 #!/bin/bash
-# L1: re-export xcresult attachments to a fresh directory (no destructive ops).
+# Re-export L1 xcresult attachments to a fresh directory without destructive operations.
 set -u
-cd ~/code/hermes-fleet-ios
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
 STAMP=$(date +%s)
 OUT="build/l1/attachments_$STAMP"
 mkdir -p "$OUT"

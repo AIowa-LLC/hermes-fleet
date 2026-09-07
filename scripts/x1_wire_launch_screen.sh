@@ -1,25 +1,20 @@
 #!/usr/bin/env bash
-# x1_wire_launch_screen.sh — apple-dev wiring step for the X1 launch screen.
+# Wire the X1 launch screen into project configuration.
 #
-# Prereq: run this BETWEEN apple-dev lane cards (git tree clean of tracked edits),
-# because it regenerates HermesFleetApp.xcodeproj and would clobber an in-flight
-# project.pbxproj. The launch storyboard + LaunchArtwork.imageset are already in
-# the repo (created by apple-design); this script only wires the config.
-#
-# Steps: guard clean tree -> edit project.yml (drop empty UILaunchScreen gen) ->
-# add UILaunchStoryboardName to Info.plist -> xcodegen generate -> verify refs ->
-# optional build.
+# Run from a clean tracked tree because the script regenerates
+# HermesFleetApp.xcodeproj. Launch-screen assets must already exist in the
+# repository; this script only wires configuration and verifies references.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== X1 launch-screen wiring =="
 
-# --- 1. Guard: no modified TRACKED files (untracked assets/storyboard are expected). ---
+# --- 1. Guard against modified tracked files. ---
 dirty=$(git status --porcelain | grep -E '^ ?[MADRCU]' || true)
 if [ -n "$dirty" ]; then
-  echo "ABORT: tracked files are modified/staged — another worker may hold the repo:" >&2
+  echo "ABORT: tracked files are modified/staged:" >&2
   echo "$dirty" >&2
-  echo "Re-run this script between lane cards (after the T2 worker commits)." >&2
+  echo "Commit, stash, or revert tracked changes before re-running this script." >&2
   exit 1
 fi
 echo "tracked tree clean — proceeding."
@@ -61,7 +56,7 @@ if ! command -v xcodegen >/dev/null 2>&1; then
 fi
 xcodegen generate
 
-# --- 5. Verify the generated project references the new resources. ---
+# --- 5. Verify the generated project references the resources. ---
 echo "== verify project references =="
 grep -q "LaunchScreen.storyboard" HermesFleetApp.xcodeproj/project.pbxproj \
   && echo "OK: LaunchScreen.storyboard referenced" \
