@@ -1,13 +1,5 @@
 # Hermes Fleet for iOS
 
-<p align="center">
-  <img src="assets/hero/hermes-fleet-hero-source.png" alt="Hermes Fleet — Every bot. Every machine. One pocket. Native iPhone control plane for Hermes Agent." width="100%">
-</p>
-
-*Hero art by Tony Simons. The dashboard above depicts an aspirational
-multi-region fleet (128 bots, 12 gateways); today's app dogfoods a single or
-dual gateway over LAN and Tailscale/tailnet — see the Milestone map below.*
-
 Native Hermes fleet control plane for iPhone. The phone is the control plane;
 Hermes machines are the agent/compute plane.
 
