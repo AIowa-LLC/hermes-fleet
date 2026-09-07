@@ -313,6 +313,10 @@ public struct ConversationView: View {
                 if model.hydratedFromCache {
                     banner(text: "Showing saved history — connecting for live updates.",
                            symbol: "internaldrive", tint: FleetTheme.textSecondary)
+                } else if let historyError = model.historyLoadError {
+                    // H1: the authoritative fetch failed — cached rows (if
+                    // any) stay rendered; honest, non-secret notice.
+                    banner(text: historyError, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
                 } else if let errorMessage = model.errorMessage {
                     banner(text: errorMessage, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
                 }
@@ -348,6 +352,25 @@ public struct ConversationView: View {
 
     // MARK: Transcript
 
+    /// H1 (t_01c9d411) — native loading placeholder shown while an existing
+    /// session's history is in flight and no row has rendered yet. A spinner
+    /// plus "Loading conversation…" keeps the screen from reading as a
+    /// blank new chat. Redacted skeleton rows would imply content shape we
+    /// do not know yet; the plain ProgressView is the honest HIG choice.
+    private var historyLoadingPlaceholder: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("Loading conversation…")
+                .font(.callout)
+                .foregroundStyle(FleetTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 120)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Loading conversation history")
+        .accessibilityIdentifier("fleet.conversation.history.loading")
+    }
+
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -371,6 +394,13 @@ public struct ConversationView: View {
                         if row.kind == .user {
                             fileRefChips(row)
                         }
+                    }
+                    // H1 (t_01c9d411): while an EXISTING session's history is
+                    // still in flight and no row has rendered yet, show a
+                    // HIG-native loading placeholder — never a bare blank
+                    // slate that reads as a brand-new chat.
+                    if model.showsHistoryLoadingPlaceholder {
+                        historyLoadingPlaceholder
                     }
                 }
                 .padding(.horizontal, 16)

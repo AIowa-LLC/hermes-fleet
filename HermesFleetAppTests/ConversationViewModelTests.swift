@@ -498,7 +498,7 @@ final class ConversationViewModelTests: XCTestCase {
 
     func testColdStartHydratesFromCache() async throws {
         // Pre-seed the cache with persisted history for the session.
-        let (_, viewModel) = try await makeFixture(sessionID: "s-1")
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
         try await cache.saveHistory(
             SessionHistory(sessionID: "s-1", count: 2, messages: [
                 SessionMessage(role: .user, text: "cached question", timestamp: 1, rowID: "r1"),
@@ -506,13 +506,30 @@ final class ConversationViewModelTests: XCTestCase {
             ]),
             for: GatewayID(rawValue: "workstation")
         )
+        // H1: the post-resume authoritative fetch now runs eagerly; hold it
+        // with the one-shot gate so the COLD-START phase (cache rows on
+        // screen, hydratedFromCache) is observed deterministically. Once
+        // released, the authoritative history (same rows) settles the swap.
+        let gate = OneShotGate()
+        scripted.historyGate = gate
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 2, messages: [
+            SessionMessage(role: .user, text: "cached question", timestamp: 1, rowID: "r1"),
+            SessionMessage(role: .assistant, text: "cached answer", timestamp: 2, rowID: "r2"),
+        ]))
 
         await viewModel.start()
+        await flush()
 
         XCTAssertTrue(viewModel.hydratedFromCache)
         XCTAssertEqual(viewModel.transcript.count, 2)
         XCTAssertEqual(viewModel.transcript.first?.text, "cached question")
         XCTAssertEqual(viewModel.transcript.last?.kind, .assistant)
+
+        // Release the authoritative fetch: same durable rows ⇒ ids preserved.
+        gate.open()
+        await flush()
+        XCTAssertEqual(viewModel.transcript.count, 2)
+        XCTAssertFalse(viewModel.hydratedFromCache)
     }
 
     // MARK: - Reconnect / replay hydration (M6)
@@ -1049,5 +1066,174 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.replayNotice, "Reconnected · gateway restarted — history refreshed")
         let assistant = viewModel.transcript.last { $0.kind == .assistant }
         XCTAssertEqual(assistant?.text, "in-order history")
+    }
+
+    // MARK: - H1 history hydration UX (t_01c9d411)
+
+    /// H1: opening an existing session with an EMPTY cache must show the
+    /// loading placeholder (never a bare new-chat slate) and fetch the
+    /// authoritative history IMMEDIATELY after resume — the resume
+    /// projection suppressing its messages is not an "empty session".
+    func testEmptyCacheShowsPlaceholderThenAuthoritativeHistory() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        // Empty cache (nothing seeded) AND empty resume projection (the
+        // gateway default) — history must come from session.history.
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 2, messages: [
+            SessionMessage(role: .user, text: "wire question", timestamp: 1, rowID: "r1"),
+            SessionMessage(role: .assistant, text: "wire answer", timestamp: 2, rowID: "r2"),
+        ]))
+
+        await viewModel.start()
+        await flush() // let the eager post-resume history fetch land
+
+        XCTAssertTrue(viewModel.isHistoryHydrationInProgress == false,
+                      "authoritative history landed — hydration must be settled")
+        XCTAssertFalse(viewModel.showsHistoryLoadingPlaceholder)
+        XCTAssertEqual(scripted.historyCallCount, 1,
+                       "suppressed resume projection must trigger exactly one eager session.history fetch")
+        XCTAssertEqual(viewModel.transcript.count, 2)
+        XCTAssertEqual(viewModel.transcript.first?.text, "wire question")
+        XCTAssertEqual(viewModel.transcript.last?.kind, .assistant)
+    }
+
+    /// H1: the placeholder phase must be OBSERVABLE while hydration is still
+    /// in flight — arm the one-shot history gate so the eager fetch parks,
+    /// then assert the loading state shows before it completes.
+    func testPlaceholderVisibleWhileHistoryInFlight() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        let gate = OneShotGate()
+        scripted.historyGate = gate
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 1, messages: [
+            SessionMessage(role: .assistant, text: "late history", rowID: "r1"),
+        ]))
+
+        await viewModel.start()
+        await flush()
+
+        XCTAssertTrue(scripted.historyParkedCount > 0, "the eager history fetch must be in flight")
+        XCTAssertTrue(viewModel.showsHistoryLoadingPlaceholder,
+                      "empty transcript + hydration in flight ⇒ placeholder, not a blank slate")
+        XCTAssertTrue(viewModel.isHistoryHydrationInProgress)
+
+        gate.open()
+        await flush()
+        XCTAssertFalse(viewModel.showsHistoryLoadingPlaceholder)
+        XCTAssertEqual(viewModel.transcript.last?.text, "late history")
+    }
+
+    /// H1: a POPULATED cache renders immediately and the later authoritative
+    /// swap PRESERVES row identities (no flash/jump when history replaces
+    /// the cached rows). The one-shot history gate holds the eager fetch so
+    /// both phases are observed deterministically.
+    func testPopulatedCacheRendersImmediatelyAndSwapPreservesIDs() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        try await cache.saveHistory(
+            SessionHistory(sessionID: "s-1", count: 2, messages: [
+                SessionMessage(role: .user, text: "cached question", timestamp: 1, rowID: "r1"),
+                SessionMessage(role: .assistant, text: "cached answer", timestamp: 2, rowID: "r2"),
+            ]),
+            for: GatewayID(rawValue: "workstation")
+        )
+        // The authoritative history carries the SAME durable rows.
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 2, messages: [
+            SessionMessage(role: .user, text: "cached question", timestamp: 1, rowID: "r1"),
+            SessionMessage(role: .assistant, text: "cached answer", timestamp: 2, rowID: "r2"),
+        ]))
+        let gate = OneShotGate()
+        scripted.historyGate = gate
+
+        await viewModel.start()
+        await flush()
+
+        // Cache rows rendered immediately; no placeholder once they land.
+        XCTAssertEqual(viewModel.transcript.map(\.text), ["cached question", "cached answer"])
+        XCTAssertTrue(viewModel.hydratedFromCache)
+        XCTAssertFalse(viewModel.showsHistoryLoadingPlaceholder)
+
+        // Release the (parked) eager authoritative fetch — the swap must
+        // preserve row ids so SwiftUI updates bubbles in place.
+        gate.open()
+        await flush()
+        XCTAssertFalse(viewModel.hydratedFromCache)
+        XCTAssertEqual(viewModel.transcript.map(\.text), ["cached question", "cached answer"])
+        XCTAssertEqual(viewModel.transcript.map(\.id), ["row-1", "row-2"],
+                       "cache→authoritative swap must preserve row ids (no flash)")
+        XCTAssertEqual(scripted.historyCallCount, 1)
+    }
+
+    /// H1: a FAILED authoritative fetch must NEVER wipe cached rows — the
+    /// cache stays rendered and an honest error surfaces.
+    func testFailedAuthoritativeFetchKeepsCacheAndSurfacesError() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        try await cache.saveHistory(
+            SessionHistory(sessionID: "s-1", count: 2, messages: [
+                SessionMessage(role: .user, text: "cached question", timestamp: 1, rowID: "r1"),
+                SessionMessage(role: .assistant, text: "cached answer", timestamp: 2, rowID: "r2"),
+            ]),
+            for: GatewayID(rawValue: "workstation")
+        )
+        scripted.historyResult = .failure(.rpcFailed("gateway hiccup"))
+
+        await viewModel.start()
+        await flush()
+
+        XCTAssertTrue(viewModel.hydratedFromCache, "cache must remain the rendered source")
+        XCTAssertEqual(viewModel.transcript.map(\.text), ["cached question", "cached answer"],
+                       "a failed refetch must never wipe cached rows")
+        XCTAssertNotNil(viewModel.historyLoadError, "an honest error must surface")
+        XCTAssertTrue(viewModel.historyLoadError?.contains("gateway hiccup") == true)
+    }
+
+    /// H1: an authoritatively EMPTY session (empty cache + empty fetch
+    /// result) settles hydration — placeholder clears, honest blank state.
+    func testAuthoritativelyEmptySessionClearsPlaceholder() async throws {
+        let (_, viewModel) = try await makeFixture(sessionID: "s-1")
+        // Empty cache + empty history result: session.history confirming
+        // zero messages is authoritative (unlike the suppressed projection).
+
+        await viewModel.start()
+        await flush()
+
+        XCTAssertFalse(viewModel.showsHistoryLoadingPlaceholder,
+                       "authoritative empty ⇒ no perpetual spinner")
+        XCTAssertFalse(viewModel.isHistoryHydrationInProgress)
+        XCTAssertTrue(viewModel.transcript.isEmpty)
+    }
+
+    /// H1: `mergePreservingIDs` — durable row_id matches keep their rendered
+    /// ids; unmatched authoritative messages get fresh ids.
+    func testMergePreservingIDsDurableAndContentPaths() {
+        let existing = [
+            ConversationRow(id: "row-1", kind: .user, text: "hello", rowID: "r1"),
+            ConversationRow(id: "row-2", kind: .assistant, text: "hi", rowID: "r2"),
+        ]
+        let authoritative = [
+            SessionMessage(role: .user, text: "hello", timestamp: 1, rowID: "r1"),
+            SessionMessage(role: .assistant, text: "hi", timestamp: 2, rowID: "r2"),
+            SessionMessage(role: .user, text: "second turn", timestamp: 3, rowID: "r3"),
+        ]
+        var counter = 0
+        let merged = FleetUI.ConversationViewModel.mergePreservingIDs(
+            existing: existing, authoritative: authoritative,
+            nextRowID: { counter += 1; return "fresh-\(counter)" }
+        )
+        XCTAssertEqual(merged.map(\.id), ["row-1", "row-2", "fresh-1"])
+        XCTAssertEqual(merged.map(\.rowID), ["r1", "r2", "r3"])
+
+        // Content-match fallback (no durable ids, identical content+position).
+        let existingNoIDs = [
+            ConversationRow(id: "row-A", kind: .user, text: "q"),
+            ConversationRow(id: "row-B", kind: .assistant, text: "a"),
+        ]
+        let authoritativeNoIDs = [
+            SessionMessage(role: .user, text: "q"),
+            SessionMessage(role: .assistant, text: "a"),
+        ]
+        counter = 0
+        let mergedContent = FleetUI.ConversationViewModel.mergePreservingIDs(
+            existing: existingNoIDs, authoritative: authoritativeNoIDs,
+            nextRowID: { counter += 1; return "fresh-\(counter)" }
+        )
+        XCTAssertEqual(mergedContent.map(\.id), ["row-A", "row-B"])
     }
 }

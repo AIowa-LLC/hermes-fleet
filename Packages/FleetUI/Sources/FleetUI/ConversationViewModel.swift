@@ -196,6 +196,23 @@ public final class ConversationViewModel {
     /// True when the current transcript was hydrated from the persisted cache
     /// (M10 cold-start) rather than a live server fetch.
     public private(set) var hydratedFromCache = false
+    /// H1 (t_01c9d411) — true from cold-start of an EXISTING session until
+    /// history actually lands (cache rows, the resume projection, or the
+    /// authoritative fetch) or an authoritative fetch confirms the session
+    /// is empty. While armed and the transcript is still empty, the view
+    /// renders the history-loading placeholder instead of a new-chat blank
+    /// slate. A FAILED authoritative fetch NEVER clears it via the empty
+    /// path — cached rows survive untouched and an honest error surfaces.
+    public private(set) var isHistoryHydrationInProgress = false
+    /// True when the placeholder should render right now: hydration is in
+    /// flight AND no row has landed yet.
+    public var showsHistoryLoadingPlaceholder: Bool {
+        isHistoryHydrationInProgress && allRows.isEmpty
+    }
+    /// H1 (t_01c9d411) — non-secret notice shown when the authoritative
+    /// history fetch failed. Cached rows (if any) stay rendered; a retry
+    /// rides the next reconnect/replay hydration.
+    public private(set) var historyLoadError: String?
     /// Best-effort session metadata from session.info.
     public private(set) var sessionTitle: String?
     public private(set) var sessionModel: String?
@@ -374,6 +391,13 @@ public final class ConversationViewModel {
             // M10 cold-start: render persisted history immediately while the
             // socket opens, so an offline/relaunch shows the last transcript.
             if let sessionID, transcript.isEmpty {
+                // H1 (t_01c9d411): opening an EXISTING chat must never look
+                // like a fresh new-chat slate while history is still in
+                // flight. Arm the hydration placeholder BEFORE the (possibly
+                // empty) cache read; it is cleared only by rows actually
+                // landing or by an authoritative empty confirmation — never
+                // by a failed fetch (cache rows survive, M10 contract).
+                isHistoryHydrationInProgress = true
                 await hydrateFromCache(sessionID: sessionID)
             }
         }
@@ -868,6 +892,10 @@ public final class ConversationViewModel {
         allRows = cached.messages.map { Self.row(from: $0, id: nextRowID()) }
         adoptHistoryReactions(into: allRows, from: cached.messages)
         hydratedFromCache = true
+        // H1: cached rows landed — the placeholder is no longer needed (rows
+        // render immediately). The authoritative fetch still runs to settle
+        // the transcript, but the screen already shows real content.
+        isHistoryHydrationInProgress = false
         phase = .ready
     }
 
@@ -875,9 +903,35 @@ public final class ConversationViewModel {
     /// projection returned by create/resume (when non-empty).
     private func applyOpenedSession(_ opened: ConversationSession) {
         if !opened.messages.isEmpty {
-            allRows = opened.messages.map { Self.row(from: $0, id: nextRowID()) }
+            // H1 flash-free swap: when the cache already rendered the same
+            // history, merge by PRESERVING row ids (the durable gateway
+            // row_id, else the existing id) so SwiftUI's ForEach sees the
+            // same identities and does not tear down/recreate every bubble
+            // — the cache→authoritative handoff must not visibly jump.
+            let authoritative = opened.messages
+            if hydratedFromCache {
+                allRows = Self.mergePreservingIDs(
+                    existing: allRows, authoritative: authoritative,
+                    nextRowID: { nextRowID() }
+                )
+            } else {
+                allRows = authoritative.map { Self.row(from: $0, id: nextRowID()) }
+            }
             adoptHistoryReactions(into: allRows, from: opened.messages)
             hydratedFromCache = false
+            isHistoryHydrationInProgress = false
+            historyLoadError = nil
+        } else if sessionID != nil {
+            // H1: the resume projection carried NO messages (the gateway
+            // suppresses seeds on resume — verified wire shape), so it is
+            // NOT an authoritative "session is empty" — the history state is
+            // simply UNKNOWN. Fetch it NOW via the read-only seam, racing
+            // the full subscribe pipeline, so populated history renders as
+            // soon as the socket is up instead of after the whole stack
+            // settles. Whether the cache already rendered rows or not, this
+            // is what settles the transcript authoritatively (and swaps
+            // ids-preserving when the cache is showing).
+            Task { await refetchAuthoritativeHistory(sessionID: opened.sessionID) }
         }
         sessionTitle = opened.profileName
         if let model = opened.model, let provider = opened.provider {
@@ -1051,19 +1105,46 @@ public final class ConversationViewModel {
     /// replaces the transcript. `nil` keeps the pre-existing unconditional
     /// behavior for unfenced callers.
     private func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async {
-        guard let history = try? await session.history.fetchSessionHistory(sessionID: sessionID) else {
-            return
+        // H1: a failed fetch must NEVER wipe the transcript. Cached/projection
+        // rows stay rendered, an honest non-secret error surfaces, and the
+        // placeholder stays armed only if nothing ever landed (still loading,
+        // not failed-slate) — retry rides the next reconnect/replay hydration.
+        do {
+            let history = try await session.history.fetchSessionHistory(sessionID: sessionID)
+            guard isCurrent(token) else { return }
+            if history.messages.isEmpty {
+                // Authoritative empty (session.history always carries the
+                // persisted rows) — the session genuinely has no messages.
+                allRows = []
+                hydratedFromCache = false
+                isHistoryHydrationInProgress = false
+                historyLoadError = nil
+                return
+            }
+            if hydratedFromCache {
+                // H1 flash-free swap (see applyOpenedSession): preserve row
+                // identities across the cache→authoritative handoff.
+                allRows = Self.mergePreservingIDs(
+                    existing: allRows, authoritative: history.messages,
+                    nextRowID: { nextRowID() }
+                )
+            } else {
+                allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
+            }
+            adoptHistoryReactions(into: allRows, from: history.messages)
+            hydratedFromCache = false
+            isHistoryHydrationInProgress = false
+            historyLoadError = nil
+            // History is snapshot-authoritative, not event-id tagged: drop the
+            // cursor so the next stamped live event re-establishes continuity
+            // from the freshest server state instead of false-gap-firing against
+            // a stale cursor.
+            lastAppliedEventID = nil
+            Task { await persistTranscript() }
+        } catch {
+            guard isCurrent(token) else { return }
+            historyLoadError = "History unavailable — \(Self.nonSecret(error))"
         }
-        guard isCurrent(token) else { return }
-        allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
-        adoptHistoryReactions(into: allRows, from: history.messages)
-        hydratedFromCache = false
-        // History is snapshot-authoritative, not event-id tagged: drop the
-        // cursor so the next stamped live event re-establishes continuity
-        // from the freshest server state instead of false-gap-firing against
-        // a stale cursor.
-        lastAppliedEventID = nil
-        Task { await persistTranscript() }
     }
 
     /// The transcript-mutating rendering switch (the former `apply` body).
@@ -1603,6 +1684,58 @@ public final class ConversationViewModel {
     }
 
     // MARK: Static mapping helpers
+
+    /// H1 (t_01c9d411) — flash-free cache→authoritative swap. Rebuilds rows
+    /// from the authoritative messages while PRESERVING identity where the
+    /// cache already rendered the same content: a durable gateway `row_id`
+    /// match, else an exact content match (kind+text+detail+timestamp) at
+    /// the same list position. Unmatched messages get fresh ids. Same
+    /// identity ⇒ SwiftUI's ForEach updates bubbles in place instead of
+    /// tearing the transcript down and re-popping every row.
+    static public func mergePreservingIDs(
+        existing: [ConversationRow],
+        authoritative: [SessionMessage],
+        nextRowID: () -> String
+    ) -> [ConversationRow] {
+        var byDurableID: [String: String] = [:] // row_id -> rendered row id
+        for row in existing {
+            if let durable = row.rowID {
+                byDurableID[durable] = row.id
+            }
+        }
+        var merged: [ConversationRow] = []
+        merged.reserveCapacity(authoritative.count)
+        for message in authoritative {
+            // Resolve the identity FIRST (id is a let on ConversationRow).
+            var id: String
+            if let durable = message.rowID, let preserved = byDurableID[durable] {
+                id = preserved
+            } else if message.rowID == nil,
+                      let preserved = contentMatchID(at: merged.count, in: existing, for: message) {
+                id = preserved
+            } else {
+                id = nextRowID()
+            }
+            merged.append(Self.row(from: message, id: id))
+        }
+        return merged
+    }
+
+    /// Content-match fallback for messages without a durable row_id: the
+    /// cached and authoritative lists are both transcript-ordered, so an
+    /// exact kind+text+detail+timestamp match at the same position keeps
+    /// its rendered id.
+    private static func contentMatchID(
+        at index: Int, in existing: [ConversationRow], for message: SessionMessage
+    ) -> String? {
+        guard index < existing.count, existing[index].rowID == nil else { return nil }
+        let candidate = Self.row(from: message, id: existing[index].id)
+        return existing[index].kind == candidate.kind
+            && existing[index].text == candidate.text
+            && existing[index].detail == candidate.detail
+            && existing[index].timestamp == candidate.timestamp
+            ? existing[index].id : nil
+    }
 
     /// Map a persisted `SessionMessage` (history projection) onto a rendered row.
     /// R10-T2: the durable `row_id` rides onto the row (the reaction write
