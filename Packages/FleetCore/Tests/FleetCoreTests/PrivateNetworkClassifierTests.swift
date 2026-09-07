@@ -56,7 +56,7 @@ final class PrivateNetworkClassifierTests: XCTestCase {
 
     func testDotLocalNamesArePrivate() {
         XCTAssertTrue(PrivateNetwork.isPrivateOrLoopbackHost("hermes.local"))
-        XCTAssertTrue(PrivateNetwork.isPrivateOrLoopbackHost("MacBook-M5.local"))
+        XCTAssertTrue(PrivateNetwork.isPrivateOrLoopbackHost("workstation.local"))
         XCTAssertTrue(PrivateNetwork.isPrivateOrLoopbackHost("gateway.local."))
     }
 

@@ -35,6 +35,8 @@ TS_TAILNET="taila00fdc"                 # real tailnet name fragment
 MAC_HOST="macbook""-m5"                 # maintainer workstation hostname
 PERSONAL_APPLE="asimons""1981"          # personal Apple ID local part
 
+# Keep concrete maintainer-specific patterns while allowing generic public
+# fixture hosts and RFC/private-range examples.
 PATTERN="${HOME_DIR}|${GMAIL}|${ICLOUD}|${ME_COM}|${AGENT_ID}|${DEV_UDID}|${SIM_UDID}|${FLEET_HOST}|${LAN_A}|${TAIL_A}|${TAIL_B}|${ARCH_HOST}|${TS_TAILNET}|${MAC_HOST}|${PERSONAL_APPLE}"
 
 note() { printf '=== %s ===\n' "$1"; }

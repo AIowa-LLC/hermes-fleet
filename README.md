@@ -11,12 +11,12 @@ dual gateway over LAN and Tailscale/tailnet — see the Milestone map below.*
 Native Hermes fleet control plane for iPhone. The phone is the control plane;
 Hermes machines are the agent/compute plane.
 
-**Status:** Working fleet client — live gateway connection proven (LAN +
-Tailscale/tailnet), streaming conversations, auth (loopback / session / bearer
-/ username-password), Keychain credential storage, SwiftData cache, connection
-health dashboard, biometric app lock, and green CI. See the **Milestone map**
-below for the full history; the M0 skeleton notes in `docs/M0-foundation.md`
-are historical foundation evidence, not current status.
+**Status:** Active development — the client supports gateway connections,
+streaming conversations, multiple authentication modes, Keychain credential
+storage, SwiftData caching, connection health, and biometric app lock. CI and
+hosted test coverage are being closed in the public-snapshot preparation pass.
+See the **Milestone map** below for the full history; the M0 skeleton notes in
+`docs/M0-foundation.md` are historical foundation evidence, not current status.
 
 ## Repository / workspace
 

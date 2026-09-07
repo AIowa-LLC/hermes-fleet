@@ -65,7 +65,7 @@ provenance; cache seam observable.
 
 - Build/install/launch PASS via `xcrun simctl` (install + launch PID returned).
 - Screenshot `build/u1-simulator-gateways.png`: app renders **"Hermes Fleet"** title, the two seeded
-  gateways (**MacBook M5** / **Gaming 4090**), per-row **Idle** status + ellipsis connect menu +
+  gateways (**Workstation** / **Render Box**), per-row **Idle** status + ellipsis connect menu +
   refresh toolbar — Black/White/Signal Red theme from M14. The DEBUG scripted fleet makes every
   navigation destination (Gateways → Bots → Sessions → Conversation) reachable on a booted simulator.
 

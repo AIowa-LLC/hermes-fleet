@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetCore
+import Foundation
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -220,7 +221,7 @@ struct GatewayFormSheet: View {
     private func pasteButton(_ id: String, into binding: Binding<String>) -> some View {
         Button {
             #if canImport(UIKit)
-            if let text = UIPasteboard.general.string {
+            if let text = testPasteValue(for: id) ?? UIPasteboard.general.string {
                 binding.wrappedValue = text
             }
             #endif
@@ -231,6 +232,20 @@ struct GatewayFormSheet: View {
         }
         .buttonStyle(.borderless)
         .accessibilityIdentifier(id)
+    }
+
+    private func testPasteValue(for identifier: String) -> String? {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["HERMES_FLEET_UI_TEST_PASTE_FIXTURES"] == "1" else { return nil }
+        switch identifier {
+        case "fleet.gateways.form.paste.endpoint": return "http://192.168.50.58:8642"
+        case "fleet.gateways.form.paste.username": return "fleet-operator"
+        case "fleet.gateways.form.paste.password": return "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7"
+        default: return nil
+        }
+        #else
+        return nil
+        #endif
     }
 
     /// Token strategies need a secure entry field. `.none` does not.

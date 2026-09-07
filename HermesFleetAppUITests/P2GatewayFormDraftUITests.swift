@@ -23,51 +23,13 @@ final class P2GatewayFormDraftUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        // The iOS paste-permission alert (shown the first time the app reads a
-        // pasteboard written by another process — the test runner) is a SYSTEM
-        // alert. `app.alerts` cannot reliably see it, so register ONE
-        // interruption monitor that taps Allow on any system alert; it fires on
-        // the next interaction whenever the prompt appears (P3 pattern).
-        addUIInterruptionMonitor(withDescription: "Paste permission") { alert in
-            for label in ["Allow Paste", "Allow", "OK"] {
-                let button = alert.buttons[label]
-                if button.exists {
-                    button.tap()
-                    return true
-                }
-            }
-            return false
-        }
     }
 
-    /// The iOS paste-permission prompt is a SYSTEM alert (SpringBoard process).
-    /// Querying the SpringBoard app directly avoids the app event-loop idle
-    /// stall. The first `UIPasteboard` read in a session returns nil while the
-    /// prompt is up, so the test grants permission then retries the paste.
-    private func grantPastePermissionIfPrompted() {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allow = springboard.alerts.buttons["Allow Paste"]
-        if allow.waitForExistence(timeout: 4) {
-            allow.tap()
-            return
-        }
-        let allowGeneric = springboard.alerts.buttons["Allow"]
-        if allowGeneric.waitForExistence(timeout: 1) {
-            allowGeneric.tap()
-        }
-    }
-
-    /// Paste into a field via its paste button, granting the system
-    /// paste-permission prompt if it appears (the first read returns nil
-    /// until allowed, so we re-tap the button after granting).
+    /// Tap the real application paste button once. In canonical UI tests the
+    /// app is launched with an explicit DEBUG fixture provider, so this path
+    /// does not depend on SpringBoard's OS-owned paste permission prompt.
     private func paste(into button: XCUIElement, app: XCUIApplication) {
         button.tap()
-        // The interruption monitor (setUp) + direct SpringBoard grant dismiss
-        // the system prompt; then a second tap reads the now-allowed pasteboard.
-        grantPastePermissionIfPrompted()
-        if button.waitForExistence(timeout: 2) {
-            button.tap()
-        }
     }
 
     // MARK: - Draft survives background + FaceID relock (dogfood acceptance)
@@ -146,6 +108,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         let app = XCUIApplication()
         // Lock disabled so the test focuses purely on paste affordances.
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        app.launchEnvironment["HERMES_FLEET_UI_TEST_PASTE_FIXTURES"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
@@ -158,7 +121,6 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
 
         // Endpoint paste button.
-        UIPasteboard.general.string = "http://192.168.50.58:8642"
         let pasteEndpoint = firstMatch(in: app, identifier: "fleet.gateways.form.paste.endpoint")
         XCTAssertTrue(pasteEndpoint.waitForExistence(timeout: 5), "endpoint paste button should exist")
         paste(into: pasteEndpoint, app: app)
@@ -173,14 +135,12 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         let passwordField = app.secureTextFields["fleet.gateways.form.password"]
         XCTAssertTrue(usernameField.waitForExistence(timeout: 5), "username field should appear")
 
-        UIPasteboard.general.string = "fleet-operator"
         let pasteUsername = firstMatch(in: app, identifier: "fleet.gateways.form.paste.username")
         XCTAssertTrue(pasteUsername.waitForExistence(timeout: 5), "username paste button should exist")
         paste(into: pasteUsername, app: app)
         XCTAssertEqual(usernameField.value as? String, "fleet-operator",
                        "username paste button must fill the username field")
 
-        UIPasteboard.general.string = "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7"
         let pastePassword = firstMatch(in: app, identifier: "fleet.gateways.form.paste.password")
         XCTAssertTrue(pastePassword.waitForExistence(timeout: 5), "password paste button should exist")
         paste(into: pastePassword, app: app)

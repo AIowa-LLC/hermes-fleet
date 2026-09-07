@@ -78,7 +78,7 @@ fi
 # --- Step 2: see which machines/Bots are available ---------------------------
 note "Step 2 — see which Hermes machines/Bots are available (Gateways list)"
 if xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u4-sim-step2-gateways.png" >/dev/null 2>&1; then
-  ok "screenshot: build/u4-sim-step2-gateways.png (MacBook M5 / Gaming 4090 / Arch Lab)"
+  ok "screenshot: build/u4-sim-step2-gateways.png (Workstation / Render Box / Lab Node)"
 else
   bad "step2 screenshot failed"
 fi

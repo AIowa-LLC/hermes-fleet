@@ -98,7 +98,7 @@ Fresh install (uninstall → install) on the booted iPhone 17 Pro simulator
 | Step | Requirement | Evidence |
 |---|---|---|
 | 1 | open the app | ✅ launched (PID), `build/u4-sim-step1-open.png` |
-| 2 | see which Hermes machines/Bots are available | ✅ `build/u4-sim-step2-gateways.png` (MacBook M5 / Gaming 4090 / Arch Lab) |
+| 2 | see which Hermes machines/Bots are available | ✅ `build/u4-sim-step2-gateways.png` (Workstation / Render Box / Lab Node) |
 | 3 | select a Bot on a specific machine | ✅ `build/u4-sim-step3-roster.png` (union roster, bots per gateway) |
 | 4 | open or create a conversation | ✅ `build/u4-sim-step4-bot-detail.png` (Bot detail → Sessions → conversation) |
 | 5 | send a task | ✅ XCUITest happy path (composer → send) |
@@ -106,7 +106,7 @@ Fresh install (uninstall → install) on the booted iPhone 17 Pro simulator
 | 7 | receive the streamed answer | ✅ XCUITest happy path (echoed answer rendered); `build/u4-xcresult/*.png` shows user bubble "hello dogfood" + assistant bubble "Hello from the scripted fleet. You said: hello dogfood" + "complete" status |
 | 8 | briefly lose connectivity | ✅ gateway lifecycle: Disconnect → Disconnected (UI test) + fixture-loop mid-stream abort |
 | 9 | reconnect without corrupting/duplicating | ✅ Reconnect → healthy (UI test) + fixture-loop replay dedupe (single row) |
-| 10 | return to Fleet, switch machine | ✅ `build/u4-sim-step10-switch.png` + `testReturnToFleetSwitchMachine` (Gaming 4090) |
+| 10 | return to Fleet, switch machine | ✅ `build/u4-sim-step10-switch.png` + `testReturnToFleetSwitchMachine` (Render Box) |
 
 Screenshots: `build/u4-sim-step1-open.png` … `build/u4-sim-step10-switch.png`;
 conversation canvas: `build/u4-xcresult/<attachment>.png` (exported from the
