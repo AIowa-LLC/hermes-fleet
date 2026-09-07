@@ -127,10 +127,45 @@ public struct BotDetailView: View {
                 // registry target, fail-closed (never forks on a transient
                 // lookup failure; recency never selects the target).
                 BotChatOpenButton(environment: environment, bot: bot)
+
+                // Slice 2: management actions — Edit sheet, Duplicate (with
+                // inherited/not-copied confirmation), Delete (capability-
+                // gated honest state). Ghost writes are disabled: an
+                // offline-owning gateway cannot take metadata writes.
+                HStack(spacing: FleetTheme.spacingSm) {
+                    if presence == .reachable {
+                        Button {
+                            showingEdit = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("fleet.bot-detail.edit")
+                        BotActionsMenu(environment: environment, bot: bot)
+                    } else {
+                        Label(
+                            "Write actions need the owning gateway online",
+                            systemImage: "wifi.slash"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                    }
+                }
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.bot-detail.header")
+        .sheet(isPresented: $showingEdit) {
+            EditBotSheet(environment: environment, bot: bot)
+        }
+    }
+
+    @State private var showingEdit = false
+
+    private var presence: BotPresence {
+        environment.botPresence(for: route)
     }
 
     // MARK: Segmented control (Chat / Details — Metrics omitted, no real data)

@@ -68,6 +68,18 @@ public typealias FleetBotModeChatFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any BotModeChatProviding
 
+/// True Bots Mode slice 2 — builds a per-gateway bot profile management
+/// seam (describe/configure/create/avatar/ui-meta key writes).
+public typealias FleetBotProfileFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any BotProfileManaging
+
+/// True Bots Mode slice 2 — builds a per-gateway room source (hosted +
+/// desktop-legacy providers unioned app-side).
+public typealias FleetRoomSourceFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any FleetRoomSourceProviding
+
 /// R10-T4 — builds the on-device voice engine (Speech framework STT +
 /// AVSpeechSynthesizer TTS) shared by every conversation view model. nil ⇒
 /// the fail-closed `UnsupportedVoiceTranscriber` (mic affordances hidden).
@@ -169,11 +181,38 @@ public final class AppEnvironment {
     /// FleetTabView observes this and appends it to the active tab's path.
     public internal(set) var pendingBotChatNavigation: FleetScreen?
 
+    /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
+    /// avatar/sections) over the per-gateway seam.
+    public let botManagement: BotManagementController
+
+    /// Bots per gateway from the last SUCCESSFUL refresh — the offline-ghost
+    /// cache (a failed refresh renders these dimmed, identity retained).
+    public private(set) var cachedBotsByGateway: [GatewayID: [FleetBot]] = [:]
+
+    /// Room rows per gateway (hosted + desktop legacy) from the room-source
+    /// seam; empty until first load, honest absence otherwise.
+    public private(set) var roomsByGateway: [GatewayID: [FleetRoom]] = [:]
+
     /// True Bots Mode: request navigation to the canonical Bot Chat screen.
     /// Called by `BotChatOpenButton` after a successful fail-closed resolve.
     public func openBotChat(route: Route, sessionID: String) {
         pendingBotChatNavigation = .conversation(route, sessionID: sessionID)
+        canonicalOpenIDs[route] = sessionID
     }
+
+    /// D03: whether (route, sessionID) is the canonical "Bot Chat" for the
+    /// bot — either the roster-reported canonical session (id or compression
+    /// tip) or a session this environment opened through the canonical path.
+    /// Drives the exact "Bot Chat" screen title (identity, not decoration).
+    public func isCanonicalBotChat(route: Route, sessionID: String) -> Bool {
+        if canonicalOpenIDs[route] == sessionID { return true }
+        guard let bot = rosterSnapshot?.bot(for: route) else { return false }
+        guard let canonical = bot.canonicalSession else { return false }
+        return canonical.id == sessionID || canonical.resolvedID == sessionID
+    }
+
+    /// Sessions this environment opened through the canonical path.
+    @ObservationIgnored private var canonicalOpenIDs: [Route: String] = [:]
 
     /// Last classified read error per route (non-secret), for the Bot-detail
     /// error state. Absent until a fetch fails.
@@ -212,6 +251,9 @@ public final class AppEnvironment {
     private let botModeChatFactory: FleetBotModeChatFactory?
     /// Cached per-gateway Bot Mode chat seams (mirrors managementSeams).
     @ObservationIgnored private var botModeChatSeams: [GatewayID: any BotModeChatProviding] = [:]
+    /// Slice 2: room-source factory (app-side union provider).
+    private let roomSourceFactory: FleetRoomSourceFactory?
+    @ObservationIgnored private var roomSources: [GatewayID: any FleetRoomSourceProviding] = [:]
     /// R9-T7: learning seam factory (memory graph) — one per gateway (the
     /// concrete `GatewayLearningClient` in production, scripted in
     /// DEBUG/tests).
@@ -277,6 +319,8 @@ public final class AppEnvironment {
         projectsSeamFactory: FleetProjectsSeamFactory? = nil,
         projectsSnapshotStore: (any ProjectsSnapshotStoring)? = nil,
         botModeChatFactory: FleetBotModeChatFactory? = nil,
+        botProfileFactory: FleetBotProfileFactory? = nil,
+        roomSourceFactory: FleetRoomSourceFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
@@ -299,6 +343,9 @@ public final class AppEnvironment {
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
         self.voiceEngineFactory = voiceEngineFactory
+        self.roomSourceFactory = roomSourceFactory
+        self.botManagement = BotManagementController(factory: botProfileFactory)
+        botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
     }
 
     // MARK: Load / refresh
@@ -367,6 +414,49 @@ public final class AppEnvironment {
         guard token == rosterGeneration else { return }
         rosterSnapshot = snapshot
         isRefreshing = false
+        // Slice 2: cache each SUCCESSFUL gateway's bots for offline-ghost
+        // rendering on later failed refreshes (identity retained).
+        for gateway in snapshot.roster.allGateways {
+            if case .loaded = snapshot.outcome(for: gateway.id) {
+                let bots = snapshot.bots(on: gateway.id)
+                if !bots.isEmpty {
+                    cachedBotsByGateway[gateway.id] = bots
+                }
+            }
+        }
+        // Slice 2: best-effort room + section-registry sync after roster
+        // refresh (observational, never blocks the roster).
+        await loadRooms()
+        await loadAllSections()
+    }
+
+    /// Slice 2: rooms per gateway from the room-source seam (best-effort;
+    /// failures leave previous state — honest absence, no fabricated rows).
+    public func loadRooms() async {
+        guard let roomSourceFactory else { return }
+        for gateway in gateways {
+            let source: any FleetRoomSourceProviding
+            if let existing = roomSources[gateway.id] {
+                source = existing
+            } else {
+                source = roomSourceFactory(gateway)
+                roomSources[gateway.id] = source
+            }
+            let rooms = await source.rooms()
+            roomsByGateway[gateway.id] = rooms
+        }
+    }
+
+    /// Rooms for one gateway (empty when unknown — honest absence).
+    public func rooms(for gatewayID: GatewayID) -> [FleetRoom] {
+        roomsByGateway[gatewayID] ?? []
+    }
+
+    /// Section registries for every gateway (best-effort).
+    public func loadAllSections() async {
+        for gateway in gateways {
+            await botManagement.loadSections(from: gateway.id)
+        }
     }
 
     /// H2: copy the latest connection-health snapshots into the observable
@@ -675,8 +765,13 @@ public final class AppEnvironment {
             }
         } catch {
             // RPC failure of EITHER lookup or creation is retryable — never
-            // mint/fork from the catch path.
-            return .failure(BotChatUnavailable(message: "Could not check the Bot Chat registry: \(error.localizedDescription) — not starting a new chat"))
+            // mint/fork from the catch path. User-facing copy stays clean:
+            // the internal error chain is logged out-of-band, never shown.
+            #if DEBUG
+            print("canonical chat resolve failed for \(bot.route.id): \(error)")
+            #endif
+            return .failure(BotChatUnavailable(
+                message: "Couldn't check the Bot Chat registry — not starting a new chat"))
         }
     }
 

@@ -101,6 +101,12 @@ extension FleetServiceGraph {
             botModeChatFactory: { gateway in
                 ScriptedBotModeChatSeam(gatewayID: gateway.id)
             },
+            botProfileFactory: { gateway in
+                ScriptedBotProfileSeam(gatewayID: gateway.id)
+            },
+            roomSourceFactory: { gateway in
+                ScriptedRoomSource(gatewayID: gateway.id)
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
@@ -1380,12 +1386,35 @@ private struct ScriptedReplay: ReplayProviding {
     func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
 }
 
-/// Scripted read-only history (DEBUG only) — an empty transcript is fine for
-/// the simulator walkthrough.
+/// Scripted read-only history (DEBUG only). Canonical "Bot Chat" fixture
+/// sessions (id prefix "botchat-") carry a short deterministic transcript so
+/// the canonical-chat state is reviewable in the simulator; other sessions
+/// stay honestly empty.
 private struct ScriptedHistory: SessionHistoryProviding {
     let gatewayID: GatewayID
     func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
-        SessionHistory(sessionID: sessionID, count: 0, messages: [])
+        guard sessionID.hasPrefix("botchat-") else {
+            return SessionHistory(sessionID: sessionID, count: 0, messages: [])
+        }
+        let profile = String(sessionID.dropFirst("botchat-".count))
+        let messages = [
+            SessionMessage(
+                role: .user,
+                text: "Morning check-in — anything blocking you?",
+                timestamp: 1_757_240_000,
+                rowID: "botchat-hist-1"),
+            SessionMessage(
+                role: .assistant,
+                text: "Nothing blocking. I finished the \(profile) review pass and queued the summary.",
+                timestamp: 1_757_240_060,
+                rowID: "botchat-hist-2"),
+            SessionMessage(
+                role: .user,
+                text: "Great — ping me if the batch job drifts.",
+                timestamp: 1_757_240_180,
+                rowID: "botchat-hist-3"),
+        ]
+        return SessionHistory(sessionID: sessionID, count: messages.count, messages: messages)
     }
     func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
         SessionStatus.parse(output: "Session ID: \(sessionID)")
@@ -1578,6 +1607,206 @@ private struct ScriptedRosterSession: GatewayRosterSession {
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
         if isOutage { throw RosterError.notConnected }
         return ScriptedFleet.sessions(on: route)
+    }
+}
+
+/// True Bots Mode slice 2: scripted bot-profile management seam (DEBUG
+/// simulator only) — in-memory metadata/section/avatar state with the same
+/// semantics as the real client (CAS conflict on stale revision, model
+/// confirmation knob, partial-success outcomes). Presentation data only.
+final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, @unchecked Sendable {
+    private let lock = NSLock()
+    private let gatewayID: GatewayID
+    private var metadataByProfile: [String: BotModeMetadata] = [:]
+    private var revisionByProfile: [String: Int] = [:]
+    private var sections: [BotSection] = []
+    private var sectionsRevision = 0
+
+    /// Env knob: `HERMES_FLEET_MODEL_CONFIRM=1` forces the model
+    /// confirmation handshake on every model write.
+    private var modelConfirmForced: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_MODEL_CONFIRM"] == "1"
+    }
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+        if gatewayID.rawValue == "workstation" {
+            sections = [
+                BotSection(id: "sec-script-1", name: "Clients"),
+                BotSection(id: "sec-script-2", name: "Research"),
+            ]
+            sectionsRevision = 1
+            var researcher = BotModeMetadata()
+            researcher.title = "Researcher"
+            researcher.sectionID = "sec-script-2"
+            metadataByProfile["researcher"] = researcher
+            revisionByProfile["researcher"] = 2
+        }
+    }
+
+    func describeProfile(_ profile: String) async throws -> BotProfileDescription {
+        BotProfileDescription(
+            name: profile,
+            descriptionText: metadataByProfile[profile]?.descriptionText,
+            soul: "Scripted SOUL for \(profile).",
+            defaultModel: "hermes",
+            provider: "nous",
+            skills: [
+                .init(name: "code", enabled: true),
+                .init(name: "web", enabled: false),
+            ],
+            toolsets: [.init(name: "fs", label: "Files", toolCount: 4, enabled: true)],
+            mcpServers: [.init(name: "script-srv", enabled: true, transport: "http")]
+        )
+    }
+
+    func configureProfile(_ profile: String, edit: BotProfileEdit) async throws -> BotProfileEditOutcome {
+        try await configureProfile(profile, edit: edit, confirmExpensiveModel: false)
+    }
+
+    func configureProfile(
+        _ profile: String, edit: BotProfileEdit, confirmExpensiveModel: Bool
+    ) async throws -> BotProfileEditOutcome {
+        var applied: [String: Bool] = [:]
+        if let metadata = edit.metadata {
+            let expected = edit.metadataExpectedRevision
+            let current: Int
+            let appliedMeta: Bool
+            (current, appliedMeta) = applyMetadata(profile, metadata: metadata, expected: expected)
+            if !appliedMeta {
+                throw BotSectionSyncError.conflict(
+                    "expected revision \(expected ?? 0) but the gateway has \(current)")
+            }
+            applied["ui_meta"] = true
+        }
+        if edit.soul != nil { applied["soul"] = true }
+        if edit.descriptionText != nil { applied["description"] = true }
+        if edit.hasModelSection {
+            if modelConfirmForced && !confirmExpensiveModel {
+                return BotProfileEditOutcome(
+                    appliedSections: [], failedSections: [],
+                    confirmRequired: true,
+                    confirmMessage: "Scripted expensive-model confirmation")
+            }
+            applied["model"] = true
+        }
+        if edit.disabledSkills != nil { applied["skills"] = true }
+        if edit.enabledToolsets != nil { applied["toolsets"] = true }
+        if edit.enabledMCPServers != nil { applied["mcp_servers"] = true }
+        return BotProfileEditOutcome(edit: edit, applied: applied)
+    }
+
+    func createProfile(_ spec: BotCreateSpec) async throws -> String {
+        seedProfile(spec.name, metadata: BotModeMetadata(
+            title: spec.title, descriptionText: spec.descriptionText))
+        return spec.name
+    }
+
+    func uploadAvatar(_ profile: String, dataURL: String) async throws {}
+
+    func clearAvatar(_ profile: String) async throws {}
+
+    func avatarData(_ profile: String) async throws -> Data? { nil }
+
+    func loadSectionRegistry() async throws -> (sections: [BotSection], revision: Int?) {
+        currentSections()
+    }
+
+    func writeSectionRegistry(
+        value: MetadataValue, expectedRevision: Int?
+    ) async throws -> MetadataWriteReceiptLike {
+        let result = applySections(value, expectedRevision: expectedRevision)
+        guard result.applied else {
+            throw BotSectionSyncError.conflict(
+                "expected revision \(expectedRevision ?? 0) but the gateway has \(result.currentRevision)")
+        }
+        return MetadataWriteReceiptLike(
+            applied: true,
+            newRevisions: [BotSectionRegistry.metaKey: result.newRevision])
+    }
+
+    // Sync lock helpers (NSLock is unavailable from async contexts).
+
+    /// CAS-apply bot metadata; returns (currentRevision, applied).
+    private func applyMetadata(
+        _ profile: String, metadata: BotModeMetadata, expected: Int?
+    ) -> (Int, Bool) {
+        lock.lock(); defer { lock.unlock() }
+        let current = revisionByProfile[profile] ?? 0
+        if let expected, expected != current {
+            return (current, false)
+        }
+        metadataByProfile[profile] = metadata
+        revisionByProfile[profile] = current + 1
+        return (current + 1, true)
+    }
+
+    private func seedProfile(_ profile: String, metadata: BotModeMetadata) {
+        lock.lock(); defer { lock.unlock() }
+        metadataByProfile[profile] = metadata
+        revisionByProfile[profile] = 1
+    }
+
+    private func currentSections() -> (sections: [BotSection], revision: Int?) {
+        lock.lock(); defer { lock.unlock() }
+        return (sections, sectionsRevision)
+    }
+
+    /// CAS-apply the section registry; returns (applied, current, new).
+    private func applySections(
+        _ value: MetadataValue, expectedRevision: Int?
+    ) -> (applied: Bool, currentRevision: Int, newRevision: Int) {
+        lock.lock(); defer { lock.unlock() }
+        if let expected = expectedRevision, expected != sectionsRevision {
+            return (false, sectionsRevision, sectionsRevision)
+        }
+        sections = BotSectionRegistry.normalize(value)
+        sectionsRevision += 1
+        return (true, sectionsRevision, sectionsRevision)
+    }
+}
+
+/// Slice 2: scripted room source — one hosted room + one legacy room on the
+/// workstation fixture so both provenances render with distinct identities.
+struct ScriptedRoomSource: FleetRoomSourceProviding {
+    let gatewayID: GatewayID
+
+    func rooms() async -> [FleetRoom] {
+        guard gatewayID.rawValue == "workstation" else { return [] }
+        return [
+            FleetRoom(
+                id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: "room-alpha"),
+                name: "Launch Crew",
+                members: [
+                    FleetRoomMember(name: "Researcher", handle: "researcher"),
+                    FleetRoomMember(name: "Default", handle: "default"),
+                ],
+                recentLog: [
+                    FleetRoomMessage(
+                        id: "m1",
+                        from: .init(kind: .member, name: "Researcher"),
+                        text: "Draft is ready for review.",
+                        at: 1_757_200_000),
+                ],
+                hosted: HostedRoomState(
+                    authorityGatewayID: gatewayID.rawValue,
+                    authorityEpoch: 1,
+                    advertisedMethods: ["groups.send", "groups.stop", "groups.log"],
+                    driverAvailable: true)
+            ),
+            FleetRoom(
+                id: FleetRoomID(provenance: .desktopLegacy, gatewayID: gatewayID, key: "name:Research Crew"),
+                name: "Research Crew",
+                members: [FleetRoomMember(name: "Researcher")],
+                recentLog: [
+                    FleetRoomMessage(
+                        id: "l1",
+                        from: .init(kind: .member, name: "Researcher"),
+                        text: "Older room managed from Desktop.",
+                        at: 1_757_100_000_000),
+                ]
+            ),
+        ]
     }
 }
 

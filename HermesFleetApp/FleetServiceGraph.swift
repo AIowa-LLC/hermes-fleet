@@ -175,6 +175,8 @@ enum FleetServiceGraph {
             projectsSeamFactory: makeProjectsSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
             projectsSnapshotStore: cacheStore,
             botModeChatFactory: makeBotModeChatFactory(credentialStore: credentialStore, pinStore: pinStore),
+            botProfileFactory: makeBotProfileFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomSourceFactory: makeRoomSourceFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health,
             // R9-T1: the approval banner's FaceID gate rides the SAME
             // LocalAuthentication seam as the app lock (release: real
@@ -323,7 +325,9 @@ enum FleetServiceGraph {
 
     /// True Bots Mode: real per-gateway Bot Mode chat seam — the
     /// `GatewayBotModeClient` over its own authenticated transport (same
-    /// construction as the management seam factory).
+    /// construction as the management seam factory). Slice 2: the SAME
+    /// construction backs the bot-profile seam (describe/configure/create/
+    /// avatar/section-registry all live on that client).
     nonisolated private static func makeBotModeChatFactory(
         credentialStore: any CredentialStoring,
         pinStore: any SynchronousPinStoring
@@ -339,6 +343,52 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Slice 2: real per-gateway bot profile seam (same transport shape as
+    /// the Bot Mode chat seam).
+    nonisolated private static func makeBotProfileFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetBotProfileFactory {
+        { gateway in
+            guard let base = gateway.endpoint else {
+                return UnsupportedBotProfileManagement()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Slice 2: per-gateway room source — hosted (`groups.*`) + desktop
+    /// legacy (default-profile ui_meta projection), best-effort union.
+    nonisolated private static func makeRoomSourceFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomSourceFactory {
+        { gateway in
+            guard let base = gateway.endpoint else {
+                return EmptyRoomSource()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            let client = GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
+            return GatewayRoomSourceAdapter(
+                gatewayID: gateway.id,
+                hosted: HostedRoomProvider(gatewayID: gateway.id, client: GatewayGroupsClient(gatewayID: gateway.id, transport: transport)),
+                legacy: DesktopLegacyRoomProvider(gatewayID: gateway.id, transport: transport),
+                profileReader: client
+            )
         }
     }
 

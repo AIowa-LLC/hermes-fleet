@@ -25,6 +25,18 @@ public struct ConversationView: View {
     private let route: Route
     private let sessionID: String?
 
+    /// D03 (design acceptance finding): a conversation opened through the
+    /// canonical Bot Chat path must be TITLED exactly "Bot Chat" — the title
+    /// is identity, not decoration. The profile context stays available in
+    /// the row/detail trail; the raw slug title is kept only for non-
+    /// canonical sessions.
+    private var screenTitle: String {
+        guard let sessionID else { return route.profileSlug.rawValue }
+        return environment.isCanonicalBotChat(route: route, sessionID: sessionID)
+            ? BotModeContract.canonicalChatTitle
+            : route.profileSlug.rawValue
+    }
+
     @State private var viewModel: ConversationViewModel?
     @State private var composerText = ""
     /// V4 motion: bumped on every composer submit so `.sensoryFeedback`
@@ -57,7 +69,7 @@ public struct ConversationView: View {
                 unavailable
             }
         }
-        .navigationTitle(route.profileSlug.rawValue)
+        .navigationTitle(screenTitle)
         .task {
             if viewModel == nil {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)

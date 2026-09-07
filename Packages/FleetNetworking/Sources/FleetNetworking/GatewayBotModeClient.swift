@@ -201,6 +201,21 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
         ]))
     }
 
+    /// BotProfileManaging seam: upload avatar (same wire call as setAvatar).
+    public func uploadAvatar(_ profile: String, dataURL: String) async throws {
+        try await setAvatar(profile: profile, dataURL: dataURL)
+    }
+
+    /// BotProfileManaging seam: clear avatar ({clear: true}).
+    public func clearAvatar(_ profile: String) async throws {
+        try await clearAvatarAsset(profile: profile)
+    }
+
+    /// BotProfileManaging seam: avatar bytes (nil when absent).
+    public func avatarData(_ profile: String) async throws -> Data? {
+        try await getAvatar(profile: profile)
+    }
+
     // MARK: - profile management (slice 2)
 
     /// `profiles.describe` — the full editable surface
@@ -258,8 +273,24 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// dirty-flag discipline — an untouched section is never written).
     public func configureProfile(
         _ profile: String,
+        edit: BotProfileEdit
+    ) async throws -> BotProfileEditOutcome {
+        try await configureProfileImpl(profile, edit: edit, confirmExpensiveModel: false)
+    }
+
+    /// Confirmation resend variant for a pending model switch.
+    public func configureProfile(
+        _ profile: String,
         edit: BotProfileEdit,
-        confirmExpensiveModel: Bool = false
+        confirmExpensiveModel: Bool
+    ) async throws -> BotProfileEditOutcome {
+        try await configureProfileImpl(profile, edit: edit, confirmExpensiveModel: confirmExpensiveModel)
+    }
+
+    private func configureProfileImpl(
+        _ profile: String,
+        edit: BotProfileEdit,
+        confirmExpensiveModel: Bool
     ) async throws -> BotProfileEditOutcome {
         guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         var params: [String: JSONValue] = ["name": .string(profile)]
@@ -513,22 +544,7 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
 // (describeProfile / configureProfile(_:edit:) / configureProfile
 // (_:edit:confirmExpensiveModel:) / createProfile / uploadAvatar /
 // clearAvatar / avatarData) satisfy the seam via the overloads below.
-extension GatewayBotModeClient {
-    /// Seam: `uploadAvatar` maps to `setAvatar` (same wire call).
-    public func uploadAvatar(_ profile: String, dataURL: String) async throws {
-        try await setAvatar(profile: profile, dataURL: dataURL)
-    }
-
-    /// Seam: `clearAvatar` maps to `clearAvatarAsset` (`{clear: true}`).
-    public func clearAvatar(_ profile: String) async throws {
-        try await clearAvatarAsset(profile: profile)
-    }
-
-    /// Seam: `avatarData` maps to `getAvatar` (nil when absent).
-    public func avatarData(_ profile: String) async throws -> Data? {
-        try await getAvatar(profile: profile)
-    }
-}
+extension GatewayBotModeClient: BotProfileManaging {}
 
 /// Receipt of a successful CAS write.
 public struct MetadataWriteReceipt: Hashable, Sendable {
