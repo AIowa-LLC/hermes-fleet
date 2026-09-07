@@ -31,6 +31,10 @@ public struct FleetRosterView: View {
     @State private var showingCreate = false
     @State private var sectionsGateway: FleetGateway?
     @State private var createRoomGateway: FleetGateway?
+    /// Slice 8: collapsed section ids (per gateway+section). Search
+    /// temporarily expands everything — collapsing is a browsing aid, never
+    /// a way to lose a search match.
+    @State private var collapsedSections: Set<String> = []
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -204,11 +208,27 @@ public struct FleetRosterView: View {
                 )
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                     if !block.isUnassigned {
-                        SectionHeader(title: block.name)
-                            .accessibilityIdentifier("fleet.roster.section.\(block.id ?? "")")
+                        sectionHeader(block: block, rowCount: block.rows.count)
                     }
-                    ForEach(block.rows) { bot in
-                        botRow(bot, duplicateLabels: duplicateLabels, gatewayLabel: gatewayLabel)
+                    if !block.isUnassigned && isCollapsed(block) {
+                        // Slice 8: honest collapsed affordance — name the
+                        /// count so a collapsed section never reads as empty.
+                        Text(block.rows.isEmpty ? "No bots" : "\(block.rows.count) bot\(block.rows.count == 1 ? "" : "s")")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .padding(.leading, FleetTheme.spacingLg)
+                            .accessibilityIdentifier("fleet.roster.section-count.\(block.id ?? "")")
+                    } else {
+                        ForEach(block.rows) { bot in
+                            botRow(bot, duplicateLabels: duplicateLabels, gatewayLabel: gatewayLabel)
+                        }
+                        if !block.isUnassigned && block.rows.isEmpty {
+                            Text("Empty — move bots here from a bot's actions menu.")
+                                .font(FleetTheme.monoCaptionFont)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .padding(.leading, FleetTheme.spacingLg)
+                                .accessibilityIdentifier("fleet.roster.section-empty.\(block.id ?? "")")
+                        }
                     }
                 }
             } else {
@@ -217,6 +237,32 @@ public struct FleetRosterView: View {
                 }
             }
         }
+    }
+
+    /// Slice 8: tappable section header — tap toggles collapse. Label names
+    /// the state ("Collapse Research" / "Expand Research") so it is never
+    /// color- or chevron-only. Skipped while searching (all expanded).
+    private func sectionHeader(block: SectionBlock<FleetBot>, rowCount: Int) -> some View {
+        let collapsed = isCollapsed(block)
+        return Button {
+            withAnimation {
+                if collapsed {
+                    collapsedSections.remove(block.id ?? "")
+                } else if let id = block.id {
+                    collapsedSections.insert(id)
+                }
+            }
+        } label: {
+            SectionHeader(title: collapsed ? "\(block.name) — \(rowCount)" : block.name)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("fleet.roster.section.\(block.id ?? "")")
+        .accessibilityLabel(collapsed ? "Expand \(block.name)" : "Collapse \(block.name)")
+    }
+
+    private func isCollapsed(_ block: SectionBlock<FleetBot>) -> Bool {
+        guard let id = block.id else { return false }
+        return searchText.isEmpty && collapsedSections.contains(id)
     }
 
     @ViewBuilder

@@ -136,6 +136,7 @@ final class BotRoutinesUITests: XCTestCase {
             sheet.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "[bot:researcher]")).firstMatch.exists,
             "the form must preview the [bot:researcher] namespaced job name")
 
+        app.buttons["Advanced"].tap()
         let schedule = firstMatch(in: app, identifier: "routines.form.schedule")
         schedule.tap()
         schedule.typeText("every day at 21:00")

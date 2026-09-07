@@ -153,6 +153,7 @@ public struct EditBotSheet: View {
 
     @State private var title = ""
     @State private var descriptionText = ""
+    @State private var initialDescriptionText = ""
     @State private var soul = ""
     @State private var model = ""
     @State private var provider = ""
@@ -372,6 +373,7 @@ public struct EditBotSheet: View {
             model = description.defaultModel ?? ""
             provider = description.provider ?? ""
             descriptionText = description.descriptionText ?? descriptionText
+            initialDescriptionText = descriptionText
         } catch {
             errorMessage = "Could not load the current profile. Reopen the editor to retry."
         }
@@ -385,18 +387,21 @@ public struct EditBotSheet: View {
         metadata.shape = avatarShape.isEmpty ? nil : avatarShape
         metadata.color = avatarColor.isEmpty ? nil : avatarColor
         metadata.title = title.isEmpty ? nil : title
-        metadata.descriptionText = descriptionText.isEmpty ? nil : descriptionText
+        if descriptionText != initialDescriptionText {
+            metadata.descriptionText = descriptionText.isEmpty ? nil : descriptionText
+        }
         metadata.hidden = hidden == (baselineMetadata.hidden ?? false) ? baselineMetadata.hidden : hidden
         metadata.pinned = pinned == (baselineMetadata.pinned ?? false) ? baselineMetadata.pinned : pinned
         metadata.sectionID = sectionID
+        let modelChanged = model != (loadedDescription?.defaultModel ?? "") || provider != (loadedDescription?.provider ?? "")
         let edit = BotProfileEdit(
             metadata: metadata == baselineMetadata ? nil : metadata,
             metadataExpectedRevision: metadataRevision,
             previousMetadataRaw: bot.uiMeta?[BotModeContract.botsMetaKey],
             soul: soul == (loadedDescription?.soul ?? "") ? nil : soul,
             descriptionText: descriptionText == (loadedDescription?.descriptionText ?? "") ? nil : descriptionText,
-            model: model == (loadedDescription?.defaultModel ?? "") ? nil : model,
-            provider: provider == (loadedDescription?.provider ?? "") ? nil : provider,
+            model: modelChanged ? model : nil,
+            provider: modelChanged ? provider : nil,
             disabledSkills: draftDescription?.skills == loadedDescription?.skills ? nil : draftDescription?.disabledSkillNames,
             enabledToolsets: draftDescription?.toolsets == loadedDescription?.toolsets ? nil : draftDescription?.enabledToolsetNames,
             enabledMCPServers: draftDescription?.mcpServers == loadedDescription?.mcpServers ? nil : draftDescription?.enabledMCPServerNames
@@ -407,7 +412,7 @@ public struct EditBotSheet: View {
             if result.confirmRequired {
                 pendingModelEdit = edit
                 confirmMessage = result.confirmMessage
-            } else if result.succeeded {
+            } else if outcome?.succeeded == true {
                 await environment.refreshRoster()
                 dismiss()
             }
@@ -419,6 +424,7 @@ public struct EditBotSheet: View {
     private func record(_ result: BotProfileEditOutcome, edit: BotProfileEdit) {
         var combined = outcome ?? BotProfileEditOutcome()
         combined.appliedSections.formUnion(result.appliedSections)
+        combined.appliedSections.subtract(result.failedSections)
         combined.failedSections.subtract(result.appliedSections)
         combined.failedSections.formUnion(result.failedSections)
         combined.confirmRequired = result.confirmRequired

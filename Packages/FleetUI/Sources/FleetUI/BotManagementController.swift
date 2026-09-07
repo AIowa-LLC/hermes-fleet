@@ -38,6 +38,7 @@ public final class BotManagementController {
     @ObservationIgnored private var avatarLoads: Set<Route> = []
     @ObservationIgnored private var avatarFetchedAt: [Route: Date] = [:]
     @ObservationIgnored private var avatarSlots = 0
+    @ObservationIgnored private var avatarGenerations: [Route: Int] = [:]
     @ObservationIgnored private var avatarWaiters: [CheckedContinuation<Void, Never>] = []
     private let factory: FleetBotProfileFactory?
     @ObservationIgnored private var seams: [GatewayID: any BotProfileManaging] = [:]
@@ -220,8 +221,9 @@ public final class BotManagementController {
         }
         guard !Task.isCancelled else { return }
         avatarFetchedAt[bot.route] = Date()
+        let generation = avatarGenerations[bot.route, default: 0]
         if let data = try? await seam.avatarData(bot.route.profileSlug.rawValue),
-           !data.isEmpty, data.count <= 2_000_000 {
+           !data.isEmpty, data.count <= 2_000_000, avatarGenerations[bot.route, default: 0] == generation {
             avatarDataByRoute[bot.route] = data
         }
     }
@@ -232,6 +234,7 @@ public final class BotManagementController {
             throw BotSectionSyncError.unavailable("Profile management is unavailable on this gateway")
         }
         try await seam.uploadAvatar(bot.route.profileSlug.rawValue, dataURL: dataURL)
+        avatarGenerations[bot.route, default: 0] += 1
         avatarDataByRoute[bot.route] = GatewayBotModeClientBridge.decodeDataURLBytes(dataURL)
     }
 
@@ -241,6 +244,7 @@ public final class BotManagementController {
             throw BotSectionSyncError.unavailable("Profile management is unavailable on this gateway")
         }
         try await seam.clearAvatar(bot.route.profileSlug.rawValue)
+        avatarGenerations[bot.route, default: 0] += 1
         avatarDataByRoute[bot.route] = nil
     }
 
