@@ -491,3 +491,16 @@ final class BotProfileNetworkingTests: XCTestCase {
         XCTAssertNil(absentProfile)
     }
 }
+
+extension BotProfileNetworkingTests {
+    func testUnknownCapabilityStateIsNotInvented() {
+        let description = GatewayBotModeClient.decodeDescription([
+            "skills": .array([.object(["name": .string("unknown")])]),
+            "toolsets": .array([.object(["name": .string("unknown")])]),
+            "mcp_servers": .array([.object(["name": .string("unknown"), "secret": .string("fixture-secret")])])
+        ], profile: "researcher")
+        XCTAssertTrue(description.skills.isEmpty)
+        XCTAssertTrue(description.toolsets.isEmpty)
+        XCTAssertTrue(description.mcpServers.isEmpty)
+    }
+}

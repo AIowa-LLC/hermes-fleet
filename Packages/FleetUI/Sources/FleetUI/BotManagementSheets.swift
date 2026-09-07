@@ -157,6 +157,10 @@ public struct EditBotSheet: View {
     @State private var model = ""
     @State private var provider = ""
     @State private var hidden = false
+    @State private var pinned = false
+    @State private var draftDescription: BotProfileDescription?
+    @State private var baselineMetadata = BotModeMetadata()
+    @State private var metadataRevision: Int?
     @State private var sectionID: String?
     @State private var loadedDescription: BotProfileDescription?
     @State private var isSubmitting = false
@@ -176,7 +180,7 @@ public struct EditBotSheet: View {
                 metadataSection
                 soulSection
                 modelSection
-                if let description = loadedDescription {
+                if let description = draftDescription {
                     skillsSection(description)
                     toolsetsSection(description)
                     mcpSection(description)
@@ -202,7 +206,7 @@ public struct EditBotSheet: View {
                     Button("Save") {
                         Task { await save() }
                     }
-                    .disabled(isSubmitting)
+                    .disabled(isSubmitting || loadedDescription == nil)
                     .accessibilityIdentifier("fleet.bot.edit.submit")
                 }
             }
@@ -230,6 +234,7 @@ public struct EditBotSheet: View {
             TextField("Title", text: $title)
             TextField("Description", text: $descriptionText)
             Toggle("Hidden from roster", isOn: $hidden)
+            Toggle("Pinned", isOn: $pinned)
         }
     }
 
@@ -250,8 +255,14 @@ public struct EditBotSheet: View {
     private func skillsSection(_ description: BotProfileDescription) -> some View {
         Section("Skills") {
             ForEach(description.skills, id: \.name) { skill in
-                Text(skill.enabled ? skill.name : "\(skill.name) (disabled)")
-                    .font(FleetTheme.secondaryFont)
+                Toggle(skill.name, isOn: Binding(
+                    get: { draftDescription?.skills.first { $0.name == skill.name }?.enabled ?? false },
+                    set: { value in
+                        if let i = draftDescription?.skills.firstIndex(where: { $0.name == skill.name }) {
+                            draftDescription?.skills[i].enabled = value
+                        }
+                    }))
+                    .accessibilityIdentifier("fleet.bot.edit.skill.\(skill.name)")
             }
         }
     }
@@ -259,8 +270,14 @@ public struct EditBotSheet: View {
     private func toolsetsSection(_ description: BotProfileDescription) -> some View {
         Section("Toolsets") {
             ForEach(description.toolsets, id: \.name) { toolset in
-                Text("\(toolset.label ?? toolset.name) — \(toolset.enabled ? "on" : "off")")
-                    .font(FleetTheme.secondaryFont)
+                Toggle(toolset.label ?? toolset.name, isOn: Binding(
+                    get: { draftDescription?.toolsets.first { $0.name == toolset.name }?.enabled ?? false },
+                    set: { value in
+                        if let i = draftDescription?.toolsets.firstIndex(where: { $0.name == toolset.name }) {
+                            draftDescription?.toolsets[i].enabled = value
+                        }
+                    }))
+                    .accessibilityIdentifier("fleet.bot.edit.toolset.\(toolset.name)")
             }
         }
     }
@@ -273,8 +290,14 @@ public struct EditBotSheet: View {
                     .foregroundStyle(FleetTheme.textSecondary)
             }
             ForEach(description.mcpServers, id: \.name) { server in
-                Text("\(server.name) (\(server.transport ?? "?")) — \(server.enabled ? "on" : "off")")
-                    .font(FleetTheme.secondaryFont)
+                Toggle(server.name, isOn: Binding(
+                    get: { draftDescription?.mcpServers.first { $0.name == server.name }?.enabled ?? false },
+                    set: { value in
+                        if let i = draftDescription?.mcpServers.firstIndex(where: { $0.name == server.name }) {
+                            draftDescription?.mcpServers[i].enabled = value
+                        }
+                    }))
+                    .accessibilityIdentifier("fleet.bot.edit.mcp.\(server.name)")
             }
         }
     }
@@ -318,12 +341,22 @@ public struct EditBotSheet: View {
         title = meta?.title ?? ""
         descriptionText = meta?.descriptionText ?? bot.profileDescription ?? ""
         hidden = meta?.hidden ?? false
+        pinned = meta?.pinned ?? false
+        baselineMetadata = meta ?? BotModeMetadata()
+        metadataRevision = bot.uiMetaRevisions?[BotModeContract.botsMetaKey]
         sectionID = meta?.sectionID
         model = bot.model ?? ""
         provider = bot.provider ?? ""
-        loadedDescription = try? await environment.botManagement.describeBot(bot)
-        if let soul = loadedDescription?.soul {
-            self.soul = soul
+        do {
+            let description = try await environment.botManagement.describeBot(bot)
+            loadedDescription = description
+            draftDescription = description
+            soul = description.soul ?? ""
+            model = description.defaultModel ?? ""
+            provider = description.provider ?? ""
+            descriptionText = description.descriptionText ?? descriptionText
+        } catch {
+            errorMessage = "Could not load the current profile. Reopen the editor to retry."
         }
     }
 
@@ -331,23 +364,27 @@ public struct EditBotSheet: View {
         isSubmitting = true
         defer { isSubmitting = false }
         errorMessage = nil
-        var metadata = bot.botModeMetadata ?? BotModeMetadata()
+        var metadata = baselineMetadata
         metadata.title = title.isEmpty ? nil : title
         metadata.descriptionText = descriptionText.isEmpty ? nil : descriptionText
-        metadata.hidden = hidden
+        metadata.hidden = hidden == (baselineMetadata.hidden ?? false) ? baselineMetadata.hidden : hidden
+        metadata.pinned = pinned == (baselineMetadata.pinned ?? false) ? baselineMetadata.pinned : pinned
         metadata.sectionID = sectionID
         let edit = BotProfileEdit(
-            metadata: metadata,
-            metadataExpectedRevision: bot.uiMetaRevisions?[BotModeContract.botsMetaKey],
+            metadata: metadata == baselineMetadata ? nil : metadata,
+            metadataExpectedRevision: metadataRevision,
             previousMetadataRaw: bot.uiMeta?[BotModeContract.botsMetaKey],
-            soul: soul,
-            descriptionText: descriptionText,
-            model: model.isEmpty ? nil : model,
-            provider: provider.isEmpty ? nil : provider
+            soul: soul == (loadedDescription?.soul ?? "") ? nil : soul,
+            descriptionText: descriptionText == (loadedDescription?.descriptionText ?? "") ? nil : descriptionText,
+            model: model == (loadedDescription?.defaultModel ?? "") ? nil : model,
+            provider: provider == (loadedDescription?.provider ?? "") ? nil : provider,
+            disabledSkills: draftDescription?.skills == loadedDescription?.skills ? nil : draftDescription?.disabledSkillNames,
+            enabledToolsets: draftDescription?.toolsets == loadedDescription?.toolsets ? nil : draftDescription?.enabledToolsetNames,
+            enabledMCPServers: draftDescription?.mcpServers == loadedDescription?.mcpServers ? nil : draftDescription?.enabledMCPServerNames
         )
         do {
             let result = try await environment.botManagement.applyEdit(edit, to: bot)
-            outcome = result
+            record(result, edit: edit)
             if result.confirmRequired {
                 pendingModelEdit = edit
                 confirmMessage = result.confirmMessage
@@ -360,15 +397,39 @@ public struct EditBotSheet: View {
         }
     }
 
+    private func record(_ result: BotProfileEditOutcome, edit: BotProfileEdit) {
+        var combined = outcome ?? BotProfileEditOutcome()
+        combined.appliedSections.formUnion(result.appliedSections)
+        combined.failedSections.subtract(result.appliedSections)
+        combined.failedSections.formUnion(result.failedSections)
+        combined.confirmRequired = result.confirmRequired
+        combined.confirmMessage = result.confirmMessage
+        combined.metadataConflict = result.metadataConflict
+        outcome = combined
+        if result.appliedSections.contains(.metadata), let metadata = edit.metadata {
+            baselineMetadata = metadata
+            metadataRevision = result.newMetadataRevisions[BotModeContract.botsMetaKey] ?? metadataRevision
+        }
+        if result.appliedSections.contains(.soul) { loadedDescription?.soul = soul }
+        if result.appliedSections.contains(.description) { loadedDescription?.descriptionText = descriptionText }
+        if result.appliedSections.contains(.model) {
+            loadedDescription?.defaultModel = model
+            loadedDescription?.provider = provider
+        }
+        if result.appliedSections.contains(.skills) { loadedDescription?.skills = draftDescription?.skills ?? [] }
+        if result.appliedSections.contains(.toolsets) { loadedDescription?.toolsets = draftDescription?.toolsets ?? [] }
+        if result.appliedSections.contains(.mcpServers) { loadedDescription?.mcpServers = draftDescription?.mcpServers ?? [] }
+    }
+
     private func confirmModelSwitch() async {
         guard let pending = pendingModelEdit else { return }
         isSubmitting = true
         defer { isSubmitting = false }
         do {
             let result = try await environment.botManagement.confirmModelEdit(pending, for: bot)
-            outcome = result
+            record(result, edit: pending.modelOnlyResend)
             pendingModelEdit = nil
-            if result.succeeded {
+            if outcome?.succeeded == true {
                 await environment.refreshRoster()
                 dismiss()
             }

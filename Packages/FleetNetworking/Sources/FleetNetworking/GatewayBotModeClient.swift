@@ -236,24 +236,24 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     static func decodeDescription(_ object: [String: JSONValue], profile: String) -> BotProfileDescription {
         let modelObject = object["model"]?.objectValue
         let skills = (object["skills"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.SkillEntry? in
-            guard let o = entry.objectValue, let name = o["name"]?.stringValue else { return nil }
+            guard let o = entry.objectValue, let name = o["name"]?.stringValue, let enabled = o["enabled"]?.boolValue else { return nil }
             return BotProfileDescription.SkillEntry(
-                name: name, enabled: o["enabled"]?.boolValue ?? true)
+                name: name, enabled: enabled)
         }
         let toolsets = (object["toolsets"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.ToolsetEntry? in
-            guard let o = entry.objectValue, let name = o["name"]?.stringValue else { return nil }
+            guard let o = entry.objectValue, let name = o["name"]?.stringValue, let enabled = o["enabled"]?.boolValue else { return nil }
             return BotProfileDescription.ToolsetEntry(
                 name: name,
                 label: o["label"]?.stringValue,
                 description: o["description"]?.stringValue,
                 toolCount: o["tool_count"]?.numberValue.map(Int.init) ?? 0,
-                enabled: o["enabled"]?.boolValue ?? false)
+                enabled: enabled)
         }
         let mcp = (object["mcp_servers"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.MCPEntry? in
-            guard let o = entry.objectValue, let name = o["name"]?.stringValue else { return nil }
+            guard let o = entry.objectValue, let name = o["name"]?.stringValue, let enabled = o["enabled"]?.boolValue else { return nil }
             return BotProfileDescription.MCPEntry(
                 name: name,
-                enabled: o["enabled"]?.boolValue ?? false,
+                enabled: enabled,
                 transport: o["transport"]?.stringValue)
         }
         return BotProfileDescription(
