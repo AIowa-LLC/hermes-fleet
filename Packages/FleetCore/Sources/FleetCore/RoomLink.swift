@@ -413,6 +413,20 @@ public struct RoomPromotionReceipt: Hashable, Sendable {
     public let previousEpoch: Int
     public let claimSeq: Int
     public let latestSeq: Int
+
+    public init(
+        roomID: String, authorityGatewayID: String, authorityEpoch: Int,
+        previousGatewayID: String, previousEpoch: Int,
+        claimSeq: Int, latestSeq: Int
+    ) {
+        self.roomID = roomID
+        self.authorityGatewayID = authorityGatewayID
+        self.authorityEpoch = authorityEpoch
+        self.previousGatewayID = previousGatewayID
+        self.previousEpoch = previousEpoch
+        self.claimSeq = claimSeq
+        self.latestSeq = latestSeq
+    }
 }
 
 /// Pure promotion-prerequisite check (D19). Upstream gates:
