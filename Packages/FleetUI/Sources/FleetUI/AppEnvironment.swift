@@ -267,6 +267,10 @@ public final class AppEnvironment {
     /// Slice 4: driver-status seam factory (groups.state driver_status).
     private let roomDriverStatusFactory: FleetRoomDriverStatusFactory?
     @ObservationIgnored private var roomDriverStatuses: [GatewayID: any RoomDriverStatusProviding] = [:]
+    /// Slice 5 (D19): RoomLink command seam factory (app-side
+    /// `GatewayRoomLinkClient` adapter; scripted in DEBUG/tests).
+    private let roomLinkFactory: FleetRoomLinkFactory?
+    @ObservationIgnored private var roomLinks: [GatewayID: any RoomLinkCommanding] = [:]
     /// R9-T7: learning seam factory (memory graph) — one per gateway (the
     /// concrete `GatewayLearningClient` in production, scripted in
     /// DEBUG/tests).
@@ -336,6 +340,7 @@ public final class AppEnvironment {
         roomSourceFactory: FleetRoomSourceFactory? = nil,
         roomCommandFactory: FleetRoomCommandFactory? = nil,
         roomDriverStatusFactory: FleetRoomDriverStatusFactory? = nil,
+        roomLinkFactory: FleetRoomLinkFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
@@ -361,6 +366,7 @@ public final class AppEnvironment {
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
+        self.roomLinkFactory = roomLinkFactory
         self.botManagement = BotManagementController(factory: botProfileFactory)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
     }
@@ -508,6 +514,40 @@ public final class AppEnvironment {
             room: room,
             commands: roomCommandSeam(for: room.id.gatewayID),
             driverStatus: roomDriverStatusSeam(for: room.id.gatewayID))
+    }
+
+    // MARK: Slice 5 — RoomLink (D19)
+
+    /// The lazily-built RoomLink command seam for a gateway (nil = the
+    /// RoomLink panel renders its honest no-connection state).
+    public func roomLinkSeam(for gatewayID: GatewayID) -> (any RoomLinkCommanding)? {
+        if let existing = roomLinks[gatewayID] { return existing }
+        guard let factory = roomLinkFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }),
+              let seam = factory(gateway) else { return nil }
+        roomLinks[gatewayID] = seam
+        return seam
+    }
+
+    /// Builds a RoomLink view model for one room.
+    public func makeRoomLinkViewModel(room: FleetRoom) -> RoomLinkViewModel {
+        RoomLinkViewModel(
+            room: room,
+            commands: roomLinkSeam(for: room.id.gatewayID))
+    }
+
+    /// Mention candidates from the LIVE fleet roster (D20): every gateway,
+    /// hidden bots included (they stay mentionable by design §3.4).
+    public func mentionCandidates() -> [MentionCandidate] {
+        var botsByGateway: [GatewayID: [FleetBot]] = [:]
+        for gateway in gateways {
+            botsByGateway[gateway.id] = bots(on: gateway.id)
+        }
+        return FleetMentionCandidates.from(
+            botsByGateway: botsByGateway,
+            gatewayLabel: { [self] id in
+                gateway(for: id)?.displayName ?? id.rawValue
+            })
     }
 
     /// True when the gateway supports creating hosted rooms (F1: derived

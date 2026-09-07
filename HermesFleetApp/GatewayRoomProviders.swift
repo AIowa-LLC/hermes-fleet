@@ -399,3 +399,90 @@ extension GatewayBotModeClient: BotSectionRegistryLoading, BotSectionRegistryWri
             applied: receipt.applied, newRevisions: receipt.newRevisions)
     }
 }
+
+/// Slice 5 (D19): production RoomLink seam — the FleetCore
+/// `RoomLinkCommanding` protocol over the per-gateway
+/// `GatewayRoomLinkClient`. Typed errors cross as FleetCore values so
+/// FleetUI never imports FleetNetworking.
+struct GatewayRoomLinkAdapter: RoomLinkCommanding {
+    let gatewayID: GatewayID
+    private let client: GatewayRoomLinkClient
+
+    init(gatewayID: GatewayID, client: GatewayRoomLinkClient) {
+        self.gatewayID = gatewayID
+        self.client = client
+    }
+
+    func negotiate() async throws -> RoomLinkNegotiation {
+        try await client.negotiate()
+    }
+
+    func invite(
+        roomID: String?, memberID: String?, ttlSeconds: Double
+    ) async throws -> RoomLinkGrant {
+        try await client.invite(roomID: roomID, memberID: memberID, ttlSeconds: ttlSeconds)
+    }
+
+    func registerPeer(
+        roomID: String, memberID: String, grant: RoomLinkGrant,
+        targetURL: String, catalogDigest: String
+    ) async throws -> RoomPeerRoute {
+        do {
+            return try await client.registerPeer(
+                roomID: roomID, memberID: memberID, grant: grant,
+                targetURL: targetURL, catalogDigest: catalogDigest)
+        } catch let error as GatewayRoomLinkClient.RoomLinkError {
+            throw Self.map(error)
+        }
+    }
+
+    func revoke(grant: RoomLinkGrant) async throws {
+        do {
+            try await client.revoke(grant: grant)
+        } catch let error as GatewayRoomLinkClient.RoomLinkError {
+            throw Self.map(error)
+        }
+    }
+
+    func peerRoutes(roomID: String) async throws -> [RoomPeerRoute] {
+        try await client.peerRoutes(roomID: roomID)
+    }
+
+    func replicaState(roomID: String) async throws -> RoomReplicaState? {
+        try await client.replicaState(roomID: roomID)
+    }
+
+    func replicate(roomID: String) async throws -> RoomReplicateReceipt {
+        try await client.replicate(
+            roomID: roomID, roomName: "", members: [], page: .object([:]))
+    }
+
+    func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt {
+        do {
+            return try await client.promote(roomID: roomID, confirm: confirm)
+        } catch let error as GatewayRoomLinkClient.RoomLinkError {
+            throw Self.map(error)
+        }
+    }
+
+    func demote(roomID: String, observedGatewayID: String, observedEpoch: Int) async throws {
+        try await client.demote(
+            roomID: roomID, observedGatewayID: observedGatewayID, observedEpoch: observedEpoch)
+    }
+
+    static func map(_ error: GatewayRoomLinkClient.RoomLinkError) -> Error {
+        switch error {
+        case .registrationRefusal(let message):
+            return RoomLinkRegistrationRefusal(wireMessage: message)
+                ?? RoomCommandFailure.rpcFailed(message, 5120)
+        case .confirmRequired(let message):
+            return RoomCommandFailure.confirmRequired(message)
+        case .notConnected:
+            return RoomCommandFailure.notConnected
+        case .malformed(let message):
+            return RoomCommandFailure.rpcFailed(message, 0)
+        case .rpcFailed(let message, let code):
+            return RoomCommandFailure.rpcFailed(message, code)
+        }
+    }
+}

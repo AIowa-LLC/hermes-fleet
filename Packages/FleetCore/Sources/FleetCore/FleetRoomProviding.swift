@@ -7,6 +7,10 @@ public typealias FleetRoomCommandFactory = @Sendable (FleetGateway) -> (any Room
 /// Slice 4: driver-status seam factory (groups.state driver_status decode).
 public typealias FleetRoomDriverStatusFactory = @Sendable (FleetGateway) -> (any RoomDriverStatusProviding)?
 
+/// Slice 5 (D19): RoomLink command seam factory (app-side adapter over the
+/// per-gateway RoomLink client; returns nil for gateways with no endpoint).
+public typealias FleetRoomLinkFactory = @Sendable (FleetGateway) -> (any RoomLinkCommanding)?
+
 /// Normalized room discovery seam — one abstraction over both room
 /// generations (addendum: "Core/service abstraction must normalize rooms
 /// while explicitly preserving source/provenance").

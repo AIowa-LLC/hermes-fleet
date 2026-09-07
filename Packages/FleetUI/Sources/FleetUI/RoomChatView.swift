@@ -331,6 +331,7 @@ public struct RoomChatView: View {
     @State private var showingRename = false
     @State private var renameDraft = ""
     @State private var showingDisbandConfirm = false
+    @State private var showingRoomLink = false
     @FocusState private var composing: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
@@ -367,6 +368,11 @@ public struct RoomChatView: View {
             .task { await viewModel.start() }
             .refreshable { await viewModel.refresh() }
             .sheet(isPresented: $showingRename) { renameSheet }
+            .sheet(isPresented: $showingRoomLink) {
+                NavigationStack {
+                    RoomLinkView(room: viewModel.room, environment: environment)
+                }
+            }
             .alert("Disband this room?", isPresented: $showingDisbandConfirm) {
                 Button("Disband", role: .destructive) {
                     Task { await viewModel.disband() }
@@ -450,25 +456,32 @@ public struct RoomChatView: View {
     @ViewBuilder
     private var failureSurfaces: some View {
         if let failure = viewModel.latestFailure {
+            let surface = BotFailureCopy.Surface(failure.reason)
             FleetCard {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                     Label(
-                        failure.reason.requiresAttention ? "Needs attention" : "Turn failed",
-                        systemImage: failure.reason.requiresAttention ? "exclamationmark.triangle.fill" : "xmark.octagon")
+                        surface.requiresAttention ? "Needs attention — \(surface.title)" : surface.title,
+                        systemImage: surface.requiresAttention ? "exclamationmark.triangle.fill" : "xmark.octagon")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
-                    Text(failure.message ?? failure.reason.rawValue)
+                    Text(failure.message ?? surface.message)
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.textSecondary)
+                    // D22: the wire spelling rides along (mono badge) —
+                    // honest typed identity, never a generic "failed".
+                    Text(surface.wireBadge)
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .accessibilityIdentifier("fleet.room.failure.wire-badge")
                     HStack(spacing: FleetTheme.spacingSm) {
-                        if viewModel.canRetryLatestFailure {
+                        ForEach(surface.actions) { action in
                             Button {
-                                Task { await viewModel.retry(taskID: viewModel.indeterminateTaskID ?? "latest") }
+                                Task { await perform(action) }
                             } label: {
-                                Label("Retry", systemImage: "arrow.clockwise")
+                                Label(action.title, systemImage: action.symbol)
                             }
                             .buttonStyle(.fleetPressable)
-                            .accessibilityIdentifier("fleet.room.retry-failure")
+                            .accessibilityIdentifier("fleet.room.failure.action.\(action.id)")
                         }
                         if viewModel.capabilities.canStop {
                             Button(role: .destructive) {
@@ -482,6 +495,9 @@ public struct RoomChatView: View {
                     }
                 }
             }
+            // (card identifier intentionally absent — a card-level identifier
+            // overrides every child identifier in the AX tree; the D22
+            // action buttons must keep their own.)
         } else if let taskID = viewModel.indeterminateTaskID, viewModel.capabilities.canRetry {
             FleetCard {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
@@ -614,39 +630,51 @@ public struct RoomChatView: View {
             .accessibilityIdentifier("fleet.room.empty")
     }
 
-    // MARK: Composer (capability-gated)
+    // MARK: Composer (capability-gated; @mention autocomplete when capable)
 
     @ViewBuilder
     private var composer: some View {
         if !viewModel.isDisbanded {
-            HStack(spacing: FleetTheme.spacingSm) {
-                Image(systemName: "chevron.up.forward")
-                    .foregroundStyle(FleetTheme.textSecondary)
-                TextField(
-                    viewModel.capabilities.canSend ? "Message the room" : "Read only",
-                    text: $draft
-                )
-                .textFieldStyle(.plain)
-                .font(.body)
-                .focused($composing)
-                .disabled(!viewModel.capabilities.canSend)
-                .accessibilityIdentifier("fleet.room.composer.field")
-                .onSubmit { Task { await submit() } }
-                if viewModel.capabilities.canSend {
-                    Button {
-                        Task { await submit() }
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
+            VStack(spacing: 0) {
+                // D20: @mention autocomplete over the live fleet roster.
+                // Renders only while an active "@fragment" is being typed;
+                // inserted text is plain text — delivery is room policy and
+                // is never presented as a completed ping.
+                MentionAutocomplete(
+                    draft: $draft,
+                    candidates: environment.mentionCandidates(),
+                    gatewayLabel: { [weak environment] id in
+                        environment?.gateway(for: id)?.displayName ?? id.rawValue
+                    })
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Image(systemName: "chevron.up.forward")
+                        .foregroundStyle(FleetTheme.textSecondary)
+                    TextField(
+                        viewModel.capabilities.canSend ? "Message the room (@ to mention)" : "Read only",
+                        text: $draft
+                    )
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .focused($composing)
+                    .disabled(!viewModel.capabilities.canSend)
+                    .accessibilityIdentifier("fleet.room.composer.field")
+                    .onSubmit { Task { await submit() } }
+                    if viewModel.capabilities.canSend {
+                        Button {
+                            Task { await submit() }
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.title2)
+                        }
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSending)
+                        .accessibilityIdentifier("fleet.room.send")
                     }
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSending)
-                    .accessibilityIdentifier("fleet.room.send")
                 }
+                .padding(.horizontal, FleetTheme.spacingMd)
+                .padding(.vertical, 10)
+                .background(FleetTheme.surfaceElevated)
+                .clipShape(Capsule())
             }
-            .padding(.horizontal, FleetTheme.spacingMd)
-            .padding(.vertical, 10)
-            .background(FleetTheme.surfaceElevated)
-            .clipShape(Capsule())
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.bottom, FleetTheme.spacingSm)
             .accessibilityElement(children: .contain)
@@ -661,10 +689,44 @@ public struct RoomChatView: View {
         composing = false
     }
 
+    /// D22: map a typed recovery action to its behavior. Retry-class actions
+    /// ride the room command seam; the others explain the honest next step
+    /// (this client cannot re-authenticate a provider or edit gateway config
+    /// — the copy says where to do it).
+    private func perform(_ action: BotFailureCopy.Action) async {
+        switch action {
+        case .retry:
+            _ = await viewModel.retry(taskID: viewModel.indeterminateTaskID ?? "latest")
+        case .compressThenResume:
+            // context_overflow recovery: the gateway compresses on resume —
+            // retry carries the compress-then-resume semantics upstream.
+            _ = await viewModel.retry(taskID: viewModel.indeterminateTaskID ?? "latest")
+        case .waitAndAutoRetry:
+            // Rate limit / server error auto-retry upstream; nothing to fire.
+            break
+        case .reauthenticate, .openSettings, .checkQuota, .pickModel, .reconnectRuntime:
+            // Honest no-op from this surface: these live in gateway/bot
+            // settings, not the room. The copy already says where to go.
+            break
+        }
+    }
+
     // MARK: Toolbar (rename / disband, capability-gated)
 
     @ToolbarContentBuilder
     private var toolbarControls: some ToolbarContent {
+        // Slice 5 (D19): RoomLink management for hosted rooms (negotiation,
+        // grants, routes, replay, takeover) — legacy rooms never offer it.
+        if viewModel.room.id.provenance == .hosted && !viewModel.isDisbanded {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showingRoomLink = true
+                } label: {
+                    Label("RoomLink", systemImage: "link")
+                }
+                .accessibilityIdentifier("fleet.room.roomlink")
+            }
+        }
         if viewModel.capabilities.canRename {
             ToolbarItem(placement: .primaryAction) {
                 Button {

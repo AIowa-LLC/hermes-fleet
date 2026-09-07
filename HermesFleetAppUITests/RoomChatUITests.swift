@@ -183,16 +183,22 @@ final class RoomChatUITests: XCTestCase {
 
         scrollToFind(app, identifier: "fleet.room.row.room-alpha").tap()
 
-        // Typed failure renders with a Retry affordance (capable room).
-        let retry = app.buttons["fleet.room.retry-failure"]
-        XCTAssertTrue(retry.waitForExistence(timeout: 10), "retry affordance renders on typed failure")
-        retry.tap()
-
-        // The retry is issued (pending action clears; notice renders).
+        // Slice 5 (D22): the typed failure card renders PER-TYPE actions for
+        // the seeded provider_auth_or_access (attention class) —
+        // re-authenticate + open settings, never a plain retry (the wire
+        // marks this reason retry:none).
         XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.notice"]
-                .waitForExistence(timeout: 10),
-            "notice renders after retry")
+            app.buttons["fleet.room.failure.action.reauthenticate"].waitForExistence(timeout: 10),
+            "typed recovery action renders on provider_auth_or_access failure")
+        app.buttons["fleet.room.failure.action.reauthenticate"].tap()
+
+        // The typed title and wire badge render (never generic-only).
+        XCTAssertTrue(
+            app.staticTexts["Needs attention — Provider sign-in needed"].exists,
+            "typed attention title renders")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.failure.wire-badge"].exists,
+            "wire badge renders")
     }
 
     // MARK: - D16 approval

@@ -115,6 +115,12 @@ extension FleetServiceGraph {
             roomDriverStatusFactory: { gateway in
                 ScriptedRoomEngine.shared
             },
+            // Slice 5 (D19): scripted RoomLink engine — env-knobbed:
+            // HERMES_FLEET_ROOMLINK=unsupported renders the honest
+            // unsupported state; default is a supported direct/TLS catalog.
+            roomLinkFactory: { gateway in
+                ScriptedRoomLinkEngine.shared
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
@@ -2125,6 +2131,179 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
             pendingRetries: _pendingRetry.map { [$0] } ?? [],
             pendingApprovals: _pendingApproval.map { [$0] } ?? [])
     }
+}
+
+/// Slice 5 (D19): scripted RoomLink engine (DEBUG simulator only) — a
+/// deterministic `RoomLinkCommanding` faithful to the gateway's peer.*
+/// semantics. Env knobs (UI tests):
+/// - `HERMES_FLEET_ROOMLINK=unsupported` — the gateway reports RoomLink
+///   disabled with reason `durable_run_storage_required` (honest unsupported
+///   state; no grant is ever minted).
+/// - `HERMES_FLEET_ROOMLINK=stale` — the replica starts BEHIND (lastSeq 4 of
+///   latestSeq 10) so promotion is blocked until Replay now runs.
+/// - default — supported direct/TLS catalog, caught-up replica.
+actor ScriptedRoomLinkEngine: RoomLinkCommanding {
+    static let shared = ScriptedRoomLinkEngine()
+
+    private var mode: Mode {
+        switch ProcessInfo.processInfo.environment["HERMES_FLEET_ROOMLINK"] {
+        case "unsupported": return .unsupported
+        case "stale": return .staleReplica
+        default: return .supported
+        }
+    }
+
+    private enum Mode {
+        case supported
+        case unsupported
+        case staleReplica
+    }
+
+    private var _inviteCount = 0
+    private var _revokeCount = 0
+    private var _registerCount = 0
+    private var _promoteConfirms: [Bool] = []
+    private var _replicateCount = 0
+    private var _replicaCaughtUp: Bool
+
+    private init() {
+        _replicaCaughtUp = ProcessInfo.processInfo.environment["HERMES_FLEET_ROOMLINK"] != "stale"
+    }
+
+    var inviteCount: Int { _inviteCount }
+    var revokeCount: Int { _revokeCount }
+    var registerCount: Int { _registerCount }
+    var promoteConfirms: [Bool] { _promoteConfirms }
+    var replicateCount: Int { _replicateCount }
+
+    func reset() {
+        _inviteCount = 0
+        _revokeCount = 0
+        _registerCount = 0
+        _promoteConfirms = []
+        _replicateCount = 0
+        _replicaCaughtUp = mode != .staleReplica
+    }
+
+    private var supportedNegotiation: RoomLinkNegotiation {
+        RoomLinkNegotiation(
+            authorityGatewayID: "install:workstation",
+            enabled: true,
+            profile: "default",
+            protocolVersion: 2,
+            installationID: "workstation",
+            linkModes: ["direct"],
+            persistentProcess: true,
+            textOnly: true,
+            attachmentsSupported: false,
+            catalogDigest: String(repeating: "c", count: 64),
+            executionPolicy: RoomLinkExecutionPolicy(
+                version: 1, targetProfile: "default",
+                enabledToolsets: ["bot_room"], approvalMode: "manual",
+                maxIterations: 12, policyDigest: String(repeating: "p", count: 64)),
+            endpoint: RoomLinkEndpoint(
+                available: true,
+                url: "https://roomlink.fixture.test/v1",
+                transportSecurity: "tls"),
+            methods: [
+                "groups.capabilities", "groups.peer.invite", "groups.peer.register",
+                "groups.peer.revoke", "groups.replica_state", "groups.replicate",
+                "groups.promote", "groups.demote",
+            ])
+    }
+
+    // MARK: RoomLinkCommanding
+
+    func negotiate() async throws -> RoomLinkNegotiation {
+        switch mode {
+        case .supported, .staleReplica:
+            return supportedNegotiation
+        case .unsupported:
+            return RoomLinkNegotiation(
+                authorityGatewayID: "install:workstation",
+                enabled: false,
+                disabledReason: .durableRunStorageRequired)
+        }
+    }
+
+    func invite(
+        roomID: String?, memberID: String?, ttlSeconds: Double
+    ) async throws -> RoomLinkGrant {
+        guard mode != .unsupported else {
+            throw RoomCommandFailure.unsupportedMethod("groups.peer.invite")
+        }
+        _inviteCount += 1
+        let now = Date()
+        return RoomLinkGrant(
+            id: "grant-\(_inviteCount)",
+            token: "fixture-grant-\(_inviteCount)-0123456789abcdef",
+            roomID: roomID,
+            memberID: memberID ?? "researcher",
+            targetProfile: "researcher",
+            permissions: RoomLinkGrant.Permission.allCases,
+            issuedAt: now,
+            expiresAt: now.addingTimeInterval(ttlSeconds))
+    }
+
+    func registerPeer(
+        roomID: String, memberID: String, grant: RoomLinkGrant,
+        targetURL: String, catalogDigest: String
+    ) async throws -> RoomPeerRoute {
+        _registerCount += 1
+        return RoomPeerRoute(
+            roomID: roomID, memberID: memberID,
+            targetInstallID: "install:remote", targetProfile: grant.targetProfile,
+            mode: "direct", transportSecurity: "tls", status: .ready)
+    }
+
+    func revoke(grant: RoomLinkGrant) async throws {
+        _revokeCount += 1
+    }
+
+    func peerRoutes(roomID: String) async throws -> [RoomPeerRoute] {
+        guard mode != .unsupported else { return [] }
+        return [RoomPeerRoute(
+            roomID: roomID, memberID: "researcher",
+            targetInstallID: "install:remote", targetProfile: "researcher",
+            mode: "direct", transportSecurity: "tls", status: .ready)]
+    }
+
+    func replicaState(roomID: String) async throws -> RoomReplicaState? {
+        guard mode != .unsupported else { return nil }
+        return RoomReplicaState(
+            roomID: roomID, name: "Launch Crew",
+            authorityGatewayID: "install:workstation", authorityEpoch: 3,
+            lastSeq: _replicaCaughtUp ? 10 : 4,
+            latestSeq: 10,
+            eventBytes: 4096, createdAt: 1, updatedAt: 2)
+    }
+
+    func replicate(roomID: String) async throws -> RoomReplicateReceipt {
+        _replicateCount += 1
+        _replicaCaughtUp = true
+        return RoomReplicateReceipt(
+            roomID: roomID, storedSeq: 10, ingested: 6,
+            authorityGatewayID: "install:workstation", authorityEpoch: 3,
+            caughtUp: true)
+    }
+
+    func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt {
+        _promoteConfirms.append(confirm)
+        guard confirm else {
+            throw RoomCommandFailure.confirmRequired(
+                "promotion requires confirm=true acknowledging the previous authority can no longer commit")
+        }
+        guard _replicaCaughtUp else {
+            throw RoomCommandFailure.rpcFailed("replica is behind the authority log", 0)
+        }
+        return RoomPromotionReceipt(
+            roomID: roomID,
+            authorityGatewayID: "install:workstation", authorityEpoch: 4,
+            previousGatewayID: "install:old", previousEpoch: 3,
+            claimSeq: 11, latestSeq: 10)
+    }
+
+    func demote(roomID: String, observedGatewayID: String, observedEpoch: Int) async throws {}
 }
 
 #endif

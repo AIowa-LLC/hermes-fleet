@@ -179,6 +179,7 @@ enum FleetServiceGraph {
             roomSourceFactory: makeRoomSourceFactory(credentialStore: credentialStore, pinStore: pinStore),
             roomCommandFactory: makeRoomCommandFactory(credentialStore: credentialStore, pinStore: pinStore),
             roomDriverStatusFactory: makeRoomDriverStatusFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomLinkFactory: makeRoomLinkFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health,
             // R9-T1: the approval banner's FaceID gate rides the SAME
             // LocalAuthentication seam as the app lock (release: real
@@ -428,6 +429,27 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayRoomDriverStatusAdapter(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Slice 5 (D19): real per-gateway RoomLink seam — the
+    /// `GatewayRoomLinkClient` over its own authenticated transport (same
+    /// construction as the driver-status seam factory).
+    nonisolated private static func makeRoomLinkFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomLinkFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayRoomLinkAdapter(
+                gatewayID: gateway.id,
+                client: GatewayRoomLinkClient(gatewayID: gateway.id, transport: transport))
         }
     }
 

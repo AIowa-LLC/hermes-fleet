@@ -229,7 +229,6 @@ public enum MentionResolution {
             let qualified = candidate.sourceQualifiedKey(gatewayLabel: label)
             qualifiedMap[qualified.lowercased()] = candidate
 
-            let bareHandle = handle(name: candidate.name, rosterHandle: candidate.handle)
             var forms = Set<String>()
             forms.insert(candidate.name.lowercased())
             forms.insert(collapse(candidate.name.lowercased()))
@@ -395,7 +394,7 @@ public enum FleetMentionCandidates {
         gatewayLabel: (GatewayID) -> String
     ) -> [MentionCandidate] {
         var out: [MentionCandidate] = []
-        for (gatewayID, bots) in botsByGateway.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+        for (_, bots) in botsByGateway.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             for bot in bots {
                 out.append(MentionCandidate(
                     route: bot.route,
