@@ -1,0 +1,48 @@
+name: CI
+
+# Paths-filtered to conserve free macOS runner minutes: CI only runs when
+# source/project/CI files change, not on docs/README-only edits.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Packages/**'
+      - 'HermesFleetApp/**'
+      - 'HermesFleetAppTests/**'
+      - 'HermesFleetAppUITests/**'
+      - 'project.yml'
+      - 'Makefile'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Packages/**'
+      - 'HermesFleetApp/**'
+      - 'HermesFleetAppTests/**'
+      - 'HermesFleetAppUITests/**'
+      - 'project.yml'
+      - 'Makefile'
+      - 'scripts/**'
+      - '.github/workflows/**'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Build & Test (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools (xcodegen, gitleaks)
+        run: |
+          brew install xcodegen gitleaks
+
+      - name: Full CI validation
+        run: |
+          bash scripts/c1_ci_validate.sh

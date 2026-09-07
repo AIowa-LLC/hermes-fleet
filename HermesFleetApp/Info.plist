@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- F2 (t_b678fb38): raw-IP / tailnet NSExceptionDomains stripped. F2-era
+	     note: a compiled default endpoint was removed for public release —
+	     every user connects to THEIR OWN HTTPS-reachable Hermes gateway, so no
+	     endpoint ships in the default configuration. NSAllowsLocalNetworking
+	     stays for true-LAN http:// gateways (ATS permits loopback/local net
+	     ranges without per-domain exceptions). A `FleetDefaultEndpoint` key
+	     may still be injected per build configuration (public HTTPS origin
+	     only — enforced by ATSExceptionDriftTests), but it is absent by
+	     default. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Hermes Fleet uses the camera only to scan your gateway's pairing QR code. No photos or video are saved.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Hermes Fleet uses Face ID to unlock the app and protect your fleet conversations.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Hermes Fleet connects to your Hermes gateway on the local network.</string>
+	<!-- R10-T4 voice: on-device transcription (Speech framework) + spoken
+	     replies. Documented client-side deviation — no audio leaves the
+	     device; only recognized TEXT is submitted to the gateway. -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Hermes Fleet transcribes your voice on-device so you can speak prompts instead of typing. Only the recognized text is sent to your gateway.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hermes Fleet uses the microphone to transcribe your spoken prompts on this device.</string>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

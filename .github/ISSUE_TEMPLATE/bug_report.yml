@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible problem in Hermes Fleet
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private endpoints, device identifiers, private IPs, or local filesystem paths.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and the expected behavior.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App/project version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots
+      description: Remove credentials, endpoints, hostnames, device IDs, and personal paths before posting.
+    validations:
+      required: false

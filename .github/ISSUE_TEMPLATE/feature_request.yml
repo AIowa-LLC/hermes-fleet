@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an improvement to Hermes Fleet
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private endpoints, device identifiers, private IPs, or local filesystem paths.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What user problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

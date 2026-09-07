@@ -1,0 +1,20 @@
+# Hermes Fleet gitleaks configuration.
+#
+# Baseline: gitleaks default rules (useDefault = true), extended with a
+# scoped allowlist for a single known false positive.
+title = "Hermes Fleet gitleaks config"
+
+[extend]
+useDefault = true
+
+# Allowlist (scoped, documented — never blanket):
+# - `dGhlIHNhbXBsZSBub25jZQ==` is the canonical RFC 6455 §1.3 example
+#   Sec-WebSocket-Key (base64 of the literal string "the sample nonce"),
+#   used by WebSocket handshake probes to validate the gateway's
+#   Sec-WebSocket-Accept. It is a public specification test vector, not a
+#   credential. The generic-api-key rule flags it by entropy alone.
+[allowlist]
+description = "RFC 6455 sample nonce (public spec test vector, not a secret)"
+regexes = [
+  '''dGhlIHNhbXBsZSBub25jZQ==''',
+]

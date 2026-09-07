@@ -1,0 +1,46 @@
+{
+  "generated_for": "Hermes Fleet iOS — M14 Visual Identity (Black/White/Signal Red)",
+  "generated_at": "2026-08-29T00:00:00-05:00",
+  "model": "OpenAI GPT image model (via image_generate / fal media CDN)",
+  "style_seed": "flat, high-contrast, technical; Black/White/Signal Red foundation; Signal Red #FF453A (dark) / #C8102E (light) as sole attention accent; no text; no marks; no faces",
+  "assets": [
+    {
+      "file": "assets/m14-generated/icon-1024.png",
+      "role": "app-icon",
+      "size_px": "1024x1024",
+      "alpha": false,
+      "source_url": "https://v3b.fal.media/files/b/0aa858c2/ZOKMgYfn3ixmtaoH7UwT1_XD3O6qjg.png",
+      "prompt": "Minimal flat iOS app icon, 1024x1024 square, opaque, solid pure-black background (#0A0A0B). A compact constellation of three small rounded-square glowing nodes connected by thin hairline signal lines, centered with generous negative space. Two nodes glow soft neutral white-gray, one node is a vivid Signal Red (#FF453A) attention beacon. Flat vector style, subtle soft glow, no photorealism, no gradient banding, no text, no letters, no numbers, no border, no rounded corners, no watermark, no third-party logo. Single strong silhouette, legible at small sizes."
+    },
+    {
+      "file": "assets/m14-generated/empty-first-run-dark.png",
+      "role": "empty-state-first-run",
+      "appearance": "dark",
+      "size_px": "1024x1024",
+      "alpha": false,
+      "source_url": "https://v3b.fal.media/files/b/0aa858c2/cbzNtvrw3XeKQgdvcP3dE_0Xkdt5OE.png",
+      "prompt": "Flat vector-style empty-state illustration, minimal detail, no text, no characters, no faces, no watermark. Pure-black background (#0A0A0B). A sparse constellation: one small unlit rounded-square node with a faint dashed orbit ring, plus two very faint hairline connection lines fading out, and a single subtle Signal Red (#FF453A) dot as a distant beacon."
+    },
+    {
+      "file": "assets/m14-generated/empty-first-run-light.png",
+      "role": "empty-state-first-run",
+      "appearance": "light",
+      "size_px": "1024x1024",
+      "alpha": false,
+      "source_url": "https://v3b.fal.media/files/b/0aa858d8/b4JoNjfkp7dhFTWZtRx1U_nKJRivOf.png",
+      "prompt": "Flat vector-style empty-state illustration, minimal detail, no text, no characters, no faces, no watermark. Pure-white background (#FFFFFF). A sparse constellation: one small unlit rounded-square node in medium gray (#8A8A92) with a faint dashed orbit ring, plus two very faint hairline connection lines fading out, and a single subtle dark Signal Red (#C8102E) dot as a distant beacon."
+    },
+    {
+      "file": "assets/m14-generated/live-activity-glyph.png",
+      "role": "live-activity-glyph",
+      "appearance": "monochrome (tinted at runtime)",
+      "size_px": "1024x1024",
+      "alpha": false,
+      "source_url": "https://v3b.fal.media/files/b/0aa858c2/ybzqNAY71Elcc6lbcOCzu_XlXHgYYG.png",
+      "prompt": "Single small monochrome glyph for a Live Activity / Dynamic Island icon: one rounded-square node with a single short horizontal signal line extending to the right, minimal flat vector, high contrast, solid white shape on pure black background (#0A0A0B), no text, no border, no glow, no gradient, crisp edges, legible at very small size, generous padding.",
+      "note": "P1 / deferred — the Live Activity feature is not built in v0; asset retained for the future feature. The model rendered the node and a separated signal dash; re-generate for a connected node+line when the feature lands."
+    }
+  ],
+  "licensing": "OpenAI Terms of Use assign output ownership to the user (labeled external; verify current terms before any commercial/App Store distribution). v1 is free-team USB sideload — commercial-licensing risk is low today.",
+  "provenance_note": "Regenerate-with-bounded-retry if any asset shows text, marks, or palette drift. Functional/status/navigation glyphs are SF Symbols only — never generated."
+}
