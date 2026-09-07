@@ -5,7 +5,7 @@ import FleetNetworking
 /// H2 (t_eb6b573d) — surface doctor classification.
 ///
 /// The dogfood case (2026-09-07): the app was pointed at the `api_server`
-/// REST port (100.100.105.61:8642). That surface 404s
+/// REST port (the wrong-port dogfood case). That surface 404s
 /// `POST /api/auth/ws-ticket` (→ `.unsupported`) but answers
 /// `GET /health` with 200 + `{"platform": "hermes-agent"}`. One cheap
 /// follow-up GET can tell the user WHICH surface they hit.
@@ -66,7 +66,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
             #"{"platform": "hermes-agent", "version": "1.0.0"}"#.utf8)
 
         let finding = await GatewaySurfaceDoctor.probe(
-            baseURL: URL(string: "http://192.168.4.32:8642")!,
+            baseURL: URL(string: "http://192.168.50.58:8642")!,
             urlSession: session)
 
         XCTAssertEqual(finding, .hermesServer)
@@ -82,14 +82,14 @@ final class H2SurfaceDoctorTests: XCTestCase {
         HealthProbeURLProtocol.body = Data(#"{"platform": "hermes-agent"}"#.utf8)
 
         let finding = await GatewaySurfaceDoctor.probe(
-            baseURL: URL(string: "http://192.168.4.32:8642")!,
+            baseURL: URL(string: "http://192.168.50.58:8642")!,
             urlSession: session)
         XCTAssertEqual(finding, .unknown)
     }
 
     func testHealthHTMLLoginRedirectIsUnknown() async {
         // The WS gateway's /health redirects unauthenticated requests to the
-        // login page (verified live: mac-fleet.tonysimons.dev/health → 200
+        // login page (verified live: the gateway tunnel /health renders 200
         // "Sign in — Hermes Agent" HTML). HTML must NOT decode as a Hermes
         // REST hit — that surface is the gateway, not the mix-up.
         HealthProbeURLProtocol.statusCode = 200
@@ -108,7 +108,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
         HealthProbeURLProtocol.body = Data(#"{"status": "ok"}"#.utf8)
 
         let finding = await GatewaySurfaceDoctor.probe(
-            baseURL: URL(string: "http://192.168.4.32:8642")!,
+            baseURL: URL(string: "http://192.168.50.58:8642")!,
             urlSession: session)
         XCTAssertEqual(finding, .unknown)
     }
@@ -142,7 +142,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
         let registry = GatewayRegistryService(credentials: TestCredentialStore()) { gateway, _ in
             StubFailingSession(gatewayID: gateway.id, error: .authSurfaceHTTP(404))
         }
-        let endpoint = URL(string: "http://192.168.4.32:8642")!
+        let endpoint = URL(string: "http://192.168.50.58:8642")!
         _ = try! await registry.addGateway(
             GatewayRegistration(id: probeID, displayName: "Wrong Port", endpoint: endpoint))
 

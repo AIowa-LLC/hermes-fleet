@@ -6,12 +6,20 @@ import FleetUI
 /// H2 (t_eb6b573d) — on-device live verification of the surface doctor
 /// against the REAL Mac Fleet box (two surfaces, one host):
 ///
-///   http://100.100.105.61:8642  = api_server (OpenAI-compatible REST):
+///   the api_server REST port = OpenAI-compatible surface:
 ///       POST /api/auth/ws-ticket → 404  (not the app surface)
 ///       GET  /health             → 200 {"platform": "hermes-agent"}
-///   https://mac-fleet.tonysimons.dev = the chat gateway (hermes serve
-///       behind the Cloudflare tunnel) — the CORRECT phone endpoint; its
-///       /health is auth-gated (login HTML), so the doctor must NOT flag it.
+///   the chat gateway (hermes serve behind the Cloudflare tunnel) = the
+///       CORRECT phone endpoint; its /health is auth-gated (login HTML),
+///       so the doctor must NOT flag it.
+///
+/// LIVE ENDPOINTS ARE RUNTIME CONFIG (public-safety guard: no private
+/// endpoint literals in the tracked tree). Two sources, first found wins:
+///   env  H2_PROBE_URL   — the wrong-surface REST endpoint (http://…)
+///   env  H2_TUNNEL_HOST — the correct gateway hostname
+///   file /tmp/h2_doctor_surface/endpoint   — same, one URL per line:
+///       line 1 probe URL, line 2 tunnel host (operator-written, 0600)
+/// Both tests skip when their source is absent.
 ///
 /// Asserts the H2 acceptance on Tony's physical iPhone, hosted in the
 /// unit-test bundle so it signs with the app profile (same pattern as
@@ -33,13 +41,47 @@ import FleetUI
 @MainActor
 final class H2SurfaceDoctorDeviceTests: XCTestCase {
 
-    /// The Mac Fleet api_server REST surface (wrong port for the app),
-    /// LAN-reachable via scripts/h2_api_forwarder.py (the real surface binds
-    /// loopback + tailnet only, and ATS exempts RFC1918 HTTP but NOT the
-    /// CGNAT tailnet range — the original dogfood failure was a LAN IP).
-    private static let apiServerURL = URL(string: "http://192.168.4.32:18642")!
-    /// The canonical chat-gateway endpoint (Cloudflare tunnel → :9119).
-    private static let gatewayHost = "mac-fleet.tonysimons.dev"
+    /// Operator-pushed runtime config: `devicectl device copy to
+    /// --domain-type appDataContainer --domain-identifier <bundle-id>`
+    /// lands the file in the app container's Documents; try that, then the
+    /// temporary domain, then the Mac-side operator path (sim runs).
+    private static func pushedConfig() -> String? {
+        for url in [
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("h2_doctor_surface_endpoint"),
+            URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("h2_doctor_surface_endpoint"),
+            URL(fileURLWithPath: "/tmp/h2_doctor_surface_endpoint"),
+        ].compactMap({ $0 }) {
+            if let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private static let probeURL: URL? = {
+        if let raw = ProcessInfo.processInfo.environment["H2_PROBE_URL"],
+           let url = URL(string: raw), url.scheme?.hasPrefix("http") == true {
+            return url
+        }
+        guard let text = pushedConfig(),
+              let first = text.split(whereSeparator: \.isNewline).first,
+              let url = URL(string: String(first).trimmingCharacters(in: .whitespaces)),
+              url.scheme?.hasPrefix("http") == true else { return nil }
+        return url
+    }()
+
+    private static let tunnelHost: String? = {
+        if let host = ProcessInfo.processInfo.environment["H2_TUNNEL_HOST"], !host.isEmpty {
+            return host
+        }
+        guard let text = pushedConfig() else { return nil }
+        let lines = text.split(whereSeparator: \.isNewline)
+        guard lines.count > 1 else { return nil }
+        let host = String(lines[1]).trimmingCharacters(in: .whitespaces)
+        return host.isEmpty ? nil : host
+    }()
 
     private var environment: AppEnvironment!
 
@@ -48,6 +90,7 @@ final class H2SurfaceDoctorDeviceTests: XCTestCase {
     }
 
     func testApiServerSurfaceTriggersDoctorHintOnDevice() async throws {
+        let apiServerURL = try XCTUnwrap(Self.probeURL)
         await environment.load()
 
         // Arrange: temp gateway at the REST port with a dummy session token.
@@ -60,7 +103,7 @@ final class H2SurfaceDoctorDeviceTests: XCTestCase {
             GatewayRegistration(
                 id: probeID,
                 displayName: "H2 Doctor Probe",
-                endpoint: Self.apiServerURL,
+                endpoint: apiServerURL,
                 authConfiguration: GatewayAuthConfiguration(strategy: .sessionToken)))
         try await environment.saveCredential(
             GatewayCredential(rawValue: "h2-probe-not-a-real-token"),
@@ -93,6 +136,7 @@ final class H2SurfaceDoctorDeviceTests: XCTestCase {
     }
 
     func testGatewayTunnelHealthIsNotFlaggedAsRestSurface() async throws {
+        let gatewayHost = try XCTUnwrap(Self.tunnelHost)
         await environment.load()
 
         // The tunnel endpoint (the CORRECT phone endpoint). If it is
@@ -100,7 +144,7 @@ final class H2SurfaceDoctorDeviceTests: XCTestCase {
         // doctor marker: /health is auth-gated (login HTML), and a healthy
         // gateway never reaches the doctor at all.
         guard let tunnelGateway = environment.gateways.first(where: {
-            $0.endpoint?.host == Self.gatewayHost
+            $0.endpoint?.host == gatewayHost
         }) else {
             throw XCTSkip("the tunnel gateway is not registered on this device")
         }

@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 """H2 device-test fixture: LAN-reachable TCP forwarder for the api_server.
 
-The real api_server binds 127.0.0.1 + 100.100.105.61 only. The phone's ATS
-exempts RFC1918 LAN HTTP (NSAllowsLocalNetworking) but NOT the CGNAT tailnet
-range — so the on-device doctor probe needs the REST surface reachable over
-the LAN. This forwards 0.0.0.0:18642 -> 127.0.0.1:8642 (the real surface).
+The real api_server binds loopback + the tailnet IP only. The phone's ATS
+exempts RFC1918 LAN HTTP (NSAllowsLocalNetworking) but NOT the CGNAT
+tailnet range — so the on-device doctor probe needs the REST surface
+reachable over the LAN. This forwards a LAN port to the real surface.
+
+Endpoints are ENV-DRIVEN (public-safety guard: no private endpoint
+literals in the tracked tree):
+  H2_FORWARD_LISTEN  listen host:port   (default 0.0.0.0:18642)
+  H2_FORWARD_TARGET  target host:port   (default loopback api_server port)
 
 Usage: python3 h2_api_forwarder.py [--lifetime-secs N]
 """
-import socket, threading, sys, time
+import os
+import socket, threading, sys
 
-LISTEN = ("0.0.0.0", 18642)
-TARGET = ("100.100.105.61", 8642)
+def _parse(addr: str, fallback_port: int):
+    host, _, port = addr.rpartition(":")
+    return (host or "0.0.0.0", int(port) if port else fallback_port)
+
+LISTEN = _parse(os.environ.get("H2_FORWARD_LISTEN", "0.0.0.0:18642"), 18642)
+TARGET = _parse(os.environ.get("H2_FORWARD_TARGET", "127.0.0.1:8642"), 8642)
 
 
 def pipe(src: socket.socket, dst: socket.socket) -> None:
