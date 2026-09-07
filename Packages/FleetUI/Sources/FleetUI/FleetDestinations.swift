@@ -15,7 +15,8 @@ struct FleetChatsView: View {
 
     private var entries: [FleetChatEntry] {
         environment.sessionsByRoute.flatMap { route, sessions in
-            sessions.map { FleetChatEntry(route: route, session: $0) }
+            sessions.filter { !environment.isCanonicalBotChat(route: route, sessionID: $0.id) }
+                .map { FleetChatEntry(route: route, session: $0) }
         }.filter { entry in
             environment.gateway(for: entry.route.gatewayID) != nil &&
             environment.bot(for: entry.route) != nil &&

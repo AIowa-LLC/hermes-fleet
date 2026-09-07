@@ -33,7 +33,7 @@ public struct ConversationView: View {
     private var screenTitle: String {
         guard let sessionID else { return route.profileSlug.rawValue }
         return environment.isCanonicalBotChat(route: route, sessionID: sessionID)
-            ? BotModeContract.canonicalChatTitle
+            ? environment.bot(for: route).map { BotRosterPresentation.displayTitle(for: $0) } ?? route.profileSlug.rawValue
             : route.profileSlug.rawValue
     }
 
@@ -170,7 +170,7 @@ public struct ConversationView: View {
         let name = bot?.displayName ?? route.profileSlug.rawValue
         return VStack(spacing: 0) {
             HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(displayName: name)
+                BotAvatar(bot: bot, management: environment.botManagement)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
                         .font(.body.weight(.semibold))
@@ -557,6 +557,35 @@ public struct ConversationView: View {
 
     private func composer(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
+            if let query = BotConversationMentions.query(in: composerText) {
+                let suggestions = BotConversationMentions.suggestions(query: query,
+                    roster: environment.mentionCandidates(), excluding: route,
+                    gatewayLabel: { environment.gateway(for: $0)?.displayName ?? $0.rawValue })
+                ScrollView {
+                    LazyVStack(alignment: .leading) {
+                        ForEach(suggestions) { suggestion in
+                            Button {
+                                composerText = BotConversationMentions.inserting(suggestion.alias, into: composerText)
+                            } label: {
+                                HStack {
+                                    BotAvatar(bot: environment.bot(for: suggestion.id), management: environment.botManagement)
+                                    VStack(alignment: .leading) {
+                                        Text(suggestion.candidate.friendlyTitle)
+                                        Text("@\(suggestion.alias) · \(suggestion.gatewayLabel)").font(.caption)
+                                    }
+                                }
+                            }
+                            .accessibilityLabel("Mention \(suggestion.candidate.friendlyTitle) on \(suggestion.gatewayLabel)")
+                            .accessibilityIdentifier("fleet.mention.\(suggestion.id.id)")
+                        }
+                    }
+                }.frame(maxHeight: 180)
+                 .accessibilityIdentifier("fleet.mentions")
+            }
+            if let notice = model.botDraftNotice {
+                Text(notice).font(.caption).padding(8)
+                    .accessibilityIdentifier("fleet.conversation.bot-notice")
+            }
             // R10-T1: pending-attachment chips (name + size, removable) and
             // the never-silent error banner sit directly above the input row.
             if !model.pendingAttachments.isEmpty || model.isUploadingAttachment {

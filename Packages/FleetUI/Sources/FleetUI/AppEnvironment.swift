@@ -816,7 +816,7 @@ public final class AppEnvironment {
     /// (fail-closed default inside the VM when nil).
     public func makeConversationViewModel(route: Route, sessionID: String?) -> ConversationViewModel? {
         guard let session = conversationSession(for: route.gatewayID) else { return nil }
-        return ConversationViewModel(
+        let model = ConversationViewModel(
             session: session,
             cache: cache,
             route: route,
@@ -824,6 +824,16 @@ public final class AppEnvironment {
             biometrics: biometrics,
             voice: voiceEngineFactory?()
         )
+        model.prepareBotDraft = { [weak self] text, openedID in
+            guard let self else { return BotConversationDraft(text: text) }
+            let canonical = self.isCanonicalBotChat(route: route, sessionID: openedID)
+                || sessionID.map { self.isCanonicalBotChat(route: route, sessionID: $0) } == true
+            let protected = BotConversationDraft.protectingCanonical(text, isCanonical: canonical)
+            if protected.notice != nil { return protected }
+            return BotConversationMentions.prepare(text: text, roster: self.mentionCandidates(), current: route,
+                gatewayLabel: { self.gateway(for: $0)?.displayName ?? $0.rawValue })
+        }
+        return model
     }
 
     // MARK: Kanban board (t_3b321b7b)

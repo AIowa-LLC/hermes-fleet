@@ -591,6 +591,9 @@ public final class ConversationViewModel {
     /// mirror of `mark_speech_interrupted` (server.py:17191: the gateway cuts
     /// its own TTS when a new user turn arrives; here the iOS TTS is local,
     /// so the cut is local too).
+    public var prepareBotDraft: ((String, String) -> BotConversationDraft)?
+    public private(set) var botDraftNotice: String?
+
     public func send(_ text: String) async {
         if isVoiceModeEnabled {
             await voice.stopSpeaking()
@@ -603,7 +606,9 @@ public final class ConversationViewModel {
         guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return }
 
         let refTexts = pendingAttachments.map(\.refText)
-        let composed = AttachmentStagingRules.promptAppending(refs: refTexts, to: trimmed)
+        let prepared = prepareBotDraft?(trimmed, sid) ?? BotConversationDraft(text: trimmed)
+        botDraftNotice = prepared.notice
+        let composed = AttachmentStagingRules.promptAppending(refs: refTexts, to: prepared.text)
         guard !composed.isEmpty else { return }
 
         appendRow(.init(id: nextRowID(), kind: .user, text: composed))
