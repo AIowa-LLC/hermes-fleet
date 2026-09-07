@@ -563,12 +563,24 @@ struct BotRoutineFormSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var label = ""
     @State private var schedule = ""
+    @State private var scheduleMode: BotRoutineSchedule.Mode = .daily
+    @State private var scheduleDate = Date().addingTimeInterval(3600)
+    @State private var weekday = 1
+    @State private var intervalHours = 1
+    @State private var advanced = false
+
+    private var scheduleValue: String {
+        BotRoutineSchedule.value(mode: scheduleMode, date: scheduleDate,
+            hour: Calendar.current.component(.hour, from: scheduleDate),
+            minute: Calendar.current.component(.minute, from: scheduleDate),
+            weekday: weekday, intervalHours: intervalHours, raw: schedule) ?? ""
+    }
     @State private var prompt = ""
     @State private var isSaving = false
 
     private var isValid: Bool {
         !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !schedule.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !scheduleValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -579,10 +591,41 @@ struct BotRoutineFormSheet: View {
                     TextField("Routine Name", text: $label)
                         .textInputAutocapitalization(.words)
                         .accessibilityIdentifier("routines.form.name")
-                    TextField("Schedule (e.g. every day at 07:00)", text: $schedule)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("routines.form.schedule")
+                    Picker("Schedule", selection: $scheduleMode) {
+                        ForEach(BotRoutineSchedule.Mode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }.accessibilityIdentifier("routines.form.mode")
+                    if scheduleMode == .once {
+                        DatePicker("Run once", selection: $scheduleDate, in: Date()...)
+                            .accessibilityIdentifier("routines.form.date")
+                    }
+                    if scheduleMode == .hourly {
+                        Stepper("Every \(intervalHours) hours", value: $intervalHours, in: 1...24)
+                            .accessibilityIdentifier("routines.form.interval")
+                    }
+                    if scheduleMode == .daily || scheduleMode == .weekly {
+                        DatePicker("Time on gateway", selection: $scheduleDate, displayedComponents: .hourAndMinute)
+                            .accessibilityIdentifier("routines.form.time")
+                        Text("Daily and weekly times use the gateway's configured timezone.").font(.caption)
+                    }
+                    if scheduleMode == .weekly {
+                        Picker("Weekday", selection: $weekday) {
+                            ForEach(0..<7, id: \.self) { day in
+                                Text(Calendar.current.weekdaySymbols[day]).tag(day)
+                            }
+                        }.accessibilityIdentifier("routines.form.weekday")
+                    }
+                    DisclosureGroup("Advanced", isExpanded: $advanced) {
+                        TextField("Raw schedule", text: $schedule)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("routines.form.schedule")
+                            .onChange(of: schedule) { _, _ in scheduleMode = .custom }
+                        Text("Editing this field selects Custom. The gateway validates the exact value.").font(.caption)
+                    }
+                    .onChange(of: scheduleMode) { _, mode in if mode == .custom { advanced = true } }
+
                 } header: {
                     Text("Routine")
                         .foregroundStyle(FleetTheme.textSecondary)
@@ -636,7 +679,7 @@ struct BotRoutineFormSheet: View {
                         guard isValid, !isSaving else { return }
                         isSaving = true
                         Task {
-                            let ok = await model.createRoutine(label: label, schedule: schedule, prompt: prompt)
+                            let ok = await model.createRoutine(label: label, schedule: scheduleValue, prompt: prompt)
                             isSaving = false
                             if ok { dismiss() }
                         }

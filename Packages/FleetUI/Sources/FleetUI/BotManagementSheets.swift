@@ -629,6 +629,13 @@ public struct BotActionsMenu: View {
             }
             .accessibilityIdentifier("fleet.bot.action.duplicate")
 
+            Menu("Move to Section") {
+                Button("Unassigned") { move(to: nil) }
+                ForEach(environment.botManagement.sectionsByGateway[bot.gatewayID] ?? []) { section in
+                    Button(section.name) { move(to: section.id) }
+                }
+            }.accessibilityIdentifier("fleet.bot.action.section")
+
             // D12: delete is capability-gated for the current gateway
             // generation — disabled with an honest explanation, no facade.
             Button {
@@ -650,7 +657,7 @@ public struct BotActionsMenu: View {
                 Task { await runDuplicate() }
             }
         }
-        .alert("Delete unavailable", isPresented: Binding(
+        .alert("Bot action", isPresented: Binding(
             get: { message != nil },
             set: { if !$0 { message = nil } }
         )) {
@@ -668,6 +675,18 @@ public struct BotActionsMenu: View {
                 duplicateSummary = BotDuplicateSummary.standard(
                     newProfileName: name, source: bot, cloneAll: true)
             }
+        }
+    }
+
+    private func move(to section: String?) {
+        Task {
+            isWorking = true
+            defer { isWorking = false }
+            do {
+                let outcome = try await environment.botManagement.moveBot(bot, toSection: section)
+                if outcome.succeeded { await environment.refreshRoster() }
+                else { message = "Section was not applied. Refresh the roster and try again." }
+            } catch { message = "Could not move this bot. Refresh and try again." }
         }
     }
 

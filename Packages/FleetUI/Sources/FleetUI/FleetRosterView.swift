@@ -36,6 +36,11 @@ public struct FleetRosterView: View {
         self.environment = environment
     }
 
+    private var hiddenBotsActive: Bool {
+        environment.gateways.flatMap { environment.bots(on: $0.id) }
+            .contains { environment.botPresence(for: $0.route) != .unreachable && HiddenBotActivity.hasSignal($0) }
+    }
+
     public var body: some View {
         Group {
             if environment.rosterSnapshot == nil {
@@ -92,8 +97,8 @@ public struct FleetRosterView: View {
                     revealingHidden.toggle()
                 } label: {
                     Label(
-                        revealingHidden ? "Hide Hidden Bots" : "Show Hidden Bots",
-                        systemImage: revealingHidden ? "eye.slash" : "eye"
+                        revealingHidden ? "Hide Hidden Bots" : (hiddenBotsActive ? "Hidden Bots Active" : "Show Hidden Bots"),
+                        systemImage: revealingHidden ? "eye.slash" : (hiddenBotsActive ? "eye.trianglebadge.exclamationmark" : "eye")
                     )
                 }
                 .accessibilityIdentifier("fleet.roster.hidden-toggle")
