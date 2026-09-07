@@ -379,6 +379,12 @@ final class ScriptedBotModeChatSeam: BotModeChatProviding, @unchecked Sendable {
 /// R9-T5/T6: scripted management seam (DEBUG simulator only) — fixture
 /// cron jobs + skills catalog with in-memory mutations so both panes are
 /// fully walkable without a live gateway. Presentation data only.
+///
+/// Slice 3 (D13): the cron store is PROFILE-SCOPED like the real gateway
+/// (cron/jobs.py:59-64 — each profile's jobs live in its own store). The
+/// fixture seeds general jobs plus deterministic `[bot:<owner>]` routine
+/// jobs so the bot Routines surface has walkable content: list returns
+/// the general jobs plus the requesting profile's namespaced routines.
 final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Sendable {
     private let lock = NSLock()
     private var jobs: [CronJob]
@@ -403,6 +409,30 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
                     schedule: "every monday at 09:00",
                     nextRunAt: nil, lastRunAt: nil, lastStatus: nil,
                     isEnabled: false, state: "paused", promptPreview: nil),
+                // Slice 3 fixture routines — the researcher bot's store.
+                CronJob(
+                    jobID: "script-routine-1", name: "[bot:researcher] Morning briefing",
+                    schedule: "every day at 07:00",
+                    nextRunAt: "2026-09-08T07:00:00", lastRunAt: "2026-09-07T07:00:02",
+                    lastStatus: "ok", isEnabled: true, state: "enabled",
+                    promptPreview: "Summarize overnight fleet activity for the researcher.",
+                    deliver: "bot-chat:researcher", repeatDisplay: "forever"),
+                CronJob(
+                    jobID: "script-routine-2", name: "[bot:researcher] Weekly digest",
+                    schedule: "every monday at 09:00",
+                    nextRunAt: nil, lastRunAt: nil, lastStatus: nil,
+                    isEnabled: false, state: "paused", promptPreview: nil,
+                    pausedReason: "paused by user"),
+                // Slice 3 fixture routine — the default bot's store, with a
+                // deterministic failure association (last_fire_error).
+                CronJob(
+                    jobID: "script-routine-3", name: "[bot:default] Evening recap",
+                    schedule: "every day at 21:00",
+                    nextRunAt: "2026-09-08T21:00:00", lastRunAt: "2026-09-07T21:00:04",
+                    lastStatus: "fire_failed", isEnabled: true, state: "enabled",
+                    promptPreview: "Recap the day's fleet activity.",
+                    deliver: "bot-chat:default", repeatDisplay: "forever",
+                    lastFireError: "provider auth missing for openrouter"),
             ]
             disabled = ["test-driven-development"]
         }
@@ -417,7 +447,18 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
     }
 
     func listCronJobs(profile: String?) async throws -> [CronJob] {
-        unlocked { jobs }
+        unlocked {
+            // Profile-scoped store: general jobs plus THIS profile's
+            // namespaced routines (the [bot:<profile>] namespace is the
+            // ownership association on the real wire too).
+            jobs.filter { job in
+                guard let profile else { return true }
+                if let parsed = BotRoutineNamespace.parse(job.name) {
+                    return parsed.owner.lowercased() == profile.lowercased()
+                }
+                return true
+            }
+        }
     }
 
     func createCronJob(draft: CronJobDraft, profile: String?) async throws -> CronJob {
@@ -425,7 +466,9 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
             jobID: "script-cron-\(UUID().uuidString.prefix(6))",
             name: draft.name, schedule: draft.schedule,
             nextRunAt: "2026-09-05T07:00:00", isEnabled: true, state: "enabled",
-            promptPreview: String(draft.prompt.prefix(80)))
+            promptPreview: String(draft.prompt.prefix(80)),
+            deliver: draft.deliver,
+            repeatDisplay: draft.repeatCount.map { _ in "forever" })
         return unlocked {
             jobs.append(job)
             return job

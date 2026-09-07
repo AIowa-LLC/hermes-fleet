@@ -30,6 +30,7 @@
 		2FAB6479B1024179FC62B75F /* SplashOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 171DB809769D21B3E41B0561 /* SplashOverlayView.swift */; };
 		3144AA84AD28AA9738D7D690 /* BotRosterSlice2UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74C2D0202C4833017A3A976A /* BotRosterSlice2UITests.swift */; };
 		316AD24DA48B5B359159BC3E /* ProjectsBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53074EB2159A1156DFDF11FD /* ProjectsBrowserTests.swift */; };
+		3A8B99EBFA16CC3747BB4E66 /* BotRoutinesViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C448C88190523F3B23998EC /* BotRoutinesViewModelTests.swift */; };
 		3BC9D5C1D9DB0AAA16B7E9E4 /* ModuleBoundaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */; };
 		3DF5C922278BEF5E7C68652B /* FleetComponentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BAF2911DD7A9A273ED1D5D2 /* FleetComponentsTests.swift */; };
 		3F560639A03BF741A77E72F8 /* FleetSimulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2380AC190371692E170A3C23 /* FleetSimulator.swift */; };
@@ -52,6 +53,7 @@
 		658EFD3C965298877A7A1D63 /* ManagementPanesViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0DB1D96996A146D5EC96A8 /* ManagementPanesViewModelTests.swift */; };
 		6AC11F4E4AB93D71284181CC /* P2GatewayFormDraftUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73276D7D335DD1FFAF4D238A /* P2GatewayFormDraftUITests.swift */; };
 		6AC7FDB9D7DE509A16915205 /* R10VoiceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4B9CA2708C4F6346F45A41 /* R10VoiceUITests.swift */; };
+		6F9871E160358940DD836835 /* BotRoutinesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C1AEAA48F89379DD80DE31 /* BotRoutinesUITests.swift */; };
 		700DFE4F228CE222DCF6B3F4 /* GatewayRoomProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAFAC9427FB277EA0C2D8B4 /* GatewayRoomProviders.swift */; };
 		70DBE252BC45F78409C8C733 /* ApprovalFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B652485831E5050A35169A /* ApprovalFlowTests.swift */; };
 		768404B993FAA1E100FC3F0E /* BotManagementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A13AE51B5D6BF2B4E2910E4 /* BotManagementTests.swift */; };
@@ -137,6 +139,7 @@
 		170055003D9EF98D50EDBA27 /* C2SetupPromptUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = C2SetupPromptUITests.swift; sourceTree = "<group>"; };
 		171DB809769D21B3E41B0561 /* SplashOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashOverlayView.swift; sourceTree = "<group>"; };
 		1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U4DashboardUITests.swift; sourceTree = "<group>"; };
+		19C1AEAA48F89379DD80DE31 /* BotRoutinesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotRoutinesUITests.swift; sourceTree = "<group>"; };
 		21D1C48B297C70782863ECDB /* R9ConversationToolingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ConversationToolingUITests.swift; sourceTree = "<group>"; };
 		2380AC190371692E170A3C23 /* FleetSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSimulator.swift; sourceTree = "<group>"; };
 		260BB18804C7394A2D1C217E /* FleetNetworking */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetNetworking; path = Packages/FleetNetworking; sourceTree = SOURCE_ROOT; };
@@ -152,6 +155,7 @@
 		36A4B24E61526D2294992BD2 /* U3TabNavigationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U3TabNavigationUITests.swift; sourceTree = "<group>"; };
 		36FAEE832413ACBA6AF7F206 /* VoiceIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceIO.swift; sourceTree = "<group>"; };
 		3B326FB606E259B0116F2F6D /* R10AttachmentTrayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R10AttachmentTrayUITests.swift; sourceTree = "<group>"; };
+		3C448C88190523F3B23998EC /* BotRoutinesViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotRoutinesViewModelTests.swift; sourceTree = "<group>"; };
 		3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT4LogicRegressionTests.swift; sourceTree = "<group>"; };
 		3F88573D747272E04066317D /* SplashUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashUITests.swift; sourceTree = "<group>"; };
 		44C074CE45D0B5E88EB78568 /* T2FixTailnetGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T2FixTailnetGatewayUITests.swift; sourceTree = "<group>"; };
@@ -263,6 +267,7 @@
 				26665EB6ED4AAD8BAA2065F0 /* AttachmentStagingViewModelTests.swift */,
 				2F175C052AB3C3EE845F70CD /* B1LiveBoardSelectorDeviceTests.swift */,
 				6A13AE51B5D6BF2B4E2910E4 /* BotManagementTests.swift */,
+				3C448C88190523F3B23998EC /* BotRoutinesViewModelTests.swift */,
 				5BEEFC0BD1DC4133FB63310C /* ConversationFixtureLoopTests.swift */,
 				EA799545FCC5860AE8ABB192 /* ConversationToolingTests.swift */,
 				C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */,
@@ -356,6 +361,7 @@
 				023100E301731FB65176A167 /* B1LiveBoardPickerUITests.swift */,
 				5AE013E4BDC8AF9FA7B7A6BB /* BotChatTapUITests.swift */,
 				74C2D0202C4833017A3A976A /* BotRosterSlice2UITests.swift */,
+				19C1AEAA48F89379DD80DE31 /* BotRoutinesUITests.swift */,
 				170055003D9EF98D50EDBA27 /* C2SetupPromptUITests.swift */,
 				0D4835804962F3C2C39A75BE /* F1TwoGatewayFleetLiveUITests.swift */,
 				289566529F99173DE8015AB1 /* F2QRPairingUITests.swift */,
@@ -564,6 +570,7 @@
 				CB2A546E9A4953A64976DD80 /* AttachmentStagingViewModelTests.swift in Sources */,
 				28FF08C4B275EB4BCEBBA52A /* B1LiveBoardSelectorDeviceTests.swift in Sources */,
 				768404B993FAA1E100FC3F0E /* BotManagementTests.swift in Sources */,
+				3A8B99EBFA16CC3747BB4E66 /* BotRoutinesViewModelTests.swift in Sources */,
 				99E6CF69A06EBD35702F27B0 /* ConversationFixtureLoopTests.swift in Sources */,
 				D1E600C197F91CC57F736C98 /* ConversationToolingTests.swift in Sources */,
 				AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */,
@@ -602,6 +609,7 @@
 				C0E19EB4C1CB8D2656AA26CA /* B1LiveBoardPickerUITests.swift in Sources */,
 				0648A50441FEDC7FB3FE592C /* BotChatTapUITests.swift in Sources */,
 				3144AA84AD28AA9738D7D690 /* BotRosterSlice2UITests.swift in Sources */,
+				6F9871E160358940DD836835 /* BotRoutinesUITests.swift in Sources */,
 				E11564C663A832D24FFDC972 /* C2SetupPromptUITests.swift in Sources */,
 				952EB3B91ACB63A0D00C57CE /* F1TwoGatewayFleetLiveUITests.swift in Sources */,
 				57886FC093FF828BA1832DCA /* F2QRPairingUITests.swift in Sources */,

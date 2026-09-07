@@ -143,6 +143,16 @@ public struct BotDetailView: View {
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("fleet.bot-detail.edit")
+                        // True Bots slice 3 (D13): the bot's routines —
+                        // namespaced cron jobs on the owning profile's
+                        // cron store (gateway-owned execution).
+                        NavigationLink(value: FleetScreen.botRoutines(route)) {
+                            Label("Routines", systemImage: "calendar.badge.clock")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("fleet.bot-detail.routines")
                         BotActionsMenu(environment: environment, bot: bot)
                     } else {
                         Label(
