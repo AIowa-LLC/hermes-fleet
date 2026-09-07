@@ -1,3 +1,15 @@
+# ARCHIVED
+
+This repository is the historical private pre-publication development record for Hermes Fleet.
+
+Active development has moved to:
+
+https://github.com/AIowa-LLC/hermes-fleet
+
+Do not open new feature work, issues, branches, or pull requests here.
+
+---
+
 # Hermes Fleet for iOS
 
 <p align="center">
