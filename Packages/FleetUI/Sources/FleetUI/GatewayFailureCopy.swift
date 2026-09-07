@@ -30,6 +30,12 @@ public enum GatewayFailureCopy {
             }
             return "The gateway is reachable but needs you to sign in. Re-authenticate to continue."
         case .unsupported:
+            // H2 surface doctor: a 200/health hermes-agent answer means the
+            // endpoint IS a Hermes box — just the REST surface (api_server),
+            // not the chat gateway. Name the mix-up and what to ask for.
+            if let detail, detail.contains(GatewaySurfaceDoctorDetail.hermesServerMarker) {
+                return "This address is a Hermes server, but not the chat gateway. Ask the operator which port runs the gateway (often the same address on a different port), or use its tunnel domain if it has one."
+            }
             if let detail, detail.contains("HTTP 404") {
                 // F1 wrong-port case: TCP answered, app routes missing.
                 return "The gateway answered, but this address isn't serving the app — it returned \"not found\". Check the endpoint and port."

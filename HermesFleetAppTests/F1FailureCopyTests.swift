@@ -88,4 +88,54 @@ final class F1FailureCopyTests: XCTestCase {
         let copy = GatewayFailureCopy.detail(status: .offline, detail: nil)
         XCTAssertTrue(copy.contains("timed out"), copy)
     }
+
+    // MARK: H2 surface doctor (t_eb6b573d)
+
+    func testSurfaceDoctorHitNamesHermesServerNotChatGateway() {
+        // ws-ticket 404 + /health 200 hermes-agent: the endpoint IS a Hermes
+        // box — the copy must say which surface was hit and what to ask for.
+        let copy = GatewayFailureCopy.detail(
+            status: .unsupported,
+            detail: "auth endpoint returned HTTP 404 (/health: hermes-agent)")
+        XCTAssertTrue(copy.contains("Hermes server"), copy)
+        XCTAssertTrue(copy.contains("not the chat gateway"), copy)
+        XCTAssertTrue(copy.contains("gateway"), copy)
+        XCTAssertFalse(copy.lowercased().contains("timed out"), copy)
+    }
+
+    func testSurfaceDoctorCopyNeverLeaksMarkerOrInternals() {
+        let copy = GatewayFailureCopy.detail(
+            status: .unsupported,
+            detail: "auth endpoint returned HTTP 404 (/health: hermes-agent)")
+        XCTAssertFalse(copy.contains("/health"), "raw route names stay out of user copy: \(copy)")
+        XCTAssertFalse(copy.contains("hermes-agent"), "raw platform vocabulary stays out: \(copy)")
+        XCTAssertFalse(copy.contains("HTTP 404"), "raw status codes stay out: \(copy)")
+        XCTAssertFalse(copy.contains("api_server"), copy)
+    }
+
+    func testUnsupportedWithoutDoctorHitKeepsGenericCopy() {
+        // ws-ticket 404 and NO doctor marker → the existing F1 wrong-port copy,
+        // never the doctor hint.
+        let copy = GatewayFailureCopy.detail(
+            status: .unsupported,
+            detail: "auth endpoint returned HTTP 404")
+        XCTAssertFalse(copy.contains("Hermes server"), copy)
+        XCTAssertTrue(copy.contains("isn't serving the app"), copy)
+        // And a non-404 unsupported detail (disconnect-classified) keeps the
+        // generic surface copy.
+        let generic = GatewayFailureCopy.detail(
+            status: .unsupported,
+            detail: "unsupported gateway: chat disabled")
+        XCTAssertFalse(generic.contains("Hermes server"), generic)
+        XCTAssertTrue(generic.contains("isn't a supported Hermes surface"), generic)
+    }
+
+    func testTimeoutCopyUnchangedByDoctor() {
+        // Timeout classification never reaches the doctor; copy is unchanged.
+        let copy = GatewayFailureCopy.detail(
+            status: .offline,
+            detail: "gateway connect timed out (/health: hermes-agent)")
+        XCTAssertTrue(copy.contains("timed out"), copy)
+        XCTAssertFalse(copy.contains("Hermes server"), copy)
+    }
 }

@@ -28,15 +28,20 @@ public actor FleetRosterService: FleetRosterProviding {
     private let registry: any GatewayRegistryManaging
     private let credentials: any CredentialStoring
     private let sessionFactory: GatewayRosterSessionFactory
+    /// H2: URLSession the surface-doctor `/health` probe uses (injectable for
+    /// tests; defaults to `.shared`). Read-only, non-secret GET.
+    private let doctorSession: URLSession
 
     public init(
         registry: any GatewayRegistryManaging,
         credentials: any CredentialStoring,
-        sessionFactory: @escaping GatewayRosterSessionFactory
+        sessionFactory: @escaping GatewayRosterSessionFactory,
+        doctorSession: URLSession = .shared
     ) {
         self.registry = registry
         self.credentials = credentials
         self.sessionFactory = sessionFactory
+        self.doctorSession = doctorSession
     }
 
     // MARK: FleetRosterProviding
@@ -54,11 +59,12 @@ public actor FleetRosterService: FleetRosterProviding {
             of: (GatewayID, GatewayRosterOutcome, FleetGateway, [FleetBot]).self
         ) { group in
             for gateway in gateways {
-                group.addTask { [credentials, sessionFactory] in
+                group.addTask { [credentials, sessionFactory, doctorSession] in
                     await Self.refreshGateway(
                         gateway,
                         credentials: credentials,
-                        sessionFactory: sessionFactory
+                        sessionFactory: sessionFactory,
+                        doctorSession: doctorSession
                     )
                 }
             }
@@ -83,7 +89,8 @@ public actor FleetRosterService: FleetRosterProviding {
     private static func refreshGateway(
         _ gateway: FleetGateway,
         credentials: any CredentialStoring,
-        sessionFactory: GatewayRosterSessionFactory
+        sessionFactory: GatewayRosterSessionFactory,
+        doctorSession: URLSession
     ) async -> (GatewayID, GatewayRosterOutcome, FleetGateway, [FleetBot]) {
         let credential = try? await credentials.loadCredential(for: gateway.id)
         let session = sessionFactory(gateway, credential)
@@ -103,9 +110,21 @@ public actor FleetRosterService: FleetRosterProviding {
             result = (.loaded(profileCount: profiles.count), updated, bots)
         } catch let error as GatewayConnectivityError {
             let status = GatewayStatus(connectivityError: error)
+            var detail = error.errorDescription
+            // H2 surface doctor: when the endpoint ANSWERED but is not a
+            // supported surface (.unsupported — ws-ticket 404'd), ONE
+            // read-only GET {base}/health can name the mix-up: a Hermes
+            // api_server/REST box on the wrong port. Fail-open — the doctor
+            // never changes the classification, only sharpens the copy via
+            // a non-secret marker the failure copy keys off.
+            if status == .unsupported, let endpoint = gateway.endpoint {
+                if await GatewaySurfaceDoctor.probe(baseURL: endpoint, urlSession: doctorSession) == .hermesServer {
+                    detail = (detail ?? "").appending(" (\(GatewaySurfaceDoctor.hermesServerMarker))")
+                }
+            }
             var updated = gateway
             updated.connectionState = .failed(status.rawValue)
-            result = (.failed(status: status, detail: error.errorDescription), updated, [])
+            result = (.failed(status: status, detail: detail), updated, [])
         } catch let error as RosterError {
             // Gateway reachable but the roster call failed: not-connected → the
             // socket dropped under us (offline); malformed/rpc failure → the
