@@ -1445,6 +1445,10 @@ enum ScriptedFleet {
     ]
 
     static func profiles(on gatewayID: GatewayID) -> [ProfileDescriptor] {
+        // Slice 2: profiles created through the scripted management seam in
+        // THIS app process join the roster on the next refresh (created bots
+        // must become visible; the seam mints them).
+        let created = ScriptedBotProfileSeamStore.shared.createdDescriptors(on: gatewayID)
         switch gatewayID.rawValue {
         case "workstation":
             return [
@@ -1460,7 +1464,7 @@ enum ScriptedFleet {
                     displayName: "Researcher", skillCount: 8, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "researcher")
                 ),
-            ]
+            ] + created
         case "render-box":
             return [
                 ProfileDescriptor(
@@ -1469,9 +1473,9 @@ enum ScriptedFleet {
                     displayName: "Default", skillCount: 10, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "default")
                 ),
-            ]
+            ] + created
         default:
-            return []
+            return created
         }
     }
 
@@ -1610,6 +1614,32 @@ private struct ScriptedRosterSession: GatewayRosterSession {
     }
 }
 
+/// Shared record of profiles created through scripted management seams in
+/// this app process, so the scripted roster can surface created bots on the
+/// next refresh (deterministic create-visible flow).
+final class ScriptedBotProfileSeamStore: @unchecked Sendable {
+    static let shared = ScriptedBotProfileSeamStore()
+    private let lock = NSLock()
+    private var created: [GatewayID: [ProfileDescriptor]] = [:]
+
+    func record(gatewayID: GatewayID, name: String, title: String?) {
+        lock.lock(); defer { lock.unlock() }
+        var list = created[gatewayID] ?? []
+        guard !list.contains(where: { $0.name == name }) else { return }
+        list.append(ProfileDescriptor(
+            name: name,
+            path: "~/.hermes/profiles/\(name)",
+            isDefault: false,
+            displayName: title ?? name))
+        created[gatewayID] = list
+    }
+
+    func createdDescriptors(on gatewayID: GatewayID) -> [ProfileDescriptor] {
+        lock.lock(); defer { lock.unlock() }
+        return created[gatewayID] ?? []
+    }
+}
+
 /// True Bots Mode slice 2: scripted bot-profile management seam (DEBUG
 /// simulator only) — in-memory metadata/section/avatar state with the same
 /// semantics as the real client (CAS conflict on stale revision, model
@@ -1745,6 +1775,7 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
         lock.lock(); defer { lock.unlock() }
         metadataByProfile[profile] = metadata
         revisionByProfile[profile] = 1
+        ScriptedBotProfileSeamStore.shared.record(gatewayID: gatewayID, name: profile, title: metadata.title)
     }
 
     private func currentSections() -> (sections: [BotSection], revision: Int?) {
