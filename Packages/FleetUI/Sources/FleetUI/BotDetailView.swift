@@ -123,6 +123,10 @@ public struct BotDetailView: View {
                         .foregroundStyle(FleetTheme.textSecondary)
                         .lineLimit(1)
                 }
+                // True Bots Mode: canonical "Bot Chat" open — exact-title
+                // registry target, fail-closed (never forks on a transient
+                // lookup failure; recency never selects the target).
+                BotChatOpenButton(environment: environment, bot: bot)
             }
         }
         .accessibilityElement(children: .combine)

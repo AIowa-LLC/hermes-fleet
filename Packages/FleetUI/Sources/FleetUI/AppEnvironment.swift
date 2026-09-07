@@ -60,6 +60,14 @@ public typealias FleetProjectsSeamFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any GatewayProjectsProviding
 
+/// True Bots Mode — builds a per-gateway Bot Mode chat seam (canonical
+/// "Bot Chat" lookup + safe creation). Same M0-guard construction as the
+/// seams above: SwiftUI depends only on the FleetCore
+/// `BotModeChatProviding` seam — never on the transport module.
+public typealias FleetBotModeChatFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any BotModeChatProviding
+
 /// R10-T4 — builds the on-device voice engine (Speech framework STT +
 /// AVSpeechSynthesizer TTS) shared by every conversation view model. nil ⇒
 /// the fail-closed `UnsupportedVoiceTranscriber` (mic affordances hidden).
@@ -156,6 +164,17 @@ public final class AppEnvironment {
     /// Routes whose `session.list` fetch is in flight.
     public private(set) var loadingRoutes: Set<Route> = []
 
+    /// True Bots Mode: pending navigation request — a screen push that
+    /// originates outside the view tree (the canonical Bot Chat open).
+    /// FleetTabView observes this and appends it to the active tab's path.
+    public internal(set) var pendingBotChatNavigation: FleetScreen?
+
+    /// True Bots Mode: request navigation to the canonical Bot Chat screen.
+    /// Called by `BotChatOpenButton` after a successful fail-closed resolve.
+    public func openBotChat(route: Route, sessionID: String) {
+        pendingBotChatNavigation = .conversation(route, sessionID: sessionID)
+    }
+
     /// Last classified read error per route (non-secret), for the Bot-detail
     /// error state. Absent until a fetch fails.
     public private(set) var sessionReadErrors: [Route: String] = [:]
@@ -188,6 +207,11 @@ public final class AppEnvironment {
     /// (the concrete `GatewayManagementClient` in production, scripted in
     /// DEBUG/tests).
     private let managementSeamFactory: FleetManagementSeamFactory?
+    /// True Bots Mode: per-gateway canonical-chat seam factory (the concrete
+    /// `GatewayBotModeClient` in production, scripted in DEBUG/tests).
+    private let botModeChatFactory: FleetBotModeChatFactory?
+    /// Cached per-gateway Bot Mode chat seams (mirrors managementSeams).
+    @ObservationIgnored private var botModeChatSeams: [GatewayID: any BotModeChatProviding] = [:]
     /// R9-T7: learning seam factory (memory graph) — one per gateway (the
     /// concrete `GatewayLearningClient` in production, scripted in
     /// DEBUG/tests).
@@ -252,6 +276,7 @@ public final class AppEnvironment {
         learningSnapshotStore: (any LearningGraphSnapshotStoring)? = nil,
         projectsSeamFactory: FleetProjectsSeamFactory? = nil,
         projectsSnapshotStore: (any ProjectsSnapshotStoring)? = nil,
+        botModeChatFactory: FleetBotModeChatFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
@@ -269,6 +294,7 @@ public final class AppEnvironment {
         self.learningSnapshotStore_ = learningSnapshotStore
         self.projectsSeamFactory = projectsSeamFactory
         self.projectsSnapshotStore_ = projectsSnapshotStore
+        self.botModeChatFactory = botModeChatFactory
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
@@ -584,6 +610,74 @@ public final class AppEnvironment {
         let seam = factory(gateway)
         managementSeams[gatewayID] = seam
         return seam
+    }
+
+    // MARK: True Bots Mode — canonical Bot Chat
+
+    /// Build the Bot Mode chat seam for a gateway. Nil when no factory is
+    /// wired (the tap falls back to the sessions list, fail closed).
+    public func makeBotModeChat(for gatewayID: GatewayID) -> (any BotModeChatProviding)? {
+        if let existing = botModeChatSeams[gatewayID] { return existing }
+        guard let factory = botModeChatFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let seam = factory(gateway)
+        botModeChatSeams[gatewayID] = seam
+        return seam
+    }
+
+    /// Resolve the canonical Bot Chat open target for a bot tap, applying
+    /// the fail-closed contract (see `CanonicalChatResolver`). Recency never
+    /// selects the target — `latestSession` is never substituted.
+    ///
+    /// Returns the session id to open, or a retryable error message. NEVER
+    /// creates a chat on an unconfirmed lookup (no transient fork).
+    public func resolveCanonicalChatTarget(for bot: FleetBot) async -> Result<String, BotChatUnavailable> {
+        // The roster-reported canonical_session is authoritative identity
+        // info; the tap still verifies against a live title-exact lookup so
+        // a stale roster can't open a dead id blindly.
+        guard let seam = makeBotModeChat(for: bot.route.gatewayID) else {
+            return .failure(BotChatUnavailable(message: "Bot Chat is unavailable on this gateway"))
+        }
+        let rosterID = bot.canonicalSession?.id
+        do {
+            let lookup = try await seam.lookupCanonicalChat(profile: bot.route.profileSlug.rawValue)
+            let rows = lookup.rows.map {
+                SessionSummary(id: $0.id, title: $0.title, preview: $0.preview, messageCount: $0.messageCount)
+            }
+            // resolved_id (compression tip) travels as the row id on the
+            // exact-title wire; attach it so the resolver prefers the tip.
+            let resolution: CanonicalChatResolution
+            if let first = lookup.rows.first, let tip = first.openID, tip != first.id {
+                resolution = CanonicalChatResolver.resolve(
+                    lookupRows: [SessionSummary(id: first.id, title: first.title,
+                                                preview: first.preview, messageCount: first.messageCount)],
+                    rosterCanonicalID: rosterID,
+                    lookupError: nil)
+                // The resolver's existing-ref openID falls back to row id;
+                // the tip (already validated non-empty by openID) wins.
+                if case .existing = resolution {
+                    return .success(tip)
+                }
+            } else {
+                resolution = CanonicalChatResolver.resolve(
+                    lookupRows: rows, rosterCanonicalID: rosterID, lookupError: nil)
+            }
+            switch BotChatPlanner.plan(from: resolution) {
+            case .openCanonical(let ref):
+                if let id = ref.openID { return .success(id) }
+                return .failure(BotChatUnavailable(message: "Bot Chat registry returned a malformed id — not starting a new chat"))
+            case .createThenOpen:
+                // Confirmed miss only: safe hidden creation with eager title.
+                let created = try await seam.createCanonicalChat(profile: bot.route.profileSlug.rawValue)
+                return .success(created)
+            case .unavailable(let message):
+                return .failure(BotChatUnavailable(message: message))
+            }
+        } catch {
+            // RPC failure of EITHER lookup or creation is retryable — never
+            // mint/fork from the catch path.
+            return .failure(BotChatUnavailable(message: "Could not check the Bot Chat registry: \(error.localizedDescription) — not starting a new chat"))
+        }
     }
 
     // MARK: Memory graph (R9-T7 — learning star map)

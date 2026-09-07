@@ -112,6 +112,14 @@ enum FleetServiceGraph {
     nonisolated static var zeroGatewaysEnabled: Bool {
         ProcessInfo.processInfo.environment["HERMES_FLEET_ZERO_GATEWAYS"] == "1"
     }
+
+    /// True Bots Mode UI-test knob (DEBUG simulator only):
+    /// `HERMES_FLEET_BOT_CHAT_FAIL=1` makes the scripted canonical-chat
+    /// lookup throw, so the fail-closed tap behavior (retryable error, no
+    /// fork, no navigation) is deterministically walkable.
+    nonisolated static var botChatLookupFails: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_BOT_CHAT_FAIL"] == "1"
+    }
     #endif
 
     // MARK: Production — real stores + live transports
@@ -166,6 +174,7 @@ enum FleetServiceGraph {
             learningSnapshotStore: cacheStore,
             projectsSeamFactory: makeProjectsSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
             projectsSnapshotStore: cacheStore,
+            botModeChatFactory: makeBotModeChatFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health,
             // R9-T1: the approval banner's FaceID gate rides the SAME
             // LocalAuthentication seam as the app lock (release: real
@@ -309,6 +318,27 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayManagementClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// True Bots Mode: real per-gateway Bot Mode chat seam — the
+    /// `GatewayBotModeClient` over its own authenticated transport (same
+    /// construction as the management seam factory).
+    nonisolated private static func makeBotModeChatFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetBotModeChatFactory {
+        { gateway in
+            guard let base = gateway.endpoint else {
+                return UnsupportedBotModeChat()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
         }
     }
 

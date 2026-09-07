@@ -101,10 +101,9 @@ public struct HostedRoomEvent: Hashable, Sendable, Identifiable {
 
 /// Hosted `groups.*` client over the shared per-gateway transport.
 ///
-/// Wire ground truth (tui_gateway/methods_groups.py @ 08b140d):
-/// capabilities/list/create/state/send/rename/log/disband/stop/retry/
-/// approve (+ replicate/replica_state/promote/demote/peer.* — later slices).
-public struct GatewayGroupsClient {
+/// Sendable: an immutable value holding a `GatewayWebSocketTransport` actor
+/// reference (same shape as `GatewayRosterClient`).
+public struct GatewayGroupsClient: Sendable {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
 

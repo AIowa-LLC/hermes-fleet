@@ -98,6 +98,9 @@ extension FleetServiceGraph {
                 ScriptedProjectsSeam(gatewayID: gateway.id)
             },
             projectsSnapshotStore: cacheStore,
+            botModeChatFactory: { gateway in
+                ScriptedBotModeChatSeam(gatewayID: gateway.id)
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
@@ -327,6 +330,43 @@ private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Senda
 private struct ScriptedSessionListService: SessionListProviding {
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
         ScriptedFleet.sessions(on: route)
+    }
+}
+
+/// True Bots Mode: scripted canonical-chat seam (DEBUG simulator only).
+/// Deterministic fixture: one canonical "Bot Chat" row per profile
+/// (id "botchat-<profile>"), env knob HERMES_FLEET_BOT_CHAT_FAIL forces
+/// lookup failures so the fail-closed UI path is walkable.
+final class ScriptedBotModeChatSeam: BotModeChatProviding, @unchecked Sendable {
+    private let gatewayID: GatewayID
+    private var created = Set<String>()
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+    }
+
+    func lookupCanonicalChat(profile: String) async throws -> CanonicalLookup {
+        if FleetServiceGraph.botChatLookupFails {
+            throw RosterError.rpcFailed("fixture lookup failure")
+        }
+        // The default profile already has one; other profiles return empty
+        // first (confirmed miss → creation path) unless previously created.
+        if profile != "default" && !created.contains(profile) {
+            return CanonicalLookup(rows: [])
+        }
+        return CanonicalLookup(rows: [
+            CanonicalLookupRow(
+                id: "botchat-\(profile)",
+                resolvedID: nil,
+                title: BotModeContract.canonicalChatTitle,
+                preview: "Scripted canonical chat",
+                messageCount: 3)
+        ])
+    }
+
+    func createCanonicalChat(profile: String) async throws -> String {
+        created.insert(profile)
+        return "botchat-\(profile)"
     }
 }
 

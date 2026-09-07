@@ -51,7 +51,7 @@ public enum BotModeProfileError: Error, Sendable, Equatable, LocalizedError {
 ///   carry `resolved_id` (methods_session.py:363-387).
 /// - session.create `{profile, title, hidden: true, follow_profile_config:
 ///   true}` for canonical creation (canonical-chat.ts:348-363).
-public struct GatewayBotModeClient {
+public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
 
@@ -254,33 +254,8 @@ public struct GatewayBotModeClient {
     }
 }
 
-/// Rows returned by the canonical title-exact lookup.
-public struct CanonicalLookup: Sendable {
-    public let rows: [CanonicalLookupRow]
-
-    public init(rows: [CanonicalLookupRow]) {
-        self.rows = rows
-    }
-
-    public var isEmpty: Bool { rows.isEmpty }
-    public var first: CanonicalLookupRow? { rows.first }
-}
-
-public struct CanonicalLookupRow: Hashable, Sendable {
-    public let id: String
-    public let resolvedID: String?
-    public let title: String
-    public let preview: String
-    public let messageCount: Int
-
-    public init(id: String, resolvedID: String? = nil, title: String, preview: String = "", messageCount: Int = 0) {
-        self.id = id
-        self.resolvedID = resolvedID
-        self.title = title
-        self.preview = preview
-        self.messageCount = messageCount
-    }
-}
+// `CanonicalLookup` / `CanonicalLookupRow` live in FleetCore
+// (BotModeChatProviding.swift) — this client conforms to the seam types.
 
 /// Receipt of a successful CAS write.
 public struct MetadataWriteReceipt: Hashable, Sendable {
