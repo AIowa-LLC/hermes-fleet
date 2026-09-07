@@ -572,8 +572,15 @@ public final class AppEnvironment {
     /// Creates a hosted room via the gateway's command seam. Throws the
     /// typed failure (unsupported old gateway → update explanation).
     public func createRoom(
-        gatewayID: GatewayID, name: String, members: [RoomMemberCandidate]
+        gatewayID: GatewayID, name: String, members: [RoomMemberCandidate],
+        setupID: String = UUID().uuidString
     ) async throws -> FleetRoom {
+        if let home = roomLinkSeam(for: gatewayID) as? any CrossGatewayRoomCommanding {
+            return try await createLinkedRoom(home: home, gatewayID: gatewayID, name: name, members: members, setupID: setupID)
+        }
+        guard members.allSatisfy({ $0.route.gatewayID == gatewayID }) else {
+            throw RoomCommandFailure.unsupportedMethod("Scoped RoomLink setup")
+        }
         guard let seam = roomCommandSeam(for: gatewayID) else {
             throw RoomCommandFailure.notConnected
         }
@@ -595,6 +602,62 @@ public final class AppEnvironment {
                 advertisedMethods: nil,
                 driverAvailable: false))
         Task { await loadRooms() }
+        return room
+    }
+
+    public func compatibleRoomGateways(homeID: GatewayID) async -> Set<GatewayID> {
+        guard let home = roomLinkSeam(for: homeID) as? any CrossGatewayRoomCommanding,
+              let snapshot = try? await home.roomLinkTarget(profile: "default"), snapshot.supportsHome else { return [] }
+        var compatible = Set<GatewayID>()
+        for gateway in gateways where gateway.id != homeID {
+            guard let target = roomLinkSeam(for: gateway.id) as? any CrossGatewayRoomCommanding,
+                  let targetSnapshot = try? await target.roomLinkTarget(profile: "default"),
+                  targetSnapshot.supportsTarget,
+                  targetSnapshot.negotiation.installationID != snapshot.negotiation.installationID else { continue }
+            compatible.insert(gateway.id)
+        }
+        return compatible
+    }
+
+    private func createLinkedRoom(home: any CrossGatewayRoomCommanding, gatewayID: GatewayID,
+                                  name: String, members: [RoomMemberCandidate], setupID: String) async throws -> FleetRoom {
+        let remote = members.filter { $0.route.gatewayID != gatewayID }
+        var targets: [Route: RoomLinkTargetSnapshot] = [:]
+        if !remote.isEmpty {
+            let homeSnapshot = try await home.roomLinkTarget(profile: "default")
+            guard homeSnapshot.supportsHome else { throw RoomCommandFailure.unsupportedMethod("Direct RoomLink") }
+            for member in remote {
+                guard let target = roomLinkSeam(for: member.route.gatewayID) as? any CrossGatewayRoomCommanding else {
+                    throw RoomCommandFailure.unsupportedMethod("Scoped RoomLink")
+                }
+                let snapshot = try await target.roomLinkTarget(profile: member.route.profileSlug.rawValue)
+                guard snapshot.supportsTarget,
+                      snapshot.negotiation.profile == member.route.profileSlug.rawValue,
+                      snapshot.negotiation.installationID != homeSnapshot.negotiation.installationID else {
+                    throw RoomCommandFailure.unsupportedMethod("Compatible profile-scoped RoomLink")
+                }
+                targets[member.route] = snapshot
+            }
+        }
+        let room = try await home.createScopedRoom(roomID: setupID, name: name,
+            members: members.map { CrossGatewayRoomSetup.member($0, target: targets[$0.route]) })
+        for member in remote {
+            guard let target = roomLinkSeam(for: member.route.gatewayID) as? any CrossGatewayRoomCommanding,
+                  let snapshot = targets[member.route] else { throw RoomCommandFailure.notConnected }
+            var grant: ScopedRoomGrant?
+            do {
+                let issued = try await target.inviteScopedRoom(room: room, profile: member.route.profileSlug.rawValue,
+                    memberID: CrossGatewayRoomSetup.memberID(member.route))
+                grant = issued
+                try await home.registerScopedPeer(roomID: room.id.key,
+                    memberID: CrossGatewayRoomSetup.memberID(member.route), target: snapshot, grant: issued)
+            } catch {
+                if let grant { try? await target.revokeScopedPeer(grant) }
+                await loadRooms()
+                throw RoomCommandFailure.rpcFailed("Room \(room.id.key) exists, but a remote link was not confirmed. The gateways must reach each other directly with matching execution policies. Retry this unchanged form to resume setup; no message was sent.", 0)
+            }
+        }
+        await loadRooms()
         return room
     }
 

@@ -46,9 +46,9 @@ public struct HostedRoomRow: Hashable, Sendable {
             return FleetRoomMember(
                 name: name,
                 handle: o["handle"] as? String,
-                connectionID: o["connection_id"] as? String,
+                connectionID: (o["target"] as? [String: Any])?["peer_id"] as? String ?? o["connection_id"] as? String,
                 connectionLabel: nil,
-                sourceScoped: false
+                sourceScoped: (o["target"] as? [String: Any])?["kind"] as? String == "peer"
             )
         }
     }

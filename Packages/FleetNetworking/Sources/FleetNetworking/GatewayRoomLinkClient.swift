@@ -311,3 +311,84 @@ public struct GatewayRoomLinkClient: Sendable {
         }
     }
 }
+
+extension GatewayRoomLinkClient: CrossGatewayRoomCommanding {
+    public func roomLinkTarget(profile: String) async throws -> RoomLinkTargetSnapshot {
+        let result = try await requestMapped(method: "groups.capabilities", params: .object(["profile": .string(profile)]))
+        guard let catalog = result["room_link"]?["catalog"] else {
+            throw RoomLinkError.malformed("RoomLink is not available on this gateway")
+        }
+        return RoomLinkTargetSnapshot(negotiation: Self.decodeNegotiation(result),
+            catalog: ModernProfilesDecoder.toMetadataValue(catalog), driver: result["driver"]?.boolValue == true)
+    }
+
+    public func createScopedRoom(roomID: String, name: String, members: [MetadataValue]) async throws -> FleetRoom {
+        let caps = try await requestMapped(method: "groups.capabilities", params: .object([:]))
+        let methods = caps["methods"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        guard caps["driver"]?.boolValue == true, methods.contains("groups.create") else {
+            throw RoomLinkError.malformed("This gateway cannot create hosted rooms")
+        }
+        let result = try await requestMapped(method: "groups.create", params: .object([
+            "room_id": .string(roomID), "name": .string(name), "members": .array(members.map(Self.setupJSON))
+        ]))
+        guard let json = result["room"] else { throw RoomLinkError.malformed("Missing created room") }
+        let row = try GatewayGroupsClient.decodeRoom(json)
+        guard row.roomID == roomID, !row.authorityGatewayID.isEmpty, row.authorityEpoch > 0 else {
+            throw RoomLinkError.malformed("Created room has no verified authority")
+        }
+        return FleetRoom(id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: row.roomID),
+            name: row.name, members: row.members, revision: row.revision,
+            hosted: HostedRoomState(authorityGatewayID: row.authorityGatewayID,
+                authorityEpoch: row.authorityEpoch, latestSeq: row.latestSeq,
+                advertisedMethods: methods, driverAvailable: true))
+    }
+
+    public func inviteScopedRoom(room: FleetRoom, profile: String, memberID: String) async throws -> ScopedRoomGrant {
+        guard let authority = room.hosted else { throw RoomLinkError.malformed("Missing room authority") }
+        let result = try await requestMapped(method: "groups.peer.invite", params: .object([
+            "room_id": .string(room.id.key), "profile": .string(profile), "member_id": .string(memberID),
+            "home_install_id": .string(authority.authorityGatewayID),
+            "authority_gateway_id": .string(authority.authorityGatewayID),
+            "authority_epoch": .number(Double(authority.authorityEpoch)), "ttl_seconds": .number(3600)
+        ]))
+        guard let token = result["grant"]?.stringValue, !token.isEmpty,
+              result["target_profile"]?.stringValue == profile, let catalog = result["catalog"] else {
+            throw RoomLinkError.malformed("The target did not return a scoped room grant")
+        }
+        return ScopedRoomGrant(token: token, profile: profile, catalog: ModernProfilesDecoder.toMetadataValue(catalog))
+    }
+
+    public func registerScopedPeer(roomID: String, memberID: String, target: RoomLinkTargetSnapshot, grant: ScopedRoomGrant) async throws {
+        guard target.supportsTarget, grant.catalog == target.catalog,
+              grant.profile == target.negotiation.profile, let endpoint = target.negotiation.endpoint?.url else {
+            throw RoomLinkError.malformed("The target policy or capability catalog changed; refresh before linking")
+        }
+        let result = try await requestMapped(method: "groups.peer.register", params: .object([
+            "room_id": .string(roomID), "member_id": .string(memberID),
+            "target_url": .string(endpoint), "catalog": Self.setupJSON(grant.catalog),
+            "target_profile": .string(grant.profile), "grant": .string(grant.token)
+        ]))
+        guard result["registered"]?.boolValue == true, result["mode"]?.stringValue == "direct",
+              result["target_install_id"]?.stringValue == target.negotiation.installationID,
+              result["target_profile"]?.stringValue == grant.profile else {
+            throw RoomLinkError.malformed("The home gateway did not confirm the scoped direct route")
+        }
+    }
+
+    public func revokeScopedPeer(_ grant: ScopedRoomGrant) async throws {
+        _ = try await requestMapped(method: "groups.peer.revoke", params: .object([
+            "grant": .string(grant.token), "profile": .string(grant.profile)
+        ]))
+    }
+
+    private static func setupJSON(_ value: MetadataValue) -> JSONValue {
+        switch value {
+        case .null: return .null
+        case .bool(let v): return .bool(v)
+        case .number(let v): return .number(v)
+        case .string(let v): return .string(v)
+        case .array(let v): return .array(v.map(setupJSON))
+        case .object(let v): return .object(v.mapValues(setupJSON))
+        }
+    }
+}

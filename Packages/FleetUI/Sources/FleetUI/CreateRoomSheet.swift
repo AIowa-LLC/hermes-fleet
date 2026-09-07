@@ -17,6 +17,8 @@ public struct CreateRoomSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft = RoomCreateDraft()
+    @State private var setupID = UUID().uuidString
+    @State private var compatibleGateways: Set<GatewayID> = []
     @State private var searchText = ""
     @State private var errorMessage: String?
     @State private var isSubmitting = false
@@ -31,9 +33,10 @@ public struct CreateRoomSheet: View {
         self.onCreated = onCreated
     }
 
-    /// Member candidates: this gateway's bots (source-qualified by Route).
+    /// Member candidates: this gateway's bots plus compatible remote
+    /// gateways' bots (source-qualified by Route) — slice 10.
     private var candidates: [RoomMemberCandidate] {
-        let bots = environment.rosterSnapshot?.bots(on: gateway.id) ?? []
+        let bots = ([gateway.id] + compatibleGateways.sorted { $0.rawValue < $1.rawValue }).flatMap { environment.bots(on: $0) }
         return BotRosterPresentation.order(bots).compactMap { bot in
             RoomMemberCandidate(route: bot.route, displayName: BotRosterPresentation.displayTitle(for: bot))
         }
@@ -99,7 +102,17 @@ public struct CreateRoomSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                        SectionHeader(title: "Pick from \(gateway.displayName)")
+                        SectionHeader(title: "Pick Bots")
+                        if compatibleGateways.isEmpty {
+                            Text("Bots on \(gateway.displayName). Remote gateways appear once direct RoomLink support is confirmed.")
+                                .font(FleetTheme.monoCaptionFont)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                        } else {
+                            Text("Bots on \(gateway.displayName) and \(compatibleGateways.count) linked gateway\(compatibleGateways.count == 1 ? "" : "s"). Each remote member is re-validated before creation.")
+                                .font(FleetTheme.monoCaptionFont)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .accessibilityIdentifier("fleet.room.create.linked-note")
+                        }
                         ForEach(visibleCandidates) { candidate in
                             candidateRow(candidate)
                         }
@@ -114,6 +127,7 @@ public struct CreateRoomSheet: View {
             }
             .background(FleetTheme.background.ignoresSafeArea())
             .searchable(text: $searchText, prompt: "Bots on \(gateway.displayName)")
+            .task { compatibleGateways = await environment.compatibleRoomGateways(homeID: gateway.id) }
             .navigationTitle("Create Room")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -153,7 +167,8 @@ public struct CreateRoomSheet: View {
                         Text(candidate.displayName)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(FleetTheme.textPrimary)
-                        Text("\(candidate.route.profileSlug.rawValue) · \(gateway.displayName)")
+                        let ownerGateway = environment.gateway(for: candidate.route.gatewayID)?.displayName ?? candidate.route.gatewayID.rawValue
+                        Text("\(candidate.route.profileSlug.rawValue) · \(ownerGateway)")
                             .font(FleetTheme.monoCaptionFont)
                             .foregroundStyle(FleetTheme.textSecondary)
                     }
@@ -174,7 +189,7 @@ public struct CreateRoomSheet: View {
         defer { isSubmitting = false }
         do {
             let room = try await environment.createRoom(
-                gatewayID: gateway.id, name: draft.name, members: draft.members)
+                gatewayID: gateway.id, name: draft.name, members: draft.members, setupID: setupID)
             onCreated(room)
             dismiss()
         } catch {

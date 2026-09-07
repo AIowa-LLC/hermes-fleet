@@ -486,3 +486,19 @@ struct GatewayRoomLinkAdapter: RoomLinkCommanding {
         }
     }
 }
+
+extension GatewayRoomLinkAdapter: CrossGatewayRoomCommanding {
+    func roomLinkTarget(profile: String) async throws -> RoomLinkTargetSnapshot {
+        try await client.roomLinkTarget(profile: profile)
+    }
+    func createScopedRoom(roomID: String, name: String, members: [MetadataValue]) async throws -> FleetRoom {
+        try await client.createScopedRoom(roomID: roomID, name: name, members: members)
+    }
+    func inviteScopedRoom(room: FleetRoom, profile: String, memberID: String) async throws -> ScopedRoomGrant {
+        try await client.inviteScopedRoom(room: room, profile: profile, memberID: memberID)
+    }
+    func registerScopedPeer(roomID: String, memberID: String, target: RoomLinkTargetSnapshot, grant: ScopedRoomGrant) async throws {
+        try await client.registerScopedPeer(roomID: roomID, memberID: memberID, target: target, grant: grant)
+    }
+    func revokeScopedPeer(_ grant: ScopedRoomGrant) async throws { try await client.revokeScopedPeer(grant) }
+}
