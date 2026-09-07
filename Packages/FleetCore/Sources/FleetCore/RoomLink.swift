@@ -429,25 +429,35 @@ public struct RoomPromotionReceipt: Hashable, Sendable {
     }
 }
 
-/// Pure promotion-prerequisite check (D19). Upstream gates:
+/// Pure promotion-prerequisite check (D19). Upstream gates
+/// (hosted_room_replicas.py promote_replica, 08b140d):
 /// - `groups.promote` REQUIRES `confirm: true` (4118 otherwise,
 ///   methods_groups.py:513-515: "promotion requires confirm=true
 ///   acknowledging the previous authority can no longer commit")
+/// - promote REFUSES when this gateway already holds the authority
+///   ("this gateway already holds the room authority", lines 216-217) and
+///   PROCEEDS only for a replica of a FOREIGN authority — that foreign
+///   gateway becomes previous_gateway at epoch+1 (lines 222-244).
 /// - The replica must be caught up (last_seq >= latest_seq) before promoting
 ///   makes sense — promoting a stale replica forks the room.
 public enum RoomPromotionReadiness: Hashable, Sendable {
     case ready(previousGatewayID: String, previousEpoch: Int)
     case replicaNotCaughtUp(lastSeq: Int, latestSeq: Int)
-    case roomNotLocal
+    /// This gateway IS the current authority — upstream refuses the promote
+    /// with "this gateway already holds the room authority". Nothing to take
+    /// over; takeover exists only for a foreign authority.
+    case authorityAlreadyLocal
     case unknown
 
     public static func evaluate(
         replica: RoomReplicaState?, localAuthorityGatewayID: String?
     ) -> RoomPromotionReadiness {
         guard let replica else { return .unknown }
-        guard let localAuthorityGatewayID,
-              replica.authorityGatewayID == localAuthorityGatewayID else {
-            return .roomNotLocal
+        // Without the local gateway identity the foreign-authority
+        // precondition cannot be established — never claim readiness.
+        guard let localAuthorityGatewayID else { return .unknown }
+        if replica.authorityGatewayID == localAuthorityGatewayID {
+            return .authorityAlreadyLocal
         }
         guard replica.isCaughtUp else {
             return .replicaNotCaughtUp(lastSeq: replica.lastSeq, latestSeq: replica.latestSeq)
@@ -475,8 +485,8 @@ public enum RoomPromotionReadiness: Hashable, Sendable {
             return "Promotion is a takeover: the previous authority can no longer commit once you take over. The room's authority epoch advances by one."
         case .replicaNotCaughtUp(let last, let latest):
             return "This copy is behind (event \(last) of \(latest)) — replay the room first. Promoting a stale copy would fork the room."
-        case .roomNotLocal:
-            return "This room's replica is not on this gateway."
+        case .authorityAlreadyLocal:
+            return "This gateway already holds the room authority — there is nothing to take over."
         case .unknown:
             return "Replica state is not loaded yet."
         }

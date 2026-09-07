@@ -72,7 +72,7 @@ final class RoomLinkViewModelTests: XCTestCase {
             replicateCalls += 1
             return RoomReplicateReceipt(
                 roomID: roomID, storedSeq: 10, ingested: 4,
-                authorityGatewayID: "install:local", authorityEpoch: 2,
+                authorityGatewayID: "install:other", authorityEpoch: 3,
                 caughtUp: replicaToServe?.isCaughtUp ?? true)
         }
 
@@ -81,9 +81,12 @@ final class RoomLinkViewModelTests: XCTestCase {
             if failPromote {
                 throw RoomLinkRegistrationRefusal.grantScopeMismatch
             }
+            // Upstream promote_replica shape: this gateway becomes the
+            // authority at epoch+1; the FOREIGN authority it took over is
+            // named as previous — never self.
             return RoomPromotionReceipt(
                 roomID: roomID, authorityGatewayID: "install:local", authorityEpoch: 4,
-                previousGatewayID: "install:old", previousEpoch: 3,
+                previousGatewayID: "install:other", previousEpoch: 3,
                 claimSeq: 11, latestSeq: 10)
         }
 
@@ -224,7 +227,7 @@ final class RoomLinkViewModelTests: XCTestCase {
         let seam = ScriptedRoomLink(negotiation: supportedNegotiation())
         await seam.setReplica(RoomReplicaState(
             roomID: "room-alpha", name: "Launch Crew",
-            authorityGatewayID: "install:local", authorityEpoch: 3,
+            authorityGatewayID: "install:other", authorityEpoch: 3,
             lastSeq: 4, latestSeq: 10, eventBytes: 2048, createdAt: 1, updatedAt: 2))
         let vm = makeVM(seam: seam)
         await vm.start()
@@ -242,7 +245,7 @@ final class RoomLinkViewModelTests: XCTestCase {
         // Replay catches the replica up.
         await seam.setReplica(RoomReplicaState(
             roomID: "room-alpha", name: "Launch Crew",
-            authorityGatewayID: "install:local", authorityEpoch: 3,
+            authorityGatewayID: "install:other", authorityEpoch: 3,
             lastSeq: 10, latestSeq: 10, eventBytes: 4096, createdAt: 1, updatedAt: 2))
         let replayed = await vm.replicateNow()
         XCTAssertTrue(replayed)
@@ -256,7 +259,7 @@ final class RoomLinkViewModelTests: XCTestCase {
         let seam = ScriptedRoomLink(negotiation: supportedNegotiation())
         await seam.setReplica(RoomReplicaState(
             roomID: "room-alpha", name: "Launch Crew",
-            authorityGatewayID: "install:local", authorityEpoch: 3,
+            authorityGatewayID: "install:other", authorityEpoch: 3,
             lastSeq: 10, latestSeq: 10, eventBytes: 4096, createdAt: 1, updatedAt: 2))
         let vm = makeVM(seam: seam)
         await vm.start()
@@ -267,6 +270,9 @@ final class RoomLinkViewModelTests: XCTestCase {
         XCTAssertFalse(unconfirmed)
         let noConfirms = await seam.promoteConfirms
         XCTAssertTrue(noConfirms.isEmpty)
+        XCTAssertEqual(
+            vm.errorMessage,
+            "Taking over a room needs your explicit confirmation — the previous authority can no longer commit once you take over.")
 
         // Confirmed → confirm:true on the wire, receipt named.
         let promoted = await vm.promote(confirmed: true)
@@ -274,7 +280,32 @@ final class RoomLinkViewModelTests: XCTestCase {
         let confirms = await seam.promoteConfirms
         XCTAssertEqual(confirms, [true])
         XCTAssertTrue(vm.notice?.contains("epoch 4") ?? false)
-        XCTAssertTrue(vm.notice?.contains("install:old") ?? false)
+        XCTAssertTrue(vm.notice?.contains("install:other") ?? false)
+    }
+
+    @MainActor
+    func testLocalAuthorityIsNeverPromotable() async throws {
+        // This gateway already holds the authority — upstream refuses the
+        // promote ("this gateway already holds the room authority"); the UI
+        // must reflect that honestly and never fire the wire call.
+        let seam = ScriptedRoomLink(negotiation: supportedNegotiation())
+        await seam.setReplica(RoomReplicaState(
+            roomID: "room-alpha", name: "Launch Crew",
+            authorityGatewayID: "install:local", authorityEpoch: 3,
+            lastSeq: 10, latestSeq: 10, eventBytes: 4096, createdAt: 1, updatedAt: 2))
+        let vm = makeVM(seam: seam)
+        await vm.start()
+
+        XCTAssertFalse(vm.promotionReadiness.isReady)
+        XCTAssertTrue(
+            vm.promotionReadiness.confirmationMessage
+                .contains("already holds the room authority"))
+
+        // Even a confirmed attempt is refused client-side — no wire call.
+        let promoted = await vm.promote(confirmed: true)
+        XCTAssertFalse(promoted)
+        let confirms = await seam.promoteConfirms
+        XCTAssertTrue(confirms.isEmpty)
     }
 
     // MARK: - Missing seam (honest absence)

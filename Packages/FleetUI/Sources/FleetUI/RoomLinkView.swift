@@ -201,8 +201,7 @@ public final class RoomLinkViewModel {
         guard confirmed else {
             // Never silently promote: without confirmation the wire rejects
             // with 4118 — surface that honestly instead of firing the RPC.
-            errorMessage = RoomPromotionReadiness
-                .ready(previousGatewayID: "", previousEpoch: 0).confirmationMessage
+            errorMessage = Self.unconfirmedPromotionMessage
             return false
         }
         guard promotionReadiness.isReady else {
@@ -224,7 +223,12 @@ public final class RoomLinkViewModel {
         }
     }
 
-    // MARK: - Copy helpers
+    // MARK: Copy helpers
+
+    /// Static copy for the unconfirmed path — never fabricated from a
+    /// synthetic `.ready` value (readiness carries real authority lineage).
+    static let unconfirmedPromotionMessage =
+        "Taking over a room needs your explicit confirmation — the previous authority can no longer commit once you take over."
 
     static func shortRemaining(_ grant: RoomLinkGrant?) -> String {
         guard let grant else { return "" }

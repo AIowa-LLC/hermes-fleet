@@ -2270,9 +2270,12 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
 
     func replicaState(roomID: String) async throws -> RoomReplicaState? {
         guard mode != .unsupported else { return nil }
+        // Replica of a FOREIGN authority ("install:hub") — the only state
+        // upstream promote_replica allows promoting. Authority == local
+        // would be an honest "already holds the room authority" refusal.
         return RoomReplicaState(
             roomID: roomID, name: "Launch Crew",
-            authorityGatewayID: "install:workstation", authorityEpoch: 3,
+            authorityGatewayID: "install:hub", authorityEpoch: 3,
             lastSeq: _replicaCaughtUp ? 10 : 4,
             latestSeq: 10,
             eventBytes: 4096, createdAt: 1, updatedAt: 2)
@@ -2283,7 +2286,7 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
         _replicaCaughtUp = true
         return RoomReplicateReceipt(
             roomID: roomID, storedSeq: 10, ingested: 6,
-            authorityGatewayID: "install:workstation", authorityEpoch: 3,
+            authorityGatewayID: "install:hub", authorityEpoch: 3,
             caughtUp: true)
     }
 
@@ -2296,10 +2299,14 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
         guard _replicaCaughtUp else {
             throw RoomCommandFailure.rpcFailed("replica is behind the authority log", 0)
         }
+        // Upstream promote_replica shape: THIS gateway ("install:workstation")
+        // becomes the authority at epoch+1; the foreign authority it took
+        // over ("install:hub") is named as previous — consistent with
+        // replicaState above.
         return RoomPromotionReceipt(
             roomID: roomID,
             authorityGatewayID: "install:workstation", authorityEpoch: 4,
-            previousGatewayID: "install:old", previousEpoch: 3,
+            previousGatewayID: "install:hub", previousEpoch: 3,
             claimSeq: 11, latestSeq: 10)
     }
 

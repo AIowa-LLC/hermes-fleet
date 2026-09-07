@@ -277,38 +277,48 @@ final class RoomLinkMentionsDomainTests: XCTestCase {
 
     func testPromotionReadinessGates() {
         let local = "install:local"
-        // Caught-up local replica → ready, naming the previous authority.
+        // Caught-up replica of a FOREIGN authority → ready, naming the
+        // foreign gateway as the previous authority (upstream promote_replica
+        // proceeds exactly here; the foreign gateway is previous_gateway at
+        // epoch+1). Takeover is OF a foreign authority, never of self.
         let ready = RoomReplicaState(
             roomID: "room-alpha", name: "Launch Crew",
-            authorityGatewayID: local, authorityEpoch: 3,
+            authorityGatewayID: "install:other", authorityEpoch: 3,
             lastSeq: 10, latestSeq: 10, eventBytes: 4096, createdAt: 1, updatedAt: 2)
         let readiness = RoomPromotionReadiness.evaluate(replica: ready, localAuthorityGatewayID: local)
         XCTAssertTrue(readiness.isReady)
         XCTAssertEqual(
             readiness.confirmationTitle,
-            "Take over this room from \(local) (epoch 3)?")
+            "Take over this room from install:other (epoch 3)?")
 
-        // Stale replica → NOT ready (forking hazard).
+        // Stale foreign replica → NOT ready (forking hazard).
         let stale = RoomReplicaState(
             roomID: "room-alpha", name: "Launch Crew",
-            authorityGatewayID: local, authorityEpoch: 3,
+            authorityGatewayID: "install:other", authorityEpoch: 3,
             lastSeq: 4, latestSeq: 10, eventBytes: 4096, createdAt: 1, updatedAt: 2)
         let staleReadiness = RoomPromotionReadiness.evaluate(replica: stale, localAuthorityGatewayID: local)
         XCTAssertFalse(staleReadiness.isReady)
         XCTAssertTrue(staleReadiness.confirmationMessage.contains("behind"))
 
-        // Foreign authority → not local.
-        let foreign = RoomReplicaState(
+        // This gateway IS the authority → upstream refuses promote with
+        // "this gateway already holds the room authority" — honest blocked
+        // state, never offered as ready.
+        let alreadyLocal = RoomReplicaState(
             roomID: "room-alpha", name: "Launch Crew",
-            authorityGatewayID: "install:other", authorityEpoch: 3,
+            authorityGatewayID: local, authorityEpoch: 3,
             lastSeq: 10, latestSeq: 10, eventBytes: 4096, createdAt: 1, updatedAt: 2)
-        XCTAssertEqual(
-            RoomPromotionReadiness.evaluate(replica: foreign, localAuthorityGatewayID: local),
-            .roomNotLocal)
+        let localReadiness = RoomPromotionReadiness.evaluate(replica: alreadyLocal, localAuthorityGatewayID: local)
+        XCTAssertFalse(localReadiness.isReady)
+        XCTAssertNil(localReadiness.confirmationTitle)
+        XCTAssertTrue(localReadiness.confirmationMessage.contains("already holds the room authority"))
 
-        // No replica state → unknown.
+        // No replica state → unknown. Local identity missing → unknown too
+        // (readiness can never be established without knowing self).
         XCTAssertEqual(
             RoomPromotionReadiness.evaluate(replica: nil, localAuthorityGatewayID: local),
+            .unknown)
+        XCTAssertEqual(
+            RoomPromotionReadiness.evaluate(replica: ready, localAuthorityGatewayID: nil),
             .unknown)
     }
 
