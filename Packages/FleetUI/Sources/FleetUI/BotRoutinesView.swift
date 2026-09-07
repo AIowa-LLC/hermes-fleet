@@ -386,6 +386,12 @@ public struct BotRoutinesView: View {
                 Spacer()
                 Menu {
                     Button {
+                        Task { await model.runNow(routine) }
+                    } label: {
+                        Label("Run Now", systemImage: "bolt.fill")
+                    }
+                    .accessibilityIdentifier("routines.row.runnow.\(routine.jobID)")
+                    Button {
                         Task { await model.setRoutine(routine, enabled: !routine.isEnabled) }
                     } label: {
                         Label(routine.isEnabled ? "Pause" : "Resume",

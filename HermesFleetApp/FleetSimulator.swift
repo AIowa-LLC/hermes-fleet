@@ -500,7 +500,16 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
     }
 
     func fireCronJob(_ jobID: String, profile: String?) async throws {
-        // Scripted success — the fixture gateway "supports" run-over-WS.
+        // The scripted gateway supports run by default (R9-era fixture
+        // behavior the general Cron pane's regression test relies on —
+        // a gateway that DOES forward cron.manage run). The launch arg
+        // `-fixture-run-now-fails` scripts the REAL 0.21.0 wire answer
+        // (methods_tools.py:1033-1057: run not forwarded → err 4016) so
+        // the honest unsupported-explanation path is UI-testable against
+        // the same shape the live gateway returns.
+        if ProcessInfo.processInfo.arguments.contains("-fixture-run-now-fails") {
+            throw GatewayManagementError.unsupportedAction("unknown cron action: run")
+        }
     }
 
     func skillsCatalog(profile: String) async throws -> SkillsCatalog {

@@ -195,6 +195,51 @@ final class BotRoutinesUITests: XCTestCase {
         attachScreenshot(of: app, name: "s3-routines-removed")
     }
 
+    func testRunNowUnsupportedShowsHonestExplanationCard() throws {
+        let app = XCUIApplication()
+        // Script the REAL 0.21.0 wire answer: run not forwarded → 4016.
+        app.launchArguments += ["-fixture-run-now-fails"]
+        app.launch()
+        openResearcherRoutines(app)
+
+        let row = firstMatch(in: app, identifier: "routines.row.script-routine-1")
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+
+        // Row menu → Run Now.
+        tap(firstMatch(in: app, identifier: "routines.row.menu.script-routine-1"))
+        let runNow = app.buttons["Run Now"]
+        XCTAssertTrue(runNow.waitForExistence(timeout: 5), "Run Now action in the routine menu")
+        runNow.tap()
+
+        // The honest unsupported-explanation card renders (4016 gate).
+        let card = firstMatch(in: app, identifier: "routines.runnow.unsupported")
+        XCTAssertTrue(card.waitForExistence(timeout: 10),
+                      "the unsupported explanation card must be reachable from the UI")
+        attachScreenshot(of: app, name: "s3-routines-runnow-unsupported")
+    }
+
+    func testRunNowSuccessSurfacesNotice() throws {
+        let app = XCUIApplication()
+        // Default scripted gateway forwards run (R9-era fixture
+        // behavior) — the supported-gateway branch.
+        app.launch()
+        openResearcherRoutines(app)
+
+        let row = firstMatch(in: app, identifier: "routines.row.script-routine-1")
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+
+        tap(firstMatch(in: app, identifier: "routines.row.menu.script-routine-1"))
+        let runNow = app.buttons["Run Now"]
+        XCTAssertTrue(runNow.waitForExistence(timeout: 5))
+        runNow.tap()
+
+        // The success notice renders (routines.notice card).
+        let notice = firstMatch(in: app, identifier: "routines.notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: 10),
+                      "a supported gateway's run-now must surface the notice card")
+        attachScreenshot(of: app, name: "s3-routines-runnow-success")
+    }
+
     func testGeneralCronPaneUnhijacked() throws {
         let app = XCUIApplication()
         app.launch()
