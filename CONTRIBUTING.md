@@ -1,23 +1,28 @@
 # Contributing to Hermes Fleet
 
-Hermes Fleet is a native iPhone control plane for user-owned Hermes Agent
-installations. Contributions should preserve the thin, native, read-mostly
-architecture and explicit identity and privilege boundaries.
+Hermes Fleet is a native iPhone control plane for user-owned Hermes Agent deployments. Contributions should preserve its direct-to-gateway architecture, explicit trust boundaries, and native iOS behavior.
 
-## Prerequisites
+## Development setup
 
-- macOS with Xcode 26.x and an available iOS simulator
-- Swift 6 toolchain
-- [xcodegen](https://github.com/yonaskolb/XcodeGen)
-- [gitleaks](https://github.com/gitleaks/gitleaks)
+You will need:
 
-## Build and test
+- macOS with Xcode 26.x
+- Swift 6
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+- an iOS 26 simulator or compatible device
+- [gitleaks](https://github.com/gitleaks/gitleaks) for the full validation gate
 
-The generated Xcode project is derived from `project.yml`; never hand-edit the
-project file. From the repository root:
+Generate the Xcode project from the repository root:
 
 ```sh
 xcodegen generate
+```
+
+`project.yml` is the project source of truth. Do not hand-edit `project.pbxproj`.
+
+## Build and test
+
+```sh
 make build
 make test
 make test-core
@@ -26,23 +31,28 @@ bash scripts/public_safety_guard.sh
 gitleaks detect --source . --no-git
 ```
 
-The CI workflow is the authoritative hosted validation path. Live gateway,
-LAN, tailnet, device, signing, and deployment checks are opt-in local work and
-must not be required for ordinary CI.
+Run focused tests while iterating, then run the broadest relevant validation before opening a pull request.
 
-## Branches and pull requests
+Live gateway, physical-device, signing, LAN, and tailnet checks are environmental tests. Ordinary contributions must not depend on a maintainer's private infrastructure.
 
-Use a focused branch and explain the user-visible or architectural reason for
-the change. Include validation commands and results in the pull request. Do
-not merge changes that require private infrastructure to reproduce unless the
-private dependency is explicitly optional and documented.
+## Pull requests
 
-Please do not include credentials, private endpoints, device identifiers,
-personal filesystem paths, or real hostnames in fixtures, screenshots, logs,
-docs, or commit messages. Use clearly synthetic values.
+Keep pull requests focused and explain:
 
-## Bugs and features
+- what changed
+- why the change is needed
+- user-visible or architectural impact
+- validation performed
+- known limitations or follow-up work
 
-Use the issue templates for reproducible bugs and feature requests. For
-security vulnerabilities, follow `SECURITY.md` instead of opening a public
-issue.
+If `project.yml` changes, include the regenerated Xcode project in the same pull request.
+
+## Privacy and test data
+
+Do not include real credentials, tokens, private endpoints, hostnames, device identifiers, signing identifiers, personal filesystem paths, or private infrastructure details in source, fixtures, screenshots, logs, documentation, or commit messages.
+
+Use clearly synthetic examples and deterministic test doubles.
+
+## Bugs and feature requests
+
+Use the repository issue templates for reproducible bugs and feature proposals. Security vulnerabilities should be reported privately according to `SECURITY.md`, not through a public issue.

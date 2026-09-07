@@ -1,40 +1,46 @@
 # Security Policy
 
+## Supported code
+
+Hermes Fleet is under active development. Security fixes are applied to the current `main` branch. Older commits and local forks are not guaranteed to receive backports.
+
 ## Reporting a vulnerability
 
-Please do not report security vulnerabilities in a public issue. Open a private
-security advisory for this repository when GitHub enables that feature, or
-contact the maintainers through the private contact channel listed by the
-repository owner. Include enough detail to reproduce the issue, but do not
-include live credentials, tokens, private endpoints, or personal device data.
+Do not disclose a suspected vulnerability in a public issue, discussion, pull request, screenshot, or log.
 
-## Scope and expectations
+Use GitHub's private vulnerability reporting for this repository when it is available. If that option is unavailable, contact an AIowa LLC maintainer privately through a published contact method before sharing technical details publicly.
 
-Hermes Fleet is an iPhone-native control plane for user-owned Hermes Agent
-installations. Reports about credential handling, authorization boundaries,
-transport security, Keychain storage, data redaction, or local app-lock
-behavior are especially valuable. Please allow reasonable time for
-investigation and coordinated disclosure before public discussion.
+A useful report includes:
 
-## Protect credentials and personal data
+- affected component and version or commit
+- reproduction steps
+- expected and observed behavior
+- security impact
+- a minimal redacted proof of concept when appropriate
 
-Never commit or paste passwords, bearer tokens, API keys, private keys,
-provisioning material, device identifiers, private IP addresses, hostnames, or
-local filesystem paths. Use synthetic fixtures and placeholders in tests.
-
-Gateway credentials are intended to be stored in the platform Keychain rather
-than source files or logs. The app should redact sensitive URL components and
-avoid printing credentials. If you find a credential in a checkout, stop using
-it and report it privately so the owner can rotate it.
+Do not send live credentials, tokens, private endpoints, personal device data, or unrelated user information.
 
 ## Security model
 
-Fleet connects directly to Hermes infrastructure selected by the user. It is
-not a central AIowa credential relay and does not require a shared central
-operator account. Users should prefer TLS-protected gateway endpoints and
-should treat cleartext or untrusted networks as unsafe.
+Hermes Fleet connects directly to Hermes infrastructure selected by the user. It is not a central credential relay and does not require a shared AIowa operator account.
 
-Local biometric and passcode protections reduce casual access to the app on a
-device; they do not replace secure device configuration, gateway
-authentication, authorization, or TLS. Do not interpret the app's local lock
-as a guarantee that a compromised device or gateway is safe.
+The project is designed around these boundaries:
+
+- credentials and tokens are stored in the platform Keychain rather than source files
+- cached application data is non-secret and stored separately from credentials
+- gateway endpoints are normalized and sensitive URL material is rejected or redacted
+- TLS-protected endpoints are preferred, especially outside trusted local networks
+- local biometric or passcode protection reduces casual access but does not replace device security, gateway authentication, authorization, or transport security
+- unsupported or malformed security-sensitive states should fail closed rather than invent a permissive fallback
+
+## Handling accidental secret exposure
+
+If a credential or private key is discovered in a checkout, log, artifact, or published history:
+
+1. stop using the credential
+2. rotate or revoke it at the issuing system
+3. report the exposure privately
+4. remove the material from active source and artifacts
+5. assess whether history or downstream copies also require remediation
+
+Repository cleanup does not make an exposed credential safe again. Rotation is the primary containment action.
