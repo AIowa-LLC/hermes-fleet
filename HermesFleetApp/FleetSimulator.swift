@@ -98,6 +98,29 @@ extension FleetServiceGraph {
                 ScriptedProjectsSeam(gatewayID: gateway.id)
             },
             projectsSnapshotStore: cacheStore,
+            botModeChatFactory: { gateway in
+                ScriptedBotModeChatSeam(gatewayID: gateway.id)
+            },
+            botProfileFactory: { gateway in
+                ScriptedBotProfileSeam(gatewayID: gateway.id)
+            },
+            roomSourceFactory: { gateway in
+                ScriptedRoomSource(gatewayID: gateway.id)
+            },
+            // Slice 4: interactive room engine (durable log, send/rename/
+            // disband/stop/retry/approve counters) — DEBUG simulator only.
+            roomCommandFactory: { gateway in
+                ScriptedRoomEngine.shared
+            },
+            roomDriverStatusFactory: { gateway in
+                ScriptedRoomEngine.shared
+            },
+            // Slice 5 (D19): scripted RoomLink engine — env-knobbed:
+            // HERMES_FLEET_ROOMLINK=unsupported renders the honest
+            // unsupported state; default is a supported direct/TLS catalog.
+            roomLinkFactory: { gateway in
+                ScriptedRoomLinkEngine.shared
+            },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
@@ -330,9 +353,52 @@ private struct ScriptedSessionListService: SessionListProviding {
     }
 }
 
+/// True Bots Mode: scripted canonical-chat seam (DEBUG simulator only).
+/// Deterministic fixture: one canonical "Bot Chat" row per profile
+/// (id "botchat-<profile>"), env knob HERMES_FLEET_BOT_CHAT_FAIL forces
+/// lookup failures so the fail-closed UI path is walkable.
+final class ScriptedBotModeChatSeam: BotModeChatProviding, @unchecked Sendable {
+    private let gatewayID: GatewayID
+    private var created = Set<String>()
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+    }
+
+    func lookupCanonicalChat(profile: String) async throws -> CanonicalLookup {
+        if FleetServiceGraph.botChatLookupFails {
+            throw RosterError.rpcFailed("fixture lookup failure")
+        }
+        // The default profile already has one; other profiles return empty
+        // first (confirmed miss → creation path) unless previously created.
+        if profile != "default" && !created.contains(profile) {
+            return CanonicalLookup(rows: [])
+        }
+        return CanonicalLookup(rows: [
+            CanonicalLookupRow(
+                id: "botchat-\(profile)",
+                resolvedID: nil,
+                title: BotModeContract.canonicalChatTitle,
+                preview: "Scripted canonical chat",
+                messageCount: 3)
+        ])
+    }
+
+    func createCanonicalChat(profile: String) async throws -> String {
+        created.insert(profile)
+        return "botchat-\(profile)"
+    }
+}
+
 /// R9-T5/T6: scripted management seam (DEBUG simulator only) — fixture
 /// cron jobs + skills catalog with in-memory mutations so both panes are
 /// fully walkable without a live gateway. Presentation data only.
+///
+/// Slice 3 (D13): the cron store is PROFILE-SCOPED like the real gateway
+/// (cron/jobs.py:59-64 — each profile's jobs live in its own store). The
+/// fixture seeds general jobs plus deterministic `[bot:<owner>]` routine
+/// jobs so the bot Routines surface has walkable content: list returns
+/// the general jobs plus the requesting profile's namespaced routines.
 final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Sendable {
     private let lock = NSLock()
     private var jobs: [CronJob]
@@ -357,6 +423,30 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
                     schedule: "every monday at 09:00",
                     nextRunAt: nil, lastRunAt: nil, lastStatus: nil,
                     isEnabled: false, state: "paused", promptPreview: nil),
+                // Slice 3 fixture routines — the researcher bot's store.
+                CronJob(
+                    jobID: "script-routine-1", name: "[bot:researcher] Morning briefing",
+                    schedule: "every day at 07:00",
+                    nextRunAt: "2026-09-08T07:00:00", lastRunAt: "2026-09-07T07:00:02",
+                    lastStatus: "ok", isEnabled: true, state: "enabled",
+                    promptPreview: "Summarize overnight fleet activity for the researcher.",
+                    deliver: "bot-chat:researcher", repeatDisplay: "forever"),
+                CronJob(
+                    jobID: "script-routine-2", name: "[bot:researcher] Weekly digest",
+                    schedule: "every monday at 09:00",
+                    nextRunAt: nil, lastRunAt: nil, lastStatus: nil,
+                    isEnabled: false, state: "paused", promptPreview: nil,
+                    pausedReason: "paused by user"),
+                // Slice 3 fixture routine — the default bot's store, with a
+                // deterministic failure association (last_fire_error).
+                CronJob(
+                    jobID: "script-routine-3", name: "[bot:default] Evening recap",
+                    schedule: "every day at 21:00",
+                    nextRunAt: "2026-09-08T21:00:00", lastRunAt: "2026-09-07T21:00:04",
+                    lastStatus: "fire_failed", isEnabled: true, state: "enabled",
+                    promptPreview: "Recap the day's fleet activity.",
+                    deliver: "bot-chat:default", repeatDisplay: "forever",
+                    lastFireError: "provider auth missing for openrouter"),
             ]
             disabled = ["test-driven-development"]
         }
@@ -371,7 +461,18 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
     }
 
     func listCronJobs(profile: String?) async throws -> [CronJob] {
-        unlocked { jobs }
+        unlocked {
+            // Profile-scoped store: general jobs plus THIS profile's
+            // namespaced routines (the [bot:<profile>] namespace is the
+            // ownership association on the real wire too).
+            jobs.filter { job in
+                guard let profile else { return true }
+                if let parsed = BotRoutineNamespace.parse(job.name) {
+                    return parsed.owner.lowercased() == profile.lowercased()
+                }
+                return true
+            }
+        }
     }
 
     func createCronJob(draft: CronJobDraft, profile: String?) async throws -> CronJob {
@@ -379,7 +480,9 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
             jobID: "script-cron-\(UUID().uuidString.prefix(6))",
             name: draft.name, schedule: draft.schedule,
             nextRunAt: "2026-09-05T07:00:00", isEnabled: true, state: "enabled",
-            promptPreview: String(draft.prompt.prefix(80)))
+            promptPreview: String(draft.prompt.prefix(80)),
+            deliver: draft.deliver,
+            repeatDisplay: draft.repeatCount.map { _ in "forever" })
         return unlocked {
             jobs.append(job)
             return job
@@ -411,7 +514,16 @@ final class ScriptedManagementSeam: GatewayManagementProviding, @unchecked Senda
     }
 
     func fireCronJob(_ jobID: String, profile: String?) async throws {
-        // Scripted success — the fixture gateway "supports" run-over-WS.
+        // The scripted gateway supports run by default (R9-era fixture
+        // behavior the general Cron pane's regression test relies on —
+        // a gateway that DOES forward cron.manage run). The launch arg
+        // `-fixture-run-now-fails` scripts the REAL 0.21.0 wire answer
+        // (methods_tools.py:1033-1057: run not forwarded → err 4016) so
+        // the honest unsupported-explanation path is UI-testable against
+        // the same shape the live gateway returns.
+        if ProcessInfo.processInfo.arguments.contains("-fixture-run-now-fails") {
+            throw GatewayManagementError.unsupportedAction("unknown cron action: run")
+        }
     }
 
     func skillsCatalog(profile: String) async throws -> SkillsCatalog {
@@ -1340,12 +1452,35 @@ private struct ScriptedReplay: ReplayProviding {
     func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
 }
 
-/// Scripted read-only history (DEBUG only) — an empty transcript is fine for
-/// the simulator walkthrough.
+/// Scripted read-only history (DEBUG only). Canonical "Bot Chat" fixture
+/// sessions (id prefix "botchat-") carry a short deterministic transcript so
+/// the canonical-chat state is reviewable in the simulator; other sessions
+/// stay honestly empty.
 private struct ScriptedHistory: SessionHistoryProviding {
     let gatewayID: GatewayID
     func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
-        SessionHistory(sessionID: sessionID, count: 0, messages: [])
+        guard sessionID.hasPrefix("botchat-") else {
+            return SessionHistory(sessionID: sessionID, count: 0, messages: [])
+        }
+        let profile = String(sessionID.dropFirst("botchat-".count))
+        let messages = [
+            SessionMessage(
+                role: .user,
+                text: "Morning check-in — anything blocking you?",
+                timestamp: 1_757_240_000,
+                rowID: "botchat-hist-1"),
+            SessionMessage(
+                role: .assistant,
+                text: "Nothing blocking. I finished the \(profile) review pass and queued the summary.",
+                timestamp: 1_757_240_060,
+                rowID: "botchat-hist-2"),
+            SessionMessage(
+                role: .user,
+                text: "Great — ping me if the batch job drifts.",
+                timestamp: 1_757_240_180,
+                rowID: "botchat-hist-3"),
+        ]
+        return SessionHistory(sessionID: sessionID, count: messages.count, messages: messages)
     }
     func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
         SessionStatus.parse(output: "Session ID: \(sessionID)")
@@ -1376,6 +1511,10 @@ enum ScriptedFleet {
     ]
 
     static func profiles(on gatewayID: GatewayID) -> [ProfileDescriptor] {
+        // Slice 2: profiles created through the scripted management seam in
+        // THIS app process join the roster on the next refresh (created bots
+        // must become visible; the seam mints them).
+        let created = ScriptedBotProfileSeamStore.shared.createdDescriptors(on: gatewayID)
         switch gatewayID.rawValue {
         case "workstation":
             return [
@@ -1391,7 +1530,7 @@ enum ScriptedFleet {
                     displayName: "Researcher", skillCount: 8, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "researcher")
                 ),
-            ]
+            ] + created
         case "render-box":
             return [
                 ProfileDescriptor(
@@ -1400,9 +1539,9 @@ enum ScriptedFleet {
                     displayName: "Default", skillCount: 10, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "default")
                 ),
-            ]
+            ] + created
         default:
-            return []
+            return created
         }
     }
 
@@ -1539,6 +1678,639 @@ private struct ScriptedRosterSession: GatewayRosterSession {
         if isOutage { throw RosterError.notConnected }
         return ScriptedFleet.sessions(on: route)
     }
+}
+
+/// Shared record of profiles created through scripted management seams in
+/// this app process, so the scripted roster can surface created bots on the
+/// next refresh (deterministic create-visible flow).
+final class ScriptedBotProfileSeamStore: @unchecked Sendable {
+    static let shared = ScriptedBotProfileSeamStore()
+    private let lock = NSLock()
+    private var created: [GatewayID: [ProfileDescriptor]] = [:]
+
+    func record(gatewayID: GatewayID, name: String, title: String?) {
+        lock.lock(); defer { lock.unlock() }
+        var list = created[gatewayID] ?? []
+        guard !list.contains(where: { $0.name == name }) else { return }
+        list.append(ProfileDescriptor(
+            name: name,
+            path: "~/.hermes/profiles/\(name)",
+            isDefault: false,
+            displayName: title ?? name))
+        created[gatewayID] = list
+    }
+
+    func createdDescriptors(on gatewayID: GatewayID) -> [ProfileDescriptor] {
+        lock.lock(); defer { lock.unlock() }
+        return created[gatewayID] ?? []
+    }
+}
+
+/// True Bots Mode slice 2: scripted bot-profile management seam (DEBUG
+/// simulator only) — in-memory metadata/section/avatar state with the same
+/// semantics as the real client (CAS conflict on stale revision, model
+/// confirmation knob, partial-success outcomes). Presentation data only.
+final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, @unchecked Sendable {
+    private let lock = NSLock()
+    private let gatewayID: GatewayID
+    private var metadataByProfile: [String: BotModeMetadata] = [:]
+    private var revisionByProfile: [String: Int] = [:]
+    private var sections: [BotSection] = []
+    private var sectionsRevision = 0
+
+    /// Env knob: `HERMES_FLEET_MODEL_CONFIRM=1` forces the model
+    /// confirmation handshake on every model write.
+    private var modelConfirmForced: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_MODEL_CONFIRM"] == "1"
+    }
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+        if gatewayID.rawValue == "workstation" {
+            sections = [
+                BotSection(id: "sec-script-1", name: "Clients"),
+                BotSection(id: "sec-script-2", name: "Research"),
+            ]
+            sectionsRevision = 1
+            var researcher = BotModeMetadata()
+            researcher.title = "Researcher"
+            researcher.sectionID = "sec-script-2"
+            metadataByProfile["researcher"] = researcher
+            revisionByProfile["researcher"] = 2
+        }
+    }
+
+    func describeProfile(_ profile: String) async throws -> BotProfileDescription {
+        BotProfileDescription(
+            name: profile,
+            descriptionText: metadataByProfile[profile]?.descriptionText,
+            soul: "Scripted SOUL for \(profile).",
+            defaultModel: "hermes",
+            provider: "nous",
+            skills: [
+                .init(name: "code", enabled: true),
+                .init(name: "web", enabled: false),
+            ],
+            toolsets: [.init(name: "fs", label: "Files", toolCount: 4, enabled: true)],
+            mcpServers: [.init(name: "script-srv", enabled: true, transport: "http")]
+        )
+    }
+
+    func configureProfile(_ profile: String, edit: BotProfileEdit) async throws -> BotProfileEditOutcome {
+        try await configureProfile(profile, edit: edit, confirmExpensiveModel: false)
+    }
+
+    func configureProfile(
+        _ profile: String, edit: BotProfileEdit, confirmExpensiveModel: Bool
+    ) async throws -> BotProfileEditOutcome {
+        var applied: [String: Bool] = [:]
+        if let metadata = edit.metadata {
+            let expected = edit.metadataExpectedRevision
+            let current: Int
+            let appliedMeta: Bool
+            (current, appliedMeta) = applyMetadata(profile, metadata: metadata, expected: expected)
+            if !appliedMeta {
+                throw BotSectionSyncError.conflict(
+                    "expected revision \(expected ?? 0) but the gateway has \(current)")
+            }
+            applied["ui_meta"] = true
+        }
+        if edit.soul != nil { applied["soul"] = true }
+        if edit.descriptionText != nil { applied["description"] = true }
+        if edit.hasModelSection {
+            if modelConfirmForced && !confirmExpensiveModel {
+                return BotProfileEditOutcome(
+                    appliedSections: [], failedSections: [],
+                    confirmRequired: true,
+                    confirmMessage: "Scripted expensive-model confirmation")
+            }
+            applied["model"] = true
+        }
+        if edit.disabledSkills != nil { applied["skills"] = true }
+        if edit.enabledToolsets != nil { applied["toolsets"] = true }
+        if edit.enabledMCPServers != nil { applied["mcp_servers"] = true }
+        return BotProfileEditOutcome(edit: edit, applied: applied)
+    }
+
+    func createProfile(_ spec: BotCreateSpec) async throws -> String {
+        seedProfile(spec.name, metadata: BotModeMetadata(
+            title: spec.title, descriptionText: spec.descriptionText))
+        return spec.name
+    }
+
+    func uploadAvatar(_ profile: String, dataURL: String) async throws {}
+
+    func clearAvatar(_ profile: String) async throws {}
+
+    func avatarData(_ profile: String) async throws -> Data? { nil }
+
+    func loadSectionRegistry() async throws -> (sections: [BotSection], revision: Int?) {
+        currentSections()
+    }
+
+    func writeSectionRegistry(
+        value: MetadataValue, expectedRevision: Int?
+    ) async throws -> MetadataWriteReceiptLike {
+        let result = applySections(value, expectedRevision: expectedRevision)
+        guard result.applied else {
+            throw BotSectionSyncError.conflict(
+                "expected revision \(expectedRevision ?? 0) but the gateway has \(result.currentRevision)")
+        }
+        return MetadataWriteReceiptLike(
+            applied: true,
+            newRevisions: [BotSectionRegistry.metaKey: result.newRevision])
+    }
+
+    // Sync lock helpers (NSLock is unavailable from async contexts).
+
+    /// CAS-apply bot metadata; returns (currentRevision, applied).
+    private func applyMetadata(
+        _ profile: String, metadata: BotModeMetadata, expected: Int?
+    ) -> (Int, Bool) {
+        lock.lock(); defer { lock.unlock() }
+        let current = revisionByProfile[profile] ?? 0
+        if let expected, expected != current {
+            return (current, false)
+        }
+        metadataByProfile[profile] = metadata
+        revisionByProfile[profile] = current + 1
+        return (current + 1, true)
+    }
+
+    private func seedProfile(_ profile: String, metadata: BotModeMetadata) {
+        lock.lock(); defer { lock.unlock() }
+        metadataByProfile[profile] = metadata
+        revisionByProfile[profile] = 1
+        ScriptedBotProfileSeamStore.shared.record(gatewayID: gatewayID, name: profile, title: metadata.title)
+    }
+
+    private func currentSections() -> (sections: [BotSection], revision: Int?) {
+        lock.lock(); defer { lock.unlock() }
+        return (sections, sectionsRevision)
+    }
+
+    /// CAS-apply the section registry; returns (applied, current, new).
+    private func applySections(
+        _ value: MetadataValue, expectedRevision: Int?
+    ) -> (applied: Bool, currentRevision: Int, newRevision: Int) {
+        lock.lock(); defer { lock.unlock() }
+        if let expected = expectedRevision, expected != sectionsRevision {
+            return (false, sectionsRevision, sectionsRevision)
+        }
+        sections = BotSectionRegistry.normalize(value)
+        sectionsRevision += 1
+        return (true, sectionsRevision, sectionsRevision)
+    }
+}
+
+/// Slice 2: scripted room source — one hosted room + one legacy room on the
+/// workstation fixture so both provenances render with distinct identities.
+/// Slice 4: the hosted room is INTERACTIVE (backed by `ScriptedRoomEngine`)
+/// so create/open/message/rename/disband/stop/retry/approve are walkable
+/// deterministically in the simulator + UI tests. The legacy room stays
+/// observational (addendum).
+struct ScriptedRoomSource: FleetRoomSourceProviding {
+    let gatewayID: GatewayID
+
+    func rooms() async -> [FleetRoom] {
+        guard gatewayID.rawValue == "workstation" else { return [] }
+        var rooms: [FleetRoom] = [await ScriptedRoomEngine.shared.hostedRoom(gatewayID: gatewayID)]
+        rooms += await ScriptedRoomEngine.shared.createdRoomRows(gatewayID: gatewayID)
+        if await ScriptedRoomEngine.shared.legacyRoomVisible {
+            rooms.append(legacyRoom(gatewayID: gatewayID))
+        }
+        return rooms
+    }
+
+    /// F1: the workstation fixture mirrors a real gateway's
+    /// `groups.capabilities` probe (driver + groups.create advertised);
+    /// other scripted gateways fail closed (.unknown).
+    func createRoomCapability() async -> GroupsCreateCapability {
+        guard gatewayID.rawValue == "workstation" else { return .unknown }
+        return .supported
+    }
+
+    private func legacyRoom(gatewayID: GatewayID) -> FleetRoom {
+        FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: gatewayID, key: "name:Research Crew"),
+            name: "Research Crew",
+            members: [FleetRoomMember(name: "Researcher")],
+            recentLog: [
+                FleetRoomMessage(
+                    id: "l1",
+                    from: .init(kind: .member, name: "Researcher"),
+                    text: "Older room managed from Desktop.",
+                    at: 1_757_100_000_000),
+            ]
+        )
+    }
+}
+
+/// Slice 4 scripted engine: an in-memory hosted room faithful to the
+/// gateway's groups.* semantics (durable log by seq, idempotent send,
+/// tombstoned disband, stop/retry/approve counters) — deterministic UI-test
+/// fixture, DEBUG simulator only. Env knobs (UI tests):
+/// - `HERMES_FLEET_ROOM_FAILURE=1` — the room's transcript carries a typed
+///   `turn.failed` (provider_auth_or_access) + a pending retry action.
+/// - `HERMES_FLEET_ROOM_APPROVAL=1` — a needs-you approval is pending.
+actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
+    static let shared = ScriptedRoomEngine()
+
+    private var _events: [HostedRoomEventValue] = []
+    private var _seq = 0
+    private var _roomName = "Launch Crew"
+    private var _disbanded = false
+    private var _legacyRoomVisible = true
+    private var _createdRooms: [String] = []
+    private var _sendCount = 0
+    private var _renameCount = 0
+    private var _stopCount = 0
+    private var _retryCount = 0
+    private var _approveChoices: [String] = []
+    private var _pendingApproval: RoomPendingApproval?
+    private var _pendingRetry: RoomPendingRetry?
+    private var _lastCreatedMembers: [[String: String]] = []
+    private var _createdRoomNames: [String: String] = [:]
+
+    private init() {
+        let seed = Self.makeSeed()
+        _events = seed.events
+        _seq = seed.seq
+        _pendingRetry = seed.pendingRetry
+        _pendingApproval = seed.pendingApproval
+    }
+
+    /// Pure seed builder (callable from nonisolated init AND isolated reset).
+    private static func makeSeed()
+        -> (events: [HostedRoomEventValue], seq: Int,
+            pendingApproval: RoomPendingApproval?, pendingRetry: RoomPendingRetry?) {
+        var events: [HostedRoomEventValue] = []
+        var seq = 0
+        func append(
+            kind: String, actorKind: String, actorID: String, actorProfile: String? = nil,
+            text: String?, reason: String? = nil
+        ) {
+            seq += 1
+            events.append(HostedRoomEventValue(
+                roomID: "room-alpha", seq: seq, eventID: "se-\(seq)", kind: kind,
+                actorKind: actorKind, actorID: actorID, actorProfile: actorProfile,
+                payloadText: text, reasonCode: reason, createdAt: Date().timeIntervalSince1970))
+        }
+        append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
+        append(kind: "message.member", actorKind: "member", actorID: "researcher",
+               actorProfile: "researcher", text: "Draft is ready for review.")
+        var pendingRetry: RoomPendingRetry?
+        var pendingApproval: RoomPendingApproval?
+        let env = ProcessInfo.processInfo.environment
+        if env["HERMES_FLEET_ROOM_FAILURE"] == "1" {
+            append(kind: "turn.failed", actorKind: "gateway", actorID: "gateway",
+                   actorProfile: "researcher",
+                   text: "Provider rejected the request (auth).",
+                   reason: "provider_auth_or_access")
+            pendingRetry = RoomPendingRetry(taskID: "task-fail-1")
+        }
+        if env["HERMES_FLEET_ROOM_APPROVAL"] == "1" {
+            pendingApproval = RoomPendingApproval(
+                memberID: "researcher", taskID: "task-appr-1", executionGeneration: 2,
+                requestID: "req-1",
+                approval: ["prompt": .string("Allow the researcher to run the web tool?")])
+        }
+        return (events, seq, pendingApproval, pendingRetry)
+    }
+
+    /// Full reset to the deterministic seed (per-test isolation).
+    func reset() {
+        _roomName = "Launch Crew"
+        _disbanded = false
+        _legacyRoomVisible = true
+        _createdRooms = []
+        _sendCount = 0
+        _renameCount = 0
+        _stopCount = 0
+        _retryCount = 0
+        _approveChoices = []
+        _lastCreatedMembers = []
+        let seed = Self.makeSeed()
+        _events = seed.events
+        _seq = seed.seq
+        _pendingApproval = seed.pendingApproval
+        _pendingRetry = seed.pendingRetry
+    }
+
+    var roomKey: String { "room-alpha" }
+    var roomNameValue: String { _roomName }
+    var isDisbanded: Bool { _disbanded }
+    var legacyRoomVisible: Bool { _legacyRoomVisible }
+    var sendCount: Int { _sendCount }
+    var stopCount: Int { _stopCount }
+    var retryCount: Int { _retryCount }
+    var renameCount: Int { _renameCount }
+    var approveChoices: [String] { _approveChoices }
+    var createdRoomIDs: [String] { _createdRooms }
+    var lastCreatedMembers: [[String: String]] { _lastCreatedMembers }
+
+    /// Seed a legacy same-name room (distinctness fixture) on/off.
+    func setLegacyRoomVisible(_ visible: Bool) {
+        _legacyRoomVisible = visible
+    }
+
+    func hostedRoom(gatewayID: GatewayID) -> FleetRoom {
+        FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomKey),
+            name: _roomName,
+            members: [
+                FleetRoomMember(name: "Researcher", handle: "researcher"),
+                FleetRoomMember(name: "Default", handle: "default"),
+            ],
+            hosted: HostedRoomState(
+                authorityGatewayID: gatewayID.rawValue,
+                authorityEpoch: 1,
+                latestSeq: _seq,
+                advertisedMethods: [
+                    "groups.create", "groups.send", "groups.rename", "groups.log",
+                    "groups.disband", "groups.stop", "groups.retry", "groups.approve",
+                ],
+                driverAvailable: !_disbanded))
+    }
+
+    @discardableResult
+    private func append(
+        kind: String, actorKind: String, actorID: String, actorProfile: String? = nil,
+        text: String?, reason: String? = nil
+    ) -> HostedRoomEventValue {
+        _seq += 1
+        let event = HostedRoomEventValue(
+            roomID: roomKey, seq: _seq, eventID: "se-\(_seq)", kind: kind,
+            actorKind: actorKind, actorID: actorID, actorProfile: actorProfile,
+            payloadText: text, reasonCode: reason, createdAt: Date().timeIntervalSince1970)
+        _events.append(event)
+        return event
+    }
+
+    // MARK: RoomChatCommanding
+
+    func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
+        let window = _events.filter { $0.roomID == roomID && $0.seq > sinceSeq }
+        return RoomLogPageSlice(
+            events: Array(window.prefix(limit)),
+            cursor: _seq,
+            latestSeq: _seq,
+            hasMore: window.count > limit,
+            authorityGatewayID: "workstation",
+            authorityEpoch: 1)
+    }
+
+    func send(roomID: String, text: String, threadID: String?) async throws -> Int {
+        _sendCount += 1
+        append(kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
+        return _seq
+    }
+
+    func rename(roomID: String, name: String) async throws {
+        _renameCount += 1
+        _roomName = name
+        append(kind: "room.renamed", actorKind: "system", actorID: "system", text: name)
+    }
+
+    func disband(roomID: String) async throws {
+        _disbanded = true
+        append(kind: "room.disbanded", actorKind: "system", actorID: "system", text: nil)
+    }
+
+    func stop(roomID: String) async throws -> Int {
+        _stopCount += 1
+        append(kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
+        return 1
+    }
+
+    func retry(roomID: String, taskID: String) async throws {
+        _retryCount += 1
+        _pendingRetry = nil
+    }
+
+    func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws {
+        _approveChoices.append(choice)
+        _pendingApproval = nil
+    }
+
+    func createRoom(name: String, members: [[String: String]]) async throws -> String {
+        let roomID = "room-\(_createdRooms.count + 1)"
+        _createdRooms.append(roomID)
+        _createdRoomNames[roomID] = name
+        _lastCreatedMembers = members
+        append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
+        return roomID
+    }
+
+    /// FleetRoom rows for created rooms (fresh log per room; frozen roster
+    /// from the wire members).
+    func createdRoomRows(gatewayID: GatewayID) -> [FleetRoom] {
+        _createdRooms.map { roomID in
+            FleetRoom(
+                id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+                name: _createdRoomNames[roomID] ?? roomID,
+                members: [],
+                hosted: HostedRoomState(
+                    authorityGatewayID: gatewayID.rawValue,
+                    authorityEpoch: 1,
+                    advertisedMethods: [
+                        "groups.create", "groups.send", "groups.rename", "groups.log",
+                        "groups.disband", "groups.stop", "groups.retry", "groups.approve",
+                    ],
+                    driverAvailable: true))
+        }
+    }
+
+    // MARK: RoomDriverStatusProviding
+
+    func driverStatus(roomID: String) async throws -> RoomDriverStatus? {
+        RoomDriverStatus(
+            working: false,
+            blocked: _pendingApproval != nil || _pendingRetry != nil,
+            counts: [:],
+            pendingRetries: _pendingRetry.map { [$0] } ?? [],
+            pendingApprovals: _pendingApproval.map { [$0] } ?? [])
+    }
+}
+
+/// Slice 5 (D19): scripted RoomLink engine (DEBUG simulator only) — a
+/// deterministic `RoomLinkCommanding` faithful to the gateway's peer.*
+/// semantics. Env knobs (UI tests):
+/// - `HERMES_FLEET_ROOMLINK=unsupported` — the gateway reports RoomLink
+///   disabled with reason `durable_run_storage_required` (honest unsupported
+///   state; no grant is ever minted).
+/// - `HERMES_FLEET_ROOMLINK=stale` — the replica starts BEHIND (lastSeq 4 of
+///   latestSeq 10) so promotion is blocked until Replay now runs.
+/// - default — supported direct/TLS catalog, caught-up replica.
+actor ScriptedRoomLinkEngine: RoomLinkCommanding {
+    static let shared = ScriptedRoomLinkEngine()
+
+    private var mode: Mode {
+        switch ProcessInfo.processInfo.environment["HERMES_FLEET_ROOMLINK"] {
+        case "unsupported": return .unsupported
+        case "stale": return .staleReplica
+        default: return .supported
+        }
+    }
+
+    private enum Mode {
+        case supported
+        case unsupported
+        case staleReplica
+    }
+
+    private var _inviteCount = 0
+    private var _revokeCount = 0
+    private var _registerCount = 0
+    private var _promoteConfirms: [Bool] = []
+    private var _replicateCount = 0
+    private var _replicaCaughtUp: Bool
+
+    private init() {
+        _replicaCaughtUp = ProcessInfo.processInfo.environment["HERMES_FLEET_ROOMLINK"] != "stale"
+    }
+
+    var inviteCount: Int { _inviteCount }
+    var revokeCount: Int { _revokeCount }
+    var registerCount: Int { _registerCount }
+    var promoteConfirms: [Bool] { _promoteConfirms }
+    var replicateCount: Int { _replicateCount }
+
+    func reset() {
+        _inviteCount = 0
+        _revokeCount = 0
+        _registerCount = 0
+        _promoteConfirms = []
+        _replicateCount = 0
+        _replicaCaughtUp = mode != .staleReplica
+    }
+
+    private var supportedNegotiation: RoomLinkNegotiation {
+        RoomLinkNegotiation(
+            authorityGatewayID: "install:workstation",
+            enabled: true,
+            profile: "default",
+            protocolVersion: 2,
+            installationID: "workstation",
+            linkModes: ["direct"],
+            persistentProcess: true,
+            textOnly: true,
+            attachmentsSupported: false,
+            catalogDigest: String(repeating: "c", count: 64),
+            executionPolicy: RoomLinkExecutionPolicy(
+                version: 1, targetProfile: "default",
+                enabledToolsets: ["bot_room"], approvalMode: "manual",
+                maxIterations: 12, policyDigest: String(repeating: "p", count: 64)),
+            endpoint: RoomLinkEndpoint(
+                available: true,
+                url: "https://roomlink.fixture.test/v1",
+                transportSecurity: "tls"),
+            methods: [
+                "groups.capabilities", "groups.peer.invite", "groups.peer.register",
+                "groups.peer.revoke", "groups.replica_state", "groups.replicate",
+                "groups.promote", "groups.demote",
+            ])
+    }
+
+    // MARK: RoomLinkCommanding
+
+    func negotiate() async throws -> RoomLinkNegotiation {
+        switch mode {
+        case .supported, .staleReplica:
+            return supportedNegotiation
+        case .unsupported:
+            return RoomLinkNegotiation(
+                authorityGatewayID: "install:workstation",
+                enabled: false,
+                disabledReason: .durableRunStorageRequired)
+        }
+    }
+
+    func invite(
+        roomID: String?, memberID: String?, ttlSeconds: Double
+    ) async throws -> RoomLinkGrant {
+        guard mode != .unsupported else {
+            throw RoomCommandFailure.unsupportedMethod("groups.peer.invite")
+        }
+        _inviteCount += 1
+        let now = Date()
+        return RoomLinkGrant(
+            id: "grant-\(_inviteCount)",
+            token: "fixture-grant-\(_inviteCount)-0123456789abcdef",
+            roomID: roomID,
+            memberID: memberID ?? "researcher",
+            targetProfile: "researcher",
+            permissions: RoomLinkGrant.Permission.allCases,
+            issuedAt: now,
+            expiresAt: now.addingTimeInterval(ttlSeconds))
+    }
+
+    func registerPeer(
+        roomID: String, memberID: String, grant: RoomLinkGrant,
+        targetURL: String, catalogDigest: String
+    ) async throws -> RoomPeerRoute {
+        _registerCount += 1
+        return RoomPeerRoute(
+            roomID: roomID, memberID: memberID,
+            targetInstallID: "install:remote", targetProfile: grant.targetProfile,
+            mode: "direct", transportSecurity: "tls", status: .ready)
+    }
+
+    func revoke(grant: RoomLinkGrant) async throws {
+        _revokeCount += 1
+    }
+
+    func peerRoutes(roomID: String) async throws -> [RoomPeerRoute] {
+        guard mode != .unsupported else { return [] }
+        return [RoomPeerRoute(
+            roomID: roomID, memberID: "researcher",
+            targetInstallID: "install:remote", targetProfile: "researcher",
+            mode: "direct", transportSecurity: "tls", status: .ready)]
+    }
+
+    func replicaState(roomID: String) async throws -> RoomReplicaState? {
+        guard mode != .unsupported else { return nil }
+        // Replica of a FOREIGN authority ("install:hub") — the only state
+        // upstream promote_replica allows promoting. Authority == local
+        // would be an honest "already holds the room authority" refusal.
+        return RoomReplicaState(
+            roomID: roomID, name: "Launch Crew",
+            authorityGatewayID: "install:hub", authorityEpoch: 3,
+            lastSeq: _replicaCaughtUp ? 10 : 4,
+            latestSeq: 10,
+            eventBytes: 4096, createdAt: 1, updatedAt: 2)
+    }
+
+    func replicate(roomID: String) async throws -> RoomReplicateReceipt {
+        _replicateCount += 1
+        _replicaCaughtUp = true
+        return RoomReplicateReceipt(
+            roomID: roomID, storedSeq: 10, ingested: 6,
+            authorityGatewayID: "install:hub", authorityEpoch: 3,
+            caughtUp: true)
+    }
+
+    func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt {
+        _promoteConfirms.append(confirm)
+        guard confirm else {
+            throw RoomCommandFailure.confirmRequired(
+                "promotion requires confirm=true acknowledging the previous authority can no longer commit")
+        }
+        guard _replicaCaughtUp else {
+            throw RoomCommandFailure.rpcFailed("replica is behind the authority log", 0)
+        }
+        // Upstream promote_replica shape: THIS gateway ("install:workstation")
+        // becomes the authority at epoch+1; the foreign authority it took
+        // over ("install:hub") is named as previous — consistent with
+        // replicaState above.
+        return RoomPromotionReceipt(
+            roomID: roomID,
+            authorityGatewayID: "install:workstation", authorityEpoch: 4,
+            previousGatewayID: "install:hub", previousEpoch: 3,
+            claimSeq: 11, latestSeq: 10)
+    }
+
+    func demote(roomID: String, observedGatewayID: String, observedEpoch: Int) async throws {}
 }
 
 #endif

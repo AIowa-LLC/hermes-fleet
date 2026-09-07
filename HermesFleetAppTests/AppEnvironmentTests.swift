@@ -889,4 +889,135 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertNotNil(environment.rosterSnapshot)
         XCTAssertFalse(environment.isRefreshing)
     }
+
+    // MARK: F1 — gateway-level Create Room gate (zero-room first use)
+
+    /// Scripted room source answering a gateway-level capability probe.
+    private struct CapabilityProbeSource: FleetRoomSourceProviding {
+        let capability: GroupsCreateCapability
+        func rooms() async -> [FleetRoom] { [] }
+        func createRoomCapability() async -> GroupsCreateCapability { capability }
+    }
+
+    /// A source whose probe answer can flip between loads (last-known-truth
+    /// test). OSAllocatedUnfairLock — NSLock is banned in async contexts.
+    private final class FlippingProbeSource: FleetRoomSourceProviding, @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock()
+        private var _capability: GroupsCreateCapability
+        init(_ capability: GroupsCreateCapability) { _capability = capability }
+        func setCapability(_ capability: GroupsCreateCapability) {
+            lock.withLock { _capability = capability }
+        }
+        func rooms() async -> [FleetRoom] { [] }
+        func createRoomCapability() async -> GroupsCreateCapability {
+            lock.withLock { _capability }
+        }
+    }
+
+    private func makeRoomEnvironment(
+        source: any FleetRoomSourceProviding
+    ) async -> (AppEnvironment, GatewayID) {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: [])
+            }
+        )
+        let gateway = registration("fresh-gateway", name: "Fresh Gateway")
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            roomSourceFactory: { _ in source },
+            health: TestHealthAccumulator(),
+            seedRegistrations: [gateway]
+        )
+        await environment.load()
+        return (environment, gateway.id ?? GatewayID(rawValue: "fresh-gateway"))
+    }
+
+    /// F1 core case: a fully groups-capable gateway hosting ZERO rooms must
+    /// still offer Create Room — the first room on a fresh gateway is
+    /// creatable from Fleet.
+    func testCreateRoomOfferedOnZeroRoomCapableGateway() async {
+        let (environment, gatewayID) = await makeRoomEnvironment(
+            source: CapabilityProbeSource(capability: .supported))
+        await environment.loadRooms()
+        XCTAssertTrue(environment.rooms(for: gatewayID).isEmpty,
+                      "fixture: zero hosted rooms (fresh gateway, first use)")
+        XCTAssertEqual(environment.canCreateRoomsByGateway[gatewayID], true,
+                       "probe truth is persisted at the gateway level")
+        XCTAssertTrue(environment.canCreateRooms(on: gatewayID),
+                      "F1: capable gateway with ZERO rooms must still offer Create Room")
+    }
+
+    /// Old gateway without groups.*: honest absence — no dead button.
+    func testCreateRoomHiddenOnUnsupportedGateway() async {
+        let (environment, gatewayID) = await makeRoomEnvironment(
+            source: CapabilityProbeSource(capability: .unsupported))
+        await environment.loadRooms()
+        XCTAssertEqual(environment.canCreateRoomsByGateway[gatewayID], false)
+        XCTAssertFalse(environment.canCreateRooms(on: gatewayID),
+                       "unsupported gateway must not offer Create Room")
+    }
+
+    /// `.unknown` (probe transport failure) never flips the gate: the
+    /// last-known capability stands until a definitive answer arrives.
+    func testUnknownProbeKeepsLastKnownCapabilityTruth() async {
+        let source = FlippingProbeSource(.supported)
+        let (environment, gatewayID) = await makeRoomEnvironment(source: source)
+
+        await environment.loadRooms()
+        XCTAssertTrue(environment.canCreateRooms(on: gatewayID),
+                      "capable gateway opens the gate on the first probe")
+
+        // Probe starts failing (gateway unreachable): last-known truth stands.
+        source.setCapability(.unknown)
+        await environment.loadRooms()
+        XCTAssertTrue(environment.canCreateRooms(on: gatewayID),
+                      ".unknown must not hide Create Room on a capable gateway")
+
+        // A definitive downgrade is honest truth (downgrade allowed).
+        source.setCapability(.unsupported)
+        await environment.loadRooms()
+        XCTAssertFalse(environment.canCreateRooms(on: gatewayID),
+                       "definitive unsupported answer closes the gate")
+    }
+
+    /// Never-probed gateway (.unknown) with a hosted room advertising
+    /// groups.create + driver: the legacy room-row evidence still applies.
+    func testCreateGateFallsBackToRoomRowEvidenceWhenNeverProbed() async {
+        let gatewayID = GatewayID(rawValue: "fresh-gateway")
+        let capableRoom = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: "room-1"),
+            name: "Research Crew",
+            members: [],
+            hosted: HostedRoomState(
+                authorityGatewayID: gatewayID.rawValue,
+                authorityEpoch: 1,
+                advertisedMethods: ["groups.create", "groups.send"],
+                driverAvailable: true))
+        struct RoomRowSource: FleetRoomSourceProviding {
+            let room: FleetRoom
+            func rooms() async -> [FleetRoom] { [room] }
+            // createRoomCapability() defaults to .unknown
+        }
+        let (environment, _) = await makeRoomEnvironment(
+            source: RoomRowSource(room: capableRoom))
+        await environment.loadRooms()
+        XCTAssertTrue(environment.canCreateRooms(on: gatewayID),
+                      "unprobed gateway with an advertising hosted room keeps the legacy path")
+    }
 }

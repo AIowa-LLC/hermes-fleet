@@ -32,11 +32,29 @@ public struct ProfileDescriptor: Hashable, Sendable, Codable, Identifiable {
     /// presence. Presence comes from the owning gateway connection's roster
     /// outcome (see `FleetRosterSnapshot.botPresence(on:)`).
     public let gatewayRunning: Bool
+    /// Bot Mode: canonical "Bot Chat" session resolved by the gateway
+    /// (`canonical_session` — methods_profiles.py:138-172). Identity info —
+    /// the exact-title registry row; nil on older gateways that omit it.
+    public let canonicalSession: CanonicalSessionRef?
+    /// Bot Mode: newest denied-source (kanban/tool) worker session — a
+    /// worker-activity signal (methods_profiles.py:191-194).
+    public let workerSession: WorkerSessionRef?
+    /// Bot Mode per-key ui_meta revisions (ALWAYS present on modern
+    /// gateways; `{}` for new profiles — methods_profiles.py:224-234).
+    /// Older gateways omit the field entirely → nil = no CAS support.
+    public let uiMetaRevisions: MetadataRevisions?
+    /// Raw profile ui_meta (unknown keys preserved verbatim).
+    public let uiMeta: [String: MetadataValue]?
 
     public var slug: ProfileSlug { ProfileSlug(rawValue: name) }
 
     /// Identity for list rendering — the slug, which is unique per gateway.
     public var id: String { name }
+
+    /// Decoded `hermes-bots` Bot Mode metadata, when present.
+    public var botModeMetadata: BotModeMetadata? {
+        BotModeMetadata(metadataValue: uiMeta?[BotModeContract.botsMetaKey])
+    }
 
     public init(
         name: String,
@@ -49,7 +67,11 @@ public struct ProfileDescriptor: Hashable, Sendable, Codable, Identifiable {
         skillCount: Int = 0,
         hasAvatar: Bool = false,
         lastSession: SessionSummary? = nil,
-        gatewayRunning: Bool = false
+        gatewayRunning: Bool = false,
+        canonicalSession: CanonicalSessionRef? = nil,
+        workerSession: WorkerSessionRef? = nil,
+        uiMetaRevisions: MetadataRevisions? = nil,
+        uiMeta: [String: MetadataValue]? = nil
     ) {
         self.name = name
         self.path = path
@@ -62,6 +84,10 @@ public struct ProfileDescriptor: Hashable, Sendable, Codable, Identifiable {
         self.hasAvatar = hasAvatar
         self.lastSession = lastSession
         self.gatewayRunning = gatewayRunning
+        self.canonicalSession = canonicalSession
+        self.workerSession = workerSession
+        self.uiMetaRevisions = uiMetaRevisions
+        self.uiMeta = uiMeta
     }
 
     /// The name to display for this bot: `display_name` when present, else the

@@ -112,6 +112,14 @@ enum FleetServiceGraph {
     nonisolated static var zeroGatewaysEnabled: Bool {
         ProcessInfo.processInfo.environment["HERMES_FLEET_ZERO_GATEWAYS"] == "1"
     }
+
+    /// True Bots Mode UI-test knob (DEBUG simulator only):
+    /// `HERMES_FLEET_BOT_CHAT_FAIL=1` makes the scripted canonical-chat
+    /// lookup throw, so the fail-closed tap behavior (retryable error, no
+    /// fork, no navigation) is deterministically walkable.
+    nonisolated static var botChatLookupFails: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_BOT_CHAT_FAIL"] == "1"
+    }
     #endif
 
     // MARK: Production — real stores + live transports
@@ -166,6 +174,12 @@ enum FleetServiceGraph {
             learningSnapshotStore: cacheStore,
             projectsSeamFactory: makeProjectsSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
             projectsSnapshotStore: cacheStore,
+            botModeChatFactory: makeBotModeChatFactory(credentialStore: credentialStore, pinStore: pinStore),
+            botProfileFactory: makeBotProfileFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomSourceFactory: makeRoomSourceFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomCommandFactory: makeRoomCommandFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomDriverStatusFactory: makeRoomDriverStatusFactory(credentialStore: credentialStore, pinStore: pinStore),
+            roomLinkFactory: makeRoomLinkFactory(credentialStore: credentialStore, pinStore: pinStore),
             health: health,
             // R9-T1: the approval banner's FaceID gate rides the SAME
             // LocalAuthentication seam as the app lock (release: real
@@ -309,6 +323,133 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayManagementClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// True Bots Mode: real per-gateway Bot Mode chat seam — the
+    /// `GatewayBotModeClient` over its own authenticated transport (same
+    /// construction as the management seam factory). Slice 2: the SAME
+    /// construction backs the bot-profile seam (describe/configure/create/
+    /// avatar/section-registry all live on that client).
+    nonisolated private static func makeBotModeChatFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetBotModeChatFactory {
+        { gateway in
+            guard let base = gateway.endpoint else {
+                return UnsupportedBotModeChat()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Slice 2: real per-gateway bot profile seam (same transport shape as
+    /// the Bot Mode chat seam).
+    nonisolated private static func makeBotProfileFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetBotProfileFactory {
+        { gateway in
+            guard let base = gateway.endpoint else {
+                return UnsupportedBotProfileManagement()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Slice 2: per-gateway room source — hosted (`groups.*`) + desktop
+    /// legacy (default-profile ui_meta projection), best-effort union.
+    nonisolated private static func makeRoomSourceFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomSourceFactory {
+        { gateway in
+            guard let base = gateway.endpoint else {
+                return EmptyRoomSource()
+            }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            let client = GatewayBotModeClient(gatewayID: gateway.id, transport: transport)
+            return GatewayRoomSourceAdapter(
+                gatewayID: gateway.id,
+                hosted: HostedRoomProvider(gatewayID: gateway.id, client: GatewayGroupsClient(gatewayID: gateway.id, transport: transport)),
+                legacy: DesktopLegacyRoomProvider(gatewayID: gateway.id, transport: transport),
+                profileReader: client
+            )
+        }
+    }
+
+    /// Slice 4: per-gateway room-command seam — `groups.*` over the shared
+    /// authenticated transport, mapped to FleetCore typed failures.
+    nonisolated private static func makeRoomCommandFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomCommandFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayRoomCommandAdapter(
+                gatewayID: gateway.id,
+                client: GatewayGroupsClient(gatewayID: gateway.id, transport: transport))
+        }
+    }
+
+    /// Slice 4: per-gateway driver-status seam (`groups.state`).
+    nonisolated private static func makeRoomDriverStatusFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomDriverStatusFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayRoomDriverStatusAdapter(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Slice 5 (D19): real per-gateway RoomLink seam — the
+    /// `GatewayRoomLinkClient` over its own authenticated transport (same
+    /// construction as the driver-status seam factory).
+    nonisolated private static func makeRoomLinkFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetRoomLinkFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return GatewayRoomLinkAdapter(
+                gatewayID: gateway.id,
+                client: GatewayRoomLinkClient(gatewayID: gateway.id, transport: transport))
         }
     }
 

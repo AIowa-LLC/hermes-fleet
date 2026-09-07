@@ -15,6 +15,12 @@ public enum FleetScreen: Hashable, Sendable {
     case roster
     /// Bot detail for an exact route: identity + status + sessions list.
     case botDetail(Route)
+    /// True Bots slice 3 (D13): the bot's Routines surface (namespaced
+    /// cron jobs on the owning profile's store).
+    case botRoutines(Route)
+    /// True Bots slice 4 (D15/D16/D18): one room's interactive chat screen
+    /// (generation-agnostic; capabilities gate every affordance).
+    case room(FleetRoom)
     /// Conversation for a session (U3 canvas; sessionID nil = create new).
     case conversation(Route, sessionID: String?)
     /// H2 Connection health dashboard (per-gateway uptime / reconnects /

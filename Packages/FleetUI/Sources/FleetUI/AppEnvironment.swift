@@ -60,6 +60,26 @@ public typealias FleetProjectsSeamFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any GatewayProjectsProviding
 
+/// True Bots Mode — builds a per-gateway Bot Mode chat seam (canonical
+/// "Bot Chat" lookup + safe creation). Same M0-guard construction as the
+/// seams above: SwiftUI depends only on the FleetCore
+/// `BotModeChatProviding` seam — never on the transport module.
+public typealias FleetBotModeChatFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any BotModeChatProviding
+
+/// True Bots Mode slice 2 — builds a per-gateway bot profile management
+/// seam (describe/configure/create/avatar/ui-meta key writes).
+public typealias FleetBotProfileFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any BotProfileManaging
+
+/// True Bots Mode slice 2 — builds a per-gateway room source (hosted +
+/// desktop-legacy providers unioned app-side).
+public typealias FleetRoomSourceFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any FleetRoomSourceProviding
+
 /// R10-T4 — builds the on-device voice engine (Speech framework STT +
 /// AVSpeechSynthesizer TTS) shared by every conversation view model. nil ⇒
 /// the fail-closed `UnsupportedVoiceTranscriber` (mic affordances hidden).
@@ -156,6 +176,50 @@ public final class AppEnvironment {
     /// Routes whose `session.list` fetch is in flight.
     public private(set) var loadingRoutes: Set<Route> = []
 
+    /// True Bots Mode: pending navigation request — a screen push that
+    /// originates outside the view tree (the canonical Bot Chat open).
+    /// FleetTabView observes this and appends it to the active tab's path.
+    public internal(set) var pendingBotChatNavigation: FleetScreen?
+
+    /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
+    /// avatar/sections) over the per-gateway seam.
+    public let botManagement: BotManagementController
+
+    /// Bots per gateway from the last SUCCESSFUL refresh — the offline-ghost
+    /// cache (a failed refresh renders these dimmed, identity retained).
+    public private(set) var cachedBotsByGateway: [GatewayID: [FleetBot]] = [:]
+
+    /// Room rows per gateway (hosted + desktop legacy) from the room-source
+    /// seam; empty until first load, honest absence otherwise.
+    public private(set) var roomsByGateway: [GatewayID: [FleetRoom]] = [:]
+
+    /// F1: last-known GATEWAY-level `groups.create` capability (from the
+    /// room source's `groups.capabilities` probe, persisted across
+    /// refreshes — a transport hiccup must not hide the Create Room entry
+    /// on a capable gateway). Absent = never probed = fail closed.
+    public private(set) var canCreateRoomsByGateway: [GatewayID: Bool] = [:]
+
+    /// True Bots Mode: request navigation to the canonical Bot Chat screen.
+    /// Called by `BotChatOpenButton` after a successful fail-closed resolve.
+    public func openBotChat(route: Route, sessionID: String) {
+        pendingBotChatNavigation = .conversation(route, sessionID: sessionID)
+        canonicalOpenIDs[route] = sessionID
+    }
+
+    /// D03: whether (route, sessionID) is the canonical "Bot Chat" for the
+    /// bot — either the roster-reported canonical session (id or compression
+    /// tip) or a session this environment opened through the canonical path.
+    /// Drives the exact "Bot Chat" screen title (identity, not decoration).
+    public func isCanonicalBotChat(route: Route, sessionID: String) -> Bool {
+        if canonicalOpenIDs[route] == sessionID { return true }
+        guard let bot = rosterSnapshot?.bot(for: route) else { return false }
+        guard let canonical = bot.canonicalSession else { return false }
+        return canonical.id == sessionID || canonical.resolvedID == sessionID
+    }
+
+    /// Sessions this environment opened through the canonical path.
+    @ObservationIgnored private var canonicalOpenIDs: [Route: String] = [:]
+
     /// Last classified read error per route (non-secret), for the Bot-detail
     /// error state. Absent until a fetch fails.
     public private(set) var sessionReadErrors: [Route: String] = [:]
@@ -188,6 +252,25 @@ public final class AppEnvironment {
     /// (the concrete `GatewayManagementClient` in production, scripted in
     /// DEBUG/tests).
     private let managementSeamFactory: FleetManagementSeamFactory?
+    /// True Bots Mode: per-gateway canonical-chat seam factory (the concrete
+    /// `GatewayBotModeClient` in production, scripted in DEBUG/tests).
+    private let botModeChatFactory: FleetBotModeChatFactory?
+    /// Cached per-gateway Bot Mode chat seams (mirrors managementSeams).
+    @ObservationIgnored private var botModeChatSeams: [GatewayID: any BotModeChatProviding] = [:]
+    /// Slice 2: room-source factory (app-side union provider).
+    private let roomSourceFactory: FleetRoomSourceFactory?
+    @ObservationIgnored private var roomSources: [GatewayID: any FleetRoomSourceProviding] = [:]
+    /// Slice 4: room-chat command seam factory (app-side `groups.*`
+    /// adapter; scripted in DEBUG/tests).
+    private let roomCommandFactory: FleetRoomCommandFactory?
+    @ObservationIgnored private var roomCommands: [GatewayID: any RoomChatCommanding] = [:]
+    /// Slice 4: driver-status seam factory (groups.state driver_status).
+    private let roomDriverStatusFactory: FleetRoomDriverStatusFactory?
+    @ObservationIgnored private var roomDriverStatuses: [GatewayID: any RoomDriverStatusProviding] = [:]
+    /// Slice 5 (D19): RoomLink command seam factory (app-side
+    /// `GatewayRoomLinkClient` adapter; scripted in DEBUG/tests).
+    private let roomLinkFactory: FleetRoomLinkFactory?
+    @ObservationIgnored private var roomLinks: [GatewayID: any RoomLinkCommanding] = [:]
     /// R9-T7: learning seam factory (memory graph) — one per gateway (the
     /// concrete `GatewayLearningClient` in production, scripted in
     /// DEBUG/tests).
@@ -252,6 +335,12 @@ public final class AppEnvironment {
         learningSnapshotStore: (any LearningGraphSnapshotStoring)? = nil,
         projectsSeamFactory: FleetProjectsSeamFactory? = nil,
         projectsSnapshotStore: (any ProjectsSnapshotStoring)? = nil,
+        botModeChatFactory: FleetBotModeChatFactory? = nil,
+        botProfileFactory: FleetBotProfileFactory? = nil,
+        roomSourceFactory: FleetRoomSourceFactory? = nil,
+        roomCommandFactory: FleetRoomCommandFactory? = nil,
+        roomDriverStatusFactory: FleetRoomDriverStatusFactory? = nil,
+        roomLinkFactory: FleetRoomLinkFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
@@ -269,10 +358,17 @@ public final class AppEnvironment {
         self.learningSnapshotStore_ = learningSnapshotStore
         self.projectsSeamFactory = projectsSeamFactory
         self.projectsSnapshotStore_ = projectsSnapshotStore
+        self.botModeChatFactory = botModeChatFactory
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
         self.voiceEngineFactory = voiceEngineFactory
+        self.roomSourceFactory = roomSourceFactory
+        self.roomCommandFactory = roomCommandFactory
+        self.roomDriverStatusFactory = roomDriverStatusFactory
+        self.roomLinkFactory = roomLinkFactory
+        self.botManagement = BotManagementController(factory: botProfileFactory)
+        botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
     }
 
     // MARK: Load / refresh
@@ -341,6 +437,172 @@ public final class AppEnvironment {
         guard token == rosterGeneration else { return }
         rosterSnapshot = snapshot
         isRefreshing = false
+        // Slice 2: cache each SUCCESSFUL gateway's bots for offline-ghost
+        // rendering on later failed refreshes (identity retained).
+        for gateway in snapshot.roster.allGateways {
+            if case .loaded = snapshot.outcome(for: gateway.id) {
+                let bots = snapshot.bots(on: gateway.id)
+                if !bots.isEmpty {
+                    cachedBotsByGateway[gateway.id] = bots
+                }
+            }
+        }
+        // Slice 2: best-effort room + section-registry sync after roster
+        // refresh (observational, never blocks the roster).
+        await loadRooms()
+        await loadAllSections()
+    }
+
+    /// Slice 2: rooms per gateway from the room-source seam (best-effort;
+    /// failures leave previous state — honest absence, no fabricated rows).
+    public func loadRooms() async {
+        guard let roomSourceFactory else { return }
+        for gateway in gateways {
+            let source: any FleetRoomSourceProviding
+            if let existing = roomSources[gateway.id] {
+                source = existing
+            } else {
+                source = roomSourceFactory(gateway)
+                roomSources[gateway.id] = source
+            }
+            let rooms = await source.rooms()
+            roomsByGateway[gateway.id] = rooms
+            // F1: persist the GATEWAY-level create capability — zero-room
+            // capable gateways must keep the Create Room entry; `.unknown`
+            // (probe failure) never flips the gate either way, and a
+            // definitive `.unsupported` is honest truth (downgrade allowed).
+            let capability = await source.createRoomCapability()
+            switch capability {
+            case .supported: canCreateRoomsByGateway[gateway.id] = true
+            case .unsupported: canCreateRoomsByGateway[gateway.id] = false
+            case .unknown: break
+            }
+        }
+    }
+
+    /// Rooms for one gateway (empty when unknown — honest absence).
+    public func rooms(for gatewayID: GatewayID) -> [FleetRoom] {
+        roomsByGateway[gatewayID] ?? []
+    }
+
+    // MARK: Slice 4 — room chat (D15/D16)
+
+    /// The lazily-built room-command seam for a gateway (nil = fail-closed:
+    /// controls hidden/disabled-with-explanation).
+    public func roomCommandSeam(for gatewayID: GatewayID) -> (any RoomChatCommanding)? {
+        if let existing = roomCommands[gatewayID] { return existing }
+        guard let factory = roomCommandFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }),
+              let seam = factory(gateway) else { return nil }
+        roomCommands[gatewayID] = seam
+        return seam
+    }
+
+    /// The lazily-built driver-status seam for a gateway.
+    public func roomDriverStatusSeam(for gatewayID: GatewayID) -> (any RoomDriverStatusProviding)? {
+        if let existing = roomDriverStatuses[gatewayID] { return existing }
+        guard let factory = roomDriverStatusFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }),
+              let seam = factory(gateway) else { return nil }
+        roomDriverStatuses[gatewayID] = seam
+        return seam
+    }
+
+    /// Builds a room-chat view model for one room (seams from this gateway).
+    public func makeRoomChatViewModel(room: FleetRoom) -> RoomChatViewModel {
+        RoomChatViewModel(
+            room: room,
+            commands: roomCommandSeam(for: room.id.gatewayID),
+            driverStatus: roomDriverStatusSeam(for: room.id.gatewayID))
+    }
+
+    // MARK: Slice 5 — RoomLink (D19)
+
+    /// The lazily-built RoomLink command seam for a gateway (nil = the
+    /// RoomLink panel renders its honest no-connection state).
+    public func roomLinkSeam(for gatewayID: GatewayID) -> (any RoomLinkCommanding)? {
+        if let existing = roomLinks[gatewayID] { return existing }
+        guard let factory = roomLinkFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }),
+              let seam = factory(gateway) else { return nil }
+        roomLinks[gatewayID] = seam
+        return seam
+    }
+
+    /// Builds a RoomLink view model for one room.
+    public func makeRoomLinkViewModel(room: FleetRoom) -> RoomLinkViewModel {
+        RoomLinkViewModel(
+            room: room,
+            commands: roomLinkSeam(for: room.id.gatewayID))
+    }
+
+    /// Mention candidates from the LIVE fleet roster (D20): every gateway,
+    /// hidden bots included (they stay mentionable by design §3.4).
+    public func mentionCandidates() -> [MentionCandidate] {
+        var botsByGateway: [GatewayID: [FleetBot]] = [:]
+        for gateway in gateways {
+            botsByGateway[gateway.id] = bots(on: gateway.id)
+        }
+        return FleetMentionCandidates.from(
+            botsByGateway: botsByGateway,
+            gatewayLabel: { [self] id in
+                gateway(for: id)?.displayName ?? id.rawValue
+            })
+    }
+
+    /// True when the gateway supports creating hosted rooms (F1: derived
+    /// from the gateway-level `groups.capabilities` probe — a capable
+    /// gateway with ZERO hosted rooms still offers Create Room, so the
+    /// first room on a fresh gateway is creatable). Falls back to the
+    /// legacy room-row check only when no probe answer has been recorded;
+    /// never true on legacy-only evidence. Gates the Create Room entry
+    /// (unsupported gateway: honest update-required explanation, not a
+    /// dead button).
+    public func canCreateRooms(on gatewayID: GatewayID) -> Bool {
+        if let probed = canCreateRoomsByGateway[gatewayID] {
+            return probed
+        }
+        return rooms(for: gatewayID).contains { room in
+            room.id.provenance == .hosted
+                && room.hosted?.advertisedMethods?.contains("groups.create") == true
+                && room.hosted?.driverAvailable == true
+        }
+    }
+
+    /// Creates a hosted room via the gateway's command seam. Throws the
+    /// typed failure (unsupported old gateway → update explanation).
+    public func createRoom(
+        gatewayID: GatewayID, name: String, members: [RoomMemberCandidate]
+    ) async throws -> FleetRoom {
+        guard let seam = roomCommandSeam(for: gatewayID) else {
+            throw RoomCommandFailure.notConnected
+        }
+        let wireMembers = HostedRoomMemberCodec.wireMembers(members, gatewayID: gatewayID)
+        let roomID = try await seam.createRoom(name: name, members: wireMembers)
+        // F1: a successful create is definitive gateway-level truth — the
+        // entry must not regress if a later probe fails (.unknown).
+        canCreateRoomsByGateway[gatewayID] = true
+        // Reveal the room immediately from the authoritative create result.
+        let room = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+            name: name,
+            members: members.map {
+                FleetRoomMember(name: $0.displayName, handle: $0.route.profileSlug.rawValue)
+            },
+            hosted: HostedRoomState(
+                authorityGatewayID: gatewayID.rawValue,
+                authorityEpoch: 1,
+                advertisedMethods: nil,
+                driverAvailable: false))
+        Task { await loadRooms() }
+        return room
+    }
+
+    /// Section registries for every gateway (best-effort).
+    public func loadAllSections() async {
+        for gateway in gateways {
+            await botManagement.loadSections(from: gateway.id)
+        }
     }
 
     /// H2: copy the latest connection-health snapshots into the observable
@@ -584,6 +846,79 @@ public final class AppEnvironment {
         let seam = factory(gateway)
         managementSeams[gatewayID] = seam
         return seam
+    }
+
+    // MARK: True Bots Mode — canonical Bot Chat
+
+    /// Build the Bot Mode chat seam for a gateway. Nil when no factory is
+    /// wired (the tap falls back to the sessions list, fail closed).
+    public func makeBotModeChat(for gatewayID: GatewayID) -> (any BotModeChatProviding)? {
+        if let existing = botModeChatSeams[gatewayID] { return existing }
+        guard let factory = botModeChatFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let seam = factory(gateway)
+        botModeChatSeams[gatewayID] = seam
+        return seam
+    }
+
+    /// Resolve the canonical Bot Chat open target for a bot tap, applying
+    /// the fail-closed contract (see `CanonicalChatResolver`). Recency never
+    /// selects the target — `latestSession` is never substituted.
+    ///
+    /// Returns the session id to open, or a retryable error message. NEVER
+    /// creates a chat on an unconfirmed lookup (no transient fork).
+    public func resolveCanonicalChatTarget(for bot: FleetBot) async -> Result<String, BotChatUnavailable> {
+        // The roster-reported canonical_session is authoritative identity
+        // info; the tap still verifies against a live title-exact lookup so
+        // a stale roster can't open a dead id blindly.
+        guard let seam = makeBotModeChat(for: bot.route.gatewayID) else {
+            return .failure(BotChatUnavailable(message: "Bot Chat is unavailable on this gateway"))
+        }
+        let rosterID = bot.canonicalSession?.id
+        do {
+            let lookup = try await seam.lookupCanonicalChat(profile: bot.route.profileSlug.rawValue)
+            let rows = lookup.rows.map {
+                SessionSummary(id: $0.id, title: $0.title, preview: $0.preview, messageCount: $0.messageCount)
+            }
+            // resolved_id (compression tip) travels as the row id on the
+            // exact-title wire; attach it so the resolver prefers the tip.
+            let resolution: CanonicalChatResolution
+            if let first = lookup.rows.first, let tip = first.openID, tip != first.id {
+                resolution = CanonicalChatResolver.resolve(
+                    lookupRows: [SessionSummary(id: first.id, title: first.title,
+                                                preview: first.preview, messageCount: first.messageCount)],
+                    rosterCanonicalID: rosterID,
+                    lookupError: nil)
+                // The resolver's existing-ref openID falls back to row id;
+                // the tip (already validated non-empty by openID) wins.
+                if case .existing = resolution {
+                    return .success(tip)
+                }
+            } else {
+                resolution = CanonicalChatResolver.resolve(
+                    lookupRows: rows, rosterCanonicalID: rosterID, lookupError: nil)
+            }
+            switch BotChatPlanner.plan(from: resolution) {
+            case .openCanonical(let ref):
+                if let id = ref.openID { return .success(id) }
+                return .failure(BotChatUnavailable(message: "Bot Chat registry returned a malformed id — not starting a new chat"))
+            case .createThenOpen:
+                // Confirmed miss only: safe hidden creation with eager title.
+                let created = try await seam.createCanonicalChat(profile: bot.route.profileSlug.rawValue)
+                return .success(created)
+            case .unavailable(let message):
+                return .failure(BotChatUnavailable(message: message))
+            }
+        } catch {
+            // RPC failure of EITHER lookup or creation is retryable — never
+            // mint/fork from the catch path. User-facing copy stays clean:
+            // the internal error chain is logged out-of-band, never shown.
+            #if DEBUG
+            print("canonical chat resolve failed for \(bot.route.id): \(error)")
+            #endif
+            return .failure(BotChatUnavailable(
+                message: "Couldn't check the Bot Chat registry — not starting a new chat"))
+        }
     }
 
     // MARK: Memory graph (R9-T7 — learning star map)

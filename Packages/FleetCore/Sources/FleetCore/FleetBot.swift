@@ -33,6 +33,17 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
     /// (P0-7 multiplexer scope: every listed profile is reachable through the
     /// owning gateway's shared connection).
     public var gatewayRunning: Bool
+    /// Bot Mode: canonical "Bot Chat" reference from the modern roster
+    /// (profiles.list canonical_session). Identity info for the tap flow.
+    public var canonicalSession: CanonicalSessionRef?
+    /// Bot Mode: newest denied-source worker session (worker-activity signal).
+    public var workerSession: WorkerSessionRef?
+    /// Bot Mode: per-key ui_meta revisions (CAS support truth).
+    public var uiMetaRevisions: MetadataRevisions?
+    /// Bot Mode: decoded `hermes-bots` metadata (title/hidden/sections/...).
+    public var botModeMetadata: BotModeMetadata?
+    /// Bot Mode: raw profile ui_meta (unknown keys preserved for round-trip).
+    public var uiMeta: [String: MetadataValue]?
 
     public var id: Route { route }
 
@@ -44,7 +55,12 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
         profileDescription: String? = nil,
         activity: BotActivity = .unknown,
         latestSession: SessionSummary? = nil,
-        gatewayRunning: Bool = false
+        gatewayRunning: Bool = false,
+        canonicalSession: CanonicalSessionRef? = nil,
+        workerSession: WorkerSessionRef? = nil,
+        uiMetaRevisions: MetadataRevisions? = nil,
+        botModeMetadata: BotModeMetadata? = nil,
+        uiMeta: [String: MetadataValue]? = nil
     ) {
         self.route = route
         self.displayName = displayName
@@ -54,6 +70,11 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
         self.activity = activity
         self.latestSession = latestSession
         self.gatewayRunning = gatewayRunning
+        self.canonicalSession = canonicalSession
+        self.workerSession = workerSession
+        self.uiMetaRevisions = uiMetaRevisions
+        self.botModeMetadata = botModeMetadata
+        self.uiMeta = uiMeta
     }
 
     /// Build a bot from a gateway-provided `ProfileDescriptor`.
@@ -71,7 +92,12 @@ public struct FleetBot: Identifiable, Hashable, Sendable {
             provider: descriptor.provider,
             profileDescription: descriptor.profileDescription,
             latestSession: descriptor.lastSession,
-            gatewayRunning: descriptor.gatewayRunning
+            gatewayRunning: descriptor.gatewayRunning,
+            canonicalSession: descriptor.canonicalSession,
+            workerSession: descriptor.workerSession,
+            uiMetaRevisions: descriptor.uiMetaRevisions,
+            botModeMetadata: descriptor.botModeMetadata,
+            uiMeta: descriptor.uiMeta
         )
     }
 }

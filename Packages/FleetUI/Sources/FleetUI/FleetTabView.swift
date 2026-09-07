@@ -71,6 +71,13 @@ public struct FleetTabView: View {
         }
         .tint(FleetTheme.accent)
         .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false } }
+        .onChange(of: environment.pendingBotChatNavigation) { target in
+            guard let target else { return }
+            // Route Bot Chat opens to the Chats tab where conversations live.
+            if selection != .chats { selection = .chats }
+            paths[.chats, default: []].append(target)
+            environment.pendingBotChatNavigation = nil
+        }
         .task { await performAutoNavIfNeeded() }
     }
 
@@ -93,6 +100,10 @@ public struct FleetTabView: View {
             FleetRosterView(environment: environment)
         case .botDetail(let route):
             BotDetailView(environment: environment, route: route)
+        case .botRoutines(let route):
+            BotRoutinesView(environment: environment, route: route)
+        case .room(let room):
+            RoomChatView(room: room, environment: environment)
         case .conversation(let route, let sessionID):
             ConversationView(environment: environment, route: route, sessionID: sessionID)
         case .health:

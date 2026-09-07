@@ -1,25 +1,36 @@
 import SwiftUI
 import FleetCore
 
-/// Fleet-wide Bots roster (U2 → U5 Gold Fleet re-skin) — the M8 union
-/// aggregation rendered.
+/// Fleet-wide Bots roster — True Bots Mode slice 2 (D02 UI).
 ///
 /// Shows EVERY registered gateway in per-gateway sections, each with the bots
 /// it reported via `profiles.list` (owning gateway preserved by `Route`).
-/// Partial-outage resilience (spec §31 Multi-Gateway / §30): a gateway that
-/// failed the refresh renders its classified §13 status + non-secret detail
-/// as an outage section while the reachable gateways' bots stay visible —
-/// the fleet stays useful when partially available.
+/// Partial-outage resilience: a gateway that failed the refresh renders its
+/// classified §13 status as an outage section while reachable gateways' bots
+/// stay visible — the fleet stays useful when partially available.
 ///
-/// U5: sections render on the design system — `SectionHeader`s per gateway,
-/// bot rows as `FleetCard`s with the shared avatar component, name, route,
-/// model/provider subtitle, and a `StatusPill` from the bot's real activity.
-/// Presentation-layer only.
-///
-/// States: no snapshot yet (refreshing), empty fleet, one gateway, multiple
-/// gateways, and partial outage all render explicitly.
+/// Slice 2 layers (pure logic in `BotRosterPresentation`, this view only
+/// renders):
+/// - Activity ordering: pinned first, then botActivitySession recency
+///   (fresher of canonical vs last_session).
+/// - Preview + relative time per row from the activity anchor.
+/// - "Active Now" strip from live activity signals.
+/// - Search across title/slug/route/description/preview/gateway label.
+/// - Hidden bots hidden by default; eye toggle reveals them dimmed.
+/// - User sections inside each gateway (registry order, unassigned last,
+///   no fabricated header) — D10 rendering.
+/// - Duplicate-name "· <gateway>" disambiguation labels.
+/// - Offline-gateway ghost rows retain identity (cached snapshot reuse).
+/// - Rooms: group rows from the landed FleetRoomUnion provider (hosted +
+///   legacy, honest "Managed by Hermes Desktop" labels, distinct rows).
 public struct FleetRosterView: View {
     private let environment: AppEnvironment
+
+    @State private var searchText = ""
+    @State private var revealingHidden = false
+    @State private var showingCreate = false
+    @State private var sectionsGateway: FleetGateway?
+    @State private var createRoomGateway: FleetGateway?
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -40,6 +51,34 @@ public struct FleetRosterView: View {
         .navigationTitle("Fleet Roster")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button {
+                        showingCreate = true
+                    } label: {
+                        Label("Create Bot", systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("fleet.roster.create")
+                    ForEach(environment.gateways) { gateway in
+                        Button {
+                            createRoomGateway = gateway
+                        } label: {
+                            Label("Create Room — \(gateway.displayName)", systemImage: "person.3")
+                        }
+                        .disabled(!environment.canCreateRooms(on: gateway.id))
+                        .accessibilityIdentifier("fleet.roster.createroom.\(gateway.id.rawValue)")
+                        Button {
+                            sectionsGateway = gateway
+                        } label: {
+                            Label("Edit Sections — \(gateway.displayName)", systemImage: "folder")
+                        }
+                        .accessibilityIdentifier("fleet.roster.sections.\(gateway.id.rawValue)")
+                    }
+                } label: {
+                    Label("Manage", systemImage: "plus.circle")
+                }
+                .accessibilityIdentifier("fleet.roster.manage")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await environment.refreshRoster() }
                 } label: {
@@ -48,7 +87,28 @@ public struct FleetRosterView: View {
                 .disabled(environment.isRefreshing)
                 .accessibilityIdentifier("fleet.roster.refresh")
             }
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    revealingHidden.toggle()
+                } label: {
+                    Label(
+                        revealingHidden ? "Hide Hidden Bots" : "Show Hidden Bots",
+                        systemImage: revealingHidden ? "eye.slash" : "eye"
+                    )
+                }
+                .accessibilityIdentifier("fleet.roster.hidden-toggle")
+            }
         }
+        .sheet(isPresented: $showingCreate) {
+            CreateBotSheet(environment: environment) { _, _ in }
+        }
+        .sheet(item: $sectionsGateway) { gateway in
+            SectionsManagementSheet(environment: environment, gateway: gateway)
+        }
+        .sheet(item: $createRoomGateway) { gateway in
+            CreateRoomSheet(environment: environment, gateway: gateway) { _ in }
+        }
+        .searchable(text: $searchText, prompt: "Bots, rooms, gateways")
         .task {
             // Re-render from the latest snapshot on entry (idempotent).
             if environment.rosterSnapshot == nil {
@@ -61,17 +121,9 @@ public struct FleetRosterView: View {
 
     // MARK: Sections — per-gateway grouping with outage states
 
-    /// Roster sections in stable gateway order: a healthy gateway's bots as a
-    /// section, an unreachable gateway as an outage section.
-    ///
-    /// P2-5: a HEALTHY gateway with zero bots contributes NO section — an
-    /// all-healthy, all-empty fleet must render the `noBotsAnywhere` state,
-    /// not a row of empty section headers. Outage sections are ALWAYS
-    /// preserved (partial-outage resilience): an unreachable gateway still
-    /// reports its §13 state even with no bots.
     private var sections: [RosterSection] {
         guard let snapshot = environment.rosterSnapshot else { return [] }
-        return Self.sections(from: snapshot)
+        return Self.sections(from: snapshot, cachedBots: environment.cachedBotsByGateway)
     }
 
     private var rosterList: some View {
@@ -89,45 +141,24 @@ public struct FleetRosterView: View {
 
     private func rosterSection(_ section: RosterSection) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            // Section header: gateway name (+ outage status when unreachable).
-            // The gateway-name Text is a UI-test landmark (staticTexts[name]).
-            HStack(spacing: FleetTheme.spacingSm) {
-                Image(systemName: section.outage == nil ? "server.rack" : "wifi.slash")
-                    .font(.caption)
-                    .foregroundStyle(
-                        section.outage == nil
-                            ? FleetTheme.textSecondary
-                            : FleetTheme.statusDegraded
-                    )
-                    .fixedSize()
-                    .accessibilityHidden(true)
-                // V3: the gateway name is DATA (UI-test landmark) — stays
-                // title-case + primary; the uppercase micro-label role is for
-                // generic section labels (see SectionHeader).
-                Text(section.gateway.displayName)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let outage = section.outage {
-                    Text(statusText(outage.0))
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+            gatewayHeader(section)
 
             if let (status, detail) = section.outage {
                 outageRow(gateway: section.gateway, status: status, detail: detail)
-            } else {
-                VStack(spacing: FleetTheme.spacingSm) {
+                // Ghost rows: a failed refresh still shows the CACHED bots
+                // (identity retained, dimmed) — never a same-name twin.
+                if !section.bots.isEmpty {
+                    Text("Last known bots")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
                     ForEach(section.bots) { bot in
                         NavigationLink(value: FleetScreen.botDetail(bot.route)) {
                             BotRowView(
                                 bot: bot,
-                                presence: environment.botPresence(for: bot.route)
+                                presence: .unreachable,
+                                anchor: BotRosterPresentation.activityAnchor(for: bot),
+                                duplicateLabel: nil,
+                                dimmed: true
                             )
                         }
                         .buttonStyle(.fleetPressable)
@@ -135,8 +166,155 @@ public struct FleetRosterView: View {
                         .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
                     }
                 }
+            } else {
+                botGroups(for: section)
+                roomsGroup(for: section.gateway)
             }
         }
+    }
+
+    /// User-section blocks (D10): registry order; each block a header + rows;
+    /// unassigned last with NO fabricated header; no sections → plain rows.
+    private func botGroups(for section: RosterSection) -> some View {
+        let registry = environment.botManagement.sectionsByGateway[section.gateway.id] ?? []
+        let gatewayLabel = section.gateway.displayName
+        let rows = BotRosterPresentation.filter(
+            BotRosterPresentation.order(section.bots),
+            query: searchText,
+            gatewayLabel: { _ in gatewayLabel },
+            revealingHidden: revealingHidden
+        )
+        let duplicateLabels = BotRosterPresentation.duplicateNameRoutes(
+            BotRosterPresentation.visible(section.bots, revealingHidden: revealingHidden),
+            gatewayLabel: { _ in gatewayLabel }
+        )
+        return VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            activeNowStrip(rows: rows)
+            if BotSectionRegistry.rendersSections(registry) {
+                let blocks = BotSectionRegistry.split(
+                    rows,
+                    sectionID: { $0.botModeMetadata?.sectionID },
+                    sections: registry
+                )
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    if !block.isUnassigned {
+                        SectionHeader(title: block.name)
+                            .accessibilityIdentifier("fleet.roster.section.\(block.id ?? "")")
+                    }
+                    ForEach(block.rows) { bot in
+                        botRow(bot, duplicateLabels: duplicateLabels, gatewayLabel: gatewayLabel)
+                    }
+                }
+            } else {
+                ForEach(rows) { bot in
+                    botRow(bot, duplicateLabels: duplicateLabels, gatewayLabel: gatewayLabel)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func botRow(
+        _ bot: FleetBot,
+        duplicateLabels: [Route: String],
+        gatewayLabel: String
+    ) -> some View {
+        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+            BotRowView(
+                bot: bot,
+                presence: environment.botPresence(for: bot.route),
+                anchor: BotRosterPresentation.activityAnchor(for: bot),
+                duplicateLabel: duplicateLabels[bot.route],
+                dimmed: bot.botModeMetadata?.hidden == true
+            )
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
+    }
+
+    /// Active Now strip: live-signal bots (never fabricated).
+    @ViewBuilder
+    private func activeNowStrip(rows: [FleetBot]) -> some View {
+        let active = rows.filter(BotRosterPresentation.isActiveNow)
+        if !active.isEmpty {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                SectionHeader(title: "Active Now")
+                    .accessibilityIdentifier("fleet.roster.active-now")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: FleetTheme.spacingSm) {
+                        ForEach(active) { bot in
+                            NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(FleetTheme.statusOnline)
+                                        .frame(width: 8, height: 8)
+                                    Text(BotRosterPresentation.displayTitle(for: bot))
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(FleetTheme.textPrimary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, FleetTheme.spacingSm)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(FleetTheme.surfaceElevated))
+                                .overlay(Capsule().strokeBorder(FleetTheme.statusOnline.opacity(0.4), lineWidth: 1))
+                            }
+                            .buttonStyle(.fleetPressable)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("fleet.roster.active.\(bot.route.id)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rooms group: rows from the room union (hosted + desktop legacy).
+    @ViewBuilder
+    private func roomsGroup(for gateway: FleetGateway) -> some View {
+        let rooms = environment.rooms(for: gateway.id)
+        let visible = searchText.isEmpty
+            ? rooms
+            : rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        if !visible.isEmpty {
+            SectionHeader(title: "Rooms")
+                .accessibilityIdentifier("fleet.roster.rooms")
+            ForEach(visible) { room in
+                NavigationLink(value: FleetScreen.room(room)) {
+                    RoomRowView(room: room)
+                }
+                .buttonStyle(.fleetPressable)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.room.row.\(room.id.key)")
+            }
+        }
+    }
+
+    private func gatewayHeader(_ section: RosterSection) -> some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Image(systemName: section.outage == nil ? "server.rack" : "wifi.slash")
+                .font(.caption)
+                .foregroundStyle(
+                    section.outage == nil
+                        ? FleetTheme.textSecondary
+                        : FleetTheme.statusDegraded
+                )
+                .fixedSize()
+                .accessibilityHidden(true)
+            Text(section.gateway.displayName)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(FleetTheme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let outage = section.outage {
+                Text(statusText(outage.0))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private func outageRow(gateway: FleetGateway, status: GatewayStatus, detail: String?) -> some View {
@@ -212,13 +390,10 @@ public struct FleetRosterView: View {
     }
 
     private func detailNonEmpty(_ detail: String?, status: GatewayStatus = .offline) -> String {
-        // F1: the outage line is cause copy (what happened + what to do),
-        // not raw transport detail — the classified status drives it, with
-        // the non-secret detail used only to sharpen the cause.
         GatewayFailureCopy.detail(status: status, detail: detail)
     }
 
-    /// One per-gateway roster section (healthy bots or an outage).
+    /// One per-gateway roster section (healthy bots or an outage + ghosts).
     public struct RosterSection: Identifiable {
         public let gateway: FleetGateway
         public let bots: [FleetBot]
@@ -239,13 +414,19 @@ public struct FleetRosterView: View {
 
     /// Build the roster sections from a snapshot (P2-5, testable pure logic).
     ///
-    /// A healthy gateway with zero bots contributes NO section — an
-    /// all-healthy, all-empty fleet must render the No Bots state, not empty
-    /// section headers. Outage sections are always preserved.
-    public static func sections(from snapshot: FleetRosterSnapshot) -> [RosterSection] {
+    /// A healthy gateway with zero bots contributes NO section. Outage
+    /// sections are always preserved — and now carry the gateway's CACHED
+    /// bots (from the previous successful refresh) as offline ghosts: their
+    /// identity is retained, never substituted by a same-name profile from
+    /// another gateway.
+    public static func sections(
+        from snapshot: FleetRosterSnapshot,
+        cachedBots: [GatewayID: [FleetBot]] = [:]
+    ) -> [RosterSection] {
         snapshot.roster.allGateways.compactMap { gateway in
             if case .failed(let status, let detail) = snapshot.outcome(for: gateway.id) {
-                return RosterSection(gateway: gateway, bots: [], outage: (status, detail))
+                let ghosts = cachedBots[gateway.id] ?? []
+                return RosterSection(gateway: gateway, bots: ghosts, outage: (status, detail))
             }
             let bots = snapshot.bots(on: gateway.id)
             guard !bots.isEmpty else { return nil }
@@ -254,44 +435,164 @@ public struct FleetRosterView: View {
     }
 }
 
-/// A bot row in the union roster (U5): avatar + name + canonical route
-/// identity + model/provider + status pill, on a FleetCard.
-/// P0-7: the pill derives from roster presence (owning gateway answered)
-/// with live activity as refinement — NOT from unobserved activity alone.
-private struct BotRowView: View {
+/// A bot row (slice 2 anatomy): avatar | title (+dup label) + preview/time |
+/// status pill; dimmed when hidden-revealed or a ghost.
+struct BotRowView: View {
     let bot: FleetBot
     let presence: BotPresence
+    let anchor: BotRosterPresentation.ActivityAnchor
+    let duplicateLabel: String?
+    let dimmed: Bool
 
     var body: some View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(displayName: bot.displayName)
+                BotAvatar(displayName: BotRosterPresentation.displayTitle(for: bot))
+                    .opacity(dimmed ? 0.4 : 1)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(bot.displayName)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
-                        .lineLimit(2)
-                    Text(bot.route.id)
-                        .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let model = bot.model, let provider = bot.provider {
-                        Text("\(model) · \(provider)")
+                    HStack(spacing: 4) {
+                        Text(BotRosterPresentation.displayTitle(for: bot))
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(FleetTheme.textPrimary)
+                            .lineLimit(1)
+                        if let duplicateLabel {
+                            Text("· \(duplicateLabel)")
+                                .font(.caption)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .lineLimit(1)
+                        }
+                        if bot.botModeMetadata?.hidden == true {
+                            Image(systemName: "eye.slash")
+                                .font(.caption2)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .accessibilityLabel("Hidden")
+                        }
+                    }
+                    if let preview = anchor.preview, !preview.isEmpty {
+                        Text(preview)
                             .font(FleetTheme.secondaryFont)
                             .foregroundStyle(FleetTheme.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
-                    if bot.gatewayRunning {
-                        GatewayRunningBadge(isRunning: true)
+                    HStack(spacing: 4) {
+                        Text(bot.route.id)
+                        if anchor.lastActive > 0 {
+                            Text("· \(BotRowView.relativeTime(anchor.lastActive))")
+                        }
                     }
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer()
                 StatusPill(status: FleetStatus(activity: bot.activity, presence: presence))
             }
+            .opacity(dimmed ? 0.55 : 1)
         }
         .accessibilityElement(children: .combine)
     }
+
+    /// Short relative-time copy ("now", "5m", "3h", "2d") from epoch seconds.
+    static func relativeTime(_ epoch: Double, now: Double = Date().timeIntervalSince1970) -> String {
+        let delta = max(0, now - epoch)
+        switch delta {
+        case ..<60: return "now"
+        case ..<3600: return "\(Int(delta / 60))m"
+        case ..<86_400: return "\(Int(delta / 3600))h"
+        default: return "\(Int(delta / 86_400))d"
+        }
+    }
+}
+
+/// A room row: name, last speaker + preview, provenance label for legacy
+/// rooms, needs-attention badge only from real capability state.
+struct RoomRowView: View {
+    let room: FleetRoom
+
+    var body: some View {
+        FleetCard {
+            HStack(spacing: FleetTheme.spacingMd) {
+                RoomAvatar(members: room.members.map(\.name))
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(room.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(FleetTheme.textPrimary)
+                            .lineLimit(1)
+                        if room.isManagedByDesktop {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .accessibilityLabel("Managed by Hermes Desktop, read-only")
+                        }
+                    }
+                    if let last = room.recentLog.last {
+                        Text("\(last.from.name): \(last.text)")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } else if !room.members.isEmpty {
+                        Text(room.members.map(\.name).joined(separator: ", "))
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    if room.isManagedByDesktop {
+                        Text("Managed by Hermes Desktop")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Composite room avatar: up to 4 member initials in a 2×2 grid.
+struct RoomAvatar: View {
+    let members: [String]
+
+    var body: some View {
+        let chips = Array(members.prefix(4))
+        ZStack {
+            RoundedRectangle(cornerRadius: 15)
+                .fill(FleetTheme.surfaceElevated)
+            if chips.isEmpty {
+                Image(systemName: "person.3")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textSecondary)
+            } else {
+                GeometryReader { geo in
+                    let cols = chips.count == 1 ? 1 : 2
+                    let rows = (chips.count + cols - 1) / cols
+                    let w = geo.size.width / CGFloat(cols)
+                    let h = geo.size.height / CGFloat(rows)
+                    ForEach(Array(chips.enumerated()), id: \.offset) { i, name in
+                        Text(FleetDashboardFormatting.avatarInitials(from: name))
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(FleetTheme.accent)
+                            .frame(width: w, height: h)
+                            .position(
+                                x: (CGFloat(i % cols) + 0.5) * w,
+                                y: (CGFloat(i / cols) + 0.5) * h
+                            )
+                    }
+                }
+            }
+        }
+        .frame(width: 44, height: 44)
+        .overlay(
+            RoundedRectangle(cornerRadius: 15)
+                .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
+        )
+        .accessibilityHidden(true)
+    }
+
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 }
