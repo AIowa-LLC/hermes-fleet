@@ -193,6 +193,12 @@ public final class AppEnvironment {
     /// seam; empty until first load, honest absence otherwise.
     public private(set) var roomsByGateway: [GatewayID: [FleetRoom]] = [:]
 
+    /// F1: last-known GATEWAY-level `groups.create` capability (from the
+    /// room source's `groups.capabilities` probe, persisted across
+    /// refreshes — a transport hiccup must not hide the Create Room entry
+    /// on a capable gateway). Absent = never probed = fail closed.
+    public private(set) var canCreateRoomsByGateway: [GatewayID: Bool] = [:]
+
     /// True Bots Mode: request navigation to the canonical Bot Chat screen.
     /// Called by `BotChatOpenButton` after a successful fail-closed resolve.
     public func openBotChat(route: Route, sessionID: String) {
@@ -455,6 +461,16 @@ public final class AppEnvironment {
             }
             let rooms = await source.rooms()
             roomsByGateway[gateway.id] = rooms
+            // F1: persist the GATEWAY-level create capability — zero-room
+            // capable gateways must keep the Create Room entry; `.unknown`
+            // (probe failure) never flips the gate either way, and a
+            // definitive `.unsupported` is honest truth (downgrade allowed).
+            let capability = await source.createRoomCapability()
+            switch capability {
+            case .supported: canCreateRoomsByGateway[gateway.id] = true
+            case .unsupported: canCreateRoomsByGateway[gateway.id] = false
+            case .unknown: break
+            }
         }
     }
 
@@ -494,11 +510,19 @@ public final class AppEnvironment {
             driverStatus: roomDriverStatusSeam(for: room.id.gatewayID))
     }
 
-    /// True when a gateway's rooms advertise `groups.create` — gates the
-    /// Create Room entry (unsupported gateway: honest update-required
-    /// explanation, not a dead button).
+    /// True when the gateway supports creating hosted rooms (F1: derived
+    /// from the gateway-level `groups.capabilities` probe — a capable
+    /// gateway with ZERO hosted rooms still offers Create Room, so the
+    /// first room on a fresh gateway is creatable). Falls back to the
+    /// legacy room-row check only when no probe answer has been recorded;
+    /// never true on legacy-only evidence. Gates the Create Room entry
+    /// (unsupported gateway: honest update-required explanation, not a
+    /// dead button).
     public func canCreateRooms(on gatewayID: GatewayID) -> Bool {
-        rooms(for: gatewayID).contains { room in
+        if let probed = canCreateRoomsByGateway[gatewayID] {
+            return probed
+        }
+        return rooms(for: gatewayID).contains { room in
             room.id.provenance == .hosted
                 && room.hosted?.advertisedMethods?.contains("groups.create") == true
                 && room.hosted?.driverAvailable == true
@@ -515,6 +539,9 @@ public final class AppEnvironment {
         }
         let wireMembers = HostedRoomMemberCodec.wireMembers(members, gatewayID: gatewayID)
         let roomID = try await seam.createRoom(name: name, members: wireMembers)
+        // F1: a successful create is definitive gateway-level truth — the
+        // entry must not regress if a later probe fails (.unknown).
+        canCreateRoomsByGateway[gatewayID] = true
         // Reveal the room immediately from the authoritative create result.
         let room = FleetRoom(
             id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),

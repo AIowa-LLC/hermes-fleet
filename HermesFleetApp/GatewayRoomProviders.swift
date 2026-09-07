@@ -18,6 +18,26 @@ struct HostedRoomProvider: FleetRoomProviding {
         self.client = client
     }
 
+    /// Gateway-level create capability (F1): derived from the gateway's own
+    /// `groups.capabilities` probe, independent of any room row — a capable
+    /// gateway with ZERO hosted rooms still reports `.supported` so the
+    /// first room is creatable. Fail closed on transport errors (`.unknown`
+    /// must not flip the gate).
+    func createRoomCapability() async -> GroupsCreateCapability {
+        do {
+            let caps = try await client.capabilities()
+            return GroupsCreateCapability(capabilities: GroupsCapabilityTruth(
+                driver: caps.driver,
+                methods: caps.methods))
+        } catch GroupsError.unsupportedMethod {
+            // Old gateway without groups.*: honest absence.
+            return .unsupported
+        } catch {
+            // Transport/rpc failure: no capability truth — fail closed.
+            return .unknown
+        }
+    }
+
     func rooms() async throws -> [FleetRoom] {
         let caps: GroupsCapabilities?
         do {
@@ -113,6 +133,12 @@ struct GatewayRoomSourceAdapter: FleetRoomSourceProviding {
 
     func rooms() async -> [FleetRoom] {
         await GatewayRoomSource(hosted: hosted, legacy: legacy).rooms()
+    }
+
+    /// F1: gateway-level create gate from the hosted provider's
+    /// `groups.capabilities` probe (zero-room capable gateways included).
+    func createRoomCapability() async -> GroupsCreateCapability {
+        await hosted.createRoomCapability()
     }
 }
 

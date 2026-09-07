@@ -1876,6 +1876,14 @@ struct ScriptedRoomSource: FleetRoomSourceProviding {
         return rooms
     }
 
+    /// F1: the workstation fixture mirrors a real gateway's
+    /// `groups.capabilities` probe (driver + groups.create advertised);
+    /// other scripted gateways fail closed (.unknown).
+    func createRoomCapability() async -> GroupsCreateCapability {
+        guard gatewayID.rawValue == "workstation" else { return .unknown }
+        return .supported
+    }
+
     private func legacyRoom(gatewayID: GatewayID) -> FleetRoom {
         FleetRoom(
             id: FleetRoomID(provenance: .desktopLegacy, gatewayID: gatewayID, key: "name:Research Crew"),
