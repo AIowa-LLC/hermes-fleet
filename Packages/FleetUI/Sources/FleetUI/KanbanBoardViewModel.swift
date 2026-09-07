@@ -87,11 +87,7 @@ public final class KanbanBoardViewModel {
     public func start() async {
         guard streamTask == nil else { return }
         await loadBoards()
-        streamGeneration += 1
-        let generation = streamGeneration
-        streamTask = Task { [weak self] in
-            await self?.consumeStream(generation: generation)
-        }
+        await openStream()
         await loadSnapshot(initial: true)
         startPollBackstop()
     }
@@ -148,15 +144,22 @@ public final class KanbanBoardViewModel {
         streamTask?.cancel()
         streamTask = nil
         await watcher.pinBoard(slug)
+        await openStream()
+        await loadSnapshot(initial: true)
+    }
+
+    // MARK: Internals
+
+    /// Start the stream task and yield once so the watcher records the new
+    /// subscription before callers continue with snapshot work.
+    private func openStream() async {
         streamGeneration += 1
         let generation = streamGeneration
         streamTask = Task { [weak self] in
             await self?.consumeStream(generation: generation)
         }
-        await loadSnapshot(initial: true)
+        await Task.yield()
     }
-
-    // MARK: Internals
 
     private func consumeStream(generation: Int) async {
         let batches = await watcher.changeEvents()

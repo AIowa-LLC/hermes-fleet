@@ -1,7 +1,10 @@
 # AGENTS.md — working conventions for agents (Codex, Hermes kanban workers, humans)
 
 Hermes Fleet for iOS — native iPhone control plane for Hermes Agent.
-Owner: Tony Simons (GitHub `asimons81`, org AIowa-LLC). Repo is private.
+Owner: Tony Simons
+GitHub: `tony-simons-aiowa`
+Organization: `AIowa-LLC`
+Repo is private.
 
 ## Repo facts (verify before assuming — these drift)
 

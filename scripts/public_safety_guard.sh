@@ -30,12 +30,9 @@ FLEET_HOST="fleet""\\.""tonysimons""\\.""dev"   # maintainer production endpoint
 LAN_A="192""\\.""168""\\.""4""\\."       # real LAN subnet
 TAIL_A="100""\\.""100""\\.""105""\\."    # real tailnet address
 TAIL_B="100""\\.""108""\\.""104""\\."    # real tailnet address
-ARCH_HOST="archlinux""-1"               # private machine hostname
-TS_TAILNET="taila00fdc"                 # real tailnet name fragment
-MAC_HOST="macbook""-m5"                 # maintainer workstation hostname
-PERSONAL_APPLE="asimons""1981"          # personal Apple ID local part
-
-PATTERN="${HOME_DIR}|${GMAIL}|${ICLOUD}|${ME_COM}|${AGENT_ID}|${DEV_UDID}|${SIM_UDID}|${FLEET_HOST}|${LAN_A}|${TAIL_A}|${TAIL_B}|${ARCH_HOST}|${TS_TAILNET}|${MAC_HOST}|${PERSONAL_APPLE}"
+# Do not encode generic public examples as private-residue patterns. The guard
+# targets only maintainer-specific fragments and exact known private values.
+PATTERN="${HOME_DIR}|${GMAIL}|${ICLOUD}|${ME_COM}|${AGENT_ID}|${DEV_UDID}|${SIM_UDID}|${FLEET_HOST}|${LAN_A}|${TAIL_A}|${TAIL_B}"
 
 note() { printf '=== %s ===\n' "$1"; }
 

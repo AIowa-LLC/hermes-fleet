@@ -94,15 +94,15 @@ failure paths (disconnect count == 1).
 Ran via `bash scripts/u2_validate.sh` — **PASS=22 FAIL=0**.
 
 - `build/u2-simulator-gateways.png` — Gateways screen: 3 seeded gateways
-  (Arch Lab / Gaming 4090 / MacBook M5), endpoints, Idle badges, Add / Roster /
+  (Lab Node / Render Box / Workstation), endpoints, Idle badges, Add / Roster /
   Refresh toolbar, M14 theme.
 - `build/u2-simulator-roster.png` — Fleet Roster (DEBUG `HERMES_FLEET_AUTO_NAV
-  =roster`): per-gateway sections; **Arch Lab unreachable** outage section
-  ("Unreachable" + "gateway unreachable") while Gaming 4090 (Default) and
-  MacBook M5 (Default, Researcher) bots remain listed — the spec §31 partial
+  =roster`): per-gateway sections; **Lab Node unreachable** outage section
+  ("Unreachable" + "gateway unreachable") while Render Box (Default) and
+  Workstation (Default, Researcher) bots remain listed — the spec §31 partial
   availability state renders.
 - `build/u2-simulator-bot-detail.png` — Bot detail (DEBUG auto-nav =bot-detail):
-  Identity section (Route `gaming-4090#default`, Gateway, Profile), Status
+  Identity section (Route `render-box#default`, Gateway, Profile), Status
   (Model hermes·nous, Activity, Latest session "Fleet setup"), Sessions section
   listing "Fleet setup" (6 messages · ios · timestamp) via `session.list`.
 - `build/u2-simulator-dynamic-type.png` — Dynamic Type sanity at

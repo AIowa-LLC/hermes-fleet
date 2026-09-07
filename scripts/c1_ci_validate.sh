@@ -109,48 +109,69 @@ else
   grep -E 'error:|failed|Test Suite|Executed' /tmp/c1_xctest_unit.log | tail -25
 fi
 
-# 4b. DETERMINISTIC scripted-fleet UI suites (DEBUG build, no live gateway
-#     needed). Class-level selectors only — safe on their own.
-if xcodebuild "${XC[@]}" \
-    -only-testing:HermesFleetAppUITests/HermesFleetHappyPathUITests \
-    -only-testing:HermesFleetAppUITests/HermesFleetReconnectUITests \
-    -only-testing:HermesFleetAppUITests/P0_7SessionStateMachineUITests \
-    -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests \
-    -only-testing:HermesFleetAppUITests/RT2RemovalAndEndpointSanitizationUITests \
-    -only-testing:HermesFleetAppUITests/H1AppLockUITests \
-    -only-testing:HermesFleetAppUITests/RT4RosterEmptyStateUITests \
-    -only-testing:HermesFleetAppUITests/RT4FormSaveFailureUITests \
-    -only-testing:HermesFleetAppUITests/RT4VoiceOverUITests \
-    -only-testing:HermesFleetAppUITests/SplashUITests \
-    -only-testing:HermesFleetAppUITests/P2GatewayFormDraftUITests \
-    -only-testing:HermesFleetAppUITests/F2QRPairingUITests \
-    -only-testing:HermesFleetAppUITests/U3TabNavigationUITests \
-    -only-testing:HermesFleetAppUITests/SecondGenerationUITests \
-    -only-testing:HermesFleetAppUITests/U4DashboardUITests \
-    -only-testing:HermesFleetAppUITests/U5BotDetailUITests \
-    -only-testing:HermesFleetAppUITests/U6ConversationSkinUITests \
-    -only-testing:HermesFleetAppUITests/U7GatewayQrLockSettingsUITests \
-    -only-testing:HermesFleetAppUITests/F3OnboardingUITests \
-    -only-testing:HermesFleetAppUITests/C2SetupPromptUITests \
-    -only-testing:HermesFleetAppUITests/KanbanBoardUITests \
-    -only-testing:HermesFleetAppUITests/R9ApprovalBannerUITests \
-    -only-testing:HermesFleetAppUITests/R9ConversationToolingUITests \
-    -only-testing:HermesFleetAppUITests/R9ManagementPanesUITests \
-    -only-testing:HermesFleetAppUITests/R9MemoryGraphUITests \
-    -only-testing:HermesFleetAppUITests/R10AttachmentTrayUITests \
-    -only-testing:HermesFleetAppUITests/R10MessageReactionsUITests \
-    -only-testing:HermesFleetAppUITests/R10ProjectsBrowserUITests \
-    -only-testing:HermesFleetAppUITests/R10VoiceUITests \
-    -only-testing:HermesFleetAppUITests/R10MemoryGraphEditUITests \
-    -only-testing:HermesFleetAppUITests/FleetSettingsAccentUITests \
-    build test >/tmp/c1_xctest_ui.log 2>&1; then
-  TLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/c1_xctest_ui.log | tail -1)
-  ok "xcodebuild DETERMINISTIC UI tests SUCCEEDED — $TLINE"
-  grep -E 'Executed .* tests' /tmp/c1_xctest_ui.log | tail -1 | sed 's/^/  /'
-else
-  bad "xcodebuild DETERMINISTIC UI tests FAILED"
-  grep -E 'error:|failed|Test Suite|Executed' /tmp/c1_xctest_ui.log | tail -25
-fi
+# 4b. DETERMINISTIC scripted-fleet UI suites. Run each canonical class in
+# bounded invocations so one slow simulator suite cannot hide progress or
+# make the aggregate gate ambiguous. Keep this list identical to the former
+# monolithic selector set.
+UI_CLASSES=(
+  HermesFleetHappyPathUITests HermesFleetReconnectUITests P0_7SessionStateMachineUITests
+  S3CleartextWarningUITests RT2RemovalAndEndpointSanitizationUITests H1AppLockUITests
+  RT4RosterEmptyStateUITests RT4FormSaveFailureUITests RT4VoiceOverUITests SplashUITests
+  P2GatewayFormDraftUITests F2QRPairingUITests U3TabNavigationUITests SecondGenerationUITests
+  U4DashboardUITests U5BotDetailUITests U6ConversationSkinUITests U7GatewayQrLockSettingsUITests
+  F3OnboardingUITests C2SetupPromptUITests KanbanBoardUITests R9ApprovalBannerUITests
+  R9ConversationToolingUITests R9ManagementPanesUITests R9MemoryGraphUITests R10AttachmentTrayUITests
+  R10MessageReactionsUITests R10ProjectsBrowserUITests R10VoiceUITests R10MemoryGraphEditUITests
+  FleetSettingsAccentUITests
+)
+rm -rf /tmp/hermes-c1-results
+mkdir -p /tmp/hermes-c1-results
+UI_PASS=0; UI_FAIL=0; UI_TOTAL=0
+for i in "${!UI_CLASSES[@]}"; do
+  cls="${UI_CLASSES[$i]}"; n=$((i+1)); out="/tmp/c1_xctest_ui_${n}.log"
+  bundle="/tmp/hermes-c1-results/${cls}.xcresult"
+  rm -rf "$bundle"
+  printf 'C1 UI [%02d/%02d] %s ...\n' "$n" "${#UI_CLASSES[@]}" "$cls"
+  if ! xcodebuild "${XC[@]}" -resultBundlePath "$bundle" "-only-testing:HermesFleetAppUITests/$cls" build test >"$out" 2>&1; then
+    UI_FAIL=$((UI_FAIL+1)); bad "UI $cls FAILED or incomplete"; grep -E 'error:|failed|Executed|Test Suite' "$out" | tail -20; continue
+  fi
+  if [ ! -d "$bundle" ]; then
+    UI_FAIL=$((UI_FAIL+1)); bad "UI $cls INCOMPLETE: missing xcresult"; continue
+  fi
+  summary=$(xcrun xcresulttool get test-results summary --path "$bundle" --compact 2>/dev/null || true)
+  tests=$(xcrun xcresulttool get test-results tests --path "$bundle" --compact 2>/dev/null || true)
+  parsed=$(SUMMARY="$summary" TESTS="$tests" REQUESTED="$cls" python3 - <<'PY'
+import json, os, sys
+try:
+    s=json.loads(os.environ["SUMMARY"]); t=json.loads(os.environ["TESTS"]); requested=os.environ["REQUESTED"]
+except Exception:
+    print("0 0 0 0"); sys.exit(0)
+seen=[]
+def walk(v):
+    if isinstance(v, dict):
+        if v.get("nodeType") == "Test Case": seen.append(v)
+        for x in v.values(): walk(x)
+    elif isinstance(v, list):
+        for x in v: walk(x)
+walk(t)
+matched=[x for x in seen if x.get("nodeIdentifier", "").split("/")[-2:-1] == [requested]]
+failures=sum(1 for x in matched if x.get("result") not in ("Passed", "Expected Failure"))
+complete=(s.get("result") == "Passed" and s.get("totalTestCount", 0) > 0)
+print(len(matched), failures, int(complete), int(bool(matched)))
+PY
+)
+  read -r count failures complete present <<EOF
+$parsed
+EOF
+  UI_TOTAL=$((UI_TOTAL+count))
+  if [ "$present" -eq 1 ] && [ "$count" -gt 0 ] && [ "$failures" -eq 0 ] && [ "$complete" -eq 1 ]; then
+    UI_PASS=$((UI_PASS+1)); printf 'C1 UI [%02d/%02d] %s PASS — executed=%d failed=%d\n' "$n" "${#UI_CLASSES[@]}" "$cls" "$count" "$failures"
+  else
+    UI_FAIL=$((UI_FAIL+1)); bad "UI $cls INCOMPLETE or FAILED: executed=$count failed=$failures complete=$complete selector=$present"
+  fi
+done
+printf 'UI PASS=%d FAIL=%d TESTS=%d\n' "$UI_PASS" "$UI_FAIL" "$UI_TOTAL"
+if [ "$UI_FAIL" -ne 0 ]; then bad "deterministic UI matrix failed"; fi
 
 # --- 5. public-safety residue guard (Issue #2, Pass B) ------------------------
 note "public-safety residue guard"
