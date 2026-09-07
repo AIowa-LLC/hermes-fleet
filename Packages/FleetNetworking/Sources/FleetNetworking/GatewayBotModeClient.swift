@@ -190,6 +190,259 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
         _ = result
     }
 
+    /// `profiles.set_asset {clear: true}` — remove the avatar asset
+    /// (methods_profiles.py:595-630; `{ok, asset, size: 0, removed}`).
+    public func clearAvatarAsset(profile: String) async throws {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        _ = try await request(method: "profiles.set_asset", params: .object([
+            "name": .string(profile),
+            "asset": .string("avatar"),
+            "clear": .bool(true),
+        ]))
+    }
+
+    // MARK: - profile management (slice 2)
+
+    /// `profiles.describe` — the full editable surface
+    /// (methods_profiles.py:400-433): soul, model{provider,default}, skills,
+    /// toolsets, mcp_servers.
+    public func describeProfile(_ profile: String) async throws -> BotProfileDescription {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        let result = try await request(method: "profiles.describe", params: .object([
+            "name": .string(profile),
+        ]))
+        guard let object = result.objectValue else {
+            throw BotModeProfileError.malformedPayload("profiles.describe returned a non-object")
+        }
+        return Self.decodeDescription(object, profile: profile)
+    }
+
+    /// Decode a `profiles.describe` result object.
+    static func decodeDescription(_ object: [String: JSONValue], profile: String) -> BotProfileDescription {
+        let modelObject = object["model"]?.objectValue
+        let skills = (object["skills"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.SkillEntry? in
+            guard let o = entry.objectValue, let name = o["name"]?.stringValue else { return nil }
+            return BotProfileDescription.SkillEntry(
+                name: name, enabled: o["enabled"]?.boolValue ?? true)
+        }
+        let toolsets = (object["toolsets"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.ToolsetEntry? in
+            guard let o = entry.objectValue, let name = o["name"]?.stringValue else { return nil }
+            return BotProfileDescription.ToolsetEntry(
+                name: name,
+                label: o["label"]?.stringValue,
+                description: o["description"]?.stringValue,
+                toolCount: o["tool_count"]?.numberValue.map(Int.init) ?? 0,
+                enabled: o["enabled"]?.boolValue ?? false)
+        }
+        let mcp = (object["mcp_servers"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.MCPEntry? in
+            guard let o = entry.objectValue, let name = o["name"]?.stringValue else { return nil }
+            return BotProfileDescription.MCPEntry(
+                name: name,
+                enabled: o["enabled"]?.boolValue ?? false,
+                transport: o["transport"]?.stringValue)
+        }
+        return BotProfileDescription(
+            name: object["name"]?.stringValue ?? profile,
+            descriptionText: object["description"]?.stringValue,
+            soul: object["soul"]?.stringValue,
+            defaultModel: modelObject?["default"]?.stringValue,
+            provider: modelObject?["provider"]?.stringValue,
+            skills: skills,
+            toolsets: toolsets,
+            mcpServers: mcp
+        )
+    }
+
+    /// `profiles.configure` with per-section dirty flags and ui_meta CAS.
+    /// Sections that are nil in the edit are NEVER sent (upstream per-section
+    /// dirty-flag discipline — an untouched section is never written).
+    public func configureProfile(
+        _ profile: String,
+        edit: BotProfileEdit,
+        confirmExpensiveModel: Bool = false
+    ) async throws -> BotProfileEditOutcome {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        var params: [String: JSONValue] = ["name": .string(profile)]
+        if let metadata = edit.metadata {
+            var wireObject = metadata.toWire()
+            if let previous = edit.previousMetadataRaw?.objectValue {
+                for (key, value) in previous where wireObject[key] == nil {
+                    wireObject[key] = value
+                }
+            }
+            if let expected = edit.metadataExpectedRevision {
+                params["ui_meta_expected_revisions"] = .object([
+                    BotModeContract.botsMetaKey: .number(Double(expected))
+                ])
+            }
+            params["ui_meta"] = .object([
+                BotModeContract.botsMetaKey: .object(wireObject.toJSONObject())
+            ])
+        }
+        if let soul = edit.soul { params["soul"] = .string(soul) }
+        if let description = edit.descriptionText { params["description"] = .string(description) }
+        if let model = edit.model { params["model"] = .string(model) }
+        if let provider = edit.provider { params["provider"] = .string(provider) }
+        if confirmExpensiveModel { params["confirm_expensive_model"] = .bool(true) }
+        if let disabled = edit.disabledSkills {
+            params["disabled_skills"] = .array(disabled.map { .string($0) })
+        }
+        if let toolsets = edit.enabledToolsets {
+            params["enabled_toolsets"] = .array(toolsets.map { .string($0) })
+        }
+        if let mcp = edit.enabledMCPServers {
+            params["enabled_mcp_servers"] = .array(mcp.map { .string($0) })
+        }
+        let result = try await request(method: "profiles.configure", params: .object(params))
+        return try Self.decodeEditOutcome(result, edit: edit)
+    }
+
+    /// Decode a `profiles.configure` response into a typed per-section
+    /// outcome: `{ok, applied:{section: bool}, [confirm_required,
+    /// confirm_message]}` — a ui_meta conflict is surfaced as a typed
+    /// `.metadataConflict` error (never silent).
+    static func decodeEditOutcome(
+        _ result: JSONValue, edit: BotProfileEdit
+    ) throws -> BotProfileEditOutcome {
+        let applied = result["applied"]?.objectValue ?? [:]
+        let confirmRequired = result["confirm_required"]?.boolValue ?? false
+        let confirmMessage = result["confirm_message"]?.stringValue
+
+        var appliedFlags: [String: Bool] = [:]
+        for (key, value) in applied where key != "ui_meta_revisions" && key != "ui_meta_conflicts" {
+            appliedFlags[key] = value.boolValue
+        }
+        var newRevisions: [String: Int] = [:]
+        if let revs = applied["ui_meta_revisions"]?.objectValue {
+            for (key, value) in revs {
+                if let n = value.numberValue { newRevisions[key] = Int(n) }
+            }
+        }
+        var conflict: BotProfileEditOutcome.MetadataConflict?
+        if let conflicts = applied["ui_meta_conflicts"]?.objectValue,
+           let botsConflict = conflicts[BotModeContract.botsMetaKey]?.objectValue {
+            conflict = BotProfileEditOutcome.MetadataConflict(
+                key: BotModeContract.botsMetaKey,
+                expected: botsConflict["expected"]?.numberValue.map(Int.init) ?? 0,
+                actual: botsConflict["actual"]?.numberValue.map(Int.init) ?? 0)
+        }
+        if let conflict {
+            throw BotModeProfileError.metadataConflict(
+                revisions: newRevisions,
+                conflicts: [BotModeContract.botsMetaKey:
+                    BotModeProfileError.ExpectedActual(
+                        expected: conflict.expected, actual: conflict.actual)])
+        }
+        return BotProfileEditOutcome(
+            edit: edit,
+            applied: appliedFlags,
+            newMetadataRevisions: newRevisions,
+            confirmRequired: confirmRequired,
+            confirmMessage: confirmMessage
+        )
+    }
+
+    /// `profiles.create` (methods_profiles.py:337-374): fresh (bundled
+    /// skills seeded), clone_from (config-only) or clone_all (full), or
+    /// no_skills empty; optional soul/model/provider; credential semantics
+    /// (`share_auth`, `mirror_credentials`) copied from the wire contract.
+    @discardableResult
+    public func createProfile(_ spec: BotCreateSpec) async throws -> String {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        var params: [String: JSONValue] = [
+            "name": .string(spec.name),
+            "share_auth": .bool(spec.shareAuth),
+            "mirror_credentials": .bool(spec.mirrorCredentials),
+        ]
+        switch spec.seed {
+        case .fresh:
+            break
+        case .clone(let profile, let cloneAll):
+            params["clone_from"] = .string(profile)
+            params["clone_all"] = .bool(cloneAll)
+        case .emptyNoSkills:
+            params["no_skills"] = .bool(true)
+        }
+        if let soul = spec.soul, !soul.isEmpty { params["soul"] = .string(soul) }
+        if let model = spec.model, let provider = spec.provider {
+            params["model"] = .string(model)
+            params["provider"] = .string(provider)
+        }
+        if let description = spec.descriptionText, !description.isEmpty {
+            params["description"] = .string(description)
+        }
+        let result = try await request(method: "profiles.create", params: .object(params))
+        guard result["ok"]?.boolValue == true,
+              let name = result["name"]?.stringValue, !name.isEmpty else {
+            throw BotModeProfileError.malformedPayload("profiles.create did not confirm creation")
+        }
+        return name
+    }
+
+    /// Read one profile's full ui_meta row via `profiles.list` (used by the
+    /// sections-registry sync on the DEFAULT profile).
+    public func profileUIMeta(profile: String) async throws -> [String: MetadataValue]? {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        let result = try await request(method: "profiles.list", params: .object([:]))
+        guard let profiles = result["profiles"]?.arrayValue else {
+            throw BotModeProfileError.malformedPayload("profiles.list missing 'profiles'")
+        }
+        let row = profiles.first { $0["name"]?.stringValue == profile }
+        guard let row else { return nil }
+        guard let metaObject = row["ui_meta"]?.objectValue else { return nil }
+        return metaObject.mapValues { ModernProfilesDecoder.toMetadataValue($0) }
+    }
+
+    /// Write ONE ui_meta key with per-key CAS (sections registry rides the
+    /// DEFAULT profile's `bot-sections-v1` key this way). Unknown sibling
+    /// keys are untouched — only the named key is written.
+    public func writeUIMetaKey(
+        profile: String,
+        key: String,
+        value: MetadataValue,
+        expectedRevision: Int?
+    ) async throws -> MetadataWriteReceipt {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        var params: [String: JSONValue] = [
+            "name": .string(profile),
+            "ui_meta": .object([key: toJSON(value)]),
+        ]
+        if let expectedRevision {
+            params["ui_meta_expected_revisions"] = .object([
+                key: .number(Double(expectedRevision))
+            ])
+        }
+        let result = try await request(method: "profiles.configure", params: .object(params))
+        let receipt = try Self.decodeConfigureReceipt(result)
+        // The generic receipt path decodes `applied.ui_meta`; a conflict on
+        // THIS key is surfaced typed by decodeConfigureReceipt already.
+        return receipt
+    }
+
+    /// Read the current revision of one ui_meta key for a profile
+    /// (`ui_meta_revisions` from `profiles.list`).
+    public func uiMetaRevision(profile: String, key: String) async throws -> Int? {
+        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
+        let result = try await request(method: "profiles.list", params: .object([:]))
+        guard let profiles = result["profiles"]?.arrayValue else {
+            throw BotModeProfileError.malformedPayload("profiles.list missing 'profiles'")
+        }
+        guard let row = profiles.first(where: { $0["name"]?.stringValue == profile }) else { return nil }
+        guard let revisions = row["ui_meta_revisions"]?.objectValue else { return nil }
+        return revisions[key]?.numberValue.map(Int.init)
+    }
+
+    private func toJSON(_ value: MetadataValue) -> JSONValue {
+        switch value {
+        case .null: return .null
+        case .bool(let b): return .bool(b)
+        case .number(let n): return .number(n)
+        case .string(let s): return .string(s)
+        case .array(let a): return .array(a.map { toJSON($0) })
+        case .object(let o): return .object(o.mapValues { toJSON($0) })
+        }
+    }
+
     // MARK: - transport plumbing
 
     private func request(method: String, params: JSONValue) async throws -> JSONValue {
@@ -256,6 +509,26 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
 
 // `CanonicalLookup` / `CanonicalLookupRow` live in FleetCore
 // (BotModeChatProviding.swift) — this client conforms to the seam types.
+// `BotProfileManaging` conformance: the profile-management methods above
+// (describeProfile / configureProfile(_:edit:) / configureProfile
+// (_:edit:confirmExpensiveModel:) / createProfile / uploadAvatar /
+// clearAvatar / avatarData) satisfy the seam via the overloads below.
+extension GatewayBotModeClient {
+    /// Seam: `uploadAvatar` maps to `setAvatar` (same wire call).
+    public func uploadAvatar(_ profile: String, dataURL: String) async throws {
+        try await setAvatar(profile: profile, dataURL: dataURL)
+    }
+
+    /// Seam: `clearAvatar` maps to `clearAvatarAsset` (`{clear: true}`).
+    public func clearAvatar(_ profile: String) async throws {
+        try await clearAvatarAsset(profile: profile)
+    }
+
+    /// Seam: `avatarData` maps to `getAvatar` (nil when absent).
+    public func avatarData(_ profile: String) async throws -> Data? {
+        try await getAvatar(profile: profile)
+    }
+}
 
 /// Receipt of a successful CAS write.
 public struct MetadataWriteReceipt: Hashable, Sendable {
