@@ -155,7 +155,7 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         if systemBack.waitForExistence(timeout: 5) {
             back = systemBack
         } else {
-            for name in ["Hermes Fleet", "Fleet Roster", "Workstation", "Default"] {
+            for name in ["Gateways", "Bots", "Workstation", "Default"] {
                 let candidate = buttons[name]
                 if candidate.exists && !candidate.label.contains("Hidden Bots") {
                     back = candidate

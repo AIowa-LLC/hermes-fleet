@@ -60,7 +60,7 @@ public struct FleetRosterView: View {
                 rosterList
             }
         }
-        .navigationTitle("Fleet Roster")
+        .navigationTitle("Bots")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {

@@ -34,9 +34,11 @@ public struct FleetDashboardView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
-                masthead
+                // FOS-3 (SPEC §6/§21-2): the marketing masthead ("HERMES
+                // FLEET" / "Your agents. Within reach." / tagline) is REMOVED
+                // — no authenticated root begins with a slogan or wordmark.
+                // The inline "Fleet" navigation title names the surface.
                 overviewStats
-                managementSection
                 if sizeClass == .regular && !typeSize.isAccessibilitySize {
                     HStack(alignment: .top, spacing: 24) {
                         VStack(spacing: 24) { activeBotsSection; kanbanSection }
@@ -66,28 +68,6 @@ public struct FleetDashboardView: View {
                 try? await Task.sleep(for: .seconds(60))
             }
         }
-    }
-
-    // MARK: Masthead (gold brand title per the hero mock)
-
-    private var masthead: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("HERMES FLEET", systemImage: "sparkle")
-                .font(.caption.weight(.semibold)).tracking(3)
-                .foregroundStyle(FleetTheme.accent)
-            Text("Your agents.\nWithin reach.")
-                .font(FleetTheme.titleFont)
-                .foregroundStyle(FleetTheme.textPrimary)
-            Text("A clear view of your fleet. A direct line to your next idea.")
-                .font(.subheadline).foregroundStyle(FleetTheme.textSecondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(24)
-        .background {
-            RoundedRectangle(cornerRadius: 28)
-                .fill(LinearGradient(colors: [FleetTheme.accent.opacity(0.12), FleetTheme.surface], startPoint: .topLeading, endPoint: .bottomTrailing))
-        }
-        .accessibilityIdentifier("fleet.dashboard.title")
     }
 
     // MARK: Fleet Overview (real counts only)
@@ -129,7 +109,7 @@ public struct FleetDashboardView: View {
             if environment.gateways.isEmpty {
                 emptyHint(
                     icon: "server.rack",
-                    text: "No gateways registered. Add one in Control → Gateways."
+                    text: "No gateways registered. Add one in the Gateways tab."
                 )
                 .accessibilityIdentifier("fleet.dashboard.gateways.empty")
             } else {
@@ -279,14 +259,6 @@ public struct FleetDashboardView: View {
             .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("fleet.dashboard.kanban.entry")
         }
-    }
-
-    // MARK: Management panes (R9-T5 cron + R9-T6 skills)
-
-    private var managementSection: some View {
-        NavigationLink(value: FleetScreen.gateways) {
-            Label("Gateway tools", systemImage: "server.rack")
-        }.accessibilityIdentifier("fleet.dashboard.management.entry")
     }
 
     // MARK: Recent Activity (real gateway events from the H2 accumulator)

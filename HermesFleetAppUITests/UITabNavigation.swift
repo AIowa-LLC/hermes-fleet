@@ -43,15 +43,17 @@ enum UITabNavigation {
     }
 
     /// Open the Gateways tab and wait for the registry cockpit's nav bar.
+    /// FOS-3 (SPEC §6): the tab title is "Gateways" (was "Hermes Fleet").
     @discardableResult
     static func openGatewaysTab(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
-        openTab(app, label: "Gateways", expectedBar: "Hermes Fleet", timeout: timeout)
+        openTab(app, label: "Gateways", expectedBar: "Gateways", timeout: timeout)
     }
 
     /// Open the Bots tab (the fleet roster, previously a toolbar link).
+    /// FOS-3 (SPEC §6/§19): the collection title is "Bots" (was "Fleet Roster").
     @discardableResult
     static func openBotsTab(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
-        openTab(app, label: "Bots", expectedBar: "Fleet Roster", timeout: timeout)
+        openTab(app, label: "Bots", expectedBar: "Bots", timeout: timeout)
     }
     static func openSettings(_ app: XCUIApplication) {
         _ = openTab(app, label: "Fleet", expectedBar: "Fleet", timeout: 15)
@@ -59,12 +61,14 @@ enum UITabNavigation {
         XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
     }
     static func openActivity(_ app: XCUIApplication) {
-        _ = openTab(app, label: "Fleet", expectedBar: "Fleet", timeout: 15)
-        app.buttons["fleet.command-center.open"].tap()
-        let search = app.searchFields.firstMatch
-        search.tap()
-        search.typeText("Connection history")
-        app.buttons["Connection history"].tap()
+        // FOS-3: Control's cross-fleet diagnostics links are owned by the
+        // Gateways tab (Connection history under its Fleet section).
+        _ = openGatewaysTab(app)
+        let history = app.buttons["fleet.gateways.activity"].firstMatch
+        if !history.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !history.exists { app.swipeUp(velocity: .fast) }
+        }
+        history.tap()
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 10))
     }
 

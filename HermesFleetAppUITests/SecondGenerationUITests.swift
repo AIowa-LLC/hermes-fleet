@@ -60,7 +60,7 @@ final class SecondGenerationUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 5))
         capture("revamp-chats")
         app.tabBars.buttons["Gateways"].tap()
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 5))
     }
     private func firstMatchOrNil(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch

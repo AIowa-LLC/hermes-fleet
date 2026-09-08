@@ -3,16 +3,18 @@ import XCTest
 /// U4 (Gold Fleet) — Home dashboard composition regression suite.
 ///
 /// Drives the DEBUG build (deterministic scripted fleet: 3 gateways — two
-/// healthy, one unreachable — with real roster bots) and proves the plan
-/// card's composition from REAL data only:
-///   1. gold "Hermes Fleet" masthead renders on Home;
-///   2. Fleet Overview stat row: the real bot/gateway counts render;
+/// healthy, one unreachable — with real roster bots) and proves the
+/// dashboard's composition from REAL data only. FOS-3 (SPEC §6/§21-2)
+/// RETIRED the marketing masthead: the first content is the Fleet Overview
+/// stat row, and no wordmark/slogan renders on the Fleet root:
+///   1. the hero masthead is GONE (negative assertion);
+///   2. Fleet Overview stat row: the real bot/gateway counts render first;
 ///   3. Gateways rows (name + endpoint + pill) from the registry;
 ///   4. Known Bots rows (name + gateway subtitle + last-active) from the
 ///      roster — no fabricated uptime;
 ///   5. Recent Activity renders its honest empty state until real
 ///      connection events accumulate (no fabricated timeline entries);
-///   6. section "View All" drill-ins push on the Home tab's own stack.
+///   6. section "View All" drill-ins push on the Fleet tab's own stack.
 final class U4DashboardUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -22,21 +24,28 @@ final class U4DashboardUITests: XCTestCase {
     func testGoldTitleAndStatRowRenderFromRealData() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Gold masthead (accessibility id, robust against color queries).
-        XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.dashboard.title").waitForExistence(timeout: 15),
-            "the Home dashboard must render the gold Hermes Fleet masthead"
+        // FOS-3: the marketing masthead is REMOVED — its identifier and the
+        // "Your agents." slogan must NOT render (positive replacement: the
+        // stat row below).
+        XCTAssertFalse(
+            firstMatch(in: app, identifier: "fleet.dashboard.title").waitForExistence(timeout: 3),
+            "the marketing masthead must not render on the Fleet root (FOS-3)"
         )
+        XCTAssertFalse(app.staticTexts["Your agents.\nWithin reach."].exists,
+                       "the hero slogan must not render (FOS-3)")
 
         // Stat row renders the real scripted-fleet counts: 3 gateways.
         XCTAssertTrue(
             app.staticTexts["3"].waitForExistence(timeout: 15),
             "the Fleet Overview stat row must show the real gateway count (3)"
         )
-        attachScreenshot(of: app, name: "u4-home-gold-dashboard")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.dashboard.stats").waitForExistence(timeout: 10),
+            "the Fleet Overview stat row is the first dashboard content (FOS-3)"
+        )
+        attachScreenshot(of: app, name: "u4-home-fleet-overview")
     }
 
     func testGatewayRowsRenderNameAndEndpoint() throws {
@@ -94,7 +103,7 @@ final class U4DashboardUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.dashboard.title").waitForExistence(timeout: 15),
+            firstMatch(in: app, identifier: "fleet.dashboard.stats").waitForExistence(timeout: 15),
             "dashboard should render before drill-in"
         )
 
@@ -112,7 +121,7 @@ final class U4DashboardUITests: XCTestCase {
         // (the old Command launcher button was retired with Control).
         app.tabBars.firstMatch.buttons["Fleet"].tap()
         XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.dashboard.title").waitForExistence(timeout: 10),
+            firstMatch(in: app, identifier: "fleet.dashboard.stats").waitForExistence(timeout: 10),
             "the Fleet tab must return to the dashboard"
         )
         attachScreenshot(of: app, name: "u4-home-drillin-gateways")

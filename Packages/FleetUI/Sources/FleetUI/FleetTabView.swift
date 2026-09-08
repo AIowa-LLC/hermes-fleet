@@ -75,7 +75,9 @@ public struct FleetTabView: View {
                 .sheet(isPresented: $showingCommandCenter) {
                     FleetCommandCenter(environment: environment, navigate: { screen in
                         navigation.open(screen)
-                    }, selectTab: { navigation.selection = $0 })
+                    }, selectTab: { navigation.selection = $0 }, openSettings: {
+                        showingSettings = true
+                    })
                 }
             }
         }

@@ -1,48 +1,29 @@
 import SwiftUI
 
-/// Settings tab (U3 Gold Fleet, U7 polish) — app settings, hosted as a tab
-/// (no longer the H1 sheet from the Gateways toolbar).
-///
-/// Hosts the existing App Lock toggle (`AppLockController`, default ON,
-/// persisted via UserDefaults — the H1 acceptance surface, unchanged). The
-/// U7 re-skin applies the Gold Fleet tokens: gold brand header, secondary
-/// section headers, magenta control tint. Honest gaps: settings that do not
-/// exist yet are not fabricated; more sections land with their features.
+/// FOS-3 (SPEC §12) — Settings is an app-level SHEET reached from the Fleet
+/// root's leading gearshape and Command Center. First item is useful
+/// configuration, not a brand block (the U7 gold banner is retired with this
+/// card). No invented preferences: Security (App Lock), Appearance
+/// (System/Light/Dark — new; the accent picker retires in FOS-7), and the
+/// always-reachable Agent Setup Prompt (C2) plus app version.
 public struct FleetSettingsView: View {
     private let controller: AppLockController
     private let accentController: FleetAccentController
+    private let appearanceController: FleetAppearanceController
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
 
     public init(controller: AppLockController,
-                accentController: FleetAccentController = FleetAccentController.shared) {
+                accentController: FleetAccentController = FleetAccentController.shared,
+                appearanceController: FleetAppearanceController = FleetAppearanceController.shared) {
         self.controller = controller
         self.accentController = accentController
+        self.appearanceController = appearanceController
     }
 
     public var body: some View {
         Form {
-            // U7: gold brand header (matches the Home dashboard wordmark).
-            Section {
-                HStack(spacing: FleetTheme.spacingMd) {
-                    Image(systemName: "circle.hexagongrid.fill")
-                        .font(.system(size: 28))
-                        .foregroundStyle(FleetTheme.accent)
-                        .accessibilityHidden(true)
-                    Text("Hermes Fleet")
-                        .font(FleetTheme.titleFont)
-                        .foregroundStyle(FleetTheme.accent)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // One combined element: the identifier carries the merged
-                // label (icon + wordmark) instead of forwarding to the
-                // symbol image (U3 accessibility-identifier lesson).
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("fleet.settings.brand")
-            }
-            .listRowBackground(Color.clear)
-
             Section {
                 Toggle(isOn: Binding(
                     get: { controller.isEnabled },
@@ -62,29 +43,20 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(FleetTheme.textSecondary)
             }
 
-            // C2: the ALWAYS-REACHABLE door to the agent setup prompt. The
-            // old onboarding entry only existed in the empty-gateways state,
-            // so it silently vanished for anyone with a configured gateway.
+            // FOS-3 (§12 Appearance): System / Light / Dark, default System.
+            // The accent picker RETIRES in FOS-7; until then the V7.5 picker
+            // keeps applying unchanged (its tests migrate with FOS-7).
             Section {
-                Button {
-                    showingSetupPrompt = true
-                } label: {
-                    Label("Agent Setup Prompt", systemImage: "text.badge.star")
-                        .foregroundStyle(FleetTheme.textPrimary)
+                Picker("Appearance", selection: Binding(
+                    get: { appearanceController.selection },
+                    set: { appearanceController.selection = $0 }
+                )) {
+                    ForEach(FleetAppearance.allCases) { appearance in
+                        Text(appearance.label).tag(appearance)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("fleet.settings.setup-prompt")
-            } header: {
-                Text("Agent")
-                    .foregroundStyle(FleetTheme.textSecondary)
-            } footer: {
-                Text("Copy or share the versioned setup prompt for your Hermes agent.")
-                    .foregroundStyle(FleetTheme.textSecondary)
-            }
-
-            // V7.5: the ONE accent is user-choosable — vetted catalog only
-            // (no free-text hex; teal permanently banned, brand rule).
-            Section {
+                .pickerStyle(.inline)
+                .accessibilityIdentifier("fleet.settings.appearance")
                 ForEach(FleetAccent.allCases) { accent in
                     Button {
                         accentController.selection = accent
@@ -111,7 +83,35 @@ public struct FleetSettingsView: View {
                 Text("Appearance")
                     .foregroundStyle(FleetTheme.textSecondary)
             } footer: {
-                Text("Sets the app's single accent color. Warm Gold is the strongest contrast pairing with the white-wing mark; Hermes Blue is the Apple standard look.")
+                Text("Choose Light or Dark, or follow your device's system setting. The accent picker retires in a coming update in favor of one consistent Fleet interface accent.")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+
+            // C2: the ALWAYS-REACHABLE door to the agent setup prompt. The
+            // old onboarding entry only existed in the empty-gateways state,
+            // so it silently vanished for anyone with a configured gateway.
+            Section {
+                Button {
+                    showingSetupPrompt = true
+                } label: {
+                    Label("Agent Setup Prompt", systemImage: "text.badge.star")
+                        .foregroundStyle(FleetTheme.textPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("fleet.settings.setup-prompt")
+            } header: {
+                Text("Agent")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            } footer: {
+                Text("Copy or share the versioned setup prompt for your Hermes agent.")
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+
+            Section {
+                LabeledContent("Version", value: Self.appVersion)
+                    .accessibilityIdentifier("fleet.settings.version")
+            } footer: {
+                Text("Hermes Fleet — a pocket operations console for your agents.")
                     .foregroundStyle(FleetTheme.textSecondary)
             }
         }
@@ -124,6 +124,15 @@ public struct FleetSettingsView: View {
         }
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
+    }
+
+    /// Marketing/build version from the main bundle (no invented values).
+    private static var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        if let short, let build { return "\(short) (\(build))" }
+        if let short { return short }
+        return "Unknown"
     }
 }
 

@@ -19,6 +19,9 @@ struct HermesFleetApp: App {
     // Observe the accent selection at the root so app-level tint updates live
     // when the user changes it in Settings > Appearance.
     @State private var accentController = FleetAccentController.shared
+    // FOS-3 (§12): System/Light/Dark appearance preference applied at the
+    // app root (nil = System — defer to the device setting).
+    @State private var appearanceController = FleetAppearanceController.shared
 
     var body: some Scene {
         WindowGroup {
@@ -40,6 +43,8 @@ struct HermesFleetApp: App {
             // Apply the selected accent at app scope so sheets, covers, and
             // the lock overlay inherit the same tint.
             .tint(accentController.selection.color)
+            // FOS-3: apply the persisted appearance override app-wide.
+            .preferredColorScheme(appearanceController.selection.colorScheme)
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)

@@ -88,62 +88,116 @@ struct FleetChatsView: View {
     }
 }
 
-struct FleetWorkspaceView: View {
-    let environment: AppEnvironment
-    var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Image(systemName: "square.stack.3d.up").font(.largeTitle).foregroundStyle(FleetTheme.accent)
-                    Text("Where ideas become work.").font(.title2.bold())
-                    Text("Explore projects and files on your gateways. Open a host to browse its workspace.")
-                        .font(.subheadline).foregroundStyle(FleetTheme.textSecondary)
-                }.padding(.vertical, 12)
-            }
-            Section("Workspaces by gateway") {
-                ForEach(environment.gateways) { gateway in
-                    NavigationLink(value: FleetScreen.projects(gateway.id)) {
-                        Label(gateway.displayName, systemImage: "folder")
-                    }.accessibilityIdentifier("fleet.workspace.gateway.\(gateway.id.rawValue)")
-                }
-                if environment.gateways.isEmpty {
-                    ContentUnavailableView("Connect your workspace", systemImage: "folder", description: Text("Add a gateway in Control to explore its projects."))
-                }
-            }
-            Section {
-                NavigationLink(value: FleetScreen.kanban) { Label("Work board", systemImage: "rectangle.split.3x1") }
-            }
-        }
-        .scrollContentBackground(.hidden).background(FleetTheme.background)
-        .navigationTitle("Workspace").accessibilityIdentifier("fleet.workspace")
-    }
-}
+// FOS-3: FleetControlView and FleetWorkspaceView are RETIRED (SPEC §6/§19 —
+// "Control root: Remove + Redistribute", "Workspace root / slogan: Remove").
+// Their capabilities were already redistributed by FOS-1/FOS-2: registry,
+// health, history and per-gateway resources live beneath the Gateways tab
+// (Gateway Detail cockpit); Settings is the Fleet gear sheet. Both views were
+// dead code after FOS-1; this card deletes them.
 
-struct FleetControlView: View {
-    let environment: AppEnvironment
-    let lockController: AppLockController
-    var body: some View {
-        List {
-            Section("Fleet") {
-                NavigationLink(value: FleetScreen.gateways) { Label("Gateways", systemImage: "server.rack") }
-                NavigationLink(value: FleetScreen.health) { Label("Connection health", systemImage: "waveform.path.ecg") }
-                NavigationLink(value: FleetScreen.activity) { Label("Connection history", systemImage: "clock.arrow.circlepath") }
-            }
-            ForEach(environment.gateways) { gateway in
-                Section(gateway.displayName) {
-                    NavigationLink(value: FleetScreen.cron(gateway.id)) { Label("Cron", systemImage: "calendar.badge.clock") }
-                    NavigationLink(value: FleetScreen.skills(gateway.id)) { Label("Skills", systemImage: "sparkles") }
-                    NavigationLink(value: FleetScreen.memoryGraph(gateway.id)) { Label("Memory Graph", systemImage: "point.3.connected.trianglepath.dotted") }
-                }
-            }
-            Section("Security & preferences") {
-                NavigationLink { FleetSettingsView(controller: lockController) } label: {
-                    Label("App Lock & settings", systemImage: "lock.shield")
-                }
+/// FOS-3 (SPEC §13) — Command Center result model. Results carry their
+/// OWNING tab and an exact destination; `Environment`-derived search text
+/// (bots, groups, gateways) is precomputed so the query is a pure filter.
+struct FleetCommandCenterResults {
+    struct Item: Identifiable {
+        enum Kind { case bot, group, gateway, conversation, resource }
+        let kind: Kind
+        let title: String
+        let subtitle: String
+        let keywords: String
+        /// Identifier pattern: "bot:<route>" / "group:<roomKey>" /
+        /// "gateway:<id>" / "conv:<route>/<session>" / "res:<screen>".
+        let id: String
+        let screen: FleetScreen
+
+        func matches(_ query: String) -> Bool {
+            query.isEmpty
+                || title.localizedCaseInsensitiveContains(query)
+                || subtitle.localizedCaseInsensitiveContains(query)
+                || keywords.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    let items: [Item]
+
+    /// Build the loaded-index result set from the environment. No transport
+    /// is opened: bots/groups/gateways come from the current roster/registry
+    /// snapshots, conversations from `sessionsByRoute` with the SAME canonical
+    /// exclusion Chats applies (SPEC §13: canonical sessions must not appear
+    /// as ordinary chats).
+    @MainActor
+    init(environment: AppEnvironment) {
+        var items: [Item] = []
+
+        // Bots — roster truth (owner: Bots).
+        for bot in environment.rosterSnapshot?.roster.allBots ?? [] {
+            let gatewayName = environment.gateway(for: bot.route.gatewayID)?.displayName
+                ?? bot.route.gatewayID.rawValue
+            items.append(Item(
+                kind: .bot,
+                title: bot.displayName,
+                subtitle: "Bot · \(gatewayName)",
+                keywords: "bot agent profile \(bot.route.id) \(gatewayName)",
+                id: "bot:\(bot.route.id)",
+                screen: .botDetail(bot.route)
+            ))
+        }
+
+        // Groups — room union (owner: Bots; room key is the identity).
+        for gateway in environment.gateways {
+            for room in environment.rooms(for: gateway.id) {
+                items.append(Item(
+                    kind: .group,
+                    title: room.name,
+                    subtitle: "Group · \(gateway.displayName)",
+                    keywords: "group room \(room.id.key) \(gateway.displayName)",
+                    id: "group:\(room.id.key)",
+                    screen: .room(room.id)
+                ))
             }
         }
-        .scrollContentBackground(.hidden).background(FleetTheme.background)
-        .navigationTitle("Control").accessibilityIdentifier("fleet.control")
+
+        // Gateways — direct object results (SPEC §13 addition).
+        for gateway in environment.gateways {
+            items.append(Item(
+                kind: .gateway,
+                title: gateway.displayName,
+                subtitle: "Gateway · \(gateway.id.rawValue)",
+                keywords: "gateway machine server \(gateway.displayName) \(gateway.id.rawValue)",
+                id: "gateway:\(gateway.id.rawValue)",
+                screen: .gatewayDetail(gateway.id)
+            ))
+        }
+
+        // Loaded conversations — canonical sessions EXCLUDED (§13).
+        for route in environment.sessionsByRoute.keys.sorted(by: { $0.id < $1.id }) {
+            guard environment.gateway(for: route.gatewayID) != nil else { continue }
+            let botName = environment.bot(for: route)?.displayName
+            for session in environment.sessions(for: route) ?? [] {
+                guard !environment.isCanonicalBotChat(route: route, sessionID: session.id)
+                else { continue }
+                let title = session.title.isEmpty ? "Untitled conversation" : session.title
+                items.append(Item(
+                    kind: .conversation,
+                    title: title,
+                    subtitle: "\(botName ?? route.profileSlug.rawValue) · \(route.id)",
+                    keywords: "conversation chat session \(title) \(route.id) \(session.id)",
+                    id: "conv:\(route.id)/\(session.id)",
+                    screen: .conversation(route, sessionID: session.id)
+                ))
+            }
+        }
+
+        // Per-gateway resources (owner: Gateways; exact-gateway routes from FOS-2).
+        for gateway in environment.gateways {
+            let name = gateway.displayName
+            items.append(Item(kind: .resource, title: "Projects — \(name)", subtitle: "Gateway resource · \(name)", keywords: "projects files workspace \(name)", id: "res:projects:\(gateway.id.rawValue)", screen: .projects(gateway.id)))
+            items.append(Item(kind: .resource, title: "Schedules — \(name)", subtitle: "Gateway resource · \(name)", keywords: "cron schedules jobs \(name)", id: "res:cron:\(gateway.id.rawValue)", screen: .cron(gateway.id)))
+            items.append(Item(kind: .resource, title: "Skills — \(name)", subtitle: "Gateway resource · \(name)", keywords: "skills \(name)", id: "res:skills:\(gateway.id.rawValue)", screen: .skills(gateway.id)))
+            items.append(Item(kind: .resource, title: "Memory — \(name)", subtitle: "Gateway resource · \(name)", keywords: "memory graph knowledge \(name)", id: "res:memory:\(gateway.id.rawValue)", screen: .memoryGraph(gateway.id)))
+        }
+
+        self.items = items
     }
 }
 
@@ -151,10 +205,28 @@ struct FleetCommandCenter: View {
     let environment: AppEnvironment
     let navigate: (FleetScreen) -> Void
     let selectTab: (FleetTab) -> Void
+    /// FOS-3 (§12): Settings is reachable from Command Center as well as the
+    /// Fleet gear — the shell passes the sheet-presentation callback in.
+    var openSettings: (() -> Void)? = nil
     @State private var query = ""
     @Environment(\.dismiss) private var dismiss
     private func matches(_ text: String) -> Bool { query.isEmpty || text.localizedCaseInsensitiveContains(query) }
-    private func open(_ screen: FleetScreen) { dismiss(); navigate(screen) }
+    private func open(_ screen: FleetScreen) {
+        // FOS-3 (§6 routing contract): navigation goes through
+        // `FleetNavigationState.open`, which selects the OWNING tab and
+        // focuses the exact destination — bots → Bots, gateway resources →
+        // Gateways, conversations → their canonical owner.
+        dismiss()
+        navigate(screen)
+    }
+
+    /// All matching results, grouped by kind. Cap the visible rows per
+    /// section (Show more never truncates silently — the section header
+    /// carries the total).
+    private var results: [FleetCommandCenterResults.Item] {
+        let all = FleetCommandCenterResults(environment: environment).items
+        return all.filter { $0.matches(query) }
+    }
 
     var body: some View {
         NavigationStack {
@@ -164,41 +236,19 @@ struct FleetCommandCenter: View {
                         Button { dismiss(); selectTab(tab) } label: { Label(tab.label, systemImage: tab.systemImage) }
                     }
                 }
-                Section("Agents") {
-                    ForEach((environment.rosterSnapshot?.roster.allBots ?? []).filter { matches("\($0.displayName) \($0.route.id)") }) { bot in
-                        Button { open(.botDetail(bot.route)) } label: {
-                            Label { VStack(alignment: .leading) {
-                                Text(bot.displayName)
-                                Text(environment.gateway(for: bot.route.gatewayID)?.displayName ?? bot.route.gatewayID.rawValue).font(.caption).foregroundStyle(FleetTheme.textSecondary)
-                            } } icon: { Image(systemName: "cpu") }
+                if let openSettings, matches("settings preferences appearance app lock") {
+                    Section {
+                        Button { dismiss(); openSettings() } label: {
+                            Label("Settings", systemImage: "gearshape")
                         }
-                        Button("New chat with \(bot.displayName)", systemImage: "square.and.pencil") { open(.conversation(bot.route, sessionID: nil)) }
+                        .accessibilityIdentifier("fleet.command-center.settings")
                     }
                 }
-                Section("Fleet status") {
-                    Button("Connection history", systemImage: "clock.arrow.circlepath") { open(.activity) }
-                    Button("Connection health", systemImage: "waveform.path.ecg") { open(.health) }
-                }
-                Section("Loaded conversations") {
-                    ForEach(environment.sessionsByRoute.keys.filter { environment.gateway(for: $0.gatewayID) != nil }.sorted { $0.id < $1.id }, id: \.self) { route in
-                        ForEach((environment.sessions(for: route) ?? []).filter { matches($0.title) }.prefix(20)) { session in
-                            Button { open(.conversation(route, sessionID: session.id)) } label: {
-                                VStack(alignment: .leading) {
-                                    Text(session.title.isEmpty ? "Untitled conversation" : session.title)
-                                    Text(route.id).font(.caption).foregroundStyle(FleetTheme.textSecondary)
-                                }
-                            }
-                        }
-                    }
-                }
-                ForEach(environment.gateways) { gateway in
-                    Section(gateway.displayName) {
-                        if matches("Projects files workspace \(gateway.displayName)") { Button("Projects", systemImage: "folder") { open(.projects(gateway.id)) } }
-                        if matches("Cron schedule \(gateway.displayName)") { Button("Cron", systemImage: "calendar") { open(.cron(gateway.id)) } }
-                        if matches("Skills \(gateway.displayName)") { Button("Skills", systemImage: "sparkles") { open(.skills(gateway.id)) } }
-                        if matches("Memory Graph \(gateway.displayName)") { Button("Memory Graph", systemImage: "point.3.connected.trianglepath.dotted") { open(.memoryGraph(gateway.id)) } }
-                    }
-                }
+                resultSections(bots: results.filter { $0.kind == .bot },
+                               groups: results.filter { $0.kind == .group },
+                               gateways: results.filter { $0.kind == .gateway },
+                               conversations: results.filter { $0.kind == .conversation },
+                               resources: results.filter { $0.kind == .resource })
                 if matches("Refresh fleet") {
                     Button("Refresh fleet", systemImage: "arrow.clockwise") { Task { await environment.refreshRoster() } }.disabled(environment.isRefreshing)
                 }
@@ -209,5 +259,47 @@ struct FleetCommandCenter: View {
             .scrollContentBackground(.hidden).background(FleetTheme.background)
         }
         .accessibilityIdentifier("fleet.command-center")
+    }
+
+    @ViewBuilder
+    private func resultSections(bots: [Item2], groups: [Item2], gateways: [Item2], conversations: [Item2], resources: [Item2]) -> some View {
+        section("Bots", icon: "cpu", items: bots)
+        section("Groups", icon: "person.3", items: groups)
+        section("Gateways", icon: "server.rack", items: gateways)
+        section("Loaded conversations", icon: "bubble.left", items: conversations)
+        section("Resources", icon: "folder", items: resources)
+    }
+
+    private typealias Item2 = FleetCommandCenterResults.Item
+
+    @ViewBuilder
+    private func section(_ title: String, icon: String, items: [FleetCommandCenterResults.Item]) -> some View {
+        if !items.isEmpty {
+            Section {
+                ForEach(items.prefix(10)) { item in
+                    Button { open(item.screen) } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: icon)
+                                .foregroundStyle(FleetTheme.accent)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                Text(item.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(FleetTheme.textSecondary)
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("fleet.command-center.row.\(item.id)")
+                }
+                if items.count > 10 {
+                    Text("Show more — \(items.count - 10) more")
+                        .font(.caption)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+            } header: {
+                Text("\(title) — \(items.count)")
+            }
+        }
     }
 }

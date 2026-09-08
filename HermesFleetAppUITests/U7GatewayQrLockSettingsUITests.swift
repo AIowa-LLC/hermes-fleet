@@ -142,26 +142,62 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
                       "scripted passcode success should unlock to the roster")
     }
 
-    // MARK: - Settings renders the gold brand header + App Lock toggle
+    // MARK: - Settings sheet (FOS-3: app-level sheet, first item is config)
 
-    func testSettingsRendersBrandHeaderAndToggle() throws {
+    func testSettingsSheetRendersConfigurationFirst() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         UITabNavigation.openSettings(app)
 
-        // U7: gold brand header on the settings canvas.
-        let brand = firstMatch(in: app, identifier: "fleet.settings.brand")
-        XCTAssertTrue(brand.waitForExistence(timeout: 10),
-                      "settings should render the gold brand header")
-        XCTAssertTrue(brand.label.contains("Hermes Fleet"),
-                      "brand header should carry the wordmark (label: \(brand.label))")
+        // FOS-3 (SPEC §12): the brand banner section is RETIRED — it must
+        // not render; the first content is useful configuration (App Lock).
+        XCTAssertFalse(
+            firstMatch(in: app, identifier: "fleet.settings.brand").exists,
+            "the brand banner must not render in the Settings sheet (FOS-3)"
+        )
+
+        // The sheet carries its own navigation bar with a Done action.
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
+                      "Settings renders as a sheet with its own stack")
+        XCTAssertTrue(app.buttons["Done"].exists, "the Settings sheet must expose Done")
 
         // The H1 acceptance surface is untouched.
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10), "App Lock toggle should render")
-        attachScreenshot(of: app, name: "u7-settings-brand")
+        attachScreenshot(of: app, name: "u7-settings-sheet")
+    }
+
+    func testSettingsAppearancePreferenceOffersSystemLightDark() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        UITabNavigation.openSettings(app)
+
+        // FOS-3 (§12 Appearance): System / Light / Dark, default System.
+        // Scroll the Appearance section into view (below Security).
+        let picker = firstMatch(in: app, identifier: "fleet.settings.appearance")
+        if !picker.exists || !picker.isHittable {
+            for _ in 0..<4 where !(picker.exists && picker.isHittable) { app.swipeUp() }
+        }
+        XCTAssertTrue(picker.waitForExistence(timeout: 10),
+                      "the Appearance preference must render in Settings")
+        for label in ["System", "Light", "Dark"] {
+            XCTAssertTrue(app.buttons[label].exists || app.staticTexts[label].exists,
+                          "Appearance must offer \(label)")
+        }
+        // Version row renders (Setup & help group).
+        let version = firstMatch(in: app, identifier: "fleet.settings.version")
+        if !version.exists {
+            for _ in 0..<4 where !version.exists { app.swipeUp() }
+        }
+        XCTAssertTrue(version.waitForExistence(timeout: 10),
+                      "Settings must show the app version")
+        attachScreenshot(of: app, name: "u7-settings-appearance")
     }
 
     // MARK: - Helpers

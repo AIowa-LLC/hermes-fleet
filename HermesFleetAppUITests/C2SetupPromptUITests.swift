@@ -23,6 +23,11 @@ final class C2SetupPromptUITests: XCTestCase {
         UITabNavigation.openSettings(app)
 
         let row = app.buttons["fleet.settings.setup-prompt"]
+        // FOS-3: the Appearance section (picker + accents) sits above the
+        // Agent group — scroll the row into the AX tree if needed.
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "Settings must expose the Agent Setup Prompt row — the door was orphaned once; never again")
         XCTAssertTrue(app.staticTexts["Agent Setup Prompt"].exists || row.exists)
@@ -37,6 +42,9 @@ final class C2SetupPromptUITests: XCTestCase {
         UITabNavigation.openSettings(app)
 
         let row = app.buttons["fleet.settings.setup-prompt"]
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         if !row.isHittable { app.swipeUp() }
         row.tap()

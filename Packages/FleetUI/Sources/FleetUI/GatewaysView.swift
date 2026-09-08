@@ -61,7 +61,7 @@ public struct GatewaysView: View {
                 gatewayList
             }
         }
-        .navigationTitle(connectionGatewayID == nil ? "Hermes Fleet" : "Connection")
+        .navigationTitle(connectionGatewayID == nil ? "Gateways" : "Connection")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -83,6 +83,8 @@ public struct GatewaysView: View {
                 }
                 // U3: Roster / Health / Settings moved to their own tabs
                 // (Bots / Activity·Home / Settings) — no longer toolbar links.
+                // FOS-3 (SPEC §6): the Gateways toolbar is Add + Command
+                // Center (shell-provided). This slot keeps only Add.
             }
         }
         .sheet(item: $presentedSheet) { sheet in
@@ -308,7 +310,24 @@ public struct GatewaysView: View {
     }
 
     private var gatewayList: some View {
-        List(environment.gateways) { gateway in
+        List {
+            // FOS-3 (§1): Control's cross-fleet diagnostics links are owned by
+            // the Gateways tab now (per-gateway resources live on Gateway
+            // Detail from FOS-2).
+            Section {
+                NavigationLink(value: FleetScreen.health) {
+                    Label("Connection health", systemImage: "waveform.path.ecg")
+                }
+                .accessibilityIdentifier("fleet.gateways.health")
+                NavigationLink(value: FleetScreen.activity) {
+                    Label("Connection history", systemImage: "clock.arrow.circlepath")
+                }
+                .accessibilityIdentifier("fleet.gateways.activity")
+            } header: {
+                Text("Fleet")
+            }
+            Section("Gateways") {
+            ForEach(environment.gateways) { gateway in
             NavigationLink(value: FleetScreen.gatewayDetail(gateway.id)) {
                 GatewayRowView(environment: environment, gateway: gateway)
             }
@@ -362,6 +381,8 @@ public struct GatewaysView: View {
                 } label: {
                     Label("Edit", systemImage: "pencil")
                 }
+            }
+            }
             }
         }
         .listStyle(.insetGrouped)

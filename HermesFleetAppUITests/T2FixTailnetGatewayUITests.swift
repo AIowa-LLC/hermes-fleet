@@ -97,7 +97,7 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.gateways.refresh"))
         sleep(6)
         UITabNavigation.openBotsTab(app)
-        XCTAssertTrue(app.navigationBars["Fleet Roster"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),
                       "Roster screen should open")
         XCTAssertTrue(app.staticTexts[tailnetName].waitForExistence(timeout: 15),
                       "roster should list the tailnet gateway")
@@ -122,7 +122,7 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
         // ---- 5. Drill tailnet -> Default bot -> clean session -> turn -----
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.\(tailnetID)"))
         UITabNavigation.openGatewayBots(app, gateway: tailnetID)
-        XCTAssertTrue(app.navigationBars["Fleet Roster"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),
                       "Bots screen for the tailnet gateway should open")
         tap(firstMatch(in: app, identifier: "fleet.roster.row.\(tailnetID)#default"))
         XCTAssertTrue(
