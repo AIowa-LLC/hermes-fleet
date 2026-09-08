@@ -75,6 +75,19 @@ public struct ConversationView: View {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
             }
             await viewModel?.start()
+            // FOS-4 (SPEC §7 Continue / §17): record the open ONLY after the
+            // destination resolved — the view model's resolved id is the
+            // exact session (resumed or created), never a title guess.
+            if let resolved = viewModel?.resolvedSessionID {
+                let gatewayLabel = environment.gateway(for: route.gatewayID)?.displayName
+                    ?? route.gatewayID.rawValue
+                environment.recordConversationOpen(
+                    route: route,
+                    sessionID: resolved,
+                    canonical: environment.isCanonicalBotChat(route: route, sessionID: resolved),
+                    title: screenTitle,
+                    subtitle: "\(route.profileSlug.rawValue) · \(gatewayLabel)")
+            }
             // R10-T1 demo hook (simulator only): `HERMES_FLEET_ATTACHMENT_PICK=1`
             // stages a fixture markdown file through the seam once the session
             // is open — the deterministic UI-test stand-in for the system

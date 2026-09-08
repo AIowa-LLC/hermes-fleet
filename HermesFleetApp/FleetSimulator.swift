@@ -1643,6 +1643,13 @@ private struct FailingSaveRegistry: GatewayRegistryManaging {
 private struct ScriptedRosterSession: GatewayRosterSession {
     let gatewayID: GatewayID
 
+    /// FOS-4 UI-test knob: `HERMES_FLEET_AUTH_GATEWAY=1` makes the `arch`
+    /// gateway a classified AUTH-REQUIRED failure (close 4401 shape) so the
+    /// Home Needs You section (auth episode) is deterministically walkable.
+    private var isAuthOutage: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_AUTH_GATEWAY"] == "1"
+    }
+
     private var isOutage: Bool {
         guard !FleetServiceGraph.zeroBotsEnabled else { return false }
         return gatewayID.rawValue == "arch"
@@ -1650,13 +1657,21 @@ private struct ScriptedRosterSession: GatewayRosterSession {
 
     private var hasNoBots: Bool { FleetServiceGraph.zeroBotsEnabled }
 
-    var status: GatewayStatus { isOutage ? .offline : .online }
+    private var authFailure: Bool { isAuthOutage && gatewayID.rawValue == "arch" }
+
+    var status: GatewayStatus {
+        if authFailure { return .authenticationRequired }
+        return isOutage ? .offline : .online
+    }
 
     func adoptedReady() async -> GatewayReadyAdoption? {
         isOutage ? nil : GatewayReadyAdoption(replayEpoch: "scripted-1", heartbeatEnabled: true, changeEventsEnabled: true)
     }
 
     func connect() async throws {
+        if authFailure {
+            throw GatewayConnectivityError.authenticationRequired
+        }
         if isOutage {
             throw GatewayConnectivityError.unreachable
         }

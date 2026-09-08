@@ -19,6 +19,13 @@ import FleetUI
 enum FleetServiceGraph {
 
     static func makeDefaultEnvironment() -> AppEnvironment {
+        // FOS-4 UI-test hygiene: `HERMES_FLEET_CONTINUE_RESET=1` deletes the
+        // persisted recent-open index so Continue's empty state is
+        // deterministically reachable in a shared simulator container (other
+        // suites' conversation/room opens persist in the same file).
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_CONTINUE_RESET"] == "1" {
+            try? FileManager.default.removeItem(at: FleetContinueIndexStore.defaultURL())
+        }
         // P0-5: the scripted fleet is for the SIMULATOR ONLY — a Debug build
         // running on a physical device is Tony's live-dogfood lane and must
         // get the REAL production graph (real Keychain + live transports).

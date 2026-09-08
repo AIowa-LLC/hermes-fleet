@@ -171,16 +171,25 @@ final class B1LiveBoardPickerUITests: XCTestCase {
     // MARK: Helpers
 
     private func openKanbanFromHome(_ app: XCUIApplication) {
-        let homeTab = app.tabBars.firstMatch.buttons["Command"]
-        XCTAssertTrue(homeTab.waitForExistence(timeout: 15), "Command (Home) tab must exist")
-        if !homeTab.isSelected {
-            homeTab.tap()
-        }
-        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        // FOS-4: the Home dashboard no longer hosts a Kanban entry (SPEC
+        // §7 — Kanban lives under Gateway Detail per FOS-2). Open via the
+        // Gateways tab → the live gateway's row → cockpit Kanban row.
+        UITabNavigation.openGatewaysTab(app)
+        let gatewayRow = firstMatch(in: app, identifier: "fleet.gateways.row.\(gatewayID)")
         XCTAssertTrue(
-            entry.waitForExistence(timeout: 20),
-            "Kanban entry must render on Home once a live gateway is registered")
-        entry.tap()
+            gatewayRow.waitForExistence(timeout: 20),
+            "the live gateway row must render on Gateways")
+        gatewayRow.tap()
+        let cockpitRow = firstMatch(in: app, identifier: "fleet.gateway-detail.\(gatewayID).kanban")
+        if !cockpitRow.waitForExistence(timeout: 5) {
+            for _ in 0..<10 where !(cockpitRow.exists && cockpitRow.isHittable) {
+                app.swipeUp(velocity: .fast)
+            }
+        }
+        XCTAssertTrue(
+            cockpitRow.waitForExistence(timeout: 20),
+            "the cockpit Kanban row must render for the live gateway")
+        cockpitRow.tap()
     }
 
     private func addGateway(in app: XCUIApplication, name: String, endpoint: String) {

@@ -35,13 +35,16 @@ public struct SectionHeader<D: Hashable>: View {
     /// Value-based variant (U4): the action renders as a `NavigationLink`
     /// pushing `destination` on the enclosing NavigationStack — preferred
     /// inside stacks (no programmatic path wiring at the call site).
+    /// FOS-4: the action label is injectable ("See all" / "Connection
+    /// summary" per SPEC §7).
     public init(
         title: String,
-        destination: D
+        destination: D,
+        actionTitle: String = "View All"
     ) {
         self.title = title
         self.action = nil
-        self.actionTitle = "View All"
+        self.actionTitle = actionTitle
         self.linkDestination = destination
     }
 

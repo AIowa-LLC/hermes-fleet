@@ -135,7 +135,7 @@ UI_CLASSES=(
   R9ConversationToolingUITests R9ManagementPanesUITests R9MemoryGraphUITests R10AttachmentTrayUITests
   R10MessageReactionsUITests R10ProjectsBrowserUITests R10VoiceUITests R10MemoryGraphEditUITests
   FleetSettingsAccentUITests BotRoutinesUITests RoomChatUITests RoomLinkMentionsUITests
-  FOS2GatewayDetailUITests FOS3FourRootShellUITests
+  FOS2GatewayDetailUITests FOS3FourRootShellUITests FOS4TruthfulHomeUITests
 )
 rm -rf /tmp/hermes-c1-results
 mkdir -p /tmp/hermes-c1-results

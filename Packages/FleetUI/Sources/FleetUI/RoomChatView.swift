@@ -44,6 +44,9 @@ public final class RoomChatViewModel {
     /// Room was disbanded through this screen (navigable-away tombstone).
     public private(set) var isDisbanded = false
     public private(set) var roomName: String
+    /// FOS-4: the last observed driver status (nil = none/not readable) —
+    /// the AppEnvironment publishes it into the Home Needs You aggregator.
+    public private(set) var lastDriverStatus: RoomDriverStatus?
 
     // MARK: Test observability
 
@@ -139,6 +142,7 @@ public final class RoomChatViewModel {
             driverBlocked = status.blocked
             pendingApprovals = status.pendingApprovals
             pendingRetries = status.pendingRetries
+            lastDriverStatus = status
         }
     }
 
@@ -380,8 +384,24 @@ public struct RoomChatView: View {
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarControls }
-            .task { await viewModel.start() }
-            .refreshable { await viewModel.refresh() }
+            .task {
+                await viewModel.start()
+                // FOS-4 (SPEC §7/§17): the room's open resolved and its scoped
+                // state was read — record the exact open in the Continue index
+                // and publish the observed attention to the Home aggregator.
+                // Home itself NEVER issues groups.state; it consumes THIS.
+                environment.recordRoomOpen(
+                    room: viewModel.room,
+                    title: viewModel.roomName,
+                    subtitle: environment.gateway(for: viewModel.room.id.gatewayID)?.displayName
+                        ?? viewModel.room.id.gatewayID.rawValue)
+                environment.publishRoomAttention(room: viewModel.room, status: viewModel.lastDriverStatus)
+            }
+            .refreshable {
+                await viewModel.refresh()
+                // FOS-4: a manual room refresh re-publishes its observations.
+                environment.publishRoomAttention(room: viewModel.room, status: viewModel.lastDriverStatus)
+            }
             .sheet(isPresented: $showingRename) { renameSheet }
             .sheet(isPresented: $showingRoomLink) {
                 NavigationStack {

@@ -23,22 +23,10 @@ final class KanbanBoardUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Home dashboard entry (the scripted fleet seeds gateways).
-        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
-        if !entry.waitForExistence(timeout: 5) {
-            // Below the fold on Home — scroll in SMALL steps (a fast full
-            // swipe can jump past the section) and re-check after each.
-            for _ in 0..<10 where !entry.exists {
-                app.swipeUp(velocity: .slow)
-            }
-        }
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
-        entry.tap()
-        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
-        // gateway explicitly.
-        let gateway = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
-        XCTAssertTrue(gateway.waitForExistence(timeout: 10), "gateway picker must render")
-        gateway.tap()
+        // FOS-4: open the board via Gateways → workstation cockpit (the Home
+        // Kanban entry is retired with the truthful Fleet Home). The cockpit
+        // row pushes the GATEWAY-SCOPED route — no gateway picker renders.
+        openKanbanEntry(app)
 
         // Columns from the scripted snapshot render (Todo header with count).
         XCTAssertTrue(
@@ -63,21 +51,7 @@ final class KanbanBoardUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
-        if !entry.waitForExistence(timeout: 5) {
-            // Below the fold on Home — scroll in SMALL steps (a fast full
-            // swipe can jump past the section) and re-check after each.
-            for _ in 0..<10 where !entry.exists {
-                app.swipeUp(velocity: .slow)
-            }
-        }
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
-        entry.tap()
-        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
-        // gateway explicitly.
-        let gateway = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
-        XCTAssertTrue(gateway.waitForExistence(timeout: 10), "gateway picker must render")
-        gateway.tap()
+        openKanbanEntry(app)
 
         // With the live ticker on (3s cadence), the Recent Activity strip
         // appears WITHOUT any user refresh action.
@@ -93,21 +67,7 @@ final class KanbanBoardUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
-        if !entry.waitForExistence(timeout: 5) {
-            // Below the fold on Home — scroll in SMALL steps (a fast full
-            // swipe can jump past the section) and re-check after each.
-            for _ in 0..<10 where !entry.exists {
-                app.swipeUp(velocity: .slow)
-            }
-        }
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
-        entry.tap()
-        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
-        // gateway explicitly.
-        let gateway = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
-        XCTAssertTrue(gateway.waitForExistence(timeout: 10), "gateway picker must render")
-        gateway.tap()
+        openKanbanEntry(app)
 
         // The picker renders with the ACTIVE scripted board's name. (Reset
         // first if a prior run left another board selected.)
@@ -163,14 +123,7 @@ final class KanbanBoardUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
-        let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
-        XCTAssertTrue(entry.waitForExistence(timeout: 15))
-        entry.tap()
-        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
-        // gateway explicitly before the board renders.
-        let gatewayChoice = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
-        XCTAssertTrue(gatewayChoice.waitForExistence(timeout: 10), "gateway picker must render")
-        gatewayChoice.tap()
+        openKanbanEntry(app)
         let picker = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
         XCTAssertTrue(picker.waitForExistence(timeout: 15))
         if !picker.label.contains("Side Quests") {
@@ -194,12 +147,7 @@ final class KanbanBoardUITests: XCTestCase {
         // Kanban board selection store is separate and must survive.
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
-        let entry2 = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
-        XCTAssertTrue(entry2.waitForExistence(timeout: 15))
-        entry2.tap()
-        let gateway2 = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
-        XCTAssertTrue(gateway2.waitForExistence(timeout: 10), "gateway picker must render after relaunch")
-        gateway2.tap()
+        openKanbanEntry(app)
         let picker2 = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
         XCTAssertTrue(picker2.waitForExistence(timeout: 15))
         XCTAssertTrue(
@@ -210,6 +158,30 @@ final class KanbanBoardUITests: XCTestCase {
     }
 
     // MARK: Helpers (same pattern as the other UI suites)
+
+    /// FOS-4: the Home dashboard no longer hosts a Kanban entry (SPEC §7 —
+    /// Kanban lives under Gateway Detail per FOS-2). Open the board via the
+    /// canonical route: Gateways tab → gateway row → cockpit Kanban row,
+    /// which pushes the GATEWAY-SCOPED route directly (no gateway picker).
+    private func openKanbanEntry(_ app: XCUIApplication) {
+        let gatewaysTab = app.tabBars.firstMatch.buttons["Gateways"]
+        XCTAssertTrue(gatewaysTab.waitForExistence(timeout: 15), "the Gateways tab must exist")
+        gatewaysTab.tap()
+        let gatewayRow = firstMatch(in: app, identifier: "fleet.gateways.row.workstation")
+        if !gatewayRow.waitForExistence(timeout: 5) {
+            for _ in 0..<8 where !gatewayRow.exists { app.swipeUp(velocity: .slow) }
+        }
+        XCTAssertTrue(gatewayRow.waitForExistence(timeout: 15), "the workstation gateway row must render")
+        gatewayRow.tap()
+        let cockpitRow = firstMatch(in: app, identifier: "fleet.gateway-detail.workstation.kanban")
+        if !cockpitRow.waitForExistence(timeout: 5) {
+            for _ in 0..<10 where !(cockpitRow.exists && cockpitRow.isHittable) {
+                app.swipeUp(velocity: .fast)
+            }
+        }
+        XCTAssertTrue(cockpitRow.waitForExistence(timeout: 15), "the cockpit Kanban row must render")
+        cockpitRow.tap()
+    }
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier].firstMatch

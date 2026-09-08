@@ -286,6 +286,11 @@ public final class ConversationViewModel {
     // MARK: Internal state
 
     private var openedSessionID: String?
+    /// FOS-4: the session id the Continue index may record (the RESOLVED
+    /// open — either the resumed exact session or the freshly created one).
+    /// Exposed read-only so ConversationView records the open only after
+    /// the destination actually resolved (SPEC §17).
+    public var resolvedSessionID: String? { openedSessionID ?? sessionID }
     /// t_8401d3c3 — the client's last APPLIED event id for the open session's
     /// stream (the "last event id" of Last-Event-ID semantics). Advances only
     /// when an event is actually rendered into the transcript; sent as

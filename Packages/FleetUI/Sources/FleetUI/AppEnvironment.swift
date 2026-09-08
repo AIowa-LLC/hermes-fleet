@@ -186,6 +186,29 @@ public final class AppEnvironment {
     /// avatar/sections) over the per-gateway seam.
     public let botManagement: BotManagementController
 
+    /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
+    /// Records opens ONLY after a real destination resolved; ≤50 refs,
+    /// 30-day retention, pruned when a gateway is removed. No secrets.
+    public private(set) var continueIndex: FleetContinueIndexStore
+
+    /// FOS-4 (SPEC §7 Needs You): attention items observed from OPENED
+    /// rooms (driver pending approvals/retries/blocked) — keyed by gateway,
+    /// replaced by each fresh observation of that room. Home renders these
+    /// WITHOUT any groups.state fan-out: only what this phone already read.
+    public private(set) var observedRoomAttention: [GatewayID: [FleetAttentionItem]] = [:]
+
+    /// FOS-4 (SPEC §7 freshness): when the current roster snapshot settled.
+    /// Anchors "Last checked …" labels (the snapshot itself is timeless).
+    public private(set) var rosterObservedAt: Date?
+
+    /// FOS-4 (SPEC §17): the ONE summary scheduler (app seam — never a row
+    /// view). Foreground cadence 30s/gateway, failure backoff 30/60/120/300,
+    /// coalesced refreshes; observation happens only on explicit triggers
+    /// (Home entry / pull-to-refresh), never on a timer.
+    private let summaryScheduler = FleetSummaryScheduler()
+    @ObservationIgnored private var summarySourceStates: [GatewayID: FleetSummaryScheduler.SourceState] = [:]
+    @ObservationIgnored private var summaryRefreshInFlight = false
+
     /// Bots per gateway from the last SUCCESSFUL refresh — the offline-ghost
     /// cache (a failed refresh renders these dimmed, identity retained).
     public private(set) var cachedBotsByGateway: [GatewayID: [FleetBot]] = [:]
@@ -368,8 +391,17 @@ public final class AppEnvironment {
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
         self.roomLinkFactory = roomLinkFactory
+        // FOS-4: the device-local recent-open index. Tests inject a temp-file
+        // store via `attachContinueIndex(_:)`; production uses the default
+        // Application Support location. (Assigned BEFORE any self capture.)
+        self.continueIndex = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL())
         self.botManagement = BotManagementController(factory: botProfileFactory)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
+    }
+
+    /// FOS-4: swap the Continue index store (tests inject a hermetic one).
+    public func attachContinueIndex(_ store: FleetContinueIndexStore) {
+        continueIndex = store
     }
 
     // MARK: Load / refresh
@@ -437,7 +469,24 @@ public final class AppEnvironment {
         // the result (observable state stays what the newest refresh set).
         guard token == rosterGeneration else { return }
         rosterSnapshot = snapshot
+        rosterObservedAt = Date()
         isRefreshing = false
+        // FOS-4 (SPEC §17): settle the per-gateway scheduler bookkeeping —
+        // success resets the backoff ladder; a classified failure climbs it.
+        for gateway in gateways {
+            let state = summarySourceStates[gateway.id] ?? .empty
+            switch snapshot.outcome(for: gateway.id) {
+            case .loaded:
+                summarySourceStates[gateway.id] = summaryScheduler.onSuccess(state)
+            case .failed:
+                summarySourceStates[gateway.id] = summaryScheduler.onFailure(state)
+            case nil:
+                // The refresh settled without classifying this gateway —
+                // an uncovered observation counts as a failure for backoff
+                // (it must not be re-driven immediately).
+                summarySourceStates[gateway.id] = summaryScheduler.onFailure(state)
+            }
+        }
         // Slice 2: cache each SUCCESSFUL gateway's bots for offline-ghost
         // rendering on later failed refreshes (identity retained).
         for gateway in snapshot.roster.allGateways {
@@ -452,6 +501,105 @@ public final class AppEnvironment {
         // refresh (observational, never blocks the roster).
         await loadRooms()
         await loadAllSections()
+    }
+
+    // MARK: FOS-4 — bounded Home summary observation (SPEC §17)
+
+    /// Whether ANY registered gateway is due for its bounded summary
+    /// observation right now (30s foreground cadence / failure backoff).
+    public func summaryObservationDue() -> Bool {
+        gateways.contains { summaryScheduler.isDue(summarySourceStates[$0.id] ?? .empty) }
+    }
+
+    /// Home-entry / pull-to-refresh observation: triggers at most ONE
+    /// roster refresh when any gateway is due; a second pull joins the
+    /// in-flight cycle instead of stacking another wave (coalesced). The
+    /// wave itself is bounded by the roster service (≤3 gateways in flight,
+    /// 10s per-gateway deadline).
+    public func refreshSummaryIfDue() async {
+        guard summaryObservationDue(), !summaryRefreshInFlight else { return }
+        summaryRefreshInFlight = true
+        defer { summaryRefreshInFlight = false }
+        await refreshRoster()
+    }
+
+    /// FOS-4 (SPEC §7 Needs You): publish observations from an OPENED room's
+    /// driver status into the known-items aggregator (freshness = now).
+    /// Called by RoomChatView's existing scoped read — Home NEVER fans out
+    /// groups.state on its own; it renders only these published items.
+    public func publishRoomAttention(
+        room: FleetRoom,
+        status: RoomDriverStatus?,
+        observedAt: Date = Date()
+    ) {
+        var items: [FleetAttentionItem] = []
+        if let status {
+            for approval in status.pendingApprovals {
+                items.append(FleetAttentionItem(
+                    id: "room-approval|\(room.id.gatewayID.rawValue)|\(room.id.key)|\(approval.id)",
+                    kind: .roomApproval,
+                    gatewayID: room.id.gatewayID,
+                    title: "Review \(room.name)",
+                    detail: approval.approval["prompt"]?.stringValue
+                        ?? approval.approval["summary"]?.stringValue,
+                    observedAt: observedAt,
+                    destination: .room(room.id)))
+            }
+            for retry in status.pendingRetries {
+                items.append(FleetAttentionItem(
+                    id: "room-retry|\(room.id.gatewayID.rawValue)|\(room.id.key)|\(retry.taskID)",
+                    kind: .roomRetry,
+                    gatewayID: room.id.gatewayID,
+                    title: "Retry \(room.name)",
+                    detail: "A turn failed and is waiting",
+                    observedAt: observedAt,
+                    destination: .room(room.id)))
+            }
+            if status.blocked {
+                items.append(FleetAttentionItem(
+                    id: "room-blocked|\(room.id.gatewayID.rawValue)|\(room.id.key)",
+                    kind: .roomDriverBlocked,
+                    gatewayID: room.id.gatewayID,
+                    title: "Review blocked Group",
+                    detail: room.name,
+                    observedAt: observedAt,
+                    destination: .room(room.id)))
+            }
+        }
+        // Replace this gateway's published set: a fresh observation of the
+        // same room supersedes its earlier items (same request/generation
+        // ids dedupe naturally; cleared pendings drop out).
+        var perGateway = observedRoomAttention[room.id.gatewayID] ?? []
+        let roomPrefix = "room-approval|\(room.id.gatewayID.rawValue)|\(room.id.key)|",
+            retryPrefix = "room-retry|\(room.id.gatewayID.rawValue)|\(room.id.key)|",
+            blockedPrefix = "room-blocked|\(room.id.gatewayID.rawValue)|\(room.id.key)"
+        perGateway.removeAll {
+            $0.id.hasPrefix(roomPrefix) || $0.id.hasPrefix(retryPrefix) || $0.id == blockedPrefix
+        }
+        perGateway.append(contentsOf: items)
+        observedRoomAttention[room.id.gatewayID] = perGateway
+    }
+
+    /// FOS-4: the aggregated Needs You items (gateway-classified live
+    /// failures + already-observed room items), priority-sorted.
+    public func attentionItems() -> [FleetAttentionItem] {
+        var items = FleetAttentionProjection.gatewayItems(
+            gateways: gateways, snapshot: rosterSnapshot)
+        for (_, roomItems) in observedRoomAttention {
+            items.append(contentsOf: roomItems)
+        }
+        return items.sorted(by: FleetAttentionItem.prioritySort)
+    }
+
+    /// FOS-4: Needs You coverage truth — complete only when every gateway
+    /// is classified AND no room was ever observed (room summaries are
+    /// per-room; a complete inbox needs class-C gateway support).
+    public func attentionCoverage() -> FleetAttentionCoverage {
+        let coverage = FleetAttentionCoverage.compute(gateways: gateways, snapshot: rosterSnapshot)
+        if !observedRoomAttention.values.allSatisfy({ $0.isEmpty }) {
+            return FleetAttentionCoverage(allGatewaysClassified: false)
+        }
+        return coverage
     }
 
     /// Slice 2: rooms per gateway from the room-source seam (best-effort;
@@ -787,10 +935,33 @@ public final class AppEnvironment {
         connectionStates[id] = nil
         testResults[id] = nil
         testResultObservedAt[id] = nil
+        // FOS-4 (SPEC §8 removal): a removed source's saved recent-open
+        // entries must not resolve to another gateway — prune the Continue
+        // index and the observed room attention for this gateway.
+        continueIndex.prune(gatewayID: id)
+        observedRoomAttention[id] = nil
+        summarySourceStates[id] = nil
         // H2: drop the gateway's accumulated + persisted health stats.
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
         await reloadGateways()
+    }
+
+    // MARK: FOS-4 — Continue open recording (SPEC §7/§17)
+
+    /// Record an open of a conversation whose destination actually resolved
+    /// (called by ConversationView once the session is live). Never records
+    /// a failed link; identity is source-qualified (Route + sessionID).
+    public func recordConversationOpen(route: Route, sessionID: String?, canonical: Bool, title: String, subtitle: String) {
+        guard let sessionID, !sessionID.isEmpty else { return }
+        continueIndex.recordConversationOpen(
+            route: route, sessionID: sessionID, canonical: canonical,
+            title: title, subtitle: subtitle)
+    }
+
+    /// Record an open of an exact room (called by RoomChatView).
+    public func recordRoomOpen(room: FleetRoom, title: String, subtitle: String) {
+        continueIndex.recordRoomOpen(room: room.id, title: title, subtitle: subtitle)
     }
 
     // MARK: Auth config entry (M7 credential flow — Keychain-safe)

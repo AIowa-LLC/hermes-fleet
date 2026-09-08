@@ -2,53 +2,108 @@ import SwiftUI
 import FleetCore
 import FleetPersistence
 
-/// Home dashboard (U4 Gold Fleet) — the full composition per the plan card:
-/// gold "Hermes Fleet" masthead, Fleet Overview stat row, Gateways rows,
-/// Active Bots rows (avatar initials + gateway + last-active), and a Recent
-/// Activity timeline derived from real gateway events.
+/// FOS-4 (t_2f5bf49a, SPEC §7/§17) — the TRUTHFUL Fleet Home.
 ///
-/// REAL DATA ONLY: every stat, row, and timeline entry derives from the live
-/// `AppEnvironment` (registered gateways, union roster, observable connection
-/// states, H2 accumulated health stats) — computed, never fabricated. Empty
-/// sections are honest gaps with a hint, not defects (empty ≠ broken).
+/// Composition (in first-viewport priority order):
+/// 1. compact 2×2 glance strip (connected n/m · known Bots · Active ·
+///    needs-you) obeying COVERAGE TRUTH — unknown/incomplete never renders
+///    zero, `0/0` renders "No gateways";
+/// 2. Needs You — ALREADY-OBSERVED authoritative items only (classified
+///    gateway auth/config failures + attention observed in OPENED rooms),
+///    deduped, one expanded preview + count, previews NAVIGATE (no approve
+///    buttons here), coverage caveat when incomplete ("N known items");
+/// 3. Active Now — REAL execution only (working/thinking/usingTool from
+///    actual roster signals); a worker heartbeat renders "Recent worker
+///    activity", never Thinking; when the sources cannot provide
+///    fleet-complete activity the honest coverage copy renders — never
+///    `bots.prefix(10)` disguised as Active;
+/// 4. Continue — this phone's recent-open index (≤2 rows, exact
+///    source-qualified destinations, never same-name substitution);
+/// 5. Gateways — compact rows (name, connection state, known bot count +
+///    freshness) into Gateway Detail; exceptions first; no raw endpoints;
+/// 6. Connection activity — last, ≤3 observations, "Connection summary"
+///    destination (FleetActivityView; HealthDashboardView demoted below it).
 ///
-/// Section "View All" actions drill into the existing surfaces on the Home
-/// tab's own NavigationStack (registry cockpit / union roster / activity
-/// feed) — presentation-layer navigation only, no logic changes.
+/// Cost contract (SPEC §17): the view contains NO networking — roster
+/// observation happens through the app-seam coordinator
+/// (`refreshSummaryIfDue`), zero `session.list` per bot and zero
+/// `groups.state` per room issue from Home.
 public struct FleetDashboardView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
     private let environment: AppEnvironment
 
-    /// Local drill-in path for the section View All actions. Rides the tab's
-    /// OWN NavigationStack (no nested stack): the typed `FleetScreen` routes
-    /// registered by the tab shell cover `.gateways` / `.roster` / `.activity`
-    /// (U4 additions), so pushes here behave identically to pushes from any
-    /// other tab surface.
     @State private var now = Date()
 
     public init(environment: AppEnvironment) {
         self.environment = environment
     }
 
+    // MARK: derived truth (pure reads of observable state — no I/O here)
+
+    private var hasGateways: Bool { !environment.gateways.isEmpty }
+    private var rosterLoaded: Bool { environment.rosterSnapshot != nil }
+
+    private var connectedCount: Int {
+        environment.gateways.filter { environment.connectionStates[$0.id] == .connected }.count
+    }
+
+    /// Union inventory (SPEC §7 Known Bots): live successful roster PLUS
+    /// retained last-known snapshots for failed sources. nil = not loaded.
+    private var knownBotCount: Int? {
+        guard let snapshot = environment.rosterSnapshot else { return nil }
+        var routes = Set<Route>()
+        for gateway in environment.gateways {
+            if case .loaded = snapshot.outcome(for: gateway.id) {
+                routes.formUnion(snapshot.bots(on: gateway.id).map(\.route))
+            } else if let cached = environment.cachedBotsByGateway[gateway.id] {
+                routes.formUnion(cached.map(\.route))
+            }
+        }
+        return routes.count
+    }
+
+    private var executingBots: [FleetBot] {
+        guard let snapshot = environment.rosterSnapshot else { return [] }
+        return snapshot.roster.allBots.filter {
+            $0.activity == .working || $0.activity == .thinking || $0.activity == .usingTool
+        }
+    }
+
+    /// Recent worker heartbeats (SPEC §7 freshness: 90s window) — labeled
+    /// "Recent worker activity", NEVER counted as executing.
+    private var recentWorkerBots: [FleetBot] {
+        guard let snapshot = environment.rosterSnapshot else { return [] }
+        let cutoff = now.addingTimeInterval(-90)
+        return snapshot.roster.allBots.filter { bot in
+            bot.activity != .working && bot.activity != .thinking && bot.activity != .usingTool
+                && bot.workerSession != nil
+                && Date(timeIntervalSince1970: bot.workerSession!.lastActive) > cutoff
+        }
+    }
+
+    private var attentionItems: [FleetAttentionItem] { environment.attentionItems() }
+    private var attentionCoverageComplete: Bool { environment.attentionCoverage().allGatewaysClassified }
+
+    private var continueEntries: [FleetContinueIndexStore.Entry] {
+        Array(environment.continueIndex.entries().prefix(2))
+    }
+
+    // MARK: body
+
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
-                // FOS-3 (SPEC §6/§21-2): the marketing masthead ("HERMES
-                // FLEET" / "Your agents. Within reach." / tagline) is REMOVED
-                // — no authenticated root begins with a slogan or wordmark.
-                // The inline "Fleet" navigation title names the surface.
-                overviewStats
-                if sizeClass == .regular && !typeSize.isAccessibilitySize {
-                    HStack(alignment: .top, spacing: 24) {
-                        VStack(spacing: 24) { activeBotsSection; kanbanSection }
-                        VStack(spacing: 24) { gatewaysSection; recentActivitySection }
-                    }
-                } else {
-                    activeBotsSection
+                if hasGateways {
+                    glanceStrip
+                    coverageLine
+                    needsYouSection
+                    activeSection
+                    continueSection
                     gatewaysSection
-                    kanbanSection
-                    recentActivitySection
+                    connectionActivitySection
+                } else {
+                    emptyFleetState
                 }
             }
             .padding(.horizontal, FleetTheme.spacingLg)
@@ -60,9 +115,16 @@ public struct FleetDashboardView: View {
         .navigationTitle("Fleet")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("fleet.dashboard")
+        .refreshable {
+            // One coalesced bounded summary refresh (joins in-flight work).
+            await environment.refreshSummaryIfDue()
+        }
         .task {
-            // Keep relative timestamps (last-active / activity) fresh while
-            // the dashboard is visible; cheap 60s tick.
+            // Home entry: at most one due roster refresh per gateway,
+            // bounded by the roster service (≤3 in flight, 10s deadline).
+            await environment.refreshSummaryIfDue()
+            await environment.refreshHealthStats()
+            // Keep relative timestamps fresh while visible; cheap 60s tick.
             while !Task.isCancelled {
                 now = Date()
                 try? await Task.sleep(for: .seconds(60))
@@ -70,213 +132,481 @@ public struct FleetDashboardView: View {
         }
     }
 
-    // MARK: Fleet Overview (real counts only)
+    // MARK: 1. Glance strip (compact 2×2 facts, no bordered tiles)
 
-    private var overviewStats: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            SectionHeader(title: "Fleet Overview")
-            HStack(alignment: .top, spacing: FleetTheme.spacingMd) {
-                StatCard(
-                    value: "\(environment.rosterSnapshot?.roster.allBots.count ?? 0)",
-                    label: "Known Bots"
-                )
-                StatCard(
-                    value: "\(environment.gateways.count)",
-                    label: "Gateways"
-                )
-                StatCard(
-                    value: connectedFractionText,
-                    label: "Connected"
-                )
+    private var glanceStrip: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingLg) {
+                glanceFact(
+                    value: "\(connectedCount)/\(environment.gateways.count) connected",
+                    id: "fleet.dashboard.glance.connected")
+                glanceFact(
+                    value: knownBotCount.map { "\($0) known Bots" } ?? "Checking Bots…",
+                    id: "fleet.dashboard.glance.bots")
+            }
+            HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingLg) {
+                glanceFact(
+                    value: activeGlanceText,
+                    id: "fleet.dashboard.glance.active")
+                glanceFact(
+                    value: needsYouGlanceText,
+                    id: "fleet.dashboard.glance.needsYou")
             }
         }
-        .accessibilityIdentifier("fleet.dashboard.stats")
+        .font(FleetTheme.secondaryFont.weight(.semibold))
+        .foregroundStyle(FleetTheme.textPrimary)
+        // NOTE: no container-level accessibilityIdentifier (repo lesson:
+        // on non-AX containers SwiftUI forwards it to descendants and it
+        // overrides the per-fact identifiers).
     }
 
-    /// Connected-gateway fraction over the registered fleet (0/0 renders "—").
-    private var connectedFractionText: String {
-        FleetDashboardFormatting.connectedFraction(gateways: environment.gateways) { gateway in
-            environment.connectionStates[gateway.id] == .connected
+    private func glanceFact(value: String, id: String) -> some View {
+        Text(value)
+            .font(FleetTheme.secondaryFont.weight(.semibold))
+            .foregroundStyle(FleetTheme.textPrimary)
+            .accessibilityIdentifier(id)
+    }
+
+    /// Active glance fact: a count ONLY with executing coverage; otherwise
+    /// "—" (unknown is never zero, SPEC §7).
+    private var activeGlanceText: String {
+        guard rosterLoaded else { return "Active —" }
+        let count = executingBots.count
+        return count > 0 ? "Active \(count)" : "Active —"
+    }
+
+    private var needsYouGlanceText: String {
+        let count = attentionItems.count
+        if count > 0 {
+            return attentionCoverageComplete ? "\(count) needing you" : "\(count) known attention item\(count == 1 ? "" : "s")"
         }
+        return attentionCoverageComplete ? "No attention items" : "Attention —"
     }
 
-    // MARK: Gateways (registry truth)
+    /// Coverage line under the strip: what was checked, when, and what
+    /// could not be (partial outage never reads as zero).
+    private var coverageLine: some View {
+        Text(coverageText)
+            .font(FleetTheme.secondaryFont)
+            .foregroundStyle(FleetTheme.textSecondary)
+            .accessibilityIdentifier("fleet.dashboard.coverage")
+    }
 
-    private var gatewaysSection: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            SectionHeader(title: "Gateways", destination: FleetScreen.gateways)
-                .accessibilityIdentifier("fleet.dashboard.gateways.header")
-            if environment.gateways.isEmpty {
-                emptyHint(
-                    icon: "server.rack",
-                    text: "No gateways registered. Add one in the Gateways tab."
-                )
-                .accessibilityIdentifier("fleet.dashboard.gateways.empty")
-            } else {
-                VStack(spacing: FleetTheme.spacingSm) {
-                    ForEach(environment.gateways) { gateway in
-                        gatewayRow(gateway)
-                    }
+    private var coverageText: String {
+        guard let snapshot = environment.rosterSnapshot else {
+            return hasGateways ? "Checking your gateways…" : ""
+        }
+        let failed = environment.gateways.filter {
+            if case .failed = snapshot.outcome(for: $0.id) { return true }
+            return false
+        }
+        var parts: [String] = []
+        if let observed = environment.rosterObservedAt {
+            parts.append("Last checked \(FleetDashboardFormatting.relativeTime(from: observed, since: now))")
+        }
+        if failed.isEmpty {
+            if !rosterLoaded { parts.append("activity not available from these gateways") }
+        } else {
+            let names = failed.map(\.displayName).joined(separator: ", ")
+            parts.append("unavailable from this phone: \(names)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: 2. Needs You (observed items only; previews navigate)
+
+    @ViewBuilder
+    private var needsYouSection: some View {
+        if !attentionItems.isEmpty {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                needsYouHeader
+                // One expanded preview + count (SPEC §7 first-viewport rule);
+                // every item navigates to its owning screen for confirmation.
+                ForEach(attentionItems.prefix(3)) { item in
+                    attentionRow(item)
+                }
+                if attentionItems.count > 3 {
+                    Text("+ \(attentionItems.count - 3) more")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+                if !attentionCoverageComplete {
+                    Text("\(attentionItems.count) known item\(attentionItems.count == 1 ? "" : "s") — more may be pending elsewhere")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .accessibilityIdentifier("fleet.dashboard.needsYou.caveat")
                 }
             }
         }
-        // NOTE: no container-level accessibilityIdentifier here — on
-        // non-AX containers SwiftUI forwards it to descendants and it
-        // would override the per-row identifiers (observed via AX dump).
     }
 
-    private func gatewayRow(_ gateway: FleetGateway) -> some View {
-        FleetCard {
+    private var needsYouHeader: some View {
+        Text("Needs You")
+            .font(FleetTheme.sectionHeaderFont)
+            .textCase(.uppercase)
+            .tracking(FleetTheme.microLabelTracking)
+            .foregroundStyle(FleetTheme.textSecondary)
+            .accessibilityIdentifier("fleet.dashboard.needsYou.header")
+    }
+
+    private func attentionRow(_ item: FleetAttentionItem) -> some View {
+        NavigationLink(value: destination(for: item)) {
             HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "server.rack")
+                Image(systemName: attentionIcon(item.kind))
                     .foregroundStyle(FleetTheme.accent)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(gateway.displayName)
+                    Text(item.title)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
-                    // V3: endpoints are machine data — mono, the terminal voice.
-                    Text(gateway.endpoint.map(Redaction.redactedURL) ?? gateway.id.rawValue)
-                        .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer()
-                StatusPill(status: gatewayPillStatus(gateway.id))
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.dashboard.gateway.\(gateway.id.rawValue)")
-    }
-
-    private func gatewayPillStatus(_ id: GatewayID) -> FleetStatus {
-        FleetStatus(gatewayStatus: pillGatewayStatus(environment.connectionStates[id]))
-    }
-
-    /// Observable connection state → the `GatewayStatus` vocabulary the
-    /// FleetStatus mapping consumes (idle/disconnected render offline-gray —
-    /// an unconnected gateway is not "degraded", it is simply not connected).
-    private func pillGatewayStatus(_ state: GatewayConnectionState?) -> GatewayStatus {
-        switch state {
-        case .connected: return .online
-        case .connecting: return .connecting
-        case .idle, .disconnected, nil: return .offline
-        case .failed(let status): return status
-        }
-    }
-
-    // MARK: Active Bots (roster truth; avatar + gateway + last-active)
-
-    private var activeBotsSection: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            SectionHeader(title: "Agents", destination: FleetScreen.roster)
-                .accessibilityIdentifier("fleet.dashboard.bots.header")
-            if let bots = environment.rosterSnapshot?.roster.allBots, !bots.isEmpty {
-                VStack(spacing: FleetTheme.spacingSm) {
-                    ForEach(bots.prefix(10)) { bot in
-                        NavigationLink(value: FleetScreen.botDetail(bot.route)) { botRow(bot) }
-                            .buttonStyle(.fleetPressable)
+                    if let detail = item.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .lineLimit(1)
                     }
                 }
-            } else {
-                emptyHint(
-                    icon: "cpu",
-                    text: "No bots reported yet. The roster refreshes from your gateways."
-                )
-                .accessibilityIdentifier("fleet.dashboard.bots.empty")
+                Spacer()
+                Text("Review")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.accent)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityHidden(true)
             }
         }
-        // NOTE: no container-level accessibilityIdentifier (see gateways).
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.needsYou.row.\(sanitized(item.id))")
     }
 
-    private func botRow(_ bot: FleetBot) -> some View {
-        FleetCard {
+    private func destination(for item: FleetAttentionItem) -> FleetScreen {
+        switch item.destination {
+        case .gatewayAuthentication(let id), .gatewayConnection(let id):
+            return .gatewayConnection(id)
+        case .room(let roomID):
+            return .room(roomID)
+        }
+    }
+
+    private func attentionIcon(_ kind: FleetAttentionItem.Kind) -> String {
+        switch kind {
+        case .gatewayAuthRequired: return "person.crop.circle.badge.exclamationmark"
+        case .gatewayConfigProblem: return "wrench.and.screwdriver"
+        case .roomApproval: return "hand.raised"
+        case .roomRetry: return "arrow.clockwise"
+        case .roomDriverBlocked: return "nosign"
+        }
+    }
+
+    // MARK: 3. Active Now (real execution only)
+
+    private var activeHeader: some View {
+        Text("Active Now")
+            .font(FleetTheme.sectionHeaderFont)
+            .textCase(.uppercase)
+            .tracking(FleetTheme.microLabelTracking)
+            .foregroundStyle(FleetTheme.textSecondary)
+            .accessibilityIdentifier("fleet.dashboard.active.header")
+    }
+
+    @ViewBuilder
+    private var activeSection: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            activeHeader
+            if !executingBots.isEmpty {
+                ForEach(executingBots.prefix(2)) { bot in
+                    activeRow(bot)
+                }
+                if executingBots.count > 2 {
+                    Text("+ \(executingBots.count - 2) more")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+            } else if !recentWorkerBots.isEmpty {
+                // A heartbeat proves recency, not execution (SPEC §7).
+                ForEach(recentWorkerBots.prefix(2)) { bot in
+                    recentWorkerRow(bot)
+                }
+            } else {
+                Text("Live Bot activity is not available from these gateways.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityIdentifier("fleet.dashboard.active.unavailable")
+            }
+        }
+    }
+
+    private func activeRow(_ bot: FleetBot) -> some View {
+        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
             HStack(spacing: FleetTheme.spacingMd) {
                 BotAvatar(bot: bot, management: environment.botManagement)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bot.displayName)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(FleetTheme.textPrimary)
-                    Text(botSubtitle(bot))
+                    Text(activeSubtitle(bot))
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
-                StatusPill(
-                    status: FleetStatus(
-                        activity: bot.activity,
-                        presence: environment.botPresence(for: bot.route)
-                    )
-                )
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityHidden(true)
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.dashboard.bot.\(bot.route.gatewayID.rawValue)#\(bot.route.profileSlug.rawValue)")
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.active.row.\(bot.route.gatewayID.rawValue)#\(bot.route.profileSlug.rawValue)")
     }
 
-    /// "Gateway · Active 3m ago" from real roster data (no sessions → honest
-    /// "No sessions yet"; the fleet has no per-bot uptime signal today).
-    private func botSubtitle(_ bot: FleetBot) -> String {
+    private func activeSubtitle(_ bot: FleetBot) -> String {
         let gatewayName = environment.gateway(for: bot.route.gatewayID)?.displayName
             ?? bot.route.gatewayID.rawValue
-        let session = bot.latestSession?.title
-        return "\(gatewayName) · \(session?.isEmpty == false ? session! : "No named conversation")"
+        let state: String
+        switch bot.activity {
+        case .working: state = "Working"
+        case .thinking: state = "Thinking"
+        case .usingTool: state = "Using tool"
+        default: state = "Activity unknown"
+        }
+        let preview = bot.latestSession?.preview ?? bot.latestSession?.title
+        if let preview, !preview.isEmpty {
+            return "\(state) · \(gatewayName) · \(preview)"
+        }
+        return "\(state) · \(gatewayName)"
     }
 
-    // MARK: Kanban board entry (t_3b321b7b)
+    private func recentWorkerRow(_ bot: FleetBot) -> some View {
+        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+            HStack(spacing: FleetTheme.spacingMd) {
+                BotAvatar(bot: bot, management: environment.botManagement)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(bot.displayName)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textPrimary)
+                    Text("Recent worker activity · \(environment.gateway(for: bot.route.gatewayID)?.displayName ?? bot.route.gatewayID.rawValue)")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.active.recent.\(bot.route.gatewayID.rawValue)#\(bot.route.profileSlug.rawValue)")
+    }
 
-    /// A single card linking into the live read-only Kanban board — only
-    /// when a watcher can be built (fail closed: no factory, no entry).
+    // MARK: 4. Continue (this phone's recent-open index)
+
+    private var continueHeader: some View {
+        Text("Continue")
+            .font(FleetTheme.sectionHeaderFont)
+            .textCase(.uppercase)
+            .tracking(FleetTheme.microLabelTracking)
+            .foregroundStyle(FleetTheme.textSecondary)
+            .accessibilityIdentifier("fleet.dashboard.continue.header")
+    }
+
     @ViewBuilder
-    private var kanbanSection: some View {
-        if environment.gateways.first(where: { environment.makeKanbanWatcher(for: $0) != nil }) != nil {
-            SectionHeader(title: "Kanban Board", destination: FleetScreen.kanban)
-                .accessibilityIdentifier("fleet.dashboard.kanban.header")
-            NavigationLink(value: FleetScreen.kanban) {
-                FleetCard {
-                    HStack(spacing: FleetTheme.spacingMd) {
-                        Image(systemName: "rectangle.stack")
+    private var continueSection: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            continueHeader
+            let entries = continueEntries
+            if entries.isEmpty {
+                Text("No recent conversations on this iPhone")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityIdentifier("fleet.dashboard.continue.empty")
+                // New conversation entry only when a usable target exists
+                // (a roster bot). It picks an exact bot, never a name match.
+                if let anyBot = environment.rosterSnapshot?.roster.allBots.first {
+                    NavigationLink(value: FleetScreen.botDetail(anyBot.route)) {
+                        Label("New conversation", systemImage: "square.and.pencil")
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(FleetTheme.accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Live Board")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(FleetTheme.textPrimary)
-                            Text("Cards by status, updating in real time")
-                                .font(FleetTheme.secondaryFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .accessibilityHidden(true)
                     }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityIdentifier("fleet.dashboard.continue.new")
+                }
+            } else {
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    continueRow(entry, index: index)
+                }
+            }
+        }
+    }
+
+    /// Open the EXACT conversation by its source-qualified identity
+    /// (Route + session id / room id) — never a re-search by title.
+    private func continueDestination(for entry: FleetContinueIndexStore.Entry) -> FleetScreen? {
+        let gatewayID = GatewayID(rawValue: entry.gatewayIDRaw)
+        guard environment.gateways.contains(where: { $0.id == gatewayID }) else {
+            return nil // removed source never resolves to another gateway
+        }
+        switch entry.kind {
+        case .room:
+            guard let provenance = entry.roomProvenance.flatMap({ RoomProvenance(rawValue: $0) }),
+                  let key = entry.roomKey else { return nil }
+            return .room(FleetRoomID(provenance: provenance, gatewayID: gatewayID, key: key))
+        case .ordinaryConversation, .canonicalBotChat:
+            guard let profile = entry.routeProfile, let sessionID = entry.sessionID else {
+                return nil
+            }
+            let route = Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: profile))
+            return .conversation(route, sessionID: sessionID, canonical: entry.kind == .canonicalBotChat)
+        }
+    }
+
+    @ViewBuilder
+    private func continueRow(_ entry: FleetContinueIndexStore.Entry, index: Int) -> some View {
+        if let destination = continueDestination(for: entry) {
+            NavigationLink(value: destination) {
+                HStack(spacing: FleetTheme.spacingMd) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.title)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(FleetTheme.textPrimary)
+                        Text("\(entry.subtitle) · \(FleetDashboardFormatting.relativeTime(from: entry.openedAt, since: now))")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .accessibilityHidden(true)
                 }
             }
             .buttonStyle(.fleetPressable)
-            .accessibilityIdentifier("fleet.dashboard.kanban.entry")
+            .accessibilityIdentifier("fleet.dashboard.continue.row.\(index)")
         }
     }
 
-    // MARK: Recent Activity (real gateway events from the H2 accumulator)
+    // MARK: 5. Gateways (compact rows; exceptions first; no endpoints)
 
-    private var recentActivitySection: some View {
+    private var gatewaysHeader: some View {
+        SectionHeader(title: "Gateways", destination: FleetScreen.gateways, actionTitle: "See all")
+            .accessibilityIdentifier("fleet.dashboard.gateways.header")
+    }
+
+    private var orderedGateways: [FleetGateway] {
+        // Exceptions first (anything not connected/loaded), then stable
+        // registration order (SPEC §7 information priority rule 4).
+        environment.gateways.partitioned { gateway in
+            gatewayIsException(gateway)
+        }
+    }
+
+    private func gatewayIsException(_ gateway: FleetGateway) -> Bool {
+        if let outcome = environment.rosterSnapshot?.outcome(for: gateway.id) {
+            if case .failed = outcome { return true }
+            if case .loaded = outcome { return environment.connectionStates[gateway.id] != .connected }
+        }
+        return environment.connectionStates[gateway.id] != .connected
+    }
+
+    private var gatewaysSection: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            SectionHeader(title: "Recent Activity", destination: FleetScreen.activity)
+            gatewaysHeader
+            VStack(spacing: FleetTheme.spacingSm) {
+                ForEach(orderedGateways) { gateway in
+                    gatewayRow(gateway)
+                }
+            }
+        }
+    }
+
+    private func gatewayRow(_ gateway: FleetGateway) -> some View {
+        NavigationLink(value: FleetScreen.gatewayDetail(gateway.id)) {
+            HStack(spacing: FleetTheme.spacingMd) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(gateway.displayName)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(FleetTheme.textPrimary)
+                    Text(gatewaySubtitle(gateway))
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(gatewayStateLabel(gateway))
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.gateway.\(gateway.id.rawValue)")
+    }
+
+    /// Connection state label — classified truth, never a guess.
+    private func gatewayStateLabel(_ gateway: FleetGateway) -> String {
+        switch environment.connectionStates[gateway.id] {
+        case .connected: return "Connected"
+        case .connecting: return "Connecting"
+        case .failed(let status):
+            switch status {
+            case .authenticationRequired: return "Sign in required"
+            case .unsupported: return "Unsupported endpoint"
+            case .degraded: return "Degraded"
+            default: return "Offline"
+            }
+        case .disconnected, .idle, nil:
+            // The maintained lifecycle may be idle while the LAST roster
+            // probe still classified this gateway (SPEC §7: keep the two
+            // observations distinguishable; the subtitle carries freshness).
+            if let outcome = environment.rosterSnapshot?.outcome(for: gateway.id) {
+                if case .failed(let status, _) = outcome {
+                    switch status {
+                    case .authenticationRequired: return "Sign in required"
+                    case .unsupported: return "Unsupported endpoint"
+                    case .degraded: return "Degraded"
+                    default: return "Offline"
+                    }
+                }
+            }
+            return "Not checked"
+        }
+    }
+
+    /// Known bot count + freshness for the row subtitle.
+    private func gatewaySubtitle(_ gateway: FleetGateway) -> String {
+        guard let snapshot = environment.rosterSnapshot else { return "Not checked yet" }
+        switch snapshot.outcome(for: gateway.id) {
+        case .loaded:
+            let count = snapshot.bots(on: gateway.id).count
+            return count == 0 ? "No Bots reported" : "\(count) Bots"
+        case .failed:
+            if let cached = environment.cachedBotsByGateway[gateway.id], !cached.isEmpty {
+                return "\(cached.count) Bots · last known"
+            }
+            return "Bot count unavailable"
+        case nil:
+            return "Not checked"
+        }
+    }
+
+    // MARK: 6. Connection activity (last; ≤3 observations)
+
+    private var connectionActivitySection: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            SectionHeader(title: "Connection Activity", destination: FleetScreen.activity, actionTitle: "Connection summary")
                 .accessibilityIdentifier("fleet.dashboard.activity.header")
-            let entries = FleetDashboardFormatting.activityEntries(
+            let entries = Array(FleetDashboardFormatting.activityEntries(
                 gateways: environment.gateways,
                 stats: environment.healthStats
-            )
+            ).prefix(3))
             if entries.isEmpty {
-                emptyHint(
-                    icon: "clock.arrow.circlepath",
-                    text: "No connection activity recorded yet. Events appear as gateways connect."
-                )
-                .accessibilityIdentifier("fleet.dashboard.activity.empty")
+                Text("No connection activity recorded yet.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityIdentifier("fleet.dashboard.activity.empty")
             } else {
                 VStack(spacing: FleetTheme.spacingSm) {
                     ForEach(entries) { entry in
@@ -285,51 +615,64 @@ public struct FleetDashboardView: View {
                 }
             }
         }
-        .task {
-            // Copy the latest accumulated stats on entry (the accumulator is
-            // fed by the composition root's transport feed regardless).
-            await environment.refreshHealthStats()
-        }
     }
 
     private func activityRow(_ entry: FleetDashboardFormatting.ActivityEntry) -> some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: entry.icon)
-                    .font(.caption)
+        HStack(spacing: FleetTheme.spacingMd) {
+            Image(systemName: entry.icon)
+                .font(.caption)
+                .foregroundStyle(FleetTheme.textSecondary)
+                .accessibilityHidden(true)
+            Text(entry.text)
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(FleetTheme.textSecondary)
+                .lineLimit(2)
+            Spacer()
+            if let at = entry.at {
+                Text(FleetDashboardFormatting.relativeTime(from: at, since: now))
+                    .font(FleetTheme.monoCaptionFont)
                     .foregroundStyle(FleetTheme.textSecondary)
-                    .accessibilityHidden(true)
-                Text(entry.text)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .lineLimit(2)
-                Spacer()
-                if let at = entry.at {
-                    // V3: timestamps are telemetry — mono caption.
-                    Text(FleetDashboardFormatting.relativeTime(from: at, since: now))
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
-                }
             }
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.dashboard.activity.row.\(entry.id)")
     }
 
-    // MARK: Empty hint (an honest gap, not a fabricated state)
+    // MARK: Empty fleet (no registered gateway)
 
-    private func emptyHint(icon: String, text: String) -> some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: icon)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .accessibilityHidden(true)
-                Text(text)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var emptyFleetState: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            glanceFact(value: "No gateways", id: "fleet.dashboard.glance.connected")
+            Text("Set up with your agent to see your fleet here.")
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(FleetTheme.textSecondary)
+            NavigationLink(value: FleetScreen.gateways) {
+                Label("Add Gateway", systemImage: "plus")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(FleetTheme.accent)
             }
+            .buttonStyle(.fleetPressable)
+            .accessibilityIdentifier("fleet.dashboard.empty.add")
         }
+        // NOTE: no container-level accessibilityIdentifier (see glance strip).
+    }
+
+    // MARK: helpers
+
+    private func sanitized(_ id: String) -> String {
+        id.replacingOccurrences(of: "|", with: ".")
+    }
+}
+
+extension Array {
+    /// Stable partition (order preserved within each side).
+    fileprivate func partitioned(by predicate: (Element) -> Bool) -> [Element] {
+        var first: [Element] = []
+        var second: [Element] = []
+        for element in self {
+            if predicate(element) { first.append(element) } else { second.append(element) }
+        }
+        return first + second
     }
 }
 

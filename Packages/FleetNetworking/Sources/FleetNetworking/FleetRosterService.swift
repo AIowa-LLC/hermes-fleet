@@ -31,17 +31,27 @@ public actor FleetRosterService: FleetRosterProviding {
     /// H2: URLSession the surface-doctor `/health` probe uses (injectable for
     /// tests; defaults to `.shared`). Read-only, non-secret GET.
     private let doctorSession: URLSession
+    /// FOS-4 (SPEC §17): at most this many gateways refresh concurrently.
+    private let maxConcurrentGatewayRefreshes: Int
+    /// FOS-4 (SPEC §17): per-gateway observation deadline. A gateway whose
+    /// connect+roster cycle exceeds it settles as a classified `.offline`
+    /// failure (never hangs the wave).
+    private let perGatewayDeadline: TimeInterval
 
     public init(
         registry: any GatewayRegistryManaging,
         credentials: any CredentialStoring,
         sessionFactory: @escaping GatewayRosterSessionFactory,
-        doctorSession: URLSession = .shared
+        doctorSession: URLSession = .shared,
+        maxConcurrentGatewayRefreshes: Int = 3,
+        perGatewayDeadline: TimeInterval = 10
     ) {
         self.registry = registry
         self.credentials = credentials
         self.sessionFactory = sessionFactory
         self.doctorSession = doctorSession
+        self.maxConcurrentGatewayRefreshes = max(1, maxConcurrentGatewayRefreshes)
+        self.perGatewayDeadline = perGatewayDeadline
     }
 
     // MARK: FleetRosterProviding
@@ -51,29 +61,48 @@ public actor FleetRosterService: FleetRosterProviding {
         var roster = FleetRoster()
         var outcomes: [GatewayID: GatewayRosterOutcome] = [:]
 
-        // Concurrent, independent per-gateway refresh. A `withTaskGroup` whose
-        // children never throw (each catches + classifies its own failure) is
-        // the partial-outage seam: one unreachable gateway cannot cancel or
-        // poison the others' refreshes.
+        // Concurrent, independent per-gateway refresh. A `withTaskGroup`
+        // whose children never throw (each catches + classifies its own
+        // failure) is the partial-outage seam: one unreachable gateway
+        // cannot cancel or poison the others' refreshes.
+        //
+        // FOS-4 (SPEC §17): the wave is BOUNDED — at most
+        // `maxConcurrentGatewayRefreshes` gateways in flight (a sliding
+        // window; new gateways start only as earlier ones settle) and each
+        // gateway's whole observation cycle is fenced by
+        // `perGatewayDeadline` (see `refreshGateway`). Results settle
+        // independently: one timeout never holds the others hostage.
         await withTaskGroup(
             of: (GatewayID, GatewayRosterOutcome, FleetGateway, [FleetBot]).self
         ) { group in
-            for gateway in gateways {
-                group.addTask { [credentials, sessionFactory, doctorSession] in
-                    await Self.refreshGateway(
-                        gateway,
-                        credentials: credentials,
-                        sessionFactory: sessionFactory,
-                        doctorSession: doctorSession
-                    )
+            var inflight = 0
+            var pending = gateways.makeIterator()
+            let factory = sessionFactory
+            let doctor = doctorSession
+            let deadlineFenced = perGatewayDeadline
+            func startNextIfNeeded() {
+                while inflight < maxConcurrentGatewayRefreshes, let gateway = pending.next() {
+                    inflight += 1
+                    group.addTask { [credentials, factory, doctor, deadlineFenced] in
+                        await Self.refreshGateway(
+                            gateway,
+                            credentials: credentials,
+                            sessionFactory: factory,
+                            doctorSession: doctor,
+                            deadline: deadlineFenced
+                        )
+                    }
                 }
             }
+            startNextIfNeeded()
             for await (id, outcome, updatedGateway, bots) in group {
+                inflight -= 1
                 roster.upsertGateway(updatedGateway)
                 for bot in bots {
                     roster.upsertBot(bot)
                 }
                 outcomes[id] = outcome
+                startNextIfNeeded()
             }
         }
 
@@ -86,12 +115,62 @@ public actor FleetRosterService: FleetRosterProviding {
     /// `profiles.list` → stamp bots with owning-gateway provenance. Never
     /// throws: every path returns a classified outcome, and the session is
     /// ALWAYS torn down before returning (ADR #3).
+    ///
+    /// FOS-4 (SPEC §17): the whole cycle is fenced by `deadline`. On expiry
+    /// the gateway settles as `.failed(.offline, "timed out")` — the bounded
+    /// observation never hangs the wave — and the still-running session work
+    /// is cancelled, which triggers its `disconnect()` teardown path.
     private static func refreshGateway(
+        _ gateway: FleetGateway,
+        credentials: any CredentialStoring,
+        sessionFactory: @escaping GatewayRosterSessionFactory,
+        doctorSession: URLSession,
+        deadline: TimeInterval
+    ) async -> (GatewayID, GatewayRosterOutcome, FleetGateway, [FleetBot]) {
+        let outcome: (GatewayRosterOutcome, FleetGateway, [FleetBot])
+        let factory = sessionFactory
+        do {
+            outcome = try await withThrowingTaskGroup(
+                of: (GatewayRosterOutcome, FleetGateway, [FleetBot]).self
+            ) { group in
+                group.addTask {
+                    await Self.refreshGatewayCycle(
+                        gateway,
+                        credentials: credentials,
+                        sessionFactory: factory,
+                        doctorSession: doctorSession
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(deadline))
+                    throw RosterError.notConnected
+                }
+                guard let first = try await group.next() else {
+                    throw RosterError.notConnected
+                }
+                // Whichever finished first wins; cancel the loser (a raced
+                // session task finishes its own teardown).
+                group.cancelAll()
+                return first
+            }
+        } catch {
+            // Deadline expiry (or an unexpected group error): classify the
+            // gateway offline with an honest timed-out detail.
+            var updated = gateway
+            updated.connectionState = .failed(GatewayStatus.offline.rawValue)
+            return (gateway.id, .failed(status: .offline, detail: "timed out"), updated, [])
+        }
+        return (gateway.id, outcome.0, outcome.1, outcome.2)
+    }
+
+    /// The un-fenced connect → roster cycle (the body extracted from
+    /// `refreshGateway` so the deadline race can wrap it).
+    private static func refreshGatewayCycle(
         _ gateway: FleetGateway,
         credentials: any CredentialStoring,
         sessionFactory: GatewayRosterSessionFactory,
         doctorSession: URLSession
-    ) async -> (GatewayID, GatewayRosterOutcome, FleetGateway, [FleetBot]) {
+    ) async -> (GatewayRosterOutcome, FleetGateway, [FleetBot]) {
         let credential = try? await credentials.loadCredential(for: gateway.id)
         let session = sessionFactory(gateway, credential)
 
@@ -142,6 +221,6 @@ public actor FleetRosterService: FleetRosterProviding {
 
         // ADR #3 — the probe ALWAYS tears down before returning, on every path.
         await session.disconnect()
-        return (gateway.id, result.0, result.1, result.2)
+        return (result.0, result.1, result.2)
     }
 }
