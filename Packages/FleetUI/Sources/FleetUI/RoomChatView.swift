@@ -182,7 +182,10 @@ public final class RoomChatViewModel {
     /// Deterministic main-thread id for one room (upstream identifier
     /// charset; stable across sessions so events land on one thread).
     static func mainThreadID(for roomKey: String) -> String {
-        "room-" + MentionResolution.slugify(roomKey.lowercased()) + "-main"
+        let slug = roomKey.lowercased().unicodeScalars
+            .filter { ($0.value >= 48 && $0.value <= 57) || ($0.value >= 97 && $0.value <= 122) || $0.value == 45 }
+            .map(Character.init)
+        return "room-" + String(slug) + "-main"
     }
 
     @discardableResult
