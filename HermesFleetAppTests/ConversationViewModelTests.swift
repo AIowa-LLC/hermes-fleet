@@ -981,6 +981,15 @@ final class ConversationViewModelTests: XCTestCase {
         let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
         await viewModel.start()
 
+        // start() intentionally launches eager history hydration asynchronously.
+        // Settle it before arming the reconnect gate, otherwise the gate can
+        // capture that initial fetch instead of reconnect #1's refetch.
+        for _ in 0..<100 {
+            if !viewModel.isHistoryHydrationInProgress { break }
+            await flush()
+        }
+        XCTAssertFalse(viewModel.isHistoryHydrationInProgress)
+
         // Hold reconnect #1's history refetch in flight.
         let gate = OneShotGate()
         scripted.historyGate = gate
