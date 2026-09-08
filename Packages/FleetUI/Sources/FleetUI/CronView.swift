@@ -116,7 +116,9 @@ public struct CronView: View {
     }
 
     private func cronRow(_ job: CronJob, model: ManagementPanesViewModel) -> some View {
-        FleetCard {
+        // FOS-6: operational row (the List's own separators are the
+        // hairlines — SPEC §18).
+        FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Circle()
                     .fill(job.isEnabled ? FleetTheme.statusOnline : FleetTheme.statusOffline)
@@ -153,6 +155,10 @@ public struct CronView: View {
                         .foregroundStyle(FleetTheme.accent)
                 }
                 .buttonStyle(.borderless)
+                // FOS-6 tap-target: the 18pt icon is a real action — pad to
+                // the 44pt actionable bar (SPEC §21 gate 15).
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .disabled(model.inFlightJobs.contains(job.jobID))
                 .accessibilityLabel("Run \(job.name) now")
                 .accessibilityIdentifier("cron.row.fire.\(job.jobID)")
@@ -165,6 +171,9 @@ public struct CronView: View {
                         .foregroundStyle(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOnline)
                 }
                 .buttonStyle(.borderless)
+                // FOS-6 tap-target: pad to the 44pt actionable bar.
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .disabled(model.inFlightJobs.contains(job.jobID))
                 .accessibilityLabel(job.isEnabled ? "Disable \(job.name)" : "Enable \(job.name)")
                 .accessibilityIdentifier("cron.row.toggle.\(job.jobID)")
@@ -212,60 +221,31 @@ public struct CronView: View {
     }
 
     private func noticeCard(_ text: String) -> some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(FleetTheme.statusIdle)
-                    .accessibilityHidden(true)
-                Text(text)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("cron.notice")
+        // FOS-6: bounded notice, not a card.
+        FleetNoticeBar(text, systemImage: "info.circle", id: "cron.notice")
     }
 
     private var emptyContent: some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "clock.badge.checkmark")
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .accessibilityHidden(true)
-                Text("No cron jobs on this profile. Tap + to schedule one.")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("cron.empty")
+        // FOS-6: inline empty state (SPEC §18 empty-state instruction).
+        FleetNoticeBar(
+            "No cron jobs on this profile. Tap + to schedule one.",
+            systemImage: "clock.badge.checkmark",
+            id: "cron.empty"
+        )
     }
 
     private func errorContent(_ error: String, model: ManagementPanesViewModel) -> some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                Label {
-                    Text(error)
-                        .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                }
-                Button("Retry") {
-                    Task { await model.refresh(profile: profileScope) }
-                }
-                .font(FleetTheme.secondaryFont.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
-                .buttonStyle(.fleetPressable)
-                .accessibilityIdentifier("cron.retry")
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("cron.error")
+        // FOS-6: contextual error notice with bounded Retry (SPEC §18
+        // "contextual status" — no card per state).
+        FleetNoticeBar(
+            error,
+            systemImage: "exclamationmark.triangle.fill",
+            tone: .error,
+            id: "cron.error",
+            actionTitle: "Retry",
+            actionID: "cron.retry",
+            action: { Task { await model.refresh(profile: profileScope) } }
+        )
     }
 
     private var unavailableContent: some View {

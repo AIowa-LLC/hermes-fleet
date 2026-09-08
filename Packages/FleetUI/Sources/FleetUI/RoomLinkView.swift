@@ -333,8 +333,8 @@ public struct RoomLinkView: View {
 
     @ViewBuilder
     private var negotiationCard: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+        // FOS-6: inspector section — plain, no card chrome (SPEC §18).
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                 Label("Cross-machine link", systemImage: "link")
                     .font(.headline.weight(.bold))
                     .foregroundStyle(FleetTheme.textPrimary)
@@ -362,8 +362,8 @@ public struct RoomLinkView: View {
                     }
                 }
             }
-        }
         // (card identifier intentionally absent — a card-level identifier
+        // overrides every child identifier in the AX tree)
     }
 
     // MARK: Grant card (invite + TTL + revoke)
@@ -435,8 +435,8 @@ public struct RoomLinkView: View {
 
     @ViewBuilder
     private var routesCard: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+        // FOS-6: inspector section — plain (SPEC §18).
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                 Label("Linked peers", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(FleetTheme.textPrimary)
@@ -466,7 +466,6 @@ public struct RoomLinkView: View {
                     }
                 }
             }
-        }
         // (see slice-5 lessons)
     }
 

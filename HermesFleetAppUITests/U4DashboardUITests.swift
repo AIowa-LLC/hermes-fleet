@@ -59,8 +59,9 @@ final class U4DashboardUITests: XCTestCase {
             "the Fleet Overview stat row is retired (FOS-4)"
         )
         // Real registry truth: 3 registered gateways in the fraction.
+        // FOS-6: fact label is now 'Connected: n/3' (value + caption).
         let connected = app.staticTexts["fleet.dashboard.glance.connected"]
-        XCTAssertTrue(connected.label.hasSuffix("/3 connected"),
+        XCTAssertTrue(connected.label.hasSuffix("/3"),
                       "the connected fraction counts the registered fleet (got: \(connected.label))")
         attachScreenshot(of: app, name: "u4-home-glance-strip")
     }

@@ -116,12 +116,12 @@ public struct ProjectsView: View {
                             projectID: project.id,
                             profile: profileScope)
                     } label: {
-                        FleetCard {
-                            projectRow(
-                                project,
-                                isActiveProject: project.id == model.tree?.activeID,
-                                isFocusedProject: project.id == focusedProjectID)
-                        }
+                        // FOS-6: operational row (SPEC §18) — projectRow
+                        // content without card chrome.
+                        projectRow(
+                            project,
+                            isActiveProject: project.id == model.tree?.activeID,
+                            isFocusedProject: project.id == focusedProjectID)
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityIdentifier("fleet.projects.row.\(project.id)")

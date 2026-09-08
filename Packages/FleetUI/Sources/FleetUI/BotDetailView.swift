@@ -96,9 +96,10 @@ public struct BotDetailView: View {
     // presence + activity, model/provider; ONE primary Bot Chat action.
 
     private func headerCard(_ bot: FleetBot) -> some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                HStack(spacing: FleetTheme.spacingMd) {
+        // FOS-6: compact object header — no card chrome around identity
+        // (the navigation title already names the bot; SPEC §18).
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            HStack(spacing: FleetTheme.spacingMd) {
                     BotAvatar(bot: bot, management: environment.botManagement)
                         // Ghost dims the portrait, not the text (§9).
                         .opacity(isGhost ? 0.4 : 1)
@@ -157,7 +158,6 @@ public struct BotDetailView: View {
                 // NOTE: no container identifier here — a container id would
                 // override the inner button's own `fleet.bot-chat.open`.
                 BotChatOpenButton(environment: environment, bot: bot, disabled: isGhost)
-            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.bot-detail.header")
@@ -282,15 +282,11 @@ public struct BotDetailView: View {
     @ViewBuilder
     private func routinesSection(_ bot: FleetBot) -> some View {
         if isGhost || presence == .unreachable {
-            FleetCard {
-                Label(
-                    "Routines need the owning gateway online",
-                    systemImage: "wifi.slash"
-                )
-                .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
-            }
-            .accessibilityIdentifier("fleet.bot-detail.routines.offline")
+            FleetNoticeBar(
+                "Routines need the owning gateway online",
+                systemImage: "wifi.slash",
+                id: "fleet.bot-detail.routines.offline"
+            )
         } else {
             // Existing routines surface, embedded (namespaced jobs on the
             // owning profile's cron store — no engine change).
@@ -306,29 +302,25 @@ public struct BotDetailView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             SectionHeader(title: "Identity")
                 .accessibilityIdentifier("fleet.bot-detail.identity.header")
-            FleetCard {
-                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                    FleetMetadataRow("Route", bot.route.id, showDivider: false)
-                    FleetMetadataRow("Gateway", gatewayName, showDivider: false)
-                    FleetMetadataRow("Profile", bot.profileSlug.rawValue, showDivider: false)
-                }
+            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                FleetMetadataRow("Route", bot.route.id, showDivider: false)
+                FleetMetadataRow("Gateway", gatewayName, showDivider: false)
+                FleetMetadataRow("Profile", bot.profileSlug.rawValue, showDivider: false)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("fleet.bot-detail.route")
 
             SectionHeader(title: "Status")
                 .accessibilityIdentifier("fleet.bot-detail.status.header")
-            FleetCard {
-                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                    if bot.model != nil {
-                        FleetMetadataRow("Model", modelText(bot), showDivider: false)
-                    }
-                    FleetMetadataRow("Activity", activityText(bot.activity), showDivider: false)
-                    FleetMetadataRow("Presence", presenceText(isGhost ? .unreachable : environment.botPresence(for: bot.route)), showDivider: false)
-                    FleetMetadataRow("Own gateway process", bot.gatewayRunning ? "Running" : "No", showDivider: false)
-                    if let latest = bot.latestSession {
-                        FleetMetadataRow("Latest session", latest.title, showDivider: false)
-                    }
+            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                if bot.model != nil {
+                    FleetMetadataRow("Model", modelText(bot), showDivider: false)
+                }
+                FleetMetadataRow("Activity", activityText(bot.activity), showDivider: false)
+                FleetMetadataRow("Presence", presenceText(isGhost ? .unreachable : environment.botPresence(for: bot.route)), showDivider: false)
+                FleetMetadataRow("Own gateway process", bot.gatewayRunning ? "Running" : "No", showDivider: false)
+                if let latest = bot.latestSession {
+                    FleetMetadataRow("Latest session", latest.title, showDivider: false)
                 }
             }
             .accessibilityElement(children: .contain)
@@ -447,7 +439,8 @@ private struct SessionRowView: View {
     let session: SessionSummary
 
     var body: some View {
-        FleetCard {
+        // FOS-6: operational row (ordinary conversation entry).
+        FleetListRow(showsSeparator: false) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title.isEmpty ? "Untitled session" : session.title)
                     .font(.body.weight(.semibold))

@@ -187,41 +187,36 @@ public struct KanbanBoardView: View {
     // MARK: States
 
     private var loadingContent: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                ProgressView()
-                    .tint(FleetTheme.accent)
-                Text("Loading board…")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-            }
+        // FOS-6: contextual status, not a card.
+        HStack(spacing: FleetTheme.spacingMd) {
+            ProgressView()
+                .tint(FleetTheme.accent)
+            Text("Loading board…")
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(FleetTheme.textSecondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("kanban.board.loading")
     }
 
     private var emptyBoardContent: some View {
-        FleetCard {
-            Text("No cards on this board yet.")
-                .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
-        }
-        .accessibilityIdentifier("kanban.board.empty")
+        FleetNoticeBar(
+            "No cards on this board yet.",
+            systemImage: "rectangle.stack",
+            id: "kanban.board.empty"
+        )
     }
 
     private func errorContent(_ message: String, model: KanbanBoardViewModel) -> some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                Text(message)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.statusDegraded)
-                Button("Retry") {
-                    Task { await model.refresh() }
-                }
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
-            }
-        }
-        .accessibilityIdentifier("kanban.board.error")
+        FleetNoticeBar(
+            message,
+            systemImage: "exclamationmark.triangle.fill",
+            tone: .error,
+            id: "kanban.board.error",
+            actionTitle: "Retry",
+            actionID: "kanban.board.retry",
+            action: { Task { await model.refresh() } }
+        )
     }
 
     private var emptyGatewaysContent: some View {

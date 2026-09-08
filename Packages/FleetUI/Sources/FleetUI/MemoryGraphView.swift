@@ -266,28 +266,16 @@ public struct MemoryGraphView: View {
     }
 
     private func errorContent(_ error: String, model: MemoryGraphViewModel) -> some View {
-        VStack(spacing: FleetTheme.spacingMd) {
-            FleetCard {
-                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                    Label {
-                        Text(error)
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.statusDegraded)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(FleetTheme.statusDegraded)
-                    }
-                    Button("Retry") {
-                        Task { await model.reload(profile: profileScope) }
-                    }
-                    .font(FleetTheme.secondaryFont.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityIdentifier("memorygraph.error.retry")
-                }
-            }
-        }
+        // FOS-6: contextual error notice with bounded Retry (SPEC §18).
+        FleetNoticeBar(
+            error,
+            systemImage: "exclamationmark.triangle.fill",
+            tone: .error,
+            id: "memorygraph.error",
+            actionTitle: "Retry",
+            actionID: "memorygraph.error.retry",
+            action: { Task { await model.reload(profile: profileScope) } }
+        )
         .padding(FleetTheme.spacingLg)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

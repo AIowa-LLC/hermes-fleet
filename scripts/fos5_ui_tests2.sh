@@ -3,7 +3,7 @@
 # units re-run. Serial xcodebuilds only (kAX rule).
 set -euo pipefail
 cd /tmp/hermes-fleet-active
-DEST='platform=iOS Simulator,id=393F1335-2DB1-48BD-96B9-A38B1EA488A4'
+DEST='platform=iOS Simulator,name=iPhone 17 Pro'
 CLASSES=(
   FOS3FourRootShellUITests
   FOS4TruthfulHomeUITests

@@ -467,23 +467,20 @@ public struct RoomChatView: View {
     }
 
     private var managedByDesktopBanner: some View {
-        FleetCard {
-            Label(
-                "Managed by Hermes Desktop — read only. Fields update when Desktop syncs.",
-                systemImage: "lock.fill")
-                .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
-        }
-        .accessibilityIdentifier("fleet.room.legacy.banner")
+        // FOS-6: bounded banner (SPEC §18 legacy/tombstone banners).
+        FleetNoticeBar(
+            "Managed by Hermes Desktop — read only. Fields update when Desktop syncs.",
+            systemImage: "lock.fill",
+            id: "fleet.room.legacy.banner"
+        )
     }
 
     private var disbandedBanner: some View {
-        FleetCard {
-            Label("This room was disbanded. Its log is preserved until the gateway prunes it.", systemImage: "trash")
-                .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
-        }
-        .accessibilityIdentifier("fleet.room.disbanded.banner")
+        FleetNoticeBar(
+            "This room was disbanded. Its log is preserved until the gateway prunes it.",
+            systemImage: "trash",
+            id: "fleet.room.disbanded.banner"
+        )
     }
 
     // MARK: D16 failure / attention surfaces
@@ -628,7 +625,8 @@ public struct RoomChatView: View {
     @ViewBuilder
     private var transcriptRows: some View {
         ForEach(viewModel.transcript) { entry in
-            FleetCard {
+            // FOS-6: transcript/tool block — no card per message (SPEC §18).
+            FleetListRow(showsSeparator: false) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(entry.speaker)

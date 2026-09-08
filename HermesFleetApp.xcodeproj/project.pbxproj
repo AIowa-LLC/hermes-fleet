@@ -10,6 +10,7 @@
 		0098E9FDF89D44B5CE8F7285 /* P3FixLANGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA506D7F4BC4CAA5FA1860A /* P3FixLANGatewayUITests.swift */; };
 		023319986EDBAC88CE708F61 /* RoomChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B14422ADBAE78872C49B68E /* RoomChatViewModelTests.swift */; };
 		0648A50441FEDC7FB3FE592C /* BotChatTapUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE013E4BDC8AF9FA7B7A6BB /* BotChatTapUITests.swift */; };
+		09B973D09FF7C6CE6235D28D /* FOS6ComponentDensityUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB290BD0B4FDD960F068C4F2 /* FOS6ComponentDensityUITests.swift */; };
 		0C15E01E38955F7B74F335F5 /* RT2RemovalAndEndpointSanitizationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0788C641C3AD0C32972980 /* RT2RemovalAndEndpointSanitizationUITests.swift */; };
 		0C26BBF27EF90EACF7C2DB65 /* GatewayFormDraftStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */; };
 		0F2A6454E506740BE84B1739 /* AppEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 743944B9CB1507020C1B2A8C /* AppEnvironmentTests.swift */; };
@@ -252,6 +253,7 @@
 		F3E045B2C895711DCB6AC796 /* S3CleartextWarningUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = S3CleartextWarningUITests.swift; sourceTree = "<group>"; };
 		F7D87954F52997464C091EED /* U6ConversationSkinUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U6ConversationSkinUITests.swift; sourceTree = "<group>"; };
 		FABC7CBF939AAF966D3C7ACD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FB290BD0B4FDD960F068C4F2 /* FOS6ComponentDensityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS6ComponentDensityUITests.swift; sourceTree = "<group>"; };
 		FDC421799B33E95495AFBAD2 /* AppLockControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockControllerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -407,6 +409,7 @@
 				9D049EEAAB53A7AB714E7F2B /* FOS3FourRootShellUITests.swift */,
 				EE4159F90136D3243A7471A8 /* FOS4TruthfulHomeUITests.swift */,
 				CEA14D54A4EAB999E0168F92 /* FOS5BotsGroupsChatsUITests.swift */,
+				FB290BD0B4FDD960F068C4F2 /* FOS6ComponentDensityUITests.swift */,
 				0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */,
 				81A1A63C6F0F29A8454980F6 /* H2HealthDashboardUITests.swift */,
 				5637DB7B24B46E1A35E0B3ED /* HermesFleetHappyPathUITests.swift */,
@@ -668,6 +671,7 @@
 				1FEA331E9B5D63C3ABD9E40E /* FOS3FourRootShellUITests.swift in Sources */,
 				5FEC189081EDC141B9EB8581 /* FOS4TruthfulHomeUITests.swift in Sources */,
 				36426EF83499A5696EE6B978 /* FOS5BotsGroupsChatsUITests.swift in Sources */,
+				09B973D09FF7C6CE6235D28D /* FOS6ComponentDensityUITests.swift in Sources */,
 				44D3313BD3B75361ECF04043 /* FleetSettingsAccentUITests.swift in Sources */,
 				EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */,
 				B1AB16A9F5EB927CD0BADA2C /* H2HealthDashboardUITests.swift in Sources */,

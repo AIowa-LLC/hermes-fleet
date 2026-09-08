@@ -215,7 +215,7 @@ public final class BotRoutinesViewModel {
 /// TRUE BOTS MODE slice 3 (D13) — the bot-scoped Routines surface: the
 /// tapped bot's namespaced cron jobs (list / create / pause / resume /
 /// remove-with-confirmation / next+last run / failure detail), Fleet
-/// visual language (FleetCard rows, mono schedule, status colors).
+/// visual language (operational rows, mono schedule, status colors).
 ///
 /// The gateway-wide Cron pane (CronView) is untouched — routines never
 /// hijack or filter the general cron list; this surface shows only
@@ -339,7 +339,8 @@ public struct BotRoutinesView: View {
     }
 
     private func routineRow(_ routine: BotRoutine, model: BotRoutinesViewModel) -> some View {
-        FleetCard {
+        // FOS-6: operational row (SPEC §18).
+        FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Circle()
                     .fill(routine.isEnabled ? FleetTheme.statusOnline : FleetTheme.statusOffline)
@@ -407,6 +408,10 @@ public struct BotRoutinesView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(FleetTheme.textSecondary)
                 }
+                // FOS-6 tap-target: pad to the 44pt actionable bar (SPEC
+                // §21 gate 15).
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .disabled(model.inFlight.contains(routine.jobID))
                 .accessibilityLabel("Routine actions for \(routine.routineName)")
                 .accessibilityIdentifier("routines.row.menu.\(routine.jobID)")
@@ -445,76 +450,39 @@ public struct BotRoutinesView: View {
     }
 
     private var unsupportedRunCard: some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundStyle(FleetTheme.statusIdle)
-                    .accessibilityHidden(true)
-                Text(BotRoutinesViewModel.runNowUnsupportedCopy)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("routines.runnow.unsupported")
+        // FOS-6: bounded notice (capability honesty stays).
+        FleetNoticeBar(
+            BotRoutinesViewModel.runNowUnsupportedCopy,
+            systemImage: "clock.badge.exclamationmark",
+            id: "routines.runnow.unsupported"
+        )
     }
 
     private func noticeCard(_ text: String) -> some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(FleetTheme.statusIdle)
-                    .accessibilityHidden(true)
-                Text(text)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("routines.notice")
+        // FOS-6: bounded notice.
+        FleetNoticeBar(text, systemImage: "info.circle", id: "routines.notice")
     }
 
     private func emptyCard(model: BotRoutinesViewModel) -> some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "calendar.badge.clock")
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .accessibilityHidden(true)
-                Text("No routines for this bot yet. Tap + to schedule one — it runs on the gateway, on the bot's own schedule.")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("routines.empty")
+        // FOS-6: inline empty state.
+        FleetNoticeBar(
+            "No routines for this bot yet. Tap + to schedule one — it runs on the gateway, on the bot's own schedule.",
+            systemImage: "calendar.badge.clock",
+            id: "routines.empty"
+        )
     }
 
     private func errorCard(_ error: String, model: BotRoutinesViewModel) -> some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                Label {
-                    Text(error)
-                        .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                }
-                Button("Retry") {
-                    Task { await model.refresh() }
-                }
-                .font(FleetTheme.secondaryFont.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
-                .buttonStyle(.fleetPressable)
-                .accessibilityIdentifier("routines.retry")
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("routines.error")
+        // FOS-6: contextual error notice with bounded Retry (SPEC §18).
+        FleetNoticeBar(
+            error,
+            systemImage: "exclamationmark.triangle.fill",
+            tone: .error,
+            id: "routines.error",
+            actionTitle: "Retry",
+            actionID: "routines.retry",
+            action: { Task { await model.refresh() } }
+        )
     }
 
     private var loadingRow: some View {

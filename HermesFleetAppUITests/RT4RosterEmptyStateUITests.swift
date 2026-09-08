@@ -8,6 +8,14 @@ import XCTest
 /// roster rendered empty section headers (sections non-empty whenever gateways
 /// existed), so `fleet.roster.no-bots` never appeared. GREEN (fix): healthy
 /// zero-bot gateways contribute no section → the No Bots state renders.
+///
+/// FOS-6 migration (t_9d259409): FOS-5 merged Groups into the roster
+/// collection. With zero bots the workstation gateway still hosts Groups
+/// (rooms), so the default All scope legitimately renders the Groups
+/// section instead of the global No-Bots state — the empty-state check
+/// moves to the Bots scope, where the no-bots state is the honest render
+/// (verified the failure reproduces identically on the approved FOS-5
+/// commit f4e1a16 — stale expectation, not a FOS-6 regression).
 final class RT4RosterEmptyStateUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -26,6 +34,14 @@ final class RT4RosterEmptyStateUITests: XCTestCase {
 
         // Open the fleet roster (Bots tab under the U3 tab shell).
         UITabNavigation.openBotsTab(app)
+
+        // FOS-6: default All scope legitimately renders the workstation's
+        // Groups (rooms survive a zero-bot roster). Switch to the Bots
+        // scope — there the all-healthy zero-bot roster must render the
+        // "No Bots" state.
+        let scope = app.segmentedControls["fleet.roster.scope"].firstMatch
+        XCTAssertTrue(scope.waitForExistence(timeout: 10), "the roster scope picker renders")
+        scope.buttons["Bots"].tap()
 
         // P2-5: the all-healthy zero-bot roster must render the "No Bots" state
         // (a ContentUnavailableView). Its children carry the roster's `fleet.roster`

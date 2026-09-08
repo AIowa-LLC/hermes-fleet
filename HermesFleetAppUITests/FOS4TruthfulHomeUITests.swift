@@ -54,9 +54,16 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
 
     func testGlanceStripEmptyFleetSaysNoGateways() throws {
         let app = launch(extra: ["HERMES_FLEET_ZERO_GATEWAYS": "1"])
+        // FOS-6: the glance fact is one AX element labeled
+        // 'Connected: No gateways' (value + caption fact component).
+        let connected = app.staticTexts["fleet.dashboard.glance.connected"]
         XCTAssertTrue(
-            app.staticTexts["No gateways"].waitForExistence(timeout: 15),
-            "0/0 connected must render 'No gateways', never '0/0'"
+            connected.waitForExistence(timeout: 15),
+            "the empty-fleet glance fact renders"
+        )
+        XCTAssertTrue(
+            connected.label.contains("No gateways"),
+            "0/0 connected must render 'No gateways', never '0/0' (got: \(connected.label))"
         )
         // The empty state offers the setup path (Add Gateway) — query by
         // label across element types (the Label button surfaces as Other).

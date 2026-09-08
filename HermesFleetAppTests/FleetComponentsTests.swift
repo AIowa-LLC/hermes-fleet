@@ -28,14 +28,32 @@ final class FleetComponentsTests: XCTestCase {
         XCTAssertEqual(FleetStatus.allCases.count, 4, "exactly four pill states per the mock")
     }
 
-    func testStatCardInit() {
-        // V2 (Nous Direction A): icon/tint params removed — mono number tile
-        // with uppercase micro-label.
-        let stat = StatCard(
-            value: "3",
-            label: "Active Bots"
+    // MARK: - FOS-6 component family (SPEC §18)
+
+    func testFleetListRowInit() {
+        let row = FleetListRow { Text("Researcher") }
+        XCTAssertNotNil(row.body, "FleetListRow must init with a ViewBuilder closure")
+        let plain = FleetListRow(showsSeparator: false) { Text("x") }
+        XCTAssertNotNil(plain.body, "separatorless init must be valid (List contexts)")
+    }
+
+    func testFleetGlanceStripInit() {
+        let strip = FleetGlanceStrip(
+            a: FleetGlanceFact(value: "2/3", label: "Connected", id: "a"),
+            b: FleetGlanceFact(value: "12", label: "Known Bots", id: "b"),
+            c: FleetGlanceFact(value: "—", label: "Active", id: "c"),
+            d: FleetGlanceFact(value: "0", label: "Attention", id: "d")
         )
-        XCTAssertNotNil(stat.body)
+        XCTAssertNotNil(strip.body, "glance strip inits with four facts")
+    }
+
+    func testFleetNoticeBarInit() {
+        let plain = FleetNoticeBar("Nothing scheduled.", id: "n1")
+        XCTAssertNotNil(plain.body)
+        let actionable = FleetNoticeBar(
+            "Could not load.", tone: .error, id: "n2",
+            actionTitle: "Retry", action: {})
+        XCTAssertNotNil(actionable.body, "notice with action must init")
     }
 
     func testSectionHeaderInitWithAndWithoutAction() {

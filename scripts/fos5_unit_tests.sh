@@ -6,7 +6,7 @@ cd /tmp/hermes-fleet-active
 exec xcodebuild \
   -project HermesFleetApp.xcodeproj \
   -scheme HermesFleetApp \
-  -destination 'platform=iOS Simulator,id=393F1335-2DB1-48BD-96B9-A38B1EA488A4' \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -only-testing:HermesFleetAppTests \
   ENABLE_TESTABILITY=YES \
   test 2>&1

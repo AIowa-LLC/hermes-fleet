@@ -9,7 +9,7 @@ import FleetCore
 /// availability / §30 "which gateway failed") instead of silently showing an
 /// empty list. Tapping a bot drills into its Bot detail (U2).
 ///
-/// U5 (Gold Fleet re-skin): rows render on the design system — `FleetCard`
+/// FOS-6: rows render on the shared operational-row system (`FleetListRow`)
 /// surfaces with the avatar component, name, model/provider subtitle, and a
 /// `StatusPill` from the bot's real activity. Presentation-layer only.
 public struct BotsView: View {
@@ -80,40 +80,25 @@ public struct BotsView: View {
     /// live activity as refinement; the "own gateway process" badge is a
     /// subtle secondary signal, never the primary online/offline.
     private func botRow(_ bot: FleetBot) -> some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(bot: bot, management: environment.botManagement)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(bot.displayName)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
-                        .lineLimit(2)
-                    // V3: the canonical route is identity data — terminal mono.
-                    Text(bot.route.id)
-                        .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let model = bot.model, let provider = bot.provider {
-                        Text("\(model) · \(provider)")
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    if bot.gatewayRunning {
-                        GatewayRunningBadge(isRunning: true)
-                    }
-                }
-                Spacer()
-                StatusPill(
-                    status: FleetStatus(
-                        activity: bot.activity,
-                        presence: environment.botPresence(for: bot.route)
-                    )
-                )
-            }
-        }
-        .accessibilityElement(children: .combine)
+        // FOS-6 (SPEC §18): BotsView's scoped row merges with the shared
+        // roster row component — one operational-row anatomy fleet-wide.
+        BotRowView(
+            management: environment.botManagement,
+            bot: bot,
+            presence: environment.botPresence(for: bot.route),
+            anchor: BotRosterPresentation.activityAnchor(for: bot),
+            duplicateLabel: nil,
+            dim: .none,
+            modelProviderText: Self.modelProviderText(bot),
+            showsGatewayRunningBadge: true
+        )
+    }
+
+    /// Model · provider subtitle (merged-row parity with the pre-FOS-6
+    /// scoped row; nil when the roster summary omits either half).
+    static func modelProviderText(_ bot: FleetBot) -> String? {
+        guard let model = bot.model, let provider = bot.provider else { return nil }
+        return "\(model) · \(provider)"
     }
 
     private var emptyState: some View {

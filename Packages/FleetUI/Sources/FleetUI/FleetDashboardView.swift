@@ -135,52 +135,51 @@ public struct FleetDashboardView: View {
     // MARK: 1. Glance strip (compact 2×2 facts, no bordered tiles)
 
     private var glanceStrip: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-            HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingLg) {
-                glanceFact(
-                    value: "\(connectedCount)/\(environment.gateways.count) connected",
-                    id: "fleet.dashboard.glance.connected")
-                glanceFact(
-                    value: knownBotCount.map { "\($0) known Bots" } ?? "Checking Bots…",
-                    id: "fleet.dashboard.glance.bots")
-            }
-            HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingLg) {
-                glanceFact(
-                    value: activeGlanceText,
-                    id: "fleet.dashboard.glance.active")
-                glanceFact(
-                    value: needsYouGlanceText,
-                    id: "fleet.dashboard.glance.needsYou")
-            }
-        }
-        .font(FleetTheme.secondaryFont.weight(.semibold))
-        .foregroundStyle(FleetTheme.textPrimary)
-        // NOTE: no container-level accessibilityIdentifier (repo lesson:
-        // on non-AX containers SwiftUI forwards it to descendants and it
-        // overrides the per-fact identifiers).
+        // FOS-6: the shared component (stacks one-per-line at
+        // accessibility type sizes). Identifiers unchanged. No
+        // container-level id (repo lesson).
+        FleetGlanceStrip(
+            a: FleetGlanceFact(
+                value: "\(connectedCount)/\(environment.gateways.count)",
+                label: "Connected",
+                id: "fleet.dashboard.glance.connected"),
+            b: FleetGlanceFact(
+                value: knownBotCount.map { "\($0)" } ?? "…",
+                label: "Known Bots",
+                id: "fleet.dashboard.glance.bots"),
+            c: FleetGlanceFact(
+                value: activeGlanceValue,
+                label: "Active",
+                id: "fleet.dashboard.glance.active"),
+            d: FleetGlanceFact(
+                value: needsYouGlanceValue,
+                label: needsYouGlanceLabel,
+                id: "fleet.dashboard.glance.needsYou")
+        )
     }
 
-    private func glanceFact(value: String, id: String) -> some View {
-        Text(value)
-            .font(FleetTheme.secondaryFont.weight(.semibold))
-            .foregroundStyle(FleetTheme.textPrimary)
-            .accessibilityIdentifier(id)
-    }
-
-    /// Active glance fact: a count ONLY with executing coverage; otherwise
-    /// "—" (unknown is never zero, SPEC §7).
-    private var activeGlanceText: String {
-        guard rosterLoaded else { return "Active —" }
+    /// Active glance VALUE: a count ONLY with executing coverage;
+    /// otherwise "—" (unknown is never zero, SPEC §7).
+    private var activeGlanceValue: String {
+        guard rosterLoaded else { return "—" }
         let count = executingBots.count
-        return count > 0 ? "Active \(count)" : "Active —"
+        return count > 0 ? "\(count)" : "—"
     }
 
-    private var needsYouGlanceText: String {
+    private var needsYouGlanceValue: String {
         let count = attentionItems.count
-        if count > 0 {
-            return attentionCoverageComplete ? "\(count) needing you" : "\(count) known attention item\(count == 1 ? "" : "s")"
+        if count > 0 { return "\(count)" }
+        return attentionCoverageComplete ? "0" : "—"
+    }
+
+    /// Coverage qualifier rides the LABEL: "Needing you" only under
+    /// complete coverage; otherwise "Known attention items" (SPEC §7 —
+    /// an incomplete inbox never reads as complete).
+    private var needsYouGlanceLabel: String {
+        guard attentionItems.count > 0 else {
+            return attentionCoverageComplete ? "Attention" : "Attention"
         }
-        return attentionCoverageComplete ? "No attention items" : "Attention —"
+        return attentionCoverageComplete ? "Needing you" : "Known attention items"
     }
 
     /// Coverage line under the strip: what was checked, when, and what
@@ -642,7 +641,7 @@ public struct FleetDashboardView: View {
 
     private var emptyFleetState: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            glanceFact(value: "No gateways", id: "fleet.dashboard.glance.connected")
+            FleetGlanceFact(value: "No gateways", label: "Connected", id: "fleet.dashboard.glance.connected")
             Text("Set up with your agent to see your fleet here.")
                 .font(FleetTheme.secondaryFont)
                 .foregroundStyle(FleetTheme.textSecondary)

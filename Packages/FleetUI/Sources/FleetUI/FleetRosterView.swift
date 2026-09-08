@@ -526,19 +526,14 @@ public struct FleetRosterView: View {
     }
 
     private func outageRow(gateway: FleetGateway, status: GatewayStatus, detail: String?) -> some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
-                Label(statusText(status), systemImage: "wifi.slash")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
-                Text(detailNonEmpty(detail, status: status))
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.roster.outage.\(gateway.id.rawValue)")
+        // FOS-6: outage state is a coverage notice (SPEC §18 "Coverage/
+        // status banner"), not a card.
+        FleetNoticeBar(
+            "\(statusText(status)) — \(detailNonEmpty(detail, status: status))",
+            systemImage: "wifi.slash",
+            tone: .warning,
+            id: "fleet.roster.outage.\(gateway.id.rawValue)"
+        )
     }
 
     // MARK: States
@@ -662,9 +657,15 @@ struct BotRowView: View {
     let anchor: BotRosterPresentation.ActivityAnchor
     let duplicateLabel: String?
     var dim: BotRowDim = .none
+    /// FOS-6: optional model · provider line (gateway-scoped collection).
+    var modelProviderText: String? = nil
+    /// FOS-6: optional own-gateway-process badge (gateway-scoped collection).
+    var showsGatewayRunningBadge = false
 
     var body: some View {
-        FleetCard {
+        // FOS-6: operational row — no card chrome, hairline separator
+        // (SPEC §18 "Operational row").
+        FleetListRow {
             HStack(spacing: FleetTheme.spacingMd) {
                 BotAvatar(bot: bot, management: management)
                     .opacity(dim == .portrait ? 0.4 : (dim == .row ? 0.4 : 1))
@@ -693,6 +694,15 @@ struct BotRowView: View {
                             .foregroundStyle(FleetTheme.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
+                    }
+                    if let modelProviderText {
+                        Text(modelProviderText)
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    if showsGatewayRunningBadge && bot.gatewayRunning {
+                        GatewayRunningBadge(isRunning: true)
                     }
                     HStack(spacing: 4) {
                         Text(bot.route.id)
@@ -733,7 +743,8 @@ struct RoomRowView: View {
     let room: FleetRoom
 
     var body: some View {
-        FleetCard {
+        // FOS-6: operational row (SPEC §18).
+        FleetListRow {
             HStack(spacing: FleetTheme.spacingMd) {
                 RoomAvatar(members: room.members.map(\.name))
                 VStack(alignment: .leading, spacing: 2) {

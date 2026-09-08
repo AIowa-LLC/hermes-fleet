@@ -162,7 +162,8 @@ public struct CreateRoomSheet: View {
         return Button {
             draft.toggle(candidate)
         } label: {
-            FleetCard {
+            // FOS-6: operational row (member candidate picker).
+            FleetListRow {
                 HStack(spacing: FleetTheme.spacingMd) {
                     BotAvatar(bot: environment.bot(for: candidate.route), management: environment.botManagement)
                     VStack(alignment: .leading, spacing: 2) {

@@ -96,7 +96,8 @@ public struct SkillsView: View {
     }
 
     private func skillRow(_ skill: ProfileSkill, model: ManagementPanesViewModel) -> some View {
-        FleetCard {
+        // FOS-6: operational row with independent toggle (SPEC §18).
+        FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(.caption)
@@ -146,60 +147,35 @@ public struct SkillsView: View {
     }
 
     private func errorCard(_ text: String) -> some View {
-        FleetCard {
-            Label {
-                Text(text)
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.statusDegraded)
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(FleetTheme.statusDegraded)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("skills.error-card")
+        // FOS-6: contextual error notice (SPEC §18).
+        FleetNoticeBar(
+            text,
+            systemImage: "exclamationmark.triangle.fill",
+            tone: .error,
+            id: "skills.error-card"
+        )
     }
 
     private var emptyContent: some View {
-        FleetCard {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .accessibilityHidden(true)
-                Text("No skills reported for this profile.")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("skills.empty")
+        // FOS-6: inline empty state.
+        FleetNoticeBar(
+            "No skills reported for this profile.",
+            systemImage: "wrench.and.screwdriver",
+            id: "skills.empty"
+        )
     }
 
     private func errorContent(_ error: String, model: ManagementPanesViewModel) -> some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                Label {
-                    Text(error)
-                        .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(FleetTheme.statusDegraded)
-                }
-                Button("Retry") {
-                    Task { await model.refresh(profile: profileScope) }
-                }
-                .font(FleetTheme.secondaryFont.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
-                .buttonStyle(.fleetPressable)
-                .accessibilityIdentifier("skills.retry")
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("skills.error")
+        // FOS-6: contextual error notice with bounded Retry (SPEC §18).
+        FleetNoticeBar(
+            error,
+            systemImage: "exclamationmark.triangle.fill",
+            tone: .error,
+            id: "skills.error",
+            actionTitle: "Retry",
+            actionID: "skills.retry",
+            action: { Task { await model.refresh(profile: profileScope) } }
+        )
     }
 
     private var unavailableContent: some View {
