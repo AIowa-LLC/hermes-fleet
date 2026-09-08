@@ -38,11 +38,11 @@ final class R9MemoryGraphUITests: XCTestCase {
 
     func testMemoryGraphRendersFixtureAndFilters() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Dashboard → Management → Memory Graph (below the fold).
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.memorygraph.entry"), in: app)
-        tap(entry)
+        UITabNavigation.openScopedPane(app, resource: "memory", profile: "default")
 
         // Summary renders (fixture: 10 learned skills · 4 memories).
         let summary = firstMatch(in: app, identifier: "memorygraph.summary")

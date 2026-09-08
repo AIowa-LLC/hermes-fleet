@@ -147,16 +147,19 @@ final class F1TwoGatewayFleetLiveUITests: XCTestCase {
 
         // ---- 4. Per-gateway bots + session render (RT1: one transport per
         // gateway). Drill EACH gateway row on the Gateways tab; the pushed
-        // BotsView keys rows fleet.bots.row.<gatewayID>#<profile>.
+        // BotsView keys rows fleet.roster.row.<gatewayID>#<profile>.
         UITabNavigation.openGatewaysTab(app)
         for (id, name) in [(macID, "Mac #1"), (archID, "Arch #2")] {
             let row = firstMatch(in: app, identifier: "fleet.gateways.row.\(id)")
             XCTAssertTrue(row.waitForExistence(timeout: 10), "\(name) row must exist on Gateways tab")
             tap(row)
+            // FOS-2: gateway rows open the Gateway Detail cockpit (§8) —
+            // the Bots collection is one more tap beneath it.
+            UITabNavigation.openGatewayBots(app, gateway: id)
             if refresh.waitForExistence(timeout: 5) { refresh.tap(); sleep(6) }
             let botRow = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier CONTAINS %@",
-                                      "fleet.bots.row.\(id)#"))
+                                      "fleet.roster.row.\(id)#"))
                 .firstMatch
             XCTAssertTrue(botRow.waitForExistence(timeout: 30),
                           "\(name) bots must render on its per-gateway Bots screen")
@@ -167,7 +170,7 @@ final class F1TwoGatewayFleetLiveUITests: XCTestCase {
                 // empty, which firstMatch picked in run 6).
                 let defaultBot = app.descendants(matching: .any)
                     .matching(NSPredicate(format: "identifier == %@",
-                                          "fleet.bots.row.\(id)#default"))
+                                          "fleet.roster.row.\(id)#default"))
                     .firstMatch
                 var target = defaultBot
                 if !target.waitForExistence(timeout: 5) {

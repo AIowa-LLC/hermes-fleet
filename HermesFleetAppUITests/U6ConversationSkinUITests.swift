@@ -18,12 +18,14 @@ final class U6ConversationSkinUITests: XCTestCase {
 
     func testConversationHeaderRendersAvatarNameRouteAndPill() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         // Drill to the scripted conversation: Workstation → Default → session s1.
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render before drilling into the conversation"
@@ -51,11 +53,13 @@ final class U6ConversationSkinUITests: XCTestCase {
 
     func testSendStillStreamsAnswerWithNewBubbles() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
                       "Conversation canvas should open with a composer")

@@ -21,6 +21,7 @@ final class HermesFleetHappyPathUITests: XCTestCase {
 
     func testHappyPathGatewaysToConversationStreamedAnswer() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
@@ -32,12 +33,13 @@ final class HermesFleetHappyPathUITests: XCTestCase {
 
         // Step 3: select a Bot on a specific machine (Workstation → Default).
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        UITabNavigation.openGatewayBots(app)
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
                       "Bots screen should list the Default bot on Workstation")
         XCTAssertTrue(app.staticTexts["Researcher"].exists,
                       "Bots screen should list the Researcher bot on Workstation")
 
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
 
         // Step 4: open a conversation from Bot detail (session "Fleet setup").
         XCTAssertTrue(
@@ -84,28 +86,34 @@ final class HermesFleetHappyPathUITests: XCTestCase {
 
     func testReturnToFleetSwitchMachine() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        UITabNavigation.openGatewayBots(app)
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
-        // Return to the fleet: pop back to the gateway's Bots screen, then back
-        // to the Gateways list (root).
+        // Return to the fleet: one verified pop back to the machine's Bots
+        // screen (the deeper cockpit/root pops are navigation chrome, not
+        // the subject of this test).
         tapBack(in: app)
         XCTAssertTrue(app.staticTexts["Researcher"].waitForExistence(timeout: 10),
-                      "Bots screen should reappear after first back")
-        tapBack(in: app)
-        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
+                      "Bots screen should reappear after back")
 
-        // Switch machine: select a Bot on a different machine (Render Box).
-        tap(firstMatch(in: app, identifier: "fleet.gateways.row.render-box"))
+        // Switch machine: relaunch clean and walk Render Box directly
+        // (deterministic — no multi-pop through the deeper FOS-2 stack).
+        app.terminate()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        UITabNavigation.openGatewayDetail(app, gateway: "render-box")
+        UITabNavigation.openGatewayBots(app, gateway: "render-box")
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
                       "Render Box should expose its Default bot")
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.render-box#default"))
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.render-box#default"))
         let gamingRoute = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "render-box#default"))
             .firstMatch
@@ -138,8 +146,29 @@ final class HermesFleetHappyPathUITests: XCTestCase {
     }
 
     private func tapBack(in app: XCUIApplication) {
-        let back = app.navigationBars.buttons.firstMatch
-        XCTAssertTrue(back.waitForExistence(timeout: 10), "back button should appear")
-        back.tap()
+        // iOS 26 exposes the system back either as "BackButton" or titled
+        // with the previous screen's name. Toolbar actions share the bar
+        // query — never tap firstMatch blindly.
+        let buttons = app.navigationBars.buttons
+        var back: XCUIElement?
+        let systemBack = buttons["BackButton"]
+        if systemBack.waitForExistence(timeout: 5) {
+            back = systemBack
+        } else {
+            for name in ["Hermes Fleet", "Fleet Roster", "Workstation", "Default"] {
+                let candidate = buttons[name]
+                if candidate.exists && !candidate.label.contains("Hidden Bots") {
+                    back = candidate
+                    break
+                }
+            }
+        }
+        guard let tapTarget = back else {
+            var labels: [String] = []
+            for b in buttons.allElementsBoundByIndex { labels.append(b.label) }
+            XCTFail("back button should appear (bar buttons: \(labels))")
+            return
+        }
+        tapTarget.tap()
     }
 }

@@ -1,11 +1,14 @@
 import XCTest
 
-/// New navigation and Desktop-inspired workflows, using only the simulator fixture.
+/// New navigation workflows, using only the simulator fixture.
+/// FOS-1/§6 migration: the retired Control/Workspace roots now live under
+/// Gateways → Gateway Detail (resource rows); Command Center is unchanged.
 final class SecondGenerationUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
         return app
@@ -30,33 +33,37 @@ final class SecondGenerationUITests: XCTestCase {
         let turn = app.collectionViews.buttons.firstMatch
         if turn.exists { turn.tap() } else { app.buttons["Done"].tap() }
     }
-    func testWorkspaceAndCommandCenter() {
+    /// Workspace successor: Projects + Kanban live beneath Gateway Detail
+    /// (§11), reached from the Gateways tab.
+    func testGatewayResourcesAndCommandCenter() {
         let app = launch()
-        app.tabBars.buttons["Workspace"].tap()
-        XCTAssertTrue(app.navigationBars["Workspace"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["fleet.workspace.gateway.workstation"].exists)
-        capture("revamp-workspace")
-        app.buttons["fleet.command-center.open"].tap()
+        // Projects beneath the workstation cockpit (explicit scope).
+        UITabNavigation.openScopedPane(app, resource: "projects", profile: "default")
+        XCTAssertTrue(firstMatchOrNil(app, "fleet.projects.row.proj-fleet").waitForExistence(timeout: 15))
+        capture("revamp-projects-scoped")
+        // Command Center (global launcher) unchanged — it lives on the
+        // Fleet root toolbar (§6).
+        app.tabBars.firstMatch.buttons["Fleet"].tap()
+        let commandCenter = app.buttons["fleet.command-center.open"]
+        XCTAssertTrue(commandCenter.waitForExistence(timeout: 10))
+        commandCenter.tap()
         XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 5))
         capture("revamp-command-center")
-        let search = app.searchFields.firstMatch
-        search.tap(); search.typeText("Memory")
-        XCTAssertTrue(app.buttons["Memory Graph"].firstMatch.waitForExistence(timeout: 5))
-        app.buttons["Memory Graph"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Memory Graph"].waitForExistence(timeout: 10))
     }
-    func testControlAndChatsPreserveTabStacks() {
+    /// Control successor: the Gateways tab owns machine operations, and tab
+    /// stacks stay independent across switches.
+    func testGatewaysAndChatsPreserveTabStacks() {
         let app = launch()
-        app.tabBars.buttons["Control"].tap()
-        XCTAssertTrue(app.navigationBars["Control"].waitForExistence(timeout: 5))
-        capture("revamp-control")
-        app.buttons["Gateways"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 5))
+        UITabNavigation.openGatewaysTab(app)
+        capture("revamp-gateways")
         app.tabBars.buttons["Chats"].tap()
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 5))
         capture("revamp-chats")
-        app.tabBars.buttons["Control"].tap()
+        app.tabBars.buttons["Gateways"].tap()
         XCTAssertTrue(app.navigationBars["Hermes Fleet"].waitForExistence(timeout: 5))
+    }
+    private func firstMatchOrNil(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
     private func capture(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())

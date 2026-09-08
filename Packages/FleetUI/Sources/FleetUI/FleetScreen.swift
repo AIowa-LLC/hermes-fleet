@@ -43,6 +43,12 @@ public enum FleetScreen: Hashable, Sendable, Codable {
         default: nil
         }
     }
+
+    /// Focused-path intent for Projects routes (transcript file references).
+    public var focusPath: String? {
+        if case .projects(_, _, let path) = self { return path }
+        return nil
+    }
 }
 
 /// One stack per domain. Opening an existing exact object focuses it and removes

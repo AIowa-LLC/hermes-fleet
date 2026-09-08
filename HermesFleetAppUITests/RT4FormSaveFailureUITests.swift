@@ -19,6 +19,7 @@ final class RT4FormSaveFailureUITests: XCTestCase {
     func testSaveFailureKeepsSheetOpenAndPreservesFields() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_SAVE_FAIL"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 

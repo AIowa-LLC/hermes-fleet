@@ -153,6 +153,23 @@ public struct BotDetailView: View {
                         }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("fleet.bot-detail.routines")
+                        // FOS-2: profile-scoped management panes entered from
+                        // Bot Detail carry this Bot's Route — no picker, no
+                        // fallback (SPEC §8 scope selection rule).
+                        NavigationLink(value: FleetScreen.skills(route.gatewayID, profile: route.profileSlug)) {
+                            Label("Skills", systemImage: "sparkles")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("fleet.bot-detail.skills")
+                        NavigationLink(value: FleetScreen.memoryGraph(route.gatewayID, profile: route.profileSlug)) {
+                            Label("Memory", systemImage: "point.3.connected.trianglepath.dotted")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("fleet.bot-detail.memory")
                         BotActionsMenu(environment: environment, bot: bot)
                     } else {
                         Label(

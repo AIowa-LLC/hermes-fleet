@@ -54,6 +54,7 @@ final class B1LiveBoardPickerUITests: XCTestCase {
     func testLivePickerSwitchPersistenceRoundTrip() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // ---- 1. Register + connect the live LAN gateway -------------------

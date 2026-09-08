@@ -67,11 +67,12 @@ final class P0_7LiveTailnetUITests: XCTestCase {
 
         // ---- 2. Drill to Default bot detail --------------------------------
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.\(tailnetID)"))
-        XCTAssertTrue(app.navigationBars[tailnetName].waitForExistence(timeout: 10))
+        UITabNavigation.openGatewayBots(app, gateway: tailnetID)
+        XCTAssertTrue(app.navigationBars["Fleet Roster"].waitForExistence(timeout: 10))
         // BotsView reads the union roster snapshot — refresh it so the tailnet
         // gateway's bots load (mirrors the T2 roster-refresh step).
         tapRefreshOnBots(app)
-        let botRow = firstMatch(in: app, identifier: "fleet.bots.row.\(tailnetID)#default")
+        let botRow = firstMatch(in: app, identifier: "fleet.roster.row.\(tailnetID)#default")
         XCTAssertTrue(botRow.waitForExistence(timeout: 30),
                       "tailnet default bot should appear after roster refresh")
         tap(botRow)

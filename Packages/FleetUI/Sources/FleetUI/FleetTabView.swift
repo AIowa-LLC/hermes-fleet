@@ -105,6 +105,12 @@ public struct FleetTabView: View {
                 }
                 restored = true
             }
+            // UI-test hygiene: NAV_RESET also clears persisted explicit
+            // profile selections so the §8 chooser deterministically renders
+            // (a stored choice would otherwise skip straight into the pane).
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
+                GatewayResourceView.resetStoredSelections()
+            }
             await performAutoNavIfNeeded()
         }
     }
@@ -162,7 +168,7 @@ public struct FleetTabView: View {
         case .gatewayKanban(let id, let board):
             KanbanBoardView(environment: environment, gatewayID: id, board: board)
         case .cron(let id, let profile), .skills(let id, let profile), .memoryGraph(let id, let profile), .projects(let id, let profile, _):
-            GatewayResourceView(environment: environment, gatewayID: id, screen: screen, profile: profile) { selected in
+            GatewayResourceView(environment: environment, gatewayID: id, screen: screen, profile: profile, focusPath: screen.focusPath) { selected in
                 let scoped: FleetScreen
                 switch screen {
                 case .cron: scoped = .cron(id, profile: selected)

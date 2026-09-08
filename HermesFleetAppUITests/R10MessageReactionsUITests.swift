@@ -30,7 +30,8 @@ final class R10MessageReactionsUITests: XCTestCase {
     private func openConversation(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.workstation").firstMatch)
-        tap(app.descendants(matching: .any).matching(identifier: "fleet.bots.row.workstation#default").firstMatch)
+        UITabNavigation.openGatewayBots(app)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.roster.row.workstation#default").firstMatch)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.bot-detail.sessions.row.workstation.default.s1").firstMatch)
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation canvas should open with a composer")
@@ -45,6 +46,7 @@ final class R10MessageReactionsUITests: XCTestCase {
     func testLongPressReactRendersChip() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_REACTION_FIXTURE"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 
@@ -74,6 +76,7 @@ final class R10MessageReactionsUITests: XCTestCase {
     func testResendSameEmojiRetracts() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_REACTION_FIXTURE"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 
@@ -104,6 +107,7 @@ final class R10MessageReactionsUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_REACTION_FIXTURE"] = "1"
         app.launchEnvironment["HERMES_FLEET_REACTION_FAIL"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 
@@ -141,6 +145,7 @@ final class R10MessageReactionsUITests: XCTestCase {
     /// latest_message_row_id.
     func testLiveRowReactKeepsChipAfterSettleAndClearWorks() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 

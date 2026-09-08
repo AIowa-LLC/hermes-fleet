@@ -40,9 +40,8 @@ final class R10MemoryGraphEditUITests: XCTestCase {
                 app.terminate()
                 app.launch()
             }
-            let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.memorygraph.entry"), in: app)
-            guard entry.exists else { continue }
-            tap(entry)
+            // FOS-2 (§8): Memory beneath Gateway Detail, explicit profile.
+            UITabNavigation.openScopedPane(app, resource: "memory", profile: "default")
             let canvas = firstMatch(in: app, identifier: "memorygraph.canvas")
             let filter = firstMatch(in: app, identifier: "memorygraph.filter.memories")
             guard canvas.waitForExistence(timeout: 15), filter.waitForExistence(timeout: 10) else {
@@ -84,6 +83,7 @@ final class R10MemoryGraphEditUITests: XCTestCase {
 
     func testEditMemorySurfacesGatewayMessage() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         openMemoryDetail(in: app)
@@ -111,6 +111,7 @@ final class R10MemoryGraphEditUITests: XCTestCase {
 
     func testDeleteMemoryRemovesNodeAfterConfirmation() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         openMemoryDetail(in: app)
@@ -137,6 +138,7 @@ final class R10MemoryGraphEditUITests: XCTestCase {
 
     func testEditRefusalSurfacesVerbatimRemedyAndKeepsNode() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         openMemoryDetail(in: app)

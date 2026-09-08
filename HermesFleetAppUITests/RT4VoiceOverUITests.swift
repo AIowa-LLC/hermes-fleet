@@ -18,14 +18,16 @@ final class RT4VoiceOverUITests: XCTestCase {
 
     func testConversationRowExposesSpeakerLabel() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         // Navigate: Gateways → Workstation → Default bot → a session.
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        UITabNavigation.openGatewayBots(app)
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10))

@@ -20,6 +20,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
     func testRemovalRequiresConfirmationAndCanUndo() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 

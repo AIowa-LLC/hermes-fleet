@@ -20,6 +20,7 @@ final class S3CleartextWarningUITests: XCTestCase {
 
     func testPublicHTTPEndpointShowsWarningAndGatesSave() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
@@ -66,6 +67,7 @@ final class S3CleartextWarningUITests: XCTestCase {
 
     func testPrivateHTTPEndpointShowsNoWarning() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
@@ -93,6 +95,7 @@ final class S3CleartextWarningUITests: XCTestCase {
 
     func testLoopbackHTTPEndpointShowsNoWarning() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 

@@ -101,7 +101,7 @@ final class U3TabNavigationUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         app.buttons["fleet.gateway-detail.workstation.bots"].tap()
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")

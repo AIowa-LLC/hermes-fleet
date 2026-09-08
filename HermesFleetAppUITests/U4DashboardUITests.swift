@@ -21,6 +21,8 @@ final class U4DashboardUITests: XCTestCase {
 
     func testGoldTitleAndStatRowRenderFromRealData() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Gold masthead (accessibility id, robust against color queries).
@@ -39,6 +41,7 @@ final class U4DashboardUITests: XCTestCase {
 
     func testGatewayRowsRenderNameAndEndpoint() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Registry truth: the scripted fleet's gateway renders by row id
@@ -55,6 +58,7 @@ final class U4DashboardUITests: XCTestCase {
 
     func testActiveBotRowsRenderAvatarSubtitleAndPill() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Roster truth: a real bot row (workstation#default) with subtitle.
@@ -71,6 +75,7 @@ final class U4DashboardUITests: XCTestCase {
 
     func testRecentActivityEmptyStateIsHonest() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // A fresh scripted session has accumulated no connection events —
@@ -85,6 +90,7 @@ final class U4DashboardUITests: XCTestCase {
 
     func testViewAllDrillInsPushOnHomeStack() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         XCTAssertTrue(
@@ -102,11 +108,12 @@ final class U4DashboardUITests: XCTestCase {
             firstMatch(in: app, identifier: "fleet.gateways.add").waitForExistence(timeout: 15),
             "the Gateways View All must push the registry cockpit"
         )
-        // Back returns to the dashboard.
-        app.buttons["Command"].firstMatch.tap()
+        // Back returns to the dashboard: the Fleet tab owns the Home stack
+        // (the old Command launcher button was retired with Control).
+        app.tabBars.firstMatch.buttons["Fleet"].tap()
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.dashboard.title").waitForExistence(timeout: 10),
-            "back navigation must return to the dashboard"
+            "the Fleet tab must return to the dashboard"
         )
         attachScreenshot(of: app, name: "u4-home-drillin-gateways")
     }

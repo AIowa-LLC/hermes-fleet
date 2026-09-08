@@ -17,6 +17,7 @@ final class RT4RosterEmptyStateUITests: XCTestCase {
     func testAllHealthyZeroBotRosterShowsNoBotsState() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_ZERO_BOTS"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // The fleet still lists the seeded gateways (Home tab, real data).

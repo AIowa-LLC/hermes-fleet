@@ -18,6 +18,7 @@ final class F3OnboardingUITests: XCTestCase {
     private func launchEmptyFleet() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_ZERO_GATEWAYS"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         return app
     }

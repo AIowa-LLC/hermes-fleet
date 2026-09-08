@@ -29,7 +29,8 @@ final class R10VoiceUITests: XCTestCase {
     private func openConversation(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.workstation").firstMatch)
-        tap(app.descendants(matching: .any).matching(identifier: "fleet.bots.row.workstation#default").firstMatch)
+        UITabNavigation.openGatewayBots(app)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.roster.row.workstation#default").firstMatch)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.bot-detail.sessions.row.workstation.default.s1").firstMatch)
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation canvas should open with a composer")
@@ -46,6 +47,7 @@ final class R10VoiceUITests: XCTestCase {
     func testMicDeniedShowsHonestGateBanner() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_VOICE_DENIED"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 
@@ -68,6 +70,7 @@ final class R10VoiceUITests: XCTestCase {
     func testTranscriptLandsForReviewAndSendSubmits() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_VOICE_TRANSCRIPT"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 

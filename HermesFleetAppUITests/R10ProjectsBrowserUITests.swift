@@ -39,10 +39,8 @@ final class R10ProjectsBrowserUITests: XCTestCase {
     /// memory-graph suite. `expectRow: false` for the failure-hook
     /// walkthrough (the pane shows its error state, not rows).
     private func openProjects(_ app: XCUIApplication, expectRow: Bool = true) {
-        let entry = scrollTo(
-            firstMatch(in: app, identifier: "fleet.dashboard.projects.entry"), in: app)
-        XCTAssertTrue(entry.waitForExistence(timeout: 15), "projects entry should appear on the dashboard")
-        tap(entry)
+        // FOS-2 (§8): Projects beneath Gateway Detail, explicit profile.
+        UITabNavigation.openScopedPane(app, resource: "projects", profile: "default")
         if expectRow {
             _ = firstMatch(in: app, identifier: "fleet.projects.row.proj-fleet")
         }
@@ -52,6 +50,7 @@ final class R10ProjectsBrowserUITests: XCTestCase {
     /// active badge + session count) and the "No Project" tier.
     func testProjectsListShowsOverviewShape() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openProjects(app)
 
@@ -65,6 +64,7 @@ final class R10ProjectsBrowserUITests: XCTestCase {
     /// Drill-in shows hydrated lanes (session rows the overview omitted).
     func testDrillInShowsHydratedLanesAndOpensConversation() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openProjects(app)
 
@@ -88,6 +88,7 @@ final class R10ProjectsBrowserUITests: XCTestCase {
     func testFailureHookShowsErrorState() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_PROJECTS_FAIL"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openProjects(app, expectRow: false)
 
@@ -103,12 +104,14 @@ final class R10ProjectsBrowserUITests: XCTestCase {
     func testTranscriptFileRefChipTapsThroughToFocusedBrowser() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_FILEREF_FIXTURE"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Walk to the conversation the same way the reactions suite does.
         UITabNavigation.openGatewaysTab(app)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.workstation").firstMatch)
-        tap(app.descendants(matching: .any).matching(identifier: "fleet.bots.row.workstation#default").firstMatch)
+        UITabNavigation.openGatewayBots(app)
+        tap(app.descendants(matching: .any).matching(identifier: "fleet.roster.row.workstation#default").firstMatch)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.bot-detail.sessions.row.workstation.default.s1").firstMatch)
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation canvas should open")

@@ -44,11 +44,11 @@ final class R9ManagementPanesUITests: XCTestCase {
 
     func testCronPaneListsFixtureJobsAndToggleFlipsRow() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Dashboard → Management → Cron Jobs (below the fold).
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.cron.entry"), in: app)
-        tap(entry)
+        // FOS-2 (§8): Schedules beneath Gateway Detail, explicit profile.
+        UITabNavigation.openScopedPane(app, resource: "cron", profile: "default")
 
         let row = scrollTo(firstMatch(in: app, identifier: "cron.row.script-cron-1"), in: app)
         XCTAssertTrue(row.waitForExistence(timeout: 15),
@@ -82,10 +82,10 @@ final class R9ManagementPanesUITests: XCTestCase {
 
     func testCronFireNowShowsNotice() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.cron.entry"), in: app)
-        tap(entry)
+        UITabNavigation.openScopedPane(app, resource: "cron", profile: "default")
 
         let fire = scrollTo(firstMatch(in: app, identifier: "cron.row.fire.script-cron-1"), in: app)
         XCTAssertTrue(fire.waitForExistence(timeout: 15), "fire button should render on the row")
@@ -101,10 +101,10 @@ final class R9ManagementPanesUITests: XCTestCase {
 
     func testCronFormCreatesJob() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.cron.entry"), in: app)
-        tap(entry)
+        UITabNavigation.openScopedPane(app, resource: "cron", profile: "default")
 
         tap(firstMatch(in: app, identifier: "cron.new"))
 
@@ -135,10 +135,11 @@ final class R9ManagementPanesUITests: XCTestCase {
 
     func testSkillsPaneListsAndToggles() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.skills.entry"), in: app)
-        tap(entry)
+        // FOS-2 (§8): Skills beneath Gateway Detail, explicit profile.
+        UITabNavigation.openScopedPane(app, resource: "skills", profile: "default")
 
         let row = scrollTo(firstMatch(in: app, identifier: "skills.row.codex"), in: app)
         XCTAssertTrue(row.waitForExistence(timeout: 15),

@@ -34,6 +34,7 @@ final class H1AppLockUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "enabled"
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "fail"
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // The failed biometric must automatically show the passcode prompt

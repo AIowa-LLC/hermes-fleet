@@ -19,7 +19,8 @@ final class R9ApprovalBannerUITests: XCTestCase {
     private func openConversation(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render before drilling into the conversation"
@@ -34,6 +35,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
     func testBannerRendersAndDenyClearsIt() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 
@@ -74,6 +76,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
     func testYoloToggleShowsDangerConfirmation() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openConversation(app)
 

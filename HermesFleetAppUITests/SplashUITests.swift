@@ -31,6 +31,7 @@ final class SplashUITests: XCTestCase {
         // waitForExistence instead would under-count by XCUITest's query
         // resolution latency and make the hold assertion flaky.
         let launched = Date()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // V7 pin: the white-wing identity mark is on screen at launch

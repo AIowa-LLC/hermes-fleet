@@ -46,12 +46,14 @@ final class BotRoutinesUITests: XCTestCase {
     private func openResearcherRoutines(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#researcher"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#researcher"))
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.routines"))
     }
 
     func testRoutinesListOnlyThisBotsNamespacedJobs() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openResearcherRoutines(app)
 
@@ -78,11 +80,13 @@ final class BotRoutinesUITests: XCTestCase {
 
     func testFailureAssociationRendersOnRow() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         // The default bot's routine carries a last_fire_error fixture.
         UITabNavigation.openGatewaysTab(app)
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.routines"))
 
         let failure = firstMatch(in: app, identifier: "routines.row.failure.script-routine-3")
@@ -95,6 +99,7 @@ final class BotRoutinesUITests: XCTestCase {
 
     func testPauseToggleFlipsRowToPaused() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openResearcherRoutines(app)
 
@@ -118,6 +123,7 @@ final class BotRoutinesUITests: XCTestCase {
 
     func testCreateStampsNamespaceAndRendersRow() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openResearcherRoutines(app)
 
@@ -158,6 +164,7 @@ final class BotRoutinesUITests: XCTestCase {
 
     func testRemoveAsksConfirmationBeforeDelete() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openResearcherRoutines(app)
 
@@ -200,6 +207,7 @@ final class BotRoutinesUITests: XCTestCase {
         let app = XCUIApplication()
         // Script the REAL 0.21.0 wire answer: run not forwarded → 4016.
         app.launchArguments += ["-fixture-run-now-fails"]
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openResearcherRoutines(app)
 
@@ -223,6 +231,7 @@ final class BotRoutinesUITests: XCTestCase {
         let app = XCUIApplication()
         // Default scripted gateway forwards run (R9-era fixture
         // behavior) — the supported-gateway branch.
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         openResearcherRoutines(app)
 
@@ -243,13 +252,15 @@ final class BotRoutinesUITests: XCTestCase {
 
     func testGeneralCronPaneUnhijacked() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         // The gateway-wide Cron pane still lists its fixture rows —
         // bot routines never filtered or hijacked the general surface.
-        let entry = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.cron.entry"), in: app)
-        tap(entry)
+        // FOS-2 (§8): the general Cron pane lives beneath Gateway Detail with
+        // an explicit profile choice — never a silent first/default pick.
+        UITabNavigation.openScopedPane(app, resource: "cron", profile: "default")
         XCTAssertTrue(firstMatch(in: app, identifier: "cron.row.script-cron-1").waitForExistence(timeout: 15),
-                      "general cron rows must keep rendering on the Cron pane")
+                      "general cron rows must keep rendering on the Schedules pane")
         XCTAssertTrue(firstMatch(in: app, identifier: "cron.row.script-cron-2").waitForExistence(timeout: 5))
         attachScreenshot(of: app, name: "s3-general-cron-preserved")
     }

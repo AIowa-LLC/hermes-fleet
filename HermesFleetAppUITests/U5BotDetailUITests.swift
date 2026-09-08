@@ -26,17 +26,19 @@ final class U5BotDetailUITests: XCTestCase {
 
     func testGatewayBotRowsRenderAvatarRouteAndPill() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         // Drill into the healthy scripted gateway's bot list.
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        UITabNavigation.openGatewayBots(app)
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
                       "Bots screen should list the Default bot on Workstation")
 
         // U5 row: the row id is stable; the combined row carries name +
         // route + pill text (children combined).
-        let row = firstMatch(in: app, identifier: "fleet.bots.row.workstation#default")
+        let row = firstMatch(in: app, identifier: "fleet.roster.row.workstation#default")
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "the per-gateway bot list must render a U5 row")
         // Real status pill from the scripted bot's activity (Idle in the
@@ -52,6 +54,7 @@ final class U5BotDetailUITests: XCTestCase {
 
     func testUnionRosterRendersDesignSystemRows() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openBotsTab(app)
 
@@ -66,11 +69,13 @@ final class U5BotDetailUITests: XCTestCase {
 
     func testBotDetailHeaderAndSegments() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
 
         // Persistent header card.
         let header = firstMatch(in: app, identifier: "fleet.bot-detail.header")
@@ -105,11 +110,13 @@ final class U5BotDetailUITests: XCTestCase {
 
     func testDetailsSegmentShowsIdentity() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
         // Switch to Details: the identity card renders.
@@ -125,11 +132,13 @@ final class U5BotDetailUITests: XCTestCase {
 
     func testSessionOpensFromChatSegment() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))

@@ -22,12 +22,18 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     /// "connect() from open" error may render anywhere.
     func testExistingSessionReEntrySendsWithoutConnectFromOpen() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         // Drill to Bot detail (Workstation → Default).
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        let botRow = firstMatch(in: app, identifier: "fleet.roster.row.workstation#default")
+        if !botRow.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !botRow.exists { app.swipeUp(velocity: .fast) }
+        }
+        tap(botRow)
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")
@@ -47,12 +53,18 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         XCTAssertTrue(firstAnswer.waitForExistence(timeout: 15),
                       "First entry: streamed reply must render")
 
-        // POP back to Bot detail, then RE-ENTER the same session.
+        // POP back, then RE-ENTER the same session. FOS-1 (§6) canonical
+        // owner routing: an ordinary conversation lives on the CHATS stack,
+        // so Back pops within Chats — re-enter the exact session from there.
         tapBackButton(app)
-        XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
-            "Bot detail should render")
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10),
+                      "Back from an ordinary conversation lands on its owning Chats stack")
+        let reentry = app.descendants(matching: .any)
+            .matching(identifier: "fleet.chats.session.workstation#default/workstation.default.s1").firstMatch
+        if !reentry.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !reentry.exists { app.swipeUp(velocity: .fast) }
+        }
+        tap(reentry)
         XCTAssertTrue(composer.waitForExistence(timeout: 10),
                       "Re-entered conversation canvas opens")
 
@@ -79,11 +91,17 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     /// a fresh conversation (session.create) that is immediately usable.
     func testNewSessionAffordanceCreatesUsableConversation() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
-        tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
+        UITabNavigation.openGatewayBots(app)
+        let botRow = firstMatch(in: app, identifier: "fleet.roster.row.workstation#default")
+        if !botRow.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !botRow.exists { app.swipeUp(velocity: .fast) }
+        }
+        tap(botRow)
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")
@@ -133,9 +151,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     }
 
     private func tapBackButton(_ app: XCUIApplication) {
-        // Navigation back via the back button (labeled with the previous
-        // screen's title, "Default" on this stack).
-        let back = app.navigationBars.buttons.firstMatch
+        // Navigation back: iOS 26 exposes the system back as "BackButton"
+        // (toolbar actions share the bar query — never tap firstMatch).
+        let back = app.navigationBars.buttons["BackButton"]
         XCTAssertTrue(back.waitForExistence(timeout: 10), "Back button must exist")
         back.tap()
     }

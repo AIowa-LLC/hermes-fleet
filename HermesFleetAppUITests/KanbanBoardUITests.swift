@@ -20,12 +20,25 @@ final class KanbanBoardUITests: XCTestCase {
 
     func testBoardEntryPushesReadOnlyBoard() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Home dashboard entry (the scripted fleet seeds gateways).
         let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        if !entry.waitForExistence(timeout: 5) {
+            // Below the fold on Home — scroll in SMALL steps (a fast full
+            // swipe can jump past the section) and re-check after each.
+            for _ in 0..<10 where !entry.exists {
+                app.swipeUp(velocity: .slow)
+            }
+        }
         XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
         entry.tap()
+        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
+        // gateway explicitly.
+        let gateway = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
+        XCTAssertTrue(gateway.waitForExistence(timeout: 10), "gateway picker must render")
+        gateway.tap()
 
         // Columns from the scripted snapshot render (Todo header with count).
         XCTAssertTrue(
@@ -47,11 +60,24 @@ final class KanbanBoardUITests: XCTestCase {
     func testLiveEventsUpdateBoardWithoutManualRefresh() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        if !entry.waitForExistence(timeout: 5) {
+            // Below the fold on Home — scroll in SMALL steps (a fast full
+            // swipe can jump past the section) and re-check after each.
+            for _ in 0..<10 where !entry.exists {
+                app.swipeUp(velocity: .slow)
+            }
+        }
         XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
         entry.tap()
+        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
+        // gateway explicitly.
+        let gateway = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
+        XCTAssertTrue(gateway.waitForExistence(timeout: 10), "gateway picker must render")
+        gateway.tap()
 
         // With the live ticker on (3s cadence), the Recent Activity strip
         // appears WITHOUT any user refresh action.
@@ -64,11 +90,24 @@ final class KanbanBoardUITests: XCTestCase {
 
     func testBoardPickerListsAndSwitchesBoards() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
+        if !entry.waitForExistence(timeout: 5) {
+            // Below the fold on Home — scroll in SMALL steps (a fast full
+            // swipe can jump past the section) and re-check after each.
+            for _ in 0..<10 where !entry.exists {
+                app.swipeUp(velocity: .slow)
+            }
+        }
         XCTAssertTrue(entry.waitForExistence(timeout: 15), "Kanban board entry must render on Home")
         entry.tap()
+        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
+        // gateway explicitly.
+        let gateway = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
+        XCTAssertTrue(gateway.waitForExistence(timeout: 10), "gateway picker must render")
+        gateway.tap()
 
         // The picker renders with the ACTIVE scripted board's name. (Reset
         // first if a prior run left another board selected.)
@@ -122,10 +161,16 @@ final class KanbanBoardUITests: XCTestCase {
         // Pass 1: switch to Side Quests (skip the tap if a prior test in
         // this suite already left it selected — the picker toggles).
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         let entry = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
         XCTAssertTrue(entry.waitForExistence(timeout: 15))
         entry.tap()
+        // FOS-1/§8: a bare Kanban route must not guess a machine — pick the
+        // gateway explicitly before the board renders.
+        let gatewayChoice = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
+        XCTAssertTrue(gatewayChoice.waitForExistence(timeout: 10), "gateway picker must render")
+        gatewayChoice.tap()
         let picker = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
         XCTAssertTrue(picker.waitForExistence(timeout: 15))
         if !picker.label.contains("Side Quests") {
@@ -145,10 +190,16 @@ final class KanbanBoardUITests: XCTestCase {
 
         // Pass 2: relaunch — the selection persists (per-device UserDefaults).
         app.terminate()
+        // NAV_RESET only drops restored navigation + profile selections; the
+        // Kanban board selection store is separate and must survive.
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         let entry2 = firstMatch(in: app, identifier: "fleet.dashboard.kanban.entry")
         XCTAssertTrue(entry2.waitForExistence(timeout: 15))
         entry2.tap()
+        let gateway2 = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
+        XCTAssertTrue(gateway2.waitForExistence(timeout: 10), "gateway picker must render after relaunch")
+        gateway2.tap()
         let picker2 = firstMatch(in: app, identifier: "fleet.kanban.board.picker")
         XCTAssertTrue(picker2.waitForExistence(timeout: 15))
         XCTAssertTrue(

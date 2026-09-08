@@ -18,6 +18,7 @@ final class C2SetupPromptUITests: XCTestCase {
     /// gateways EXIST, the state where the old door was unreachable).
     func testSettingsShowsSetupPromptRow() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openSettings(app)
 
