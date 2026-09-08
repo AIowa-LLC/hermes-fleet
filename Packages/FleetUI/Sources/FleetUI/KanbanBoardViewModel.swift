@@ -53,7 +53,6 @@ public final class KanbanBoardViewModel {
             return boards.first { $0.slug == selectedBoard }?.name ?? selectedBoard
         }
         return boards.first { $0.isCurrent }?.name
-            ?? boards.first?.name
             ?? "Board"
     }
 
@@ -84,9 +83,15 @@ public final class KanbanBoardViewModel {
     // MARK: Lifecycle
 
     /// Fetch the boards list + initial snapshot and consume the live stream.
-    public func start() async {
+    public func start(board: String? = nil) async {
         guard streamTask == nil else { return }
-        await loadBoards()
+        if let board {
+            boards = (try? await watcher.fetchBoards())?.boards ?? []
+            selectedBoard = board
+            await watcher.pinBoard(board)
+        } else {
+            await loadBoards()
+        }
         await openStream()
         await loadSnapshot(initial: true)
         startPollBackstop()
@@ -99,14 +104,10 @@ public final class KanbanBoardViewModel {
             boards = list.boards
         }
         guard let stored = selectionStore?.loadSelectedBoard() else { return }
-        if boards.contains(where: { $0.slug == stored }) {
-            selectedBoard = stored
-            await watcher.pinBoard(stored)
-        } else {
-            // Unknown persisted slug (board deleted/renamed elsewhere):
-            // drop back to the active board and clear the stale persist.
-            selectionStore?.saveSelectedBoard(nil)
-        }
+        // A missing saved board must fail at its exact target, never silently
+        // show a different board from the same gateway.
+        selectedBoard = stored
+        await watcher.pinBoard(stored)
     }
 
     /// Tear everything down (view disappeared / gateway removed).

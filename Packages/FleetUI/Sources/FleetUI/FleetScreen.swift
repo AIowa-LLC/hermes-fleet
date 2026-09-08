@@ -1,50 +1,80 @@
 import Foundation
 import FleetCore
 
-/// Typed navigation destinations for the U2 fleet cockpit.
-///
-/// Flow: Gateways → Bots (per-gateway drill) → Bot detail → Conversation
-/// (list-detail push navigation per the synthesis UX plan). `roster` is the
-/// fleet-wide union Bots roster (M8 aggregation, per-gateway grouping,
-/// partial-outage states). U2 builds Gateways registry management, the union
-/// roster, and Bot detail; Conversation remains the U3 placeholder canvas.
-public enum FleetScreen: Hashable, Sendable {
-    /// Bots on a specific gateway (drilled from the gateways list).
+/// Durable, source-qualified navigation. Payloads contain identity, never credentials
+/// or mutable room authority snapshots. Missing targets remain unavailable.
+public enum FleetScreen: Hashable, Sendable, Codable {
     case bots(GatewayID)
-    /// Fleet-wide union roster (all gateways' bots grouped per gateway).
     case roster
-    /// Bot detail for an exact route: identity + status + sessions list.
     case botDetail(Route)
-    /// True Bots slice 3 (D13): the bot's Routines surface (namespaced
-    /// cron jobs on the owning profile's store).
     case botRoutines(Route)
-    /// True Bots slice 4 (D15/D16/D18): one room's interactive chat screen
-    /// (generation-agnostic; capabilities gate every affordance).
-    case room(FleetRoom)
-    /// Conversation for a session (U3 canvas; sessionID nil = create new).
-    case conversation(Route, sessionID: String?)
-    /// H2 Connection health dashboard (per-gateway uptime / reconnects /
-    /// last-disconnect / ping RTT).
+    case room(FleetRoomID)
+    case conversation(Route, sessionID: String?, canonical: Bool = false)
     case health
-    /// U4: the registry cockpit, as a pushed destination (Home dashboard
-    /// "View All" drill-in on the tab's own stack).
     case gateways
-    /// U4: the connection-activity feed, as a pushed destination (Home
-    /// dashboard "View All" drill-in on the tab's own stack).
+    case gatewayDetail(GatewayID)
     case activity
-    /// t_3b321b7b: the live read-only Kanban board (pushed destination from
-    /// the Home dashboard).
+    /// Legacy unscoped entry: requires an explicit gateway choice.
     case kanban
-    /// R9-T5: the per-gateway Cron management pane.
-    case cron(GatewayID)
-    /// R9-T6: the per-gateway Skills management pane.
-    case skills(GatewayID)
-    /// R9-T7: the per-gateway Memory Graph (read-only learning star map).
-    case memoryGraph(GatewayID)
-    /// R10-T3: the per-gateway remote Projects browser
-    /// (projects.tree + drill-in). `focusPath` (R10-T3 round 2) carries a
-    /// transcript `@file:`/`@folder:` ref path so the browser pre-
-    /// highlights the containing project and surfaces the target path
-    /// (the tap-through "at that path" requirement).
-    case projects(GatewayID, focusPath: String? = nil)
+    case gatewayKanban(GatewayID, board: String? = nil)
+    case cron(GatewayID, profile: ProfileSlug? = nil)
+    case skills(GatewayID, profile: ProfileSlug? = nil)
+    case memoryGraph(GatewayID, profile: ProfileSlug? = nil)
+    case projects(GatewayID, profile: ProfileSlug? = nil, focusPath: String? = nil)
+
+    public var owner: FleetTab {
+        switch self {
+        case .roster, .bots, .botDetail, .botRoutines, .room: .bots
+        case .conversation(_, _, let canonical): canonical ? .bots : .chats
+        case .activity: .fleet
+        default: .gateways
+        }
+    }
+
+    public var gatewayID: GatewayID? {
+        switch self {
+        case .bots(let id), .gatewayDetail(let id), .gatewayKanban(let id, _),
+             .cron(let id, _), .skills(let id, _), .memoryGraph(let id, _), .projects(let id, _, _): id
+        case .botDetail(let route), .botRoutines(let route), .conversation(let route, _, _): route.gatewayID
+        case .room(let id): id.gatewayID
+        default: nil
+        }
+    }
+}
+
+/// One stack per domain. Opening an existing exact object focuses it and removes
+/// only destinations above it; another domain's source stack is untouched.
+public struct FleetNavigationState: Codable, Equatable, Sendable {
+    public static let storageKey = "fleet.navigation.v1"
+    public private(set) var version = 1
+    public var selection: FleetTab = .fleet
+    public var paths: [FleetTab: [FleetScreen]] = [:]
+    public init() {}
+
+    public mutating func open(_ screen: FleetScreen) {
+        selection = screen.owner
+        if screen == .roster || screen == .gateways {
+            paths[selection] = []
+        } else if let index = paths[selection]?.firstIndex(of: screen) {
+            paths[selection] = Array(paths[selection]!.prefix(through: index))
+        } else {
+            paths[selection, default: []].append(screen)
+        }
+    }
+
+    public static func restore(_ data: Data?) -> Self {
+        guard let data, let decoded = try? JSONDecoder().decode(Self.self, from: data),
+              decoded.version == 1 else { return Self() }
+        return decoded
+    }
+
+    public static func legacyTab(_ name: String) -> FleetTab? {
+        switch name.lowercased() {
+        case "home", "command", "fleet": .fleet
+        case "chats": .chats
+        case "bots", "roster": .bots
+        case "control", "gateways", "workspace", "projects", "kanban": .gateways
+        default: nil
+        }
+    }
 }

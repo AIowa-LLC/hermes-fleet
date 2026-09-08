@@ -17,10 +17,14 @@ import FleetCore
 /// failed → the error with a Retry; empty board → says so.
 public struct KanbanBoardView: View {
     private let environment: AppEnvironment
+    private let gatewayID: GatewayID
+    private let initialBoard: String?
     @State private var model: KanbanBoardViewModel?
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID, board: String? = nil) {
         self.environment = environment
+        self.gatewayID = gatewayID
+        self.initialBoard = board
     }
 
     public var body: some View {
@@ -55,29 +59,19 @@ public struct KanbanBoardView: View {
                 model = nil
                 return
             }
-            let next = KanbanBoardViewModel(watcher: watcher)
+            let next = KanbanBoardViewModel(watcher: watcher, selectionStore: KanbanBoardSelectionStore(gatewayID: gatewayID))
             await model?.stop()
             model = next
-            await next.start()
+            await next.start(board: initialBoard)
         }
         .onDisappear {
             Task { await model?.stop() }
         }
     }
 
-    /// The gateway whose board is shown: the first connected gateway, else
-    /// the first registered (single-gateway v1; multi-gateway board picking
-    /// is a later phase).
     private var boardGateway: FleetGateway? {
-        let connected = environment.gateways.first { gateway in
-            if case .connected = environment.connectionStates[gateway.id] ?? .idle {
-                return true
-            }
-            return false
-        }
-        return connected ?? environment.gateways.first
+        environment.gateways.first { $0.id == gatewayID }
     }
-
     private var boardGatewayID: GatewayID? { boardGateway?.id }
 
     // MARK: Board picker (t_624b81cd — B1)

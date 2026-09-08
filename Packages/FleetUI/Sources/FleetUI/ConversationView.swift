@@ -502,7 +502,7 @@ public struct ConversationView: View {
     /// One tap-through `@file:` chip under a user transcript row.
     @ViewBuilder
     private func fileRefChip(_ ref: FileRef, row: ConversationRow) -> some View {
-        NavigationLink(value: FleetScreen.projects(route.gatewayID, focusPath: ref.displayPath)) {
+        NavigationLink(value: FleetScreen.projects(route.gatewayID, profile: route.profileSlug, focusPath: ref.displayPath)) {
             chipLabelBody(ref)
         }
         .buttonStyle(.fleetPressable)

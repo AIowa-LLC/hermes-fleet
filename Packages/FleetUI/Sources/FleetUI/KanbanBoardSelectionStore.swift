@@ -1,4 +1,5 @@
 import Foundation
+import FleetCore
 
 /// t_624b81cd (B1) — per-device kanban board selection (UserDefaults).
 ///
@@ -14,22 +15,24 @@ public final class KanbanBoardSelectionStore: @unchecked Sendable {
     public static let key = "fleet.kanban.selectedBoard"
 
     private let defaults: UserDefaults
+    private let storageKey: String
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, gatewayID: GatewayID? = nil) {
         self.defaults = defaults
+        storageKey = gatewayID.map { "fleet.kanban.v2.\($0.rawValue).selectedBoard" } ?? Self.key
     }
 
     /// The persisted board slug, or nil when following the active board.
     public func loadSelectedBoard() -> String? {
-        defaults.string(forKey: Self.key)
+        defaults.string(forKey: storageKey)
     }
 
     /// Persist (nil clears — back to the gateway's active board).
     public func saveSelectedBoard(_ slug: String?) {
         if let slug {
-            defaults.set(slug, forKey: Self.key)
+            defaults.set(slug, forKey: storageKey)
         } else {
-            defaults.removeObject(forKey: Self.key)
+            defaults.removeObject(forKey: storageKey)
         }
     }
 }

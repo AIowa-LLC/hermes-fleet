@@ -11,12 +11,14 @@ import FleetCore
 public struct CronView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
+    private let profile: ProfileSlug
     @State private var model: ManagementPanesViewModel?
     @State private var isShowingForm = false
 
-    public init(environment: AppEnvironment, gatewayID: GatewayID) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
         self.gatewayID = gatewayID
+        self.profile = profile
     }
 
     public var body: some View {
@@ -46,11 +48,7 @@ public struct CronView: View {
     /// The profile whose cron store is shown. The roster's bot routes for
     /// this gateway enumerate its profiles; single-profile gateways (the
     /// common case) skip the picker entirely.
-    private var profileScope: String {
-        let profiles = environment.rosterSnapshot?.roster.bots(on: gatewayID) ?? []
-        let slugs = profiles.map { $0.route.profileSlug.rawValue }
-        return slugs.first ?? "default"
-    }
+    private var profileScope: String { profile.rawValue }
 
     private func bindModel() async {
         guard let seam = environment.makeManagementSeam(for: gatewayID) else {

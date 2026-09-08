@@ -251,7 +251,7 @@ public struct GatewaysView: View {
 
     private var gatewayList: some View {
         List(environment.gateways) { gateway in
-            NavigationLink(value: FleetScreen.bots(gateway.id)) {
+            NavigationLink(value: FleetScreen.gatewayDetail(gateway.id)) {
                 GatewayRowView(environment: environment, gateway: gateway)
             }
             .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue)")

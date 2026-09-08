@@ -10,11 +10,13 @@ import FleetCore
 public struct MemoryGraphView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
+    private let profile: ProfileSlug
     @State private var model: MemoryGraphViewModel?
 
-    public init(environment: AppEnvironment, gatewayID: GatewayID) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
         self.gatewayID = gatewayID
+        self.profile = profile
     }
 
     public var body: some View {
@@ -36,10 +38,7 @@ public struct MemoryGraphView: View {
         }
     }
 
-    private var profileScope: String {
-        let profiles = environment.rosterSnapshot?.roster.bots(on: gatewayID) ?? []
-        return profiles.map { $0.route.profileSlug.rawValue }.first ?? "default"
-    }
+    private var profileScope: String { profile.rawValue }
 
     private func bindModel() async {
         guard let seam = environment.makeLearningSeam(for: gatewayID) else {
@@ -49,7 +48,9 @@ public struct MemoryGraphView: View {
         let next = MemoryGraphViewModel(
             gatewayID: gatewayID,
             learning: seam,
-            snapshotStore: environment.learningSnapshotStore)
+            snapshotStore: nil) // Legacy gateway-only cache is unsafe for an explicitly scoped route.
+        /* Scoped persistence is wired in FOS-2. */
+
         model = next
         await next.start(profile: profileScope)
     }

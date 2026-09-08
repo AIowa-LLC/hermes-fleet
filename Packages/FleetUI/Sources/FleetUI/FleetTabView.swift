@@ -1,25 +1,23 @@
 import SwiftUI
 import FleetCore
 
-public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable {
-    case home, chats, bots, workspace, control
+public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Codable {
+    case fleet, chats, bots, gateways
     public var id: String { rawValue }
     public var label: String {
         switch self {
-        case .home: "Command"
+        case .fleet: "Fleet"
         case .chats: "Chats"
         case .bots: "Bots"
-        case .workspace: "Workspace"
-        case .control: "Control"
+        case .gateways: "Gateways"
         }
     }
     public var systemImage: String {
         switch self {
-        case .home: "sparkle"
+        case .fleet: "square.grid.2x2"
         case .chats: "bubble.left.and.bubble.right"
         case .bots: "cpu"
-        case .workspace: "folder"
-        case .control: "slider.horizontal.3"
+        case .gateways: "server.rack"
         }
     }
 }
@@ -28,8 +26,9 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable {
 public struct FleetTabView: View {
     private let environment: AppEnvironment
     private let lockController: AppLockController
-    @State private var selection: FleetTab = .home
-    @State private var paths: [FleetTab: [FleetScreen]] = [:]
+    @State private var navigation = FleetNavigationState()
+    @State private var showingSettings = false
+    @State private var restored = false
     @State private var showingCommandCenter = false
     @State private var autoNavHandled = false
 
@@ -43,13 +42,24 @@ public struct FleetTabView: View {
             if lockController.isLocked {
                 AppLockView(controller: lockController)
             } else {
-                TabView(selection: $selection) {
+                TabView(selection: Binding(get: { navigation.selection }, set: { tab in
+                    navigation.selection = tab
+                })) {
                     ForEach(FleetTab.allCases) { tab in
                         Tab(tab.label, systemImage: tab.systemImage, value: tab) {
-                            NavigationStack(path: Binding(get: { paths[tab] ?? [] }, set: { paths[tab] = $0 })) {
+                            NavigationStack(path: Binding(get: { navigation.paths[tab] ?? [] }, set: { path in
+                                if let target = path.last, path.count > (navigation.paths[tab]?.count ?? 0) { navigation.open(target) }
+                                else { navigation.paths[tab] = path }
+                            })) {
                                 root(tab)
                                     .navigationDestination(for: FleetScreen.self) { destination($0) }
                                     .toolbar {
+                                        ToolbarItem(placement: .topBarLeading) {
+                                            if tab == .fleet {
+                                                Button("Settings", systemImage: "gearshape") { showingSettings = true }
+                                                    .accessibilityIdentifier("fleet.settings.open")
+                                            }
+                                        }
                                         ToolbarItem(placement: .topBarTrailing) {
                                             Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
                                                 .accessibilityIdentifier("fleet.command-center.open")
@@ -64,35 +74,55 @@ public struct FleetTabView: View {
                 .tabViewStyle(.sidebarAdaptable)
                 .sheet(isPresented: $showingCommandCenter) {
                     FleetCommandCenter(environment: environment, navigate: { screen in
-                        paths[selection, default: []].append(screen)
-                    }, selectTab: { selection = $0 })
+                        navigation.open(screen)
+                    }, selectTab: { navigation.selection = $0 })
                 }
             }
         }
+        .sheet(isPresented: $showingSettings) {
+            NavigationStack {
+                FleetSettingsView(controller: lockController)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingSettings = false } } }
+            }
+        }
+        .onChange(of: navigation) { _, state in
+            guard restored else { return }
+            if let data = try? JSONEncoder().encode(state) {
+                UserDefaults.standard.set(data, forKey: FleetNavigationState.storageKey)
+            }
+        }
         .tint(FleetTheme.accent)
-        .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false } }
+        .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false; showingSettings = false } }
         .onChange(of: environment.pendingBotChatNavigation) { target in
             guard let target else { return }
-            // Route Bot Chat opens to the Chats tab where conversations live.
-            if selection != .chats { selection = .chats }
-            paths[.chats, default: []].append(target)
+            navigation.open(target)
             environment.pendingBotChatNavigation = nil
         }
-        .task { await performAutoNavIfNeeded() }
+        .task {
+            if !restored {
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_AUTO_NAV"] == nil && ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] != "1" {
+                    navigation = .restore(UserDefaults.standard.data(forKey: FleetNavigationState.storageKey))
+                }
+                restored = true
+            }
+            await performAutoNavIfNeeded()
+        }
     }
 
     @ViewBuilder private func root(_ tab: FleetTab) -> some View {
         switch tab {
-        case .home: FleetDashboardView(environment: environment)
+        case .fleet: FleetDashboardView(environment: environment)
         case .chats: FleetChatsView(environment: environment)
         case .bots: FleetRosterView(environment: environment)
-        case .workspace: FleetWorkspaceView(environment: environment)
-        case .control: FleetControlView(environment: environment, lockController: lockController)
+        case .gateways: GatewaysView(environment: environment)
         }
     }
 
     @ViewBuilder
     private func destination(_ screen: FleetScreen) -> some View {
+        if let id = screen.gatewayID, !environment.gateways.contains(where: { $0.id == id }) {
+            ContentUnavailableView("Gateway unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer registered."))
+        } else {
         switch screen {
         case .bots(let gatewayID):
             BotsView(environment: environment, gatewayID: gatewayID)
@@ -102,9 +132,13 @@ public struct FleetTabView: View {
             BotDetailView(environment: environment, route: route)
         case .botRoutines(let route):
             BotRoutinesView(environment: environment, route: route)
-        case .room(let room):
-            RoomChatView(room: room, environment: environment)
-        case .conversation(let route, let sessionID):
+        case .room(let id):
+            if let room = environment.rooms(for: id.gatewayID).first(where: { $0.id == id }) {
+                RoomChatView(room: room, environment: environment)
+            } else {
+                ContentUnavailableView("Group unavailable", systemImage: "person.3", description: Text("This exact group has not been resolved. Refresh its gateway to try again."))
+            }
+        case .conversation(let route, let sessionID, _):
             ConversationView(environment: environment, route: route, sessionID: sessionID)
         case .health:
             HealthDashboardView(environment: environment)
@@ -112,19 +146,42 @@ public struct FleetTabView: View {
             GatewaysView(environment: environment)
         case .activity:
             FleetActivityView(environment: environment)
+        case .gatewayDetail(let id):
+            List {
+                NavigationLink("Bots", value: FleetScreen.bots(id))
+                    .accessibilityIdentifier("fleet.gateway-detail.\(id.rawValue).bots")
+                NavigationLink("Projects", value: FleetScreen.projects(id))
+                NavigationLink("Kanban", value: FleetScreen.gatewayKanban(id))
+                NavigationLink("Schedules", value: FleetScreen.cron(id))
+                NavigationLink("Skills", value: FleetScreen.skills(id))
+                NavigationLink("Memory", value: FleetScreen.memoryGraph(id))
+            }.navigationTitle(environment.gateways.first(where: { $0.id == id })?.displayName ?? id.rawValue)
         case .kanban:
-            KanbanBoardView(environment: environment)
-        case .cron(let gatewayID):
-            CronView(environment: environment, gatewayID: gatewayID)
-        case .skills(let gatewayID):
-            SkillsView(environment: environment, gatewayID: gatewayID)
-        case .memoryGraph(let gatewayID):
-            MemoryGraphView(environment: environment, gatewayID: gatewayID)
-        case .projects(let gatewayID, let focusPath):
-            ProjectsView(environment: environment, gatewayID: gatewayID, focusPath: focusPath)
+            List(environment.gateways) { gateway in
+                NavigationLink(gateway.displayName, value: FleetScreen.gatewayKanban(gateway.id))
+                    .accessibilityIdentifier("fleet.kanban.gateway.\(gateway.id.rawValue)")
+            }.navigationTitle("Choose gateway")
+        case .gatewayKanban(let id, let board):
+            KanbanBoardView(environment: environment, gatewayID: id, board: board)
+        case .cron(let id, let profile):
+            if let profile { CronView(environment: environment, gatewayID: id, profile: profile) }
+            else { chooseProfile(id, screen: screen) }
+        case .skills(let id, let profile):
+            if let profile { SkillsView(environment: environment, gatewayID: id, profile: profile) }
+            else { chooseProfile(id, screen: screen) }
+        case .memoryGraph(let id, let profile):
+            if let profile { MemoryGraphView(environment: environment, gatewayID: id, profile: profile) }
+            else { chooseProfile(id, screen: screen) }
+        case .projects(let id, let profile, let focusPath):
+            if let profile { ProjectsView(environment: environment, gatewayID: id, profile: profile, focusPath: focusPath) }
+            else { chooseProfile(id, screen: screen) }
+        }
         }
     }
 
+    private func chooseProfile(_ id: GatewayID, screen: FleetScreen) -> some View {
+        ContentUnavailableView("Choose a profile", systemImage: "person.crop.circle", description: Text("Open this tool with an explicit profile on \(id.rawValue). No profile has been selected."))
+    }
 
     @MainActor private func performAutoNavIfNeeded() async {
         #if DEBUG
@@ -132,25 +189,23 @@ public struct FleetTabView: View {
         autoNavHandled = true
         await environment.load()
         await environment.refreshRoster()
-        if autoNav == "roster" { selection = .bots }
-        if autoNav == "chats" { selection = .chats }
-        if autoNav == "workspace" { selection = .workspace }
-        if autoNav == "control" { selection = .control }
+        if let tab = FleetNavigationState.legacyTab(autoNav) { navigation.selection = tab }
         if autoNav == "command-center" { showingCommandCenter = true }
-        let gateway = environment.gateways.first { $0.id.rawValue == "workstation" } ?? environment.gateways.first
-        if let gateway {
+        if autoNav == "settings" { showingSettings = true }
+        if autoNav == "kanban" { navigation.open(.kanban) }
+        // Test automation specifies a stable fixture identity; it never picks a machine by order.
+        if let gateway = environment.gateways.first(where: { $0.id.rawValue == "workstation" }) {
             switch autoNav {
-            case "cron": paths[.home] = [.cron(gateway.id)]
-            case "skills": paths[.home] = [.skills(gateway.id)]
-            case "memory": paths[.home] = [.memoryGraph(gateway.id)]
-            case "projects": paths[.home] = [.projects(gateway.id)]
-            case "gateways": paths[.home] = [.gateways]
+            case "cron": navigation.open(.cron(gateway.id))
+            case "skills": navigation.open(.skills(gateway.id))
+            case "memory": navigation.open(.memoryGraph(gateway.id))
+            case "projects", "workspace": navigation.open(.projects(gateway.id))
+            case "bot-detail":
+                if let bot = environment.rosterSnapshot?.roster.allBots.first(where: { $0.route.gatewayID == gateway.id && $0.route.profileSlug.rawValue == "default" }) {
+                    navigation.open(.botDetail(bot.route))
+                }
             default: break
             }
-        }
-        if autoNav == "bot-detail", let first = environment.rosterSnapshot?.roster.allBots.first {
-            selection = .bots
-            paths[.bots] = [.botDetail(first.route)]
         }
         #endif
     }

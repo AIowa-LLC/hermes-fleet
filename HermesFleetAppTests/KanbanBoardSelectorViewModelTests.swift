@@ -22,7 +22,7 @@ final class KanbanBoardSelectorViewModelTests: XCTestCase {
 
     // MARK: Boards list
 
-    func testStartLoadsBoardsAndFallsBackToActiveForUnknownPersistedSlug() async throws {
+    func testStartKeepsMissingPersistedBoardWithoutSubstitutingActive() async throws {
         let watcher = SelectorWatcherDouble()
         watcher.boards = KanbanBoardList(
             boards: [
@@ -30,15 +30,16 @@ final class KanbanBoardSelectorViewModelTests: XCTestCase {
                 KanbanBoardSummary(slug: "side", name: "Side", isCurrent: false, total: 1),
             ],
             current: "r10")
-        // A persisted slug the gateway no longer has → fall back to active.
+        // A removed board retains its exact scope; the gateway reports unavailability.
         makeStore().saveSelectedBoard("ghost-board")
         let model = KanbanBoardViewModel(watcher: watcher, selectionStore: makeStore())
         await model.start()
         defer { Task { await model.stop() } }
 
         XCTAssertEqual(model.boards.map(\.slug), ["r10", "side"])
-        XCTAssertNil(model.selectedBoard, "unknown persisted slug must fall back to the active board")
-        XCTAssertEqual(model.displayBoardName, "R10")
+        XCTAssertEqual(model.selectedBoard, "ghost-board")
+        XCTAssertEqual(watcher.pinnedSlugs.first, "ghost-board")
+        XCTAssertEqual(model.displayBoardName, "ghost-board")
     }
 
     func testStartRestoresKnownPersistedSelection() async throws {
@@ -221,5 +222,18 @@ final class SelectorWatcherDouble: KanbanBoardWatching, @unchecked Sendable {
             return targets
         }
         for target in targets { target.finish() }
+    }
+}
+
+
+extension KanbanBoardSelectorViewModelTests {
+    func testBoardSelectionDoesNotCrossGatewayBoundaries() {
+        let a = KanbanBoardSelectionStore(defaults: suite, gatewayID: GatewayID(rawValue: "a"))
+        let b = KanbanBoardSelectionStore(defaults: suite, gatewayID: GatewayID(rawValue: "b"))
+        a.saveSelectedBoard("release")
+        XCTAssertNil(b.loadSelectedBoard())
+        b.saveSelectedBoard("dogfood")
+        XCTAssertEqual(a.loadSelectedBoard(), "release")
+        XCTAssertEqual(b.loadSelectedBoard(), "dogfood")
     }
 }

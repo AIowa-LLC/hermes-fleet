@@ -13,6 +13,7 @@ import FleetCore
 public struct ProjectsView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
+    private let profile: ProfileSlug
     /// R10-T3 round 2 — the tap-through `@file:`/`@folder:` ref path:
     /// the containing project is pre-highlighted and the target path
     /// surfaced in a focus banner (never a silent root landing).
@@ -20,9 +21,10 @@ public struct ProjectsView: View {
     @State private var model: ProjectsBrowserViewModel?
     @State private var drillPath: [ProjectDrillRoute] = []
 
-    public init(environment: AppEnvironment, gatewayID: GatewayID, focusPath: String? = nil) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug, focusPath: String? = nil) {
         self.environment = environment
         self.gatewayID = gatewayID
+        self.profile = profile
         self.focusPath = focusPath
     }
 
@@ -45,10 +47,7 @@ public struct ProjectsView: View {
         }
     }
 
-    private var profileScope: String {
-        let profiles = environment.rosterSnapshot?.roster.bots(on: gatewayID) ?? []
-        return profiles.map { $0.route.profileSlug.rawValue }.first ?? "default"
-    }
+    private var profileScope: String { profile.rawValue }
 
     private func bindModel() async {
         guard let seam = environment.makeProjectsSeam(for: gatewayID) else {
@@ -58,7 +57,9 @@ public struct ProjectsView: View {
         let next = ProjectsBrowserViewModel(
             gatewayID: gatewayID,
             projects: seam,
-            snapshotStore: environment.projectsSnapshotStore)
+            snapshotStore: nil) // Legacy gateway-only cache is unsafe for an explicitly scoped route.
+        /* Scoped persistence is wired in FOS-2. */
+
         model = next
         await next.start(profile: profileScope)
     }

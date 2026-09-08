@@ -350,7 +350,7 @@ final class FleetScreenProjectsRouteTests: XCTestCase {
             FleetScreen.projects(
                 GatewayID(rawValue: "workstation"),
                 focusPath: "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift"))
-        if case .projects(let gatewayID, let focusPath) = focused {
+        if case .projects(let gatewayID, _, let focusPath) = focused {
             XCTAssertEqual(gatewayID.rawValue, "workstation")
             XCTAssertEqual(focusPath, "/Users/dev/code/fleet-ios/Packages/FleetUI/Foo.swift")
         } else {

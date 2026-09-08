@@ -333,7 +333,7 @@ public struct FleetRosterView: View {
             SectionHeader(title: "Rooms")
                 .accessibilityIdentifier("fleet.roster.rooms")
             ForEach(visible) { room in
-                NavigationLink(value: FleetScreen.room(room)) {
+                NavigationLink(value: FleetScreen.room(room.id)) {
                     RoomRowView(room: room)
                 }
                 .buttonStyle(.fleetPressable)

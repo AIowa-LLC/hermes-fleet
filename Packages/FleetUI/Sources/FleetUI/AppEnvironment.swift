@@ -202,7 +202,7 @@ public final class AppEnvironment {
     /// True Bots Mode: request navigation to the canonical Bot Chat screen.
     /// Called by `BotChatOpenButton` after a successful fail-closed resolve.
     public func openBotChat(route: Route, sessionID: String) {
-        pendingBotChatNavigation = .conversation(route, sessionID: sessionID)
+        pendingBotChatNavigation = .conversation(route, sessionID: sessionID, canonical: true)
         canonicalOpenIDs[route] = sessionID
     }
 

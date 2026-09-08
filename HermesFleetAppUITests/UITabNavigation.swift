@@ -41,12 +41,7 @@ enum UITabNavigation {
     /// Open the Gateways tab and wait for the registry cockpit's nav bar.
     @discardableResult
     static func openGatewaysTab(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
-        if app.navigationBars["Hermes Fleet"].exists { return app.navigationBars["Hermes Fleet"] }
-        _ = openTab(app, label: "Control", expectedBar: "Control", timeout: timeout)
-        app.buttons["Gateways"].firstMatch.tap()
-        let bar = app.navigationBars["Hermes Fleet"]
-        XCTAssertTrue(bar.waitForExistence(timeout: timeout))
-        return bar
+        openTab(app, label: "Gateways", expectedBar: "Hermes Fleet", timeout: timeout)
     }
 
     /// Open the Bots tab (the fleet roster, previously a toolbar link).
@@ -55,16 +50,17 @@ enum UITabNavigation {
         openTab(app, label: "Bots", expectedBar: "Fleet Roster", timeout: timeout)
     }
     static func openSettings(_ app: XCUIApplication) {
-        _ = openTab(app, label: "Control", expectedBar: "Control", timeout: 15)
-        let link = app.buttons["App Lock & settings"].firstMatch
-        if !link.isHittable { app.swipeUp() }
-        XCTAssertTrue(link.waitForExistence(timeout: 10))
-        link.tap()
+        _ = openTab(app, label: "Fleet", expectedBar: "Fleet", timeout: 15)
+        app.buttons["fleet.settings.open"].tap()
         XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
     }
     static func openActivity(_ app: XCUIApplication) {
-        _ = openTab(app, label: "Control", expectedBar: "Control", timeout: 15)
-        app.buttons["Connection history"].firstMatch.tap()
+        _ = openTab(app, label: "Fleet", expectedBar: "Fleet", timeout: 15)
+        app.buttons["fleet.command-center.open"].tap()
+        let search = app.searchFields.firstMatch
+        search.tap()
+        search.typeText("Connection history")
+        app.buttons["Connection history"].tap()
         XCTAssertTrue(app.navigationBars["Activity"].waitForExistence(timeout: 10))
     }
 

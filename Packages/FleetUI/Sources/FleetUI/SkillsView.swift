@@ -11,12 +11,14 @@ import FleetCore
 public struct SkillsView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
+    private let profile: ProfileSlug
     @State private var model: ManagementPanesViewModel?
     @State private var query = ""
 
-    public init(environment: AppEnvironment, gatewayID: GatewayID) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
         self.gatewayID = gatewayID
+        self.profile = profile
     }
 
     public var body: some View {
@@ -39,10 +41,7 @@ public struct SkillsView: View {
         }
     }
 
-    private var profileScope: String {
-        let profiles = environment.rosterSnapshot?.roster.bots(on: gatewayID) ?? []
-        return profiles.map { $0.route.profileSlug.rawValue }.first ?? "default"
-    }
+    private var profileScope: String { profile.rawValue }
 
     private func bindModel() async {
         guard let seam = environment.makeManagementSeam(for: gatewayID) else {

@@ -15,14 +15,15 @@ final class U3TabNavigationUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testColdLaunchShowsFiveTabsOnHome() throws {
+    func testColdLaunchShowsFourTabsOnFleet() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // The tab bar exposes the five plan tabs by label.
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 15), "the root shell must render a tab bar")
-        for label in ["Command", "Chats", "Bots", "Workspace", "Control"] {
+        for label in ["Fleet", "Chats", "Bots", "Gateways"] {
             XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
         }
 
@@ -30,12 +31,13 @@ final class U3TabNavigationUITests: XCTestCase {
         // fleet's gateways render in the summary section — real data only).
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
                       "Home should render the fleet dashboard with real scripted-fleet data")
-        XCTAssertTrue(app.navigationBars["Command"].exists, "Home tab is initially selected")
+        XCTAssertTrue(app.navigationBars["Fleet"].exists, "Home tab is initially selected")
         attachScreenshot(of: app, name: "u3-home-five-tabs")
     }
 
     func testBotsTabOpensFleetRoster() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         UITabNavigation.openBotsTab(app)
@@ -46,6 +48,7 @@ final class U3TabNavigationUITests: XCTestCase {
 
     func testGatewaysTabHostsRegistryCockpit() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         UITabNavigation.openGatewaysTab(app)
@@ -56,6 +59,7 @@ final class U3TabNavigationUITests: XCTestCase {
 
     func testActivityTabShowsRealConnectionSummary() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         openActivityTab(app)
@@ -74,6 +78,7 @@ final class U3TabNavigationUITests: XCTestCase {
         // a previous suite left it OFF (same pattern as H1AppLockUITests).
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         openSettingsTab(app)
@@ -87,12 +92,14 @@ final class U3TabNavigationUITests: XCTestCase {
 
     func testGatewaysDrillInPreservedAcrossTabSwitch() throws {
         let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // Drill in on the Gateways tab: gateway → bots → bot detail.
         UITabNavigation.openGatewaysTab(app)
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
+        app.buttons["fleet.gateway-detail.workstation.bots"].tap()
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.bots.row.workstation#default"))
         XCTAssertTrue(
@@ -103,9 +110,9 @@ final class U3TabNavigationUITests: XCTestCase {
         // switch (each tab keeps its own NavigationStack). Plain tap on the
         // return trip: with bot detail pushed, the top bar is the detail's,
         // not "Hermes Fleet", so the verified-open helper does not apply.
-        tapTab(app, "Command")
-        XCTAssertTrue(app.navigationBars["Command"].waitForExistence(timeout: 10))
-        tapTab(app, "Control")
+        tapTab(app, "Fleet")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        tapTab(app, "Bots")
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
             "Bot detail should render")

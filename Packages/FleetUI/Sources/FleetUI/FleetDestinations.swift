@@ -175,6 +175,10 @@ struct FleetCommandCenter: View {
                         Button("New chat with \(bot.displayName)", systemImage: "square.and.pencil") { open(.conversation(bot.route, sessionID: nil)) }
                     }
                 }
+                Section("Fleet status") {
+                    Button("Connection history", systemImage: "clock.arrow.circlepath") { open(.activity) }
+                    Button("Connection health", systemImage: "waveform.path.ecg") { open(.health) }
+                }
                 Section("Loaded conversations") {
                     ForEach(environment.sessionsByRoute.keys.filter { environment.gateway(for: $0.gatewayID) != nil }.sorted { $0.id < $1.id }, id: \.self) { route in
                         ForEach((environment.sessions(for: route) ?? []).filter { matches($0.title) }.prefix(20)) { session in
