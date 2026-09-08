@@ -296,8 +296,19 @@ public protocol GatewayProjectsProviding: Sendable {
 /// on this protocol; the composition root adapts FleetPersistence's
 /// `SwiftDataCacheStore` (which conforms in an extension).
 public protocol ProjectsSnapshotStoring: Sendable {
-    func save(_ tree: ProjectsTree, for gatewayID: GatewayID) async throws
-    func load(for gatewayID: GatewayID) async throws -> (tree: ProjectsTree, capturedAt: Date)?
+    func save(_ tree: ProjectsTree, for gatewayID: GatewayID, profile: ProfileSlug?) async throws
+    func load(for gatewayID: GatewayID, profile: ProfileSlug?) async throws -> (tree: ProjectsTree, capturedAt: Date)?
+}
+
+public extension ProjectsSnapshotStoring {
+    /// Legacy snapshots have unknown profile ownership and are never reused
+    /// by a profile-qualified load. Kept only for existing unscoped callers.
+    func save(_ tree: ProjectsTree, for gatewayID: GatewayID) async throws {
+        try await save(tree, for: gatewayID, profile: nil)
+    }
+    func load(for gatewayID: GatewayID) async throws -> (tree: ProjectsTree, capturedAt: Date)? {
+        try await load(for: gatewayID, profile: nil)
+    }
 }
 
 /// Fail-closed default for gateways without the projects surface (no

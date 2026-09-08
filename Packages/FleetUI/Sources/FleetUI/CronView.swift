@@ -30,7 +30,7 @@ public struct CronView: View {
             }
         }
         .background(FleetTheme.background)
-        .navigationTitle("Cron")
+        .navigationTitle("Schedules")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: profileScope) {
             await bindModel()

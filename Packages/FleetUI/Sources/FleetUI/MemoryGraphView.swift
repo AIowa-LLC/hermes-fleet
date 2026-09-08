@@ -48,9 +48,7 @@ public struct MemoryGraphView: View {
         let next = MemoryGraphViewModel(
             gatewayID: gatewayID,
             learning: seam,
-            snapshotStore: nil) // Legacy gateway-only cache is unsafe for an explicitly scoped route.
-        /* Scoped persistence is wired in FOS-2. */
-
+            snapshotStore: environment.learningSnapshotStore)
         model = next
         await next.start(profile: profileScope)
     }

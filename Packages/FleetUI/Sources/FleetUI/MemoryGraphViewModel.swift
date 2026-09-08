@@ -200,7 +200,7 @@ public final class MemoryGraphViewModel {
     /// Offline prefill first (instant browse), then the live fetch.
     public func start(profile: String?) async {
         if graph == nil, let store = snapshotStore,
-           let cached = try? await store.load(for: gatewayID) {
+           let cached = try? await store.load(for: gatewayID, profile: profile.map(ProfileSlug.init(rawValue:))) {
             graph = cached.graph
             offlineCapturedAt = cached.capturedAt
             source = .offlineSnapshot
@@ -222,7 +222,7 @@ public final class MemoryGraphViewModel {
             if let store = snapshotStore {
                 // Save-on-success; a persistence failure must not fail the
                 // pane (offline browse is best-effort).
-                try? await store.save(fresh, for: gatewayID)
+                try? await store.save(fresh, for: gatewayID, profile: profile.map(ProfileSlug.init(rawValue:)))
             }
         } catch {
             // Keep the snapshot prefill (if any) for offline browse; surface

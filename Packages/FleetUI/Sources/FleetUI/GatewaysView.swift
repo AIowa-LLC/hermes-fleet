@@ -15,6 +15,7 @@ import FleetCore
 /// reinforcement only), per the semantic status map.
 public struct GatewaysView: View {
     private let environment: AppEnvironment
+    private let connectionGatewayID: GatewayID?
 
     /// Presentation-only sheet state (no secrets stored here).
     @State private var presentedSheet: PresentedSheet?
@@ -41,21 +42,30 @@ public struct GatewaysView: View {
         }
     }
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, connectionGatewayID: GatewayID? = nil) {
         self.environment = environment
+        self.connectionGatewayID = connectionGatewayID
     }
 
     public var body: some View {
         Group {
-            if environment.gateways.isEmpty {
+            if let connectionGatewayID {
+                if let gateway = environment.gateway(for: connectionGatewayID) {
+                    connectionDetails(gateway)
+                } else {
+                    ContentUnavailableView("Gateway removed", systemImage: "server.rack", description: Text("This connection is no longer registered on this phone."))
+                }
+            } else if environment.gateways.isEmpty {
                 emptyState
             } else {
                 gatewayList
             }
         }
-        .navigationTitle("Hermes Fleet")
+        .navigationTitle(connectionGatewayID == nil ? "Hermes Fleet" : "Connection")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                if connectionGatewayID == nil {
                 Button {
                     presentAddForm()
                 } label: {
@@ -70,6 +80,7 @@ public struct GatewaysView: View {
                 }
                 .accessibilityIdentifier("fleet.gateways.refresh")
                 .disabled(environment.isRefreshing)
+                }
                 // U3: Roster / Health / Settings moved to their own tabs
                 // (Bots / Activity·Home / Settings) — no longer toolbar links.
             }
@@ -151,7 +162,7 @@ public struct GatewaysView: View {
             Button("Cancel", role: .cancel) {}
                 .accessibilityIdentifier("fleet.gateways.remove.cancel")
         } message: {
-            Text("This removes \"\(gatewayPendingRemoval?.displayName ?? "")\" and deletes its stored credential from the Keychain.")
+            Text("Remove \(gatewayPendingRemoval?.displayName ?? "this gateway") from Fleet? Its saved connection and credentials will be removed from this phone. Bots and data on the gateway will remain.")
         }
         // P1-8: bounded undo for the most recent removal (registry only — the
         // credential is intentionally gone per the confirmation above).
@@ -176,6 +187,53 @@ public struct GatewaysView: View {
         .onAppear {
             resumeGatewayFormDraftIfNeeded()
         }
+    }
+
+    private func connectionDetails(_ gateway: FleetGateway) -> some View {
+        List {
+            Section("Identity") {
+                LabeledContent("Gateway", value: gateway.displayName)
+                LabeledContent("Gateway ID", value: gateway.id.rawValue)
+                Text(gateway.endpoint.map(Redaction.redactedURL) ?? "Endpoint not configured")
+                    .font(.footnote).textSelection(.enabled)
+                LabeledContent("Phone connection", value: GatewayConnectionCopy.label(environment.connectionStates[gateway.id] ?? .idle))
+            }
+            Section {
+                Button("Connect", systemImage: "bolt") { Task { await environment.connect(to: gateway.id) } }
+                    .accessibilityIdentifier("fleet.connection.connect.\(gateway.id.rawValue)")
+                Button("Authentication", systemImage: "key") { presentedSheet = .auth(gateway.id) }
+                Button("Test Connection", systemImage: "network") {
+                    Task {
+                        do { try await environment.testConnection(to: gateway.id) }
+                        catch { operationError = Self.describe(error) }
+                    }
+                }.disabled(environment.testingGatewayIDs.contains(gateway.id))
+                    .accessibilityIdentifier("fleet.connection.test.\(gateway.id.rawValue)")
+                if environment.testingGatewayIDs.contains(gateway.id) { ProgressView("Testing connection…") }
+                if let result = environment.testResults[gateway.id] {
+                    LabeledContent("Last test", value: result.status.rawValue)
+                    if let date = environment.testResultObservedAt[gateway.id] { Text(date, style: .relative).font(.footnote) }
+                }
+                Button("Disconnect", systemImage: "power") { Task { await environment.disconnect(from: gateway.id) } }
+                Button("Reconnect", systemImage: "arrow.clockwise") { Task { await environment.reconnect(to: gateway.id) } }
+            } footer: { Text("These controls affect this phone's connection. They do not stop Bots or the gateway.") }
+            Section("Diagnostics") {
+                NavigationLink("Connection diagnostics", value: FleetScreen.gatewayHealth(gateway.id))
+                DisclosureGroup("Advertised connection capabilities") {
+                    let capabilities = environment.testResults[gateway.id]?.capabilities.allStrings
+                        ?? environment.rosterSnapshot?.roster.gateways[gateway.id]?.capabilities
+                    if let capabilities, !capabilities.isEmpty {
+                        ForEach(capabilities.sorted(), id: \.self) { Text($0).font(.footnote.monospaced()) }
+                    } else { Text("No capability catalog observed.") }
+                    Text("Groups and RoomLink capabilities are negotiated separately.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                Button("Edit Gateway", systemImage: "pencil") { presentEditForm(gateway) }
+                Button("Remove Gateway", role: .destructive) { gatewayPendingRemoval = gateway }
+                    .accessibilityIdentifier("fleet.connection.remove.\(gateway.id.rawValue)")
+            }
+        }.accessibilityIdentifier("fleet.connection.\(gateway.id.rawValue)")
     }
 
     // MARK: P0-2 — in-progress form draft (survives the FaceID lock)

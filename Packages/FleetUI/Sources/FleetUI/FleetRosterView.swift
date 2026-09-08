@@ -25,6 +25,8 @@ import FleetCore
 ///   legacy, honest "Managed by Hermes Desktop" labels, distinct rows).
 public struct FleetRosterView: View {
     private let environment: AppEnvironment
+    private let gatewayID: GatewayID?
+    private var visibleGateways: [FleetGateway] { environment.gateways.filter { gatewayID == nil || $0.id == gatewayID } }
 
     @State private var searchText = ""
     @State private var revealingHidden = false
@@ -36,12 +38,13 @@ public struct FleetRosterView: View {
     /// a way to lose a search match.
     @State private var collapsedSections: Set<String> = []
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID? = nil) {
         self.environment = environment
+        self.gatewayID = gatewayID
     }
 
     private var hiddenBotsActive: Bool {
-        environment.gateways.flatMap { environment.bots(on: $0.id) }
+        visibleGateways.flatMap { environment.bots(on: $0.id) }
             .contains { environment.botPresence(for: $0.route) != .unreachable && HiddenBotActivity.hasSignal($0) }
     }
 
@@ -67,7 +70,7 @@ public struct FleetRosterView: View {
                         Label("Create Bot", systemImage: "plus")
                     }
                     .accessibilityIdentifier("fleet.roster.create")
-                    ForEach(environment.gateways) { gateway in
+                    ForEach(visibleGateways) { gateway in
                         Button {
                             createRoomGateway = gateway
                         } label: {
@@ -132,7 +135,7 @@ public struct FleetRosterView: View {
 
     private var sections: [RosterSection] {
         guard let snapshot = environment.rosterSnapshot else { return [] }
-        return Self.sections(from: snapshot, cachedBots: environment.cachedBotsByGateway)
+        return Self.sections(from: snapshot, cachedBots: environment.cachedBotsByGateway).filter { gatewayID == nil || $0.gateway.id == gatewayID }
     }
 
     private var rosterList: some View {

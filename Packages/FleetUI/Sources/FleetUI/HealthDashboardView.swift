@@ -21,9 +21,11 @@ import FleetCore
 /// reinforcement only).
 public struct HealthDashboardView: View {
     private let environment: AppEnvironment
+    private let gatewayID: GatewayID?
 
-    public init(environment: AppEnvironment) {
+    public init(environment: AppEnvironment, gatewayID: GatewayID? = nil) {
         self.environment = environment
+        self.gatewayID = gatewayID
     }
 
     public var body: some View {
@@ -63,7 +65,7 @@ public struct HealthDashboardView: View {
     }
 
     private var gatewayList: some View {
-        List(environment.gateways) { gateway in
+        List(environment.gateways.filter { gatewayID == nil || $0.id == gatewayID }) { gateway in
             HealthRowView(environment: environment, gateway: gateway)
                 .listRowBackground(Color.clear)
         }

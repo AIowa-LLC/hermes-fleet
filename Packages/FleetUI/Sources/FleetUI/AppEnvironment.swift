@@ -165,6 +165,7 @@ public final class AppEnvironment {
     /// unreachable probe). Set only after `testConnection` completes; a
     /// gateway with no entry has never been tested this session.
     public private(set) var testResults: [GatewayID: GatewayTestResult] = [:]
+    public private(set) var testResultObservedAt: [GatewayID: Date] = [:]
 
     /// Gateways currently running a connection test (for a Testing… row).
     public private(set) var testingGatewayIDs: Set<GatewayID> = []
@@ -785,6 +786,7 @@ public final class AppEnvironment {
         managementSeams[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
+        testResultObservedAt[id] = nil
         // H2: drop the gateway's accumulated + persisted health stats.
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
@@ -826,6 +828,7 @@ public final class AppEnvironment {
         defer { testingGatewayIDs.remove(id) }
         let result = try await registry.testConnection(to: id)
         testResults[id] = result
+        testResultObservedAt[id] = Date()
         // Reflect the probe into the observable connection lifecycle so the
         // row shows the §13 state without a separate connect attempt.
         connectionStates[id] = GatewayConnectionState(status: result.status)

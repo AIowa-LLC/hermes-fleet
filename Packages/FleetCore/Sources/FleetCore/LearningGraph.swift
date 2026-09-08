@@ -234,8 +234,19 @@ public protocol GatewayLearningProviding: Sendable {
 /// this protocol; the composition root adapts FleetPersistence's
 /// `SwiftDataCacheStore` (which conforms in an extension).
 public protocol LearningGraphSnapshotStoring: Sendable {
-    func save(_ graph: LearningGraph, for gatewayID: GatewayID) async throws
-    func load(for gatewayID: GatewayID) async throws -> (graph: LearningGraph, capturedAt: Date)?
+    func save(_ graph: LearningGraph, for gatewayID: GatewayID, profile: ProfileSlug?) async throws
+    func load(for gatewayID: GatewayID, profile: ProfileSlug?) async throws -> (graph: LearningGraph, capturedAt: Date)?
+}
+
+public extension LearningGraphSnapshotStoring {
+    /// Legacy snapshots have unknown profile ownership and are never reused
+    /// by a profile-qualified load. Kept only for existing unscoped callers.
+    func save(_ graph: LearningGraph, for gatewayID: GatewayID) async throws {
+        try await save(graph, for: gatewayID, profile: nil)
+    }
+    func load(for gatewayID: GatewayID) async throws -> (graph: LearningGraph, capturedAt: Date)? {
+        try await load(for: gatewayID, profile: nil)
+    }
 }
 
 /// Fail-closed default for gateways without a learning surface (no

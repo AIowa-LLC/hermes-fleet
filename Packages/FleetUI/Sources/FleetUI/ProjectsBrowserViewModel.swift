@@ -53,7 +53,7 @@ public final class ProjectsBrowserViewModel {
     /// Offline prefill first (instant browse), then the live fetch.
     public func start(profile: String?) async {
         if tree == nil, let store = snapshotStore,
-           let cached = try? await store.load(for: gatewayID),
+           let cached = try? await store.load(for: gatewayID, profile: profile.map(ProfileSlug.init(rawValue:))),
            let cachedTree = cached.tree.projects.isEmpty ? nil : cached.tree {
             tree = cachedTree
             offlineCapturedAt = cached.capturedAt
@@ -74,7 +74,7 @@ public final class ProjectsBrowserViewModel {
             if let store = snapshotStore {
                 // Save-on-success; a persistence failure must not fail
                 // the pane (offline browse is best-effort).
-                try? await store.save(fresh, for: gatewayID)
+                try? await store.save(fresh, for: gatewayID, profile: profile.map(ProfileSlug.init(rawValue:)))
             }
         } catch {
             // Keep the snapshot prefill (if any) for offline browse;

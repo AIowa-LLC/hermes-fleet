@@ -57,9 +57,7 @@ public struct ProjectsView: View {
         let next = ProjectsBrowserViewModel(
             gatewayID: gatewayID,
             projects: seam,
-            snapshotStore: nil) // Legacy gateway-only cache is unsafe for an explicitly scoped route.
-        /* Scoped persistence is wired in FOS-2. */
-
+            snapshotStore: environment.projectsSnapshotStore)
         model = next
         await next.start(profile: profileScope)
     }

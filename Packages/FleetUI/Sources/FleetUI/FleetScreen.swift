@@ -13,6 +13,9 @@ public enum FleetScreen: Hashable, Sendable, Codable {
     case health
     case gateways
     case gatewayDetail(GatewayID)
+    case gatewayConnection(GatewayID)
+    case gatewayGroups(GatewayID)
+    case gatewayHealth(GatewayID)
     case activity
     /// Legacy unscoped entry: requires an explicit gateway choice.
     case kanban
@@ -24,7 +27,7 @@ public enum FleetScreen: Hashable, Sendable, Codable {
 
     public var owner: FleetTab {
         switch self {
-        case .roster, .bots, .botDetail, .botRoutines, .room: .bots
+        case .roster, .bots, .botDetail, .botRoutines, .room, .gatewayGroups: .bots
         case .conversation(_, _, let canonical): canonical ? .bots : .chats
         case .activity: .fleet
         default: .gateways
@@ -33,7 +36,7 @@ public enum FleetScreen: Hashable, Sendable, Codable {
 
     public var gatewayID: GatewayID? {
         switch self {
-        case .bots(let id), .gatewayDetail(let id), .gatewayKanban(let id, _),
+        case .bots(let id), .gatewayDetail(let id), .gatewayConnection(let id), .gatewayGroups(let id), .gatewayHealth(let id), .gatewayKanban(let id, _),
              .cron(let id, _), .skills(let id, _), .memoryGraph(let id, _), .projects(let id, _, _): id
         case .botDetail(let route), .botRoutines(let route), .conversation(let route, _, _): route.gatewayID
         case .room(let id): id.gatewayID

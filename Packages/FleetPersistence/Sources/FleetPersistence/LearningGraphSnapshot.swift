@@ -15,6 +15,8 @@ import FleetCore
 public final class LearningGraphSnapshotRow {
     /// Owning gateway (canonical `GatewayID.rawValue`) — primary key.
     public var gatewayID: String
+    /// nil marks legacy data with unknown profile ownership.
+    public var profileSlug: String? = nil
     /// Wall-clock capture time (Unix seconds).
     public var capturedAt: Double
     /// Server-reported node count at capture (`count`).
@@ -22,8 +24,9 @@ public final class LearningGraphSnapshotRow {
     /// JSON-encoded `LearningGraph` (buckets + summary).
     public var payload: Data
 
-    public init(gatewayID: String, capturedAt: Double, totalCount: Int, payload: Data) {
+    public init(gatewayID: String, profileSlug: String? = nil, capturedAt: Double, totalCount: Int, payload: Data) {
         self.gatewayID = gatewayID
+        self.profileSlug = profileSlug
         self.capturedAt = capturedAt
         self.totalCount = totalCount
         self.payload = payload
@@ -33,12 +36,12 @@ public final class LearningGraphSnapshotRow {
 // MARK: - FleetCore seam conformance (R9-T7)
 
 extension SwiftDataCacheStore: LearningGraphSnapshotStoring {
-    public func save(_ graph: LearningGraph, for gatewayID: GatewayID) async throws {
-        try await saveLearningGraphSnapshot(graph, for: gatewayID)
+    public func save(_ graph: LearningGraph, for gatewayID: GatewayID, profile: ProfileSlug?) async throws {
+        try await saveLearningGraphSnapshot(graph, for: gatewayID, profile: profile)
     }
 
-    public func load(for gatewayID: GatewayID) async throws -> (graph: LearningGraph, capturedAt: Date)? {
-        try await loadLearningGraphSnapshot(for: gatewayID)
+    public func load(for gatewayID: GatewayID, profile: ProfileSlug?) async throws -> (graph: LearningGraph, capturedAt: Date)? {
+        try await loadLearningGraphSnapshot(for: gatewayID, profile: profile)
     }
 }
 
@@ -48,15 +51,16 @@ public extension SwiftDataCacheStore {
 
     /// Persist the latest graph for a gateway (replace semantics — one row
     /// per gateway).
-    func saveLearningGraphSnapshot(_ graph: LearningGraph, for gatewayID: GatewayID) async throws {
+    func saveLearningGraphSnapshot(_ graph: LearningGraph, for gatewayID: GatewayID, profile: ProfileSlug? = nil) async throws {
         let ctx = ModelContext(container)
         let data = try JSONEncoder().encode(graph)
         let rows = try ctx.fetch(FetchDescriptor<LearningGraphSnapshotRow>())
-        for row in rows where row.gatewayID == gatewayID.rawValue {
+        for row in rows where row.gatewayID == gatewayID.rawValue && row.profileSlug == profile?.rawValue {
             ctx.delete(row)
         }
         ctx.insert(LearningGraphSnapshotRow(
             gatewayID: gatewayID.rawValue,
+            profileSlug: profile?.rawValue,
             capturedAt: Date().timeIntervalSince1970,
             totalCount: graph.summary.totalCount,
             payload: data))
@@ -66,10 +70,10 @@ public extension SwiftDataCacheStore {
     /// Latest snapshot for a gateway (nil when never captured). Decoding is
     /// fail-soft: an unparsable payload returns nil, never a crash — an
     /// offline browse falls back to the empty state.
-    func loadLearningGraphSnapshot(for gatewayID: GatewayID) async throws -> (graph: LearningGraph, capturedAt: Date)? {
+    func loadLearningGraphSnapshot(for gatewayID: GatewayID, profile: ProfileSlug? = nil) async throws -> (graph: LearningGraph, capturedAt: Date)? {
         let ctx = ModelContext(container)
         let rows = try ctx.fetch(FetchDescriptor<LearningGraphSnapshotRow>())
-            .filter { $0.gatewayID == gatewayID.rawValue }
+            .filter { $0.gatewayID == gatewayID.rawValue && $0.profileSlug == profile?.rawValue }
         guard let latest = rows.sorted(by: { $0.capturedAt > $1.capturedAt }).first,
               let graph = try? JSONDecoder().decode(LearningGraph.self, from: latest.payload)
         else { return nil }

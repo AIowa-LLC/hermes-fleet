@@ -415,11 +415,11 @@ final class InMemorySnapshotStore: LearningGraphSnapshotStoring, @unchecked Send
         box.read()
     }
 
-    func save(_ graph: LearningGraph, for gatewayID: GatewayID) async throws {
+    func save(_ graph: LearningGraph, for gatewayID: GatewayID, profile: ProfileSlug?) async throws {
         box.write((graph, Date()))
     }
 
-    func load(for gatewayID: GatewayID) async throws -> (graph: LearningGraph, capturedAt: Date)? {
+    func load(for gatewayID: GatewayID, profile: ProfileSlug?) async throws -> (graph: LearningGraph, capturedAt: Date)? {
         box.read()
     }
 }

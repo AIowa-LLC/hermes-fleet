@@ -147,10 +147,10 @@ final class ProjectsBrowserTests: XCTestCase {
     }
 
     private final class FailingStore: ProjectsSnapshotStoring, @unchecked Sendable {
-        func save(_ tree: ProjectsTree, for gatewayID: GatewayID) async throws {
+        func save(_ tree: ProjectsTree, for gatewayID: GatewayID, profile: ProfileSlug?) async throws {
             throw NSError(domain: "test", code: 1)
         }
-        func load(for gatewayID: GatewayID) async throws -> (tree: ProjectsTree, capturedAt: Date)? {
+        func load(for gatewayID: GatewayID, profile: ProfileSlug?) async throws -> (tree: ProjectsTree, capturedAt: Date)? {
             nil
         }
     }
@@ -161,7 +161,7 @@ final class ProjectsBrowserTests: XCTestCase {
         let seam = SeamDouble()
         seam.treeResult = .success(fixtureTree())
         let store = InMemoryProjectsSnapshotStore()
-        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "workstation"))
+        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "workstation"), profile: ProfileSlug(rawValue: "default"))
 
         let vm = ProjectsBrowserViewModel(
             gatewayID: GatewayID(rawValue: "workstation"),
@@ -179,7 +179,7 @@ final class ProjectsBrowserTests: XCTestCase {
         let seam = SeamDouble()
         seam.treeResult = .failure(GatewayProjectsError.rpcFailed("gateway not configured"))
         let store = InMemoryProjectsSnapshotStore()
-        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "workstation"))
+        try? await store.save(fixtureTree(), for: GatewayID(rawValue: "workstation"), profile: ProfileSlug(rawValue: "default"))
 
         let vm = ProjectsBrowserViewModel(
             gatewayID: GatewayID(rawValue: "workstation"),
@@ -421,16 +421,16 @@ final class InMemoryProjectsSnapshotStore: ProjectsSnapshotStoring, @unchecked S
         mutate(&rows)
     }
 
-    func save(_ tree: ProjectsTree, for gatewayID: GatewayID) async throws {
+    func save(_ tree: ProjectsTree, for gatewayID: GatewayID, profile: ProfileSlug?) async throws {
         storage { rows in
-            rows[gatewayID.rawValue] = (tree, Date())
+            rows[gatewayID.rawValue + "#" + (profile?.rawValue ?? "<unknown>")] = (tree, Date())
         }
     }
 
-    func load(for gatewayID: GatewayID) async throws -> (tree: ProjectsTree, capturedAt: Date)? {
+    func load(for gatewayID: GatewayID, profile: ProfileSlug?) async throws -> (tree: ProjectsTree, capturedAt: Date)? {
         var result: (ProjectsTree, Date)?
         storage { rows in
-            result = rows[gatewayID.rawValue]
+            result = rows[gatewayID.rawValue + "#" + (profile?.rawValue ?? "<unknown>")]
         }
         return result
     }

@@ -120,12 +120,12 @@ public struct FleetTabView: View {
 
     @ViewBuilder
     private func destination(_ screen: FleetScreen) -> some View {
-        if let id = screen.gatewayID, !environment.gateways.contains(where: { $0.id == id }) {
+        if let id = screen.gatewayID, !environment.gateways.contains(where: { $0.id == id }), screen != .gatewayConnection(id) {
             ContentUnavailableView("Gateway unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer registered."))
         } else {
         switch screen {
         case .bots(let gatewayID):
-            BotsView(environment: environment, gatewayID: gatewayID)
+            FleetRosterView(environment: environment, gatewayID: gatewayID)
         case .roster:
             FleetRosterView(environment: environment)
         case .botDetail(let route):
@@ -147,15 +147,13 @@ public struct FleetTabView: View {
         case .activity:
             FleetActivityView(environment: environment)
         case .gatewayDetail(let id):
-            List {
-                NavigationLink("Bots", value: FleetScreen.bots(id))
-                    .accessibilityIdentifier("fleet.gateway-detail.\(id.rawValue).bots")
-                NavigationLink("Projects", value: FleetScreen.projects(id))
-                NavigationLink("Kanban", value: FleetScreen.gatewayKanban(id))
-                NavigationLink("Schedules", value: FleetScreen.cron(id))
-                NavigationLink("Skills", value: FleetScreen.skills(id))
-                NavigationLink("Memory", value: FleetScreen.memoryGraph(id))
-            }.navigationTitle(environment.gateways.first(where: { $0.id == id })?.displayName ?? id.rawValue)
+            GatewayDetailView(environment: environment, gatewayID: id)
+        case .gatewayConnection(let id):
+            GatewaysView(environment: environment, connectionGatewayID: id)
+        case .gatewayGroups(let id):
+            GatewayGroupsView(environment: environment, gatewayID: id)
+        case .gatewayHealth(let id):
+            HealthDashboardView(environment: environment, gatewayID: id)
         case .kanban:
             List(environment.gateways) { gateway in
                 NavigationLink(gateway.displayName, value: FleetScreen.gatewayKanban(gateway.id))
@@ -163,24 +161,22 @@ public struct FleetTabView: View {
             }.navigationTitle("Choose gateway")
         case .gatewayKanban(let id, let board):
             KanbanBoardView(environment: environment, gatewayID: id, board: board)
-        case .cron(let id, let profile):
-            if let profile { CronView(environment: environment, gatewayID: id, profile: profile) }
-            else { chooseProfile(id, screen: screen) }
-        case .skills(let id, let profile):
-            if let profile { SkillsView(environment: environment, gatewayID: id, profile: profile) }
-            else { chooseProfile(id, screen: screen) }
-        case .memoryGraph(let id, let profile):
-            if let profile { MemoryGraphView(environment: environment, gatewayID: id, profile: profile) }
-            else { chooseProfile(id, screen: screen) }
-        case .projects(let id, let profile, let focusPath):
-            if let profile { ProjectsView(environment: environment, gatewayID: id, profile: profile, focusPath: focusPath) }
-            else { chooseProfile(id, screen: screen) }
+        case .cron(let id, let profile), .skills(let id, let profile), .memoryGraph(let id, let profile), .projects(let id, let profile, _):
+            GatewayResourceView(environment: environment, gatewayID: id, screen: screen, profile: profile) { selected in
+                let scoped: FleetScreen
+                switch screen {
+                case .cron: scoped = .cron(id, profile: selected)
+                case .skills: scoped = .skills(id, profile: selected)
+                case .memoryGraph: scoped = .memoryGraph(id, profile: selected)
+                case .projects(_, _, let path): scoped = .projects(id, profile: selected, focusPath: path)
+                default: return
+                }
+                if let index = navigation.paths[.gateways]?.firstIndex(of: screen) {
+                    navigation.paths[.gateways]?[index] = scoped
+                }
+            }
         }
         }
-    }
-
-    private func chooseProfile(_ id: GatewayID, screen: FleetScreen) -> some View {
-        ContentUnavailableView("Choose a profile", systemImage: "person.crop.circle", description: Text("Open this tool with an explicit profile on \(id.rawValue). No profile has been selected."))
     }
 
     @MainActor private func performAutoNavIfNeeded() async {
