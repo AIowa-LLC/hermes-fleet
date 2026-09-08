@@ -12,6 +12,30 @@ import UIKit
 @MainActor
 final class FleetThemeTests: XCTestCase {
 
+    /// Hermetic accent state (t_5d722cea): FleetTheme.accent resolves through
+    /// FleetAccentController.shared, which reads persisted standard defaults —
+    /// on a long-lived simulator the interactive app may have saved a
+    /// non-default pick (e.g. "gold"), silently failing every accent
+    /// assertion. Pin the default for the duration of each test and restore
+    /// BOTH the in-memory selection and its persisted backing afterwards.
+    private var savedAccentRaw: String?
+
+    override func setUp() {
+        super.setUp()
+        savedAccentRaw = UserDefaults.standard.string(forKey: FleetAccentController.persistKey)
+        FleetAccentController.shared.selection = .blue
+    }
+
+    override func tearDown() {
+        if let raw = savedAccentRaw {
+            UserDefaults.standard.set(raw, forKey: FleetAccentController.persistKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: FleetAccentController.persistKey)
+        }
+        FleetAccentController.shared.selection = FleetAccent(rawValue: savedAccentRaw ?? "") ?? .default
+        super.tearDown()
+    }
+
     // MARK: - System resolution drift guard
 
     /// Resolves a FleetTheme Color and a system UIColor under the given
