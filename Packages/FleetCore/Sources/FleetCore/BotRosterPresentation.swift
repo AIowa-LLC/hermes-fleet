@@ -7,7 +7,7 @@ import Foundation
 /// no networking (design §1.1: provenance/presentation branching lives in
 /// FleetCore, views consume normalized models).
 ///
-/// Upstream ground truth (hermes-agent @ 08b140d):
+/// Upstream ground truth (hermes-agent @ originally derived from 08b140d; re-verified against upstream main 966637323e, 2026-09-08):
 /// - Activity recency = the FRESHER of canonical_session vs last_session
 ///   (`botActivitySession`, apps/desktop data.ts) — otherwise an all-day
 ///   Bot Chat bot reads "6d ago".

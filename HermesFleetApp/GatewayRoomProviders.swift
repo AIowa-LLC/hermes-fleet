@@ -149,7 +149,7 @@ struct EmptyRoomSource: FleetRoomSourceProviding {
 
 /// Slice 4: production room-command adapter — the FleetCore
 /// `RoomChatCommanding` seam over the per-gateway `GatewayGroupsClient`.
-/// Every mapping is exact (methods_groups.py at upstream 08b140d); typed
+/// Every mapping is exact (methods_groups.py, upstream main 966637323e); typed
 /// `GroupsError`s cross as FleetCore `RoomCommandFailure`s so FleetUI never
 /// imports FleetNetworking.
 struct GatewayRoomCommandAdapter: RoomChatCommanding {
@@ -425,12 +425,12 @@ struct GatewayRoomLinkAdapter: RoomLinkCommanding {
 
     func registerPeer(
         roomID: String, memberID: String, grant: RoomLinkGrant,
-        targetURL: String, catalogDigest: String
+        targetURL: String
     ) async throws -> RoomPeerRoute {
         do {
             return try await client.registerPeer(
                 roomID: roomID, memberID: memberID, grant: grant,
-                targetURL: targetURL, catalogDigest: catalogDigest)
+                targetURL: targetURL)
         } catch let error as GatewayRoomLinkClient.RoomLinkError {
             throw Self.map(error)
         }
@@ -452,9 +452,12 @@ struct GatewayRoomLinkAdapter: RoomLinkCommanding {
         try await client.replicaState(roomID: roomID)
     }
 
-    func replicate(roomID: String) async throws -> RoomReplicateReceipt {
-        try await client.replicate(
-            roomID: roomID, roomName: "", members: [], page: .object([:]))
+    func roomReplaySource(roomID: String) async throws -> any RoomReplaySourceProviding {
+        client
+    }
+
+    func replicateSink() async throws -> any RoomReplicateSink {
+        client
     }
 
     func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt {

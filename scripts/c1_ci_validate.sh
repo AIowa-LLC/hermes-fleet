@@ -53,6 +53,18 @@ else
   bad "xcodegen generate FAILED"; tail -5 /tmp/c1_xcodegen.log
 fi
 
+# --- 1b. xcodegen drift gate --------------------------------------------------
+# project.yml is authoritative: the committed .pbxproj must be exactly the
+# regenerated output. Catches hand-edited project files and forgotten
+# regenerations. Invariant: edit project.yml -> `xcodegen generate` -> commit
+# BOTH. NEVER hand-edit HermesFleetApp.xcodeproj/project.pbxproj.
+note "xcodegen drift gate (project.yml authoritative)"
+if bash scripts/xcodegen_drift_gate.sh >/tmp/c1_drift.log 2>&1; then
+  ok "xcodegen drift gate: committed project matches project.yml"
+else
+  bad "xcodegen DRIFT: HermesFleetApp.xcodeproj does not match project.yml"; tail -10 /tmp/c1_drift.log
+fi
+
 # --- 2. swift test (4 packages) ----------------------------------------------
 run_pkg() {
   local name=$1 out

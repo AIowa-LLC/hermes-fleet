@@ -11,7 +11,7 @@ public struct RoomLinkTargetSnapshot: Sendable {
     }
     public var supportsDirect: Bool {
         let n = negotiation
-        return n.enabled && n.protocolVersion == 2 && n.persistentProcess && n.linkModes.contains("direct")
+        return n.enabled && n.supportsProtocol(2) && n.persistentProcess && n.linkModes.contains("direct")
             && !n.installationID.isEmpty && !n.catalogDigest.isEmpty
             && n.executionPolicy?.targetProfile == n.profile
             && !(n.executionPolicy?.policyDigest.isEmpty ?? true)

@@ -11,7 +11,31 @@ final class RoomLinkViewModelTests: XCTestCase {
 
     /// Deterministic in-memory RoomLinkCommanding (actor — NSLock is banned
     /// in async contexts on this toolchain).
-    actor ScriptedRoomLink: RoomLinkCommanding {
+    actor ScriptedRoomLink: RoomLinkCommanding, RoomReplaySourceProviding, RoomReplicateSink {
+
+        /// A structurally complete catalog fixture (all upstream fields).
+        static let catalogValue: MetadataValue = .object([
+            "installation_id": .string("install-remote"),
+            "protocol_versions": .array([.number(2)]),
+            "link_modes": .array([.string("direct")]),
+            "persistent_process": .bool(true),
+            "text": .bool(true),
+            "attachments": .bool(false),
+            "execution_policy": .object([
+                "version": .number(1),
+                "target_profile": .string("researcher"),
+                "enabled_toolsets": .array([.string("bot_room")]),
+                "approval_mode": .string("manual"),
+                "max_iterations": .number(12),
+                "policy_digest": .string(String(repeating: "p", count: 64)),
+            ]),
+            "catalog_digest": .string(String(repeating: "c", count: 64)),
+            "endpoint": .object([
+                "available": .bool(true),
+                "url": .string("https://roomlink.example.test/v1"),
+                "transport_security": .string("tls"),
+            ]),
+        ])
         var negotiation: RoomLinkNegotiation
         var inviteCalls: [Double] = []
         var registerCalls: [String] = []
@@ -39,12 +63,14 @@ final class RoomLinkViewModelTests: XCTestCase {
                 roomID: roomID, memberID: memberID ?? "m-scripted",
                 targetProfile: "researcher",
                 permissions: RoomLinkGrant.Permission.allCases,
-                issuedAt: now, expiresAt: now.addingTimeInterval(ttlSeconds))
+                issuedAt: now, expiresAt: now.addingTimeInterval(ttlSeconds),
+                catalog: Self.catalogValue,
+                endpointURL: "https://roomlink.example.test/v1")
         }
 
         func registerPeer(
             roomID: String, memberID: String, grant: RoomLinkGrant,
-            targetURL: String, catalogDigest: String
+            targetURL: String
         ) async throws -> RoomPeerRoute {
             registerCalls.append(memberID)
             return RoomPeerRoute(
@@ -68,7 +94,39 @@ final class RoomLinkViewModelTests: XCTestCase {
             replicaToServe
         }
 
-        func replicate(roomID: String) async throws -> RoomReplicateReceipt {
+        func roomReplaySource(roomID: String) async throws -> any RoomReplaySourceProviding {
+            self
+        }
+
+        func replicateSink() async throws -> any RoomReplicateSink {
+            self
+        }
+
+        func roomProfile(roomID: String) async throws -> RoomReplayProfile {
+            RoomReplayProfile(
+                roomID: roomID, name: "Launch Crew",
+                members: .array([
+                    .object(["member_id": .string("m-1"), "profile": .string("researcher")]),
+                ]),
+                authorityGatewayID: "install:other", authorityEpoch: 3)
+        }
+
+        func logPage(roomID: String, sinceSeq: Int) async throws -> RoomReplayLogPage {
+            RoomReplayLogPage(
+                roomID: roomID,
+                page: .object([
+                    "events": .array([]),
+                    "cursor": .number(10), "latest_seq": .number(10),
+                    "has_more": .bool(false),
+                    "authority": .object(["gateway_id": .string("install:other"), "epoch": .number(3)]),
+                ]),
+                cursor: 10, latestSeq: 10, hasMore: false,
+                authorityGatewayID: "install:other", authorityEpoch: 3)
+        }
+
+        func replicate(
+            roomID: String, roomName: String, members: MetadataValue, page: MetadataValue
+        ) async throws -> RoomReplicateReceipt {
             replicateCalls += 1
             return RoomReplicateReceipt(
                 roomID: roomID, storedSeq: 10, ingested: 4,
@@ -97,7 +155,7 @@ final class RoomLinkViewModelTests: XCTestCase {
         RoomLinkNegotiation(
             authorityGatewayID: "install:local",
             enabled: true,
-            protocolVersion: 2,
+            protocolVersions: [2],
             installationID: "local",
             linkModes: ["direct"],
             persistentProcess: true,

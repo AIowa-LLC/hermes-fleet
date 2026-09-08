@@ -2190,7 +2190,7 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
             authorityGatewayID: "install:workstation",
             enabled: true,
             profile: "default",
-            protocolVersion: 2,
+            protocolVersions: [2],
             installationID: "workstation",
             linkModes: ["direct"],
             persistentProcess: true,
@@ -2247,7 +2247,7 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
 
     func registerPeer(
         roomID: String, memberID: String, grant: RoomLinkGrant,
-        targetURL: String, catalogDigest: String
+        targetURL: String
     ) async throws -> RoomPeerRoute {
         _registerCount += 1
         return RoomPeerRoute(
@@ -2281,13 +2281,12 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
             eventBytes: 4096, createdAt: 1, updatedAt: 2)
     }
 
-    func replicate(roomID: String) async throws -> RoomReplicateReceipt {
-        _replicateCount += 1
-        _replicaCaughtUp = true
-        return RoomReplicateReceipt(
-            roomID: roomID, storedSeq: 10, ingested: 6,
-            authorityGatewayID: "install:hub", authorityEpoch: 3,
-            caughtUp: true)
+    func roomReplaySource(roomID: String) async throws -> any RoomReplaySourceProviding {
+        ScriptedRoomReplaySource()
+    }
+
+    func replicateSink() async throws -> any RoomReplicateSink {
+        self
     }
 
     func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt {
@@ -2311,6 +2310,55 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
     }
 
     func demote(roomID: String, observedGatewayID: String, observedEpoch: Int) async throws {}
+}
+
+/// Scripted authority replay surface: real-shaped `groups.state` room row +
+/// one caught-up `groups.log` page (mirrors upstream shapes deterministically
+/// for the DEBUG simulator + UI tests).
+private struct ScriptedRoomReplaySource: RoomReplaySourceProviding {
+    func roomProfile(roomID: String) async throws -> RoomReplayProfile {
+        RoomReplayProfile(
+            roomID: roomID,
+            name: "Launch Crew",
+            members: .array([
+                .object(["member_id": .string("researcher"), "profile": .string("researcher")]),
+                .object(["member_id": .string("fleet"), "profile": .string("default")]),
+            ]),
+            authorityGatewayID: "install:hub",
+            authorityEpoch: 3)
+    }
+
+    func logPage(roomID: String, sinceSeq: Int) async throws -> RoomReplayLogPage {
+        RoomReplayLogPage(
+            roomID: roomID,
+            page: .object([
+                "events": .array([]),
+                "cursor": .number(10),
+                "latest_seq": .number(10),
+                "has_more": .bool(false),
+                "authority": .object([
+                    "gateway_id": .string("install:hub"),
+                    "epoch": .number(3)]),
+            ]),
+            cursor: 10,
+            latestSeq: 10,
+            hasMore: false,
+            authorityGatewayID: "install:hub",
+            authorityEpoch: 3)
+    }
+}
+
+extension ScriptedRoomLinkEngine: RoomReplicateSink {
+    func replicate(
+        roomID: String, roomName: String, members: MetadataValue, page: MetadataValue
+    ) async throws -> RoomReplicateReceipt {
+        _replicateCount += 1
+        _replicaCaughtUp = true
+        return RoomReplicateReceipt(
+            roomID: roomID, storedSeq: 10, ingested: 6,
+            authorityGatewayID: "install:hub", authorityEpoch: 3,
+            caughtUp: true)
+    }
 }
 
 #endif

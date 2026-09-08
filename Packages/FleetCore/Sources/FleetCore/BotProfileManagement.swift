@@ -3,7 +3,7 @@ import Foundation
 /// Bot profile management domain: edit payloads with per-section dirty flags,
 /// typed partial-success results, duplicate-name minting, and create specs.
 ///
-/// Upstream ground truth (hermes-agent @ 08b140d):
+/// Upstream ground truth (hermes-agent @ originally derived from 08b140d; re-verified against upstream main 966637323e, 2026-09-08):
 /// - `profiles.configure` sections: `ui_meta`(+CAS), `soul`, `description`,
 ///   `model`+`provider`(+`confirm_expensive_model`), `disabled_skills`,
 ///   `enabled_toolsets`, `enabled_mcp_servers`; response

@@ -48,7 +48,7 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
             enabled: enabled,
             disabledReason: nil,
             profile: profile,
-            protocolVersion: 2,
+            protocolVersions: [2],
             installationID: installationID,
             linkModes: direct ? ["direct"] : [],
             persistentProcess: persistent,
@@ -231,13 +231,16 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
         func invite(roomID: String?, memberID: String?, ttlSeconds: Double) async throws -> RoomLinkGrant {
             throw GatewayRoomLinkClient.RoomLinkError.notConnected
         }
-        func registerPeer(roomID: String, memberID: String, grant: RoomLinkGrant, targetURL: String, catalogDigest: String) async throws -> RoomPeerRoute {
+        func registerPeer(roomID: String, memberID: String, grant: RoomLinkGrant, targetURL: String) async throws -> RoomPeerRoute {
             throw GatewayRoomLinkClient.RoomLinkError.notConnected
         }
         func revoke(grant: RoomLinkGrant) async throws {}
         func peerRoutes(roomID: String) async throws -> [RoomPeerRoute] { [] }
         func replicaState(roomID: String) async throws -> RoomReplicaState? { nil }
-        func replicate(roomID: String) async throws -> RoomReplicateReceipt {
+        func roomReplaySource(roomID: String) async throws -> any RoomReplaySourceProviding {
+            throw GatewayRoomLinkClient.RoomLinkError.notConnected
+        }
+        func replicateSink() async throws -> any RoomReplicateSink {
             throw GatewayRoomLinkClient.RoomLinkError.notConnected
         }
         func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt {

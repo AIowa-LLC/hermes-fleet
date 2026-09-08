@@ -140,10 +140,16 @@ public final class RoomLinkViewModel {
     @discardableResult
     public func registerPeer() async -> Bool {
         guard let commands, let negotiation, negotiation.enabled,
-              let grant = activeGrant,
-              let endpoint = negotiation.endpoint, endpoint.available,
-              let url = endpoint.url else {
+              let grant = activeGrant else {
             errorMessage = "Invite a grant first, then register the route."
+            return false
+        }
+        // target_url: the endpoint the TARGET advertised at invite time
+        // (authoritative), falling back to this gateway's negotiated
+        // endpoint when the invite response omitted it.
+        guard let url = grant.endpointURL ?? negotiation.endpoint?.url,
+              grant.endpointURL != nil || negotiation.endpoint?.available == true else {
+            errorMessage = "No RoomLink endpoint is available for this target."
             return false
         }
         isMutating = true
@@ -154,8 +160,7 @@ public final class RoomLinkViewModel {
                 roomID: room.id.key,
                 memberID: grant.memberID ?? "",
                 grant: grant,
-                targetURL: url,
-                catalogDigest: negotiation.catalogDigest)
+                targetURL: url)
             routes = routes.filter { $0.id != route.id } + [route]
             notice = "Linked \(route.targetProfile.isEmpty ? "peer" : route.targetProfile) over \(route.transportSecurity == "tls" ? "TLS" : route.transportSecurity)."
             errorMessage = nil
@@ -168,6 +173,11 @@ public final class RoomLinkViewModel {
 
     // MARK: - Replication / replay
 
+    /// Manual replication choreography (defect-2 fix): pull the authority's
+    /// real room profile + verbatim log pages and submit each page to
+    /// `groups.replicate` — never placeholder metadata. All guards
+    /// (lineage continuity, page progress, fail-closed assembly) live in
+    /// `RoomReplicator`; failures surface honestly here.
     @discardableResult
     public func replicateNow() async -> Bool {
         guard let commands else { return false }
@@ -175,10 +185,16 @@ public final class RoomLinkViewModel {
         defer { isMutating = false }
         attemptedWriteCount += 1
         do {
-            let receipt = try await commands.replicate(roomID: room.id.key)
-            notice = receipt.caughtUp
-                ? "Replay complete — this copy is caught up (event \(receipt.storedSeq))."
-                : "Replayed \(receipt.ingested) events (caught up through \(receipt.storedSeq))."
+            let source = try await commands.roomReplaySource(roomID: room.id.key)
+            let sink = try await commands.replicateSink()
+            let outcome = try await RoomReplicator.replicate(
+                roomID: room.id.key,
+                replica: replica,
+                source: source,
+                sink: sink)
+            notice = outcome.caughtUp
+                ? "Replay complete — this copy is caught up (event \(outcome.storedSeq))."
+                : "Replayed \(outcome.ingested) events (caught up through \(outcome.storedSeq))."
             replica = try? await commands.replicaState(roomID: room.id.key)
             promotionReadiness = RoomPromotionReadiness.evaluate(
                 replica: replica,
@@ -336,7 +352,7 @@ public struct RoomLinkView: View {
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.textPrimary)
                         .accessibilityIdentifier("fleet.roomlink.summary")
-                    Text("Authority \(negotiation.authorityGatewayID) · protocol v\(negotiation.protocolVersion)")
+                    Text("Authority \(negotiation.authorityGatewayID) · protocol v\(negotiation.protocolVersions.map(String.init).joined(separator: "/"))")
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                     if !negotiation.attachmentsSupported {

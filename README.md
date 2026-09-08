@@ -13,7 +13,10 @@ This repository contains source code and development tooling. It does not requir
 Current surfaces include:
 
 - multi-gateway registration, connection state, health, and fleet roster
-- bot and session discovery across configured gateways
+- **Bot Mode**: a fleet-wide Bots roster with full bot lifecycle management (see [Bot Mode](#bot-mode) below)
+- canonical Bot Chat with continuous-chat semantics, `@Bot` mentions, and Bot Routines
+- hosted Group rooms, including cross-gateway rooms linked over gateway-to-gateway RoomLink
+- RoomLink management: peer grants and route registration, replication/replay, and authority promotion
 - streaming conversations with reconnect and replay handling
 - gateway authentication and Keychain-backed credential storage
 - approvals, session controls, model selection, context information, cron, and skills
@@ -21,6 +24,31 @@ Current surfaces include:
 - attachments, message reactions, and on-device voice input/output
 
 Some features depend on methods exposed by the connected Hermes gateway version. Unsupported capabilities should fail closed or remain unavailable rather than fabricate state.
+
+## Bot Mode
+
+Bot Mode is implemented against the Hermes gateway's `groups.*` and bot-profile surfaces. The iPhone is the **controller**; the gateways are the compute and agent plane.
+
+- **Fleet-wide Bots roster** — every bot on every registered gateway, identified by source-qualified `(GatewayID + ProfileSlug)` identity. Bots with the same name on different gateways are never merged into one local slug.
+- **Bot creation and full profile editing** — name/display name, description, model/provider configuration, SOUL file editing, Skills/Toolsets/MCP toggles, with confirm-required guards for expensive model changes.
+- **Sections** — organize the roster into sections; delete returns bots to Unassigned.
+- **Hidden and pinned bots** — hidden bots stay mentionable but leave the default roster view; pinned bots float to the top.
+- **Avatar identity** — real avatars per bot, avatar upload and clear, and a generated-portrait workflow with preview and explicit confirmation.
+- **Canonical Bot Chat** — each bot has one canonical chat. It is continuous: `/new` and `/reset` are protected and redirect to `/compact` instead of resetting context. Canonical Bot Chats are filtered out of the ordinary Chats list.
+- **`@Bot` mentions** — autocomplete over the live fleet roster. Duplicate names disambiguate with a friendly gateway/device label (`@researcher-mac`, `@researcher-4090`) and only fall back to a short deterministic suffix if the qualified label still collides. A mention identifies a teammate; it does not by itself confirm remote dispatch.
+- **Bot Routines** — structured schedules (interval and time-of-day) with a raw-expression escape hatch, edited through the normal profile surface.
+- **Hosted Groups** — create and chat in gateway-hosted rooms (`groups.create` / `groups.send` / `groups.log`), with pending approvals, retries, stop, rename, and disband.
+- **Cross-gateway Groups** — a room hosted on one gateway can link members whose bots live on another gateway. Setup is `create on home → invite on target → register on home`; the two gateways then talk **directly gateway-to-gateway** over RoomLink. The iPhone never relays room traffic and Fleet makes no background-relay claims.
+- **RoomLink management** — per-room panel for capability negotiation (honest unsupported state when the gateway disables RoomLink), peer grants with explicit TTL, route registration using the target's exact advertised capability catalog, grant revocation, and peer-route status.
+- **Replication and promotion** — manual replay pulls the authority's real room profile and verbatim `groups.log` pages and submits them to `groups.replicate` (idempotent; refuses sequence gaps and authority-epoch regressions). Promotion is a takeover gated behind an explicit confirmation naming the previous authority; it requires `confirm: true` and a caught-up replica.
+- **Capability-gated behavior** — RoomLink compatibility is decided by the advertised `protocol_versions` list (membership, not a single version), the advertised method list, and the endpoint/transport capability. Missing, empty, or changed capability information fails closed.
+
+### Not currently supported
+
+- **Cross-gateway `@Bot` DM relay is not guaranteed by Fleet.** Mentioning a remote bot identifies it and passes route identity to the agent, but Fleet does not verify or relay the remote messaging route; delivery depends on gateway-side `message_agent` availability.
+- RoomLink carries text only (no attachments) across gateways; the composer hides the attachment tray accordingly.
+- The iPhone does not courier RoomLink traffic in the background — gateway-to-gateway linking is the gateways' own direct connection.
+
 
 ## Architecture
 
@@ -47,7 +75,13 @@ HermesFleetApp     composition root that wires concrete implementations
 
 ## Build and test
 
-The committed Xcode project is generated output. `project.yml` is the source of truth.
+The committed Xcode project is generated output. `project.yml` is the source of truth:
+
+1. modify `project.yml` (never hand-edit `HermesFleetApp.xcodeproj/project.pbxproj`)
+2. run `xcodegen generate`
+3. commit both files together
+
+CI enforces this with a drift gate: the build fails when the committed project differs from what `xcodegen generate` produces (`bash scripts/xcodegen_drift_gate.sh` locally).
 
 ```sh
 xcodegen generate

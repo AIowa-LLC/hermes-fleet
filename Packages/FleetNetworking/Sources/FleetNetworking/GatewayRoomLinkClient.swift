@@ -3,21 +3,32 @@ import FleetCore
 
 /// TRUE BOTS MODE slice 5 (D19) — RoomLink wire client.
 ///
-/// Exact `groups.peer.*` / replicate / promote / demote requests and decodes
-/// against upstream 08b140d:
+/// Exact `groups.peer.*` / replicate / promote / demote requests and decodes.
+/// Originally derived from upstream 08b140d; re-verified against current
+/// upstream main 966637323e (2026-09-08) — contracts unchanged:
 /// - `groups.peer.invite` — tui_gateway/methods_groups.py:250-279; response
-///   `{grant, target_profile, catalog, endpoint}`; grant payload claims
-///   (permissions/status_expires_at) are server-owned — the client treats the
-///   token as opaque and derives display lifetime from `ttl_seconds`.
-/// - `groups.peer.register` — methods_groups.py:297-343; validation failures
-///   (5120) carry the exact strings decoded into
+///   `{grant, target_profile, catalog, endpoint}`; the FULL capability
+///   catalog is captured verbatim on the grant — grant payload claims
+///   (permissions/status_expires_at) are server-owned and the client treats
+///   the token as opaque.
+/// - `groups.peer.register` — methods_groups.py:297-343; takes the EXACT
+///   capability catalog advertised by the target (validated upstream by
+///   `GatewayRoomCatalog.from_mapping`: exact fields + digest HMAC +
+///   equality with the live probe catalog). Fleet sends the invite-time
+///   catalog verbatim and fails closed client-side when it is missing,
+///   partial, or carries a synthetic installation identity. Validation
+///   failures (5120) carry the exact strings decoded into
 ///   `RoomLinkRegistrationRefusal`.
 /// - `groups.peer.revoke` — methods_groups.py:282-294.
 /// - `groups.replica_state` — gateway/hosted_room_replicas.py:184-195.
-/// - `groups.replicate` — hosted_room_replicas.py:179-181
-///   (`{room_id, stored_seq, ingested, authority, caught_up}`).
+/// - `groups.replicate` — methods_groups.py:496-501 →
+///   hosted_room_replicas.py ingest_page (requires real room name, members,
+///   and a verbatim `groups.log`-shaped page with events + authority;
+///   idempotent, refuses gaps and epoch regressions). Fleet assembles the
+///   page via `RoomReplicator` from `groups.state` + `groups.log` — never
+///   placeholders.
 /// - `groups.promote` — methods_groups.py:508-517 (confirm:true required,
-///   4118 otherwise) / hosted_room_replicas.py:241-244 receipt.
+///   4118 otherwise) / hosted_room_replicas.py:198-244 receipt.
 /// - `groups.demote` — hosted_room_replicas.py:247-286.
 public struct GatewayRoomLinkClient: Sendable {
     public let gatewayID: GatewayID
@@ -59,7 +70,7 @@ public struct GatewayRoomLinkClient: Sendable {
             enabled: roomLink?["enabled"]?.boolValue ?? false,
             disabledReason: roomLink?["reason"]?.stringValue.map(RoomLinkDisabledReason.init(wireValue:)),
             profile: roomLink?["profile"]?.stringValue,
-            protocolVersion: catalog?["protocol_versions"]?.arrayValue?.compactMap(\.numberValue).first.map(Int.init) ?? 0,
+            protocolVersions: catalog?["protocol_versions"]?.arrayValue?.compactMap(\.numberValue).map(Int.init) ?? [],
             installationID: catalog?["installation_id"]?.stringValue ?? "",
             linkModes: catalog?["link_modes"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             persistentProcess: catalog?["persistent_process"]?.boolValue ?? false,
@@ -92,7 +103,9 @@ public struct GatewayRoomLinkClient: Sendable {
 
     // MARK: - Grants
 
-    /// `groups.peer.invite` on this (target) gateway.
+    /// `groups.peer.invite` on this (target) gateway. The response carries
+    /// the target's FULL capability catalog — captured VERBATIM on the grant
+    /// so `registerPeer` can send it unchanged (never reconstructed).
     public func invite(
         roomID: String?, memberID: String?, ttlSeconds: Double
     ) async throws -> RoomLinkGrant {
@@ -105,6 +118,12 @@ public struct GatewayRoomLinkClient: Sendable {
         guard let grantToken = result["grant"]?.stringValue else {
             throw RoomLinkError.malformed("groups.peer.invite missing 'grant'")
         }
+        // The catalog is REQUIRED for a registrable grant: registration
+        // sends it verbatim upstream. A grant without one is malformed.
+        guard let catalog = result["catalog"] else {
+            throw RoomLinkError.malformed("groups.peer.invite missing 'catalog'")
+        }
+        let endpointURL = result["endpoint"]?.objectValue?["url"]?.stringValue
         let now = Date()
         return RoomLinkGrant(
             id: UUID().uuidString,
@@ -114,23 +133,32 @@ public struct GatewayRoomLinkClient: Sendable {
             targetProfile: result["target_profile"]?.stringValue ?? "",
             permissions: RoomLinkGrant.Permission.allCases,
             issuedAt: now,
-            expiresAt: now.addingTimeInterval(ttlSeconds))
+            expiresAt: now.addingTimeInterval(ttlSeconds),
+            catalog: ModernProfilesDecoder.toMetadataValue(catalog),
+            endpointURL: endpointURL)
     }
 
-    /// `groups.peer.register` on the room's gateway.
+    /// `groups.peer.register` on the room's gateway. Sends the grant's
+    /// VERBATIM invite-time catalog — upstream validates it structurally
+    /// (`GatewayRoomCatalog.from_mapping`, exact fields + digest) and
+    /// compares it with the target's live probe catalog; any Fleet-side
+    /// reconstruction would be rejected (or, worse, a stale synthetic one
+    /// could misroute). Fails closed before the wire when the grant carries
+    /// no complete catalog.
     public func registerPeer(
         roomID: String,
         memberID: String,
         grant: RoomLinkGrant,
-        targetURL: String,
-        catalogDigest: String
+        targetURL: String
     ) async throws -> RoomPeerRoute {
+        if let refusal = RoomLinkCatalogValidation.validate(
+            catalog: grant.catalog, targetProfile: grant.targetProfile
+        ) {
+            throw RoomLinkError.malformed(refusal)
+        }
         let params: [String: JSONValue] = [
             "target_url": .string(targetURL),
-            "catalog": .object([
-                "installation_id": .string(grant.targetProfile.isEmpty ? "unknown" : grant.targetProfile),
-                "catalog_digest": .string(catalogDigest),
-            ]),
+            "catalog": Self.setupJSON(grant.catalog ?? .null),
             "target_profile": .string(grant.targetProfile),
             "grant": .string(grant.token),
             "room_id": .string(roomID),
@@ -210,23 +238,21 @@ public struct GatewayRoomLinkClient: Sendable {
             updatedAt: o["updated_at"]?.numberValue ?? 0)
     }
 
-    /// `groups.replicate` with a verbatim `groups.log` page for the room.
+    /// `groups.replicate` with a verbatim `groups.log` page for the room
+    /// (assembled by `RoomReplicator` from the authority surface — never
+    /// placeholders). Members are carried as the parsed JSON value so the
+    /// authority's own member objects round-trip untouched.
     public func replicate(
-        roomID: String, roomName: String, members: [[String: String]],
-        page: JSONValue
+        roomID: String, roomName: String, members: MetadataValue,
+        page: MetadataValue
     ) async throws -> RoomReplicateReceipt {
-        let membersValue: [JSONValue] = members.map { member in
-            var object: [String: JSONValue] = [:]
-            for (key, value) in member { object[key] = .string(value) }
-            return JSONValue.object(object)
-        }
         let result = try await requestMapped(
             method: "groups.replicate",
             params: .object([
                 "room_id": .string(roomID),
                 "room_name": .string(roomName),
-                "members": .array(membersValue),
-                "page": page,
+                "members": Self.setupJSON(members),
+                "page": Self.setupJSON(page),
             ]))
         guard let o = result.objectValue else {
             throw RoomLinkError.malformed("groups.replicate response not an object")
@@ -310,7 +336,58 @@ public struct GatewayRoomLinkClient: Sendable {
             return .rpcFailed(error.message, error.code)
         }
     }
+    // MARK: - Replay source (manual replication choreography)
+
+    /// `groups.state` room row → authority room profile (name + members
+    /// verbatim — exactly what `groups.replicate` requires upstream).
+    public func roomProfile(roomID: String) async throws -> RoomReplayProfile {
+        let result = try await requestMapped(
+            method: "groups.state",
+            params: .object(["room_id": .string(roomID)]))
+        guard let room = result["room"]?.objectValue else {
+            throw RoomLinkError.malformed("groups.state missing 'room'")
+        }
+        guard let name = room["name"]?.stringValue, !name.isEmpty else {
+            throw RoomLinkError.malformed("groups.state room has no name")
+        }
+        guard let members = room["members"] else {
+            throw RoomLinkError.malformed("groups.state room has no members")
+        }
+        return RoomReplayProfile(
+            roomID: room["room_id"]?.stringValue ?? roomID,
+            name: name,
+            members: ModernProfilesDecoder.toMetadataValue(members),
+            authorityGatewayID: room["authority_gateway_id"]?.stringValue ?? "",
+            authorityEpoch: room["authority_epoch"]?.numberValue.map(Int.init) ?? 0)
+    }
+
+    /// One `groups.log` page (VERBATIM result object — submitted to
+    /// `groups.replicate` untouched; upstream read_events shape
+    /// {events, cursor, latest_seq, has_more, authority}).
+    public func logPage(roomID: String, sinceSeq: Int) async throws -> RoomReplayLogPage {
+        let result = try await requestMapped(
+            method: "groups.log",
+            params: .object([
+                "room_id": .string(roomID),
+                "since_seq": .number(Double(sinceSeq)),
+                "limit": .number(500),
+            ]))
+        guard let o = result.objectValue else {
+            throw RoomLinkError.malformed("groups.log response not an object")
+        }
+        let authority = o["authority"]?.objectValue
+        return RoomReplayLogPage(
+            roomID: roomID,
+            page: ModernProfilesDecoder.toMetadataValue(result),
+            cursor: o["cursor"]?.numberValue.map(Int.init) ?? sinceSeq,
+            latestSeq: o["latest_seq"]?.numberValue.map(Int.init) ?? 0,
+            hasMore: o["has_more"]?.boolValue ?? false,
+            authorityGatewayID: authority?["gateway_id"]?.stringValue ?? "",
+            authorityEpoch: authority?["epoch"]?.numberValue.map(Int.init) ?? 0)
+    }
 }
+
+extension GatewayRoomLinkClient: RoomReplaySourceProviding, RoomReplicateSink {}
 
 extension GatewayRoomLinkClient: CrossGatewayRoomCommanding {
     public func roomLinkTarget(profile: String) async throws -> RoomLinkTargetSnapshot {

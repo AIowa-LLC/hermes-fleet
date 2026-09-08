@@ -163,7 +163,13 @@ public final class RoomChatViewModel {
         defer { isSending = false }
         attemptedWriteCount += 1
         do {
-            _ = try await commands.send(roomID: room.id.key, text: text, threadID: nil)
+            // Upstream `groups.send` requires the exact user payload
+            // {text, thread_id} (hosted_room_discussion.py
+            // _USER_PAYLOAD_FIELDS). A nil thread id is REJECTED on the live
+            // wire — the room's main thread id is stable per room.
+            _ = try await commands.send(
+                roomID: room.id.key, text: text,
+                threadID: Self.mainThreadID(for: room.id.key))
             errorMessage = nil
             await refresh()
             return true
@@ -171,6 +177,12 @@ public final class RoomChatViewModel {
             errorMessage = Self.explain(error)
             return false
         }
+    }
+
+    /// Deterministic main-thread id for one room (upstream identifier
+    /// charset; stable across sessions so events land on one thread).
+    static func mainThreadID(for roomKey: String) -> String {
+        "room-" + MentionResolution.slugify(roomKey.lowercased()) + "-main"
     }
 
     @discardableResult

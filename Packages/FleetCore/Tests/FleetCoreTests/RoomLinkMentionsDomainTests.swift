@@ -12,7 +12,7 @@ import XCTest
 /// - duplicate disambiguation: bare form poisoned on collision, qualified
 ///   handle resolves
 /// - RoomLink negotiation / grants / promotion readiness / registration
-///   refusals (methods_groups.py + hosted_room_peer.py at 08b140d)
+///   refusals (methods_groups.py + hosted_room_peer.py at originally derived from 08b140d; re-verified against upstream main 966637323e, 2026-09-08)
 final class RoomLinkMentionsDomainTests: XCTestCase {
 
     // MARK: - D20 mention forms (data.ts parity)
@@ -218,7 +218,7 @@ final class RoomLinkMentionsDomainTests: XCTestCase {
         let negotiation = RoomLinkNegotiation(
             authorityGatewayID: "install:abc",
             enabled: true,
-            protocolVersion: 2,
+            protocolVersions: [2],
             installationID: "abc",
             linkModes: ["direct"],
             persistentProcess: true,

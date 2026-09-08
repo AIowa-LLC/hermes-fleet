@@ -30,23 +30,79 @@ public enum BotConversationMentions {
         gatewayLabel: (GatewayID) -> String
     ) -> [Suggestion] {
         let all = aliases(roster: roster, gatewayLabel: gatewayLabel)
-        return all.filter {
-            $0.id != excluding && (query.isEmpty ||
-                "\($0.alias) \($0.candidate.name) \($0.candidate.friendlyTitle) \($0.gatewayLabel)"
-                    .localizedCaseInsensitiveContains(query))
+        return all.filter { item in
+            guard item.id != excluding else { return false }
+            guard !query.isEmpty else { return true }
+            let haystack = [item.alias, item.candidate.name, item.candidate.friendlyTitle, item.gatewayLabel]
+                .joined(separator: " ")
+            return haystack.localizedCaseInsensitiveContains(query)
         }.sorted { $0.candidate.friendlyTitle == $1.candidate.friendlyTitle
             ? $0.id.id < $1.id.id : $0.candidate.friendlyTitle < $1.candidate.friendlyTitle }
     }
 
     private static func aliases(roster: [MentionCandidate], gatewayLabel: (GatewayID) -> String) -> [Suggestion] {
-        let tags = roster.map { MentionResolution.mentionTag(friendlyTitle: $0.friendlyTitle, name: $0.name, handle: $0.handle) }
-        return zip(roster, tags).map { candidate, tag in
-            let duplicate = tags.filter { $0 == tag }.count > 1
-            // Hex encoding is reversible and collision-free, unlike a truncated hash or label.
-            let suffix = candidate.route.id.utf8.map { String(format: "%02x", $0) }.joined()
-            return Suggestion(candidate: candidate, alias: duplicate ? "\(tag)-\(suffix)" : tag,
+        func tag(for candidate: MentionCandidate) -> String {
+            MentionResolution.mentionTag(friendlyTitle: candidate.friendlyTitle, name: candidate.name, handle: candidate.handle)
+        }
+        let tags = roster.map { tag(for: $0) }
+        let labelFor: [Route: String] = Dictionary(
+            roster.map { ($0.route, MentionResolution.slugify(gatewayLabel($0.route.gatewayID).lowercased())) },
+            uniquingKeysWith: { first, _ in first })
+        // Tier 1: the friendly tag on its own when unique in the roster.
+        // Tier 2: tag + gateway/device label when the bare tag collides
+        //         (@researcher-mac, @researcher-4090).
+        // Tier 3: tier 2 + a short deterministic base36 suffix ONLY when the
+        //         qualified label still collides (same tag AND same gateway
+        //         label — e.g. same-name profiles on one gateway). The suffix
+        //         is derived from the full route identity (FNV-1a 32) so it
+        //         stays deterministic and reversible to exactly one route;
+        //         the internal route identity itself is unchanged.
+        let tagCounts = Dictionary(grouping: tags, by: { $0 }).mapValues(\.count)
+        var qualifiedCounts: [String: Int] = [:]
+        for candidate in roster where (tagCounts[tag(for: candidate)] ?? 0) > 1 {
+            let key = tag(for: candidate) + "-" + (labelFor[candidate.route] ?? "")
+            qualifiedCounts[key, default: 0] += 1
+        }
+        // All tier-1 tags (bare names) — a qualified alias must never
+        // shadow a DIFFERENT bot's bare tag: escalate to tier 3 if it would.
+        let bareTags = Set(tags)
+        return roster.map { candidate in
+            let tag = tag(for: candidate)
+            let label = labelFor[candidate.route] ?? ""
+            let qualified = "\(tag)-\(label)"
+            let alias: String
+            if (tagCounts[tag] ?? 0) == 1 {
+                alias = tag
+            } else if qualifiedCounts[qualified] == 1 && !bareTags.contains(qualified) {
+                alias = qualified
+            } else {
+                alias = "\(qualified)-\(shortSuffix(candidate.route))"
+            }
+            return Suggestion(candidate: candidate, alias: alias,
                               gatewayLabel: gatewayLabel(candidate.route.gatewayID))
         }
+    }
+
+    /// Short deterministic suffix from the full route identity (FNV-1a 32 →
+    /// base36, 5 chars). Only used when even the gateway-qualified label
+    /// collides. Deterministic across launches and devices; resolvable to
+    /// exactly one route via the roster (alias → route lookup in `prepare`).
+    static func shortSuffix(_ route: Route) -> String {
+        var hash: UInt32 = 0x811c9dc5
+        for byte in route.id.utf8 {
+            hash = (hash ^ UInt32(byte)) &* 0x01000193
+        }
+        // Exactly 5 base36 chars (60M values): mask into the range so the
+        // suffix length is fixed.
+        var value = UInt(hash) % 60_466_176  // 36^5
+        if value == 0 { value = 1 }
+        var digits: [Character] = []
+        while value > 0 {
+            digits.append(Character(String(value % 36, radix: 36)))
+            value /= 36
+        }
+        while digits.count < 5 { digits.append("0") }
+        return String(digits.reversed())
     }
 
     public static func query(in text: String) -> String? {

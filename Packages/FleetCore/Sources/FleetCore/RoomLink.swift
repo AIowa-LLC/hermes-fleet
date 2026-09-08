@@ -5,15 +5,21 @@ import Foundation
 /// route registration/revoke, replication/replay, promotion prerequisites
 /// and explicit confirmations.
 ///
-/// Every shape here mirrors upstream source at 08b140d (NOT docs):
-/// - `groups.capabilities` room_link catalog — tui_gateway/methods_groups.py:232-238
-/// - catalog mapping — gateway/hosted_room_peer.py:226-284 (link_modes "direct"
-///   only, text=true, attachments=false, execution_policy v1 with sha256
-///   digests)
-/// - grants — hosted_room_peer.py:390-437 (HMAC token; TTL 60..86400s)
+/// Every shape here mirrors upstream source (NOT docs). Originally derived
+/// from upstream 08b140d; re-verified against current upstream main
+/// 966637323e (2026-09-08) — the contracts below are unchanged in that
+/// snapshot:
+/// - `groups.capabilities` room_link catalog — tui_gateway/methods_groups.py:218-247
+/// - catalog mapping/validation — gateway/hosted_room_peer.py:188-241
+///   (`_CATALOG_FIELDS` exact-set validation + catalog_digest HMAC check;
+///   link_modes "direct" only, text=true, attachments=false,
+///   execution_policy v1 with sha256 digests)
+/// - grants — `groups.peer.invite` response carries the target's FULL
+///   verbatim catalog (methods_groups.py:250-279); grant tokens are HMAC
+///   opaque with TTL 60..86400s
 /// - peer.register validation strings — methods_groups.py:297-343
 /// - promote confirm handshake — methods_groups.py:508-517 (4118) and
-///   hosted_room_replicas.py:241-286
+///   hosted_room_replicas.py:198-244
 ///
 /// Honesty rules (binding): when the gateway does not advertise RoomLink the
 /// UI renders the unsupported state with the gateway's own reason — never a
@@ -112,7 +118,10 @@ public struct RoomLinkNegotiation: Hashable, Sendable {
     public let enabled: Bool
     public let disabledReason: RoomLinkDisabledReason?
     public let profile: String?
-    public let protocolVersion: Int
+    /// The FULL advertised `protocol_versions` list, preserved in wire order.
+    /// Compatibility is membership ("do you support v2?"), never equality
+    /// against whichever element decoded first.
+    public let protocolVersions: [Int]
     public let installationID: String
     public let linkModes: [String]
     public let persistentProcess: Bool
@@ -129,7 +138,7 @@ public struct RoomLinkNegotiation: Hashable, Sendable {
         enabled: Bool,
         disabledReason: RoomLinkDisabledReason? = nil,
         profile: String? = nil,
-        protocolVersion: Int = 0,
+        protocolVersions: [Int] = [],
         installationID: String = "",
         linkModes: [String] = [],
         persistentProcess: Bool = false,
@@ -144,7 +153,7 @@ public struct RoomLinkNegotiation: Hashable, Sendable {
         self.enabled = enabled
         self.disabledReason = disabledReason
         self.profile = profile
-        self.protocolVersion = protocolVersion
+        self.protocolVersions = protocolVersions
         self.installationID = installationID
         self.linkModes = linkModes
         self.persistentProcess = persistentProcess
@@ -159,6 +168,18 @@ public struct RoomLinkNegotiation: Hashable, Sendable {
     /// Method-level gates (the gateway's `methods` list is the truth).
     public func supports(_ method: String) -> Bool {
         enabled && methods.contains(method)
+    }
+
+    /// Protocol membership gate: `protocolVersions.contains(v)`. A missing or
+    /// empty advertised list supports NOTHING (fail closed — never guess a
+    /// version from absence).
+    public func supportsProtocol(_ version: Int) -> Bool {
+        protocolVersions.contains(version)
+    }
+
+    /// Highest advertised version (0 when none — display only, never a gate).
+    public var highestProtocolVersion: Int {
+        protocolVersions.max() ?? 0
     }
 
     /// Direct-mode support (the only link mode upstream ever advertises).
@@ -191,8 +212,7 @@ public struct RoomLinkNegotiation: Hashable, Sendable {
 
 /// A peer grant minted by `groups.peer.invite`. TTL bounds are upstream
 /// constants: 60...86400 seconds (methods_groups.py:250-279); dispatch
-/// permission caps at 24h even when the status permission lives longer
-/// (hosted_room_peer.py:398-399).
+/// permission caps at 24h even when the status permission lives longer.
 public struct RoomLinkGrant: Hashable, Sendable, Identifiable {
     public static let minTTLSeconds = 60.0
     public static let maxTTLSeconds = 86400.0
@@ -211,11 +231,23 @@ public struct RoomLinkGrant: Hashable, Sendable, Identifiable {
     public let permissions: [Permission]
     public let issuedAt: Date
     public let expiresAt: Date
+    /// The target's advertised capability catalog, captured VERBATIM from the
+    /// invite response (`groups.peer.invite` returns the full catalog;
+    /// methods_groups.py:276-279). `groups.peer.register` MUST send this
+    /// catalog unchanged — upstream validates it with
+    /// `GatewayRoomCatalog.from_mapping` (exact fields + digest check) and
+    /// compares it against the live probe catalog. Reconstructed or partial
+    /// catalogs can never pass; see `RoomLinkCatalogValidation`.
+    public let catalog: MetadataValue?
+    /// The target's advertised RoomLink endpoint URL from the invite
+    /// response (registration target_url).
+    public let endpointURL: String?
 
     public init(
         id: String, token: String, roomID: String?, memberID: String?,
         targetProfile: String, permissions: [Permission],
-        issuedAt: Date, expiresAt: Date
+        issuedAt: Date, expiresAt: Date,
+        catalog: MetadataValue? = nil, endpointURL: String? = nil
     ) {
         self.id = id
         self.token = token
@@ -225,6 +257,8 @@ public struct RoomLinkGrant: Hashable, Sendable, Identifiable {
         self.permissions = permissions
         self.issuedAt = issuedAt
         self.expiresAt = expiresAt
+        self.catalog = catalog
+        self.endpointURL = endpointURL
     }
 
     /// Non-secret token rendering (last 6 chars only).
@@ -430,7 +464,7 @@ public struct RoomPromotionReceipt: Hashable, Sendable {
 }
 
 /// Pure promotion-prerequisite check (D19). Upstream gates
-/// (hosted_room_replicas.py promote_replica, 08b140d):
+/// (hosted_room_replicas.py promote_replica; originally 08b140d, re-verified against current upstream main 966637323e 2026-09-08):
 /// - `groups.promote` REQUIRES `confirm: true` (4118 otherwise,
 ///   methods_groups.py:513-515: "promotion requires confirm=true
 ///   acknowledging the previous authority can no longer commit")
@@ -493,6 +527,81 @@ public enum RoomPromotionReadiness: Hashable, Sendable {
     }
 }
 
+// MARK: - Catalog validation (registration fail-closed guard)
+
+/// Structural validation of a RoomLink capability catalog before it is sent
+/// to `groups.peer.register`. Mirrors upstream
+/// `GatewayRoomCatalog.from_mapping` (gateway/hosted_room_peer.py:188-224):
+/// exact required field set, non-empty `protocol_versions`/`link_modes`,
+/// booleans present, a structurally complete `execution_policy`, and the
+/// installation identity taken from the CATALOG (never from a profile name).
+/// Fleet cannot recompute the HMAC digest, so digest equality is checked
+/// only where Fleet holds both sides (advertised vs. carried); upstream
+/// remains the authority on digest correctness.
+public enum RoomLinkCatalogValidation {
+    /// Upstream `_CATALOG_FIELDS` (hosted_room_peer.py:188).
+    public static let requiredFields: Set<String> = [
+        "installation_id", "protocol_versions", "link_modes", "persistent_process",
+        "text", "attachments", "execution_policy", "catalog_digest",
+    ]
+    /// Upstream `RoomExecutionPolicy.from_mapping` field set
+    /// (hosted_room_execution_policy.py: `_POLICY_FIELDS`).
+    public static let policyFields: Set<String> = [
+        "version", "target_profile", "enabled_toolsets", "approval_mode",
+        "max_iterations", "policy_digest",
+    ]
+
+    /// Validate the catalog the grant carried (invite-time) before register.
+    /// Returns a plain-language refusal reason on failure — the caller fails
+    /// closed and never fires the wire call. Structural mirror of upstream
+    /// `GatewayRoomCatalog.from_mapping`: exact required field set, non-empty
+    /// `protocol_versions`/`link_modes`, boolean flags, complete
+    /// `execution_policy`, and an installation identity that is NOT the
+    /// profile name (the known stale-path fabrication).
+    public static func validate(
+        catalog: MetadataValue?, targetProfile: String
+    ) -> String? {
+        guard let catalog, case .object(let fields) = catalog else {
+            return "The invite did not carry the target's capability catalog; refresh the link."
+        }
+        let keys = Set(fields.keys)
+        // `endpoint` is the only optional field upstream (advertised only).
+        let unknown = keys.subtracting(requiredFields.union(["endpoint"]))
+        if !unknown.isEmpty {
+            return "The target capability catalog carries unexpected fields (\(unknown.sorted().joined(separator: ", "))); refresh the link."
+        }
+        let missing = requiredFields.subtracting(keys)
+        if !missing.isEmpty {
+            return "The target capability catalog is incomplete (missing \(missing.sorted().joined(separator: ", "))); refresh the link."
+        }
+        guard case .string(let installationID) = fields["installation_id"],
+              !installationID.isEmpty else {
+            return "The target capability catalog has no installation identity; refresh the link."
+        }
+        if installationID == targetProfile {
+            // The stale manual path populated installation_id from the target
+            // PROFILE — a synthetic identity upstream will reject.
+            return "The capability catalog carries a synthetic installation identity; refresh the link."
+        }
+        guard case .array(let versions) = fields["protocol_versions"],
+              !versions.isEmpty else {
+            return "The target capability catalog advertises no protocol versions; refresh the link."
+        }
+        guard case .array(let modes) = fields["link_modes"], !modes.isEmpty else {
+            return "The target capability catalog advertises no link modes; refresh the link."
+        }
+        guard case .object(let policy) = fields["execution_policy"],
+              Set(policy.keys) == policyFields else {
+            return "The target capability catalog has an incomplete execution policy; refresh the link."
+        }
+        guard case .string(let digest) = fields["catalog_digest"],
+              !digest.isEmpty else {
+            return "The target capability catalog has no catalog digest; refresh the link."
+        }
+        return nil
+    }
+}
+
 // MARK: - Command seam (implemented app-side / FleetNetworking-side)
 
 /// RoomLink operations for one gateway — the exact `groups.peer.*` +
@@ -501,15 +610,17 @@ public enum RoomPromotionReadiness: Hashable, Sendable {
 public protocol RoomLinkCommanding: Sendable {
     /// `groups.capabilities` → negotiated RoomLink truth for this gateway.
     func negotiate() async throws -> RoomLinkNegotiation
-    /// `groups.peer.invite` on the TARGET gateway (mints the scoped grant).
+    /// `groups.peer.invite` on the TARGET gateway (mints the scoped grant —
+    /// the response's full verbatim catalog is captured on the grant).
     func invite(
         roomID: String?, memberID: String?, ttlSeconds: Double
     ) async throws -> RoomLinkGrant
     /// `groups.peer.register` on the room's gateway (publishes the route;
-    /// validates catalog unchanged + grant scope).
+    /// sends the grant's VERBATIM catalog — never a reconstruction; fails
+    /// closed client-side when the catalog is missing/partial/stale).
     func registerPeer(
         roomID: String, memberID: String, grant: RoomLinkGrant,
-        targetURL: String, catalogDigest: String
+        targetURL: String
     ) async throws -> RoomPeerRoute
     /// `groups.peer.revoke`.
     func revoke(grant: RoomLinkGrant) async throws
@@ -517,8 +628,12 @@ public protocol RoomLinkCommanding: Sendable {
     func peerRoutes(roomID: String) async throws -> [RoomPeerRoute]
     /// `groups.replica_state`.
     func replicaState(roomID: String) async throws -> RoomReplicaState?
-    /// `groups.replicate` with the current durable log page.
-    func replicate(roomID: String) async throws -> RoomReplicateReceipt
+    /// The authority replay surface for one room (`groups.state` room row +
+    /// `groups.log` pages) used by manual replication.
+    func roomReplaySource(roomID: String) async throws -> any RoomReplaySourceProviding
+    /// `groups.replicate` sink — VERBATIM page submission on the target
+    /// replica gateway (driven by `RoomReplicator`).
+    func replicateSink() async throws -> any RoomReplicateSink
     /// `groups.promote` — REQUIRES an explicit user confirmation; the seam
     /// must forward `confirm: true` only after the typed confirmation.
     func promote(roomID: String, confirm: Bool) async throws -> RoomPromotionReceipt
