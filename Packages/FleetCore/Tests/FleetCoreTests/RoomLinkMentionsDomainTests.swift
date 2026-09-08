@@ -290,6 +290,11 @@ final class RoomLinkMentionsDomainTests: XCTestCase {
         XCTAssertEqual(
             readiness.confirmationTitle,
             "Take over this room from install:other (epoch 3)?")
+        // SPEC fleet-os §9 Takeover: Fleet must never claim promotion itself
+        // fences/revokes the previous authority — the CALLER asserts the old
+        // writer can no longer commit, and Fleet cannot verify that.
+        XCTAssertTrue(readiness.confirmationMessage.contains("does not fence"))
+        XCTAssertFalse(readiness.confirmationMessage.contains("can no longer commit once you take over"))
 
         // Stale foreign replica → NOT ready (forking hazard).
         let stale = RoomReplicaState(

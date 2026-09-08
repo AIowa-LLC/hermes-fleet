@@ -244,7 +244,7 @@ public final class RoomLinkViewModel {
     /// Static copy for the unconfirmed path — never fabricated from a
     /// synthetic `.ready` value (readiness carries real authority lineage).
     static let unconfirmedPromotionMessage =
-        "Taking over a room needs your explicit confirmation — the previous authority can no longer commit once you take over."
+        "Taking over a room needs your explicit confirmation that the previous authority can no longer commit — promotion does not fence it, and Fleet cannot verify that for you."
 
     static func shortRemaining(_ grant: RoomLinkGrant?) -> String {
         guard let grant else { return "" }

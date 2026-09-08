@@ -330,7 +330,7 @@ final class RoomLinkViewModelTests: XCTestCase {
         XCTAssertTrue(noConfirms.isEmpty)
         XCTAssertEqual(
             vm.errorMessage,
-            "Taking over a room needs your explicit confirmation — the previous authority can no longer commit once you take over.")
+            "Taking over a room needs your explicit confirmation that the previous authority can no longer commit — promotion does not fence it, and Fleet cannot verify that for you.")
 
         // Confirmed → confirm:true on the wire, receipt named.
         let promoted = await vm.promote(confirmed: true)

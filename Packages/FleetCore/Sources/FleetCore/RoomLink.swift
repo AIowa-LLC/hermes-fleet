@@ -516,7 +516,7 @@ public enum RoomPromotionReadiness: Hashable, Sendable {
     public var confirmationMessage: String {
         switch self {
         case .ready:
-            return "Promotion is a takeover: the previous authority can no longer commit once you take over. The room's authority epoch advances by one."
+            return "Promotion does not fence the previous authority. Take over only after you have confirmed the old writer can no longer commit — Fleet cannot verify that for you, and a timeout, disconnect, or Stop is not enough. The room's authority epoch advances by one."
         case .replicaNotCaughtUp(let last, let latest):
             return "This copy is behind (event \(last) of \(latest)) — replay the room first. Promoting a stale copy would fork the room."
         case .authorityAlreadyLocal:
