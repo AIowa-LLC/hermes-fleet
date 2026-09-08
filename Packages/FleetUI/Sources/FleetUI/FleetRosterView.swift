@@ -1,41 +1,46 @@
 import SwiftUI
 import FleetCore
 
-/// Fleet-wide Bots roster — True Bots Mode slice 2 (D02 UI).
+/// Fleet-wide Bots collection — FOS-5 (SPEC §9).
 ///
-/// Shows EVERY registered gateway in per-gateway sections, each with the bots
-/// it reported via `profiles.list` (owning gateway preserved by `Route`).
-/// Partial-outage resilience: a gateway that failed the refresh renders its
-/// classified §13 status as an outage section while reachable gateways' bots
-/// stay visible — the fleet stays useful when partially available.
+/// Shows EVERY registered gateway in per-gateway sections (or the filtered
+/// subset), each with the bots it reported via `profiles.list` (owning
+/// gateway preserved by `Route`).
 ///
-/// Slice 2 layers (pure logic in `BotRosterPresentation`, this view only
-/// renders):
-/// - Activity ordering: pinned first, then botActivitySession recency
-///   (fresher of canonical vs last_session).
-/// - Preview + relative time per row from the activity anchor.
-/// - "Active Now" strip from live activity signals.
-/// - Search across title/slug/route/description/preview/gateway label.
-/// - Hidden bots hidden by default; eye toggle reveals them dimmed.
-/// - User sections inside each gateway (registry order, unassigned last,
-///   no fabricated header) — D10 rendering.
-/// - Duplicate-name "· <gateway>" disambiguation labels.
-/// - Offline-gateway ghost rows retain identity (cached snapshot reuse).
-/// - Rooms: group rows from the landed FleetRoomUnion provider (hosted +
-///   legacy, honest "Managed by Hermes Desktop" labels, distinct rows).
+/// FOS-5 layers on the slice-2 base:
+/// - ONE fleet-wide "Active Now" preview above the groups (§7 execution
+///   definition: working/thinking/using tool ONLY — waiting and
+///   needs-attention stay distinct); the per-gateway strips are gone.
+/// - All gateways filter + All / Bots / Groups scope (`Scope` picker).
+/// - Groups terminology: user-facing "Groups"; "room" stays the internal
+///   identity term (FleetRoom, FleetRoomID unchanged).
+/// - Duplicate-name disambiguation is computed over the WHOLE fleet,
+///   including offline ghosts — not per gateway.
+/// - Ghost rows apply search equally and dim the PORTRAIT, not the text.
+/// - Collapse state is keyed `(GatewayID, SectionID)` — a section id is
+///   unique only inside its registry.
+/// - Partial-outage resilience: a gateway that failed the refresh renders
+///   its classified §13 status as an outage section while reachable
+///   gateways' bots stay visible.
 public struct FleetRosterView: View {
     private let environment: AppEnvironment
     private let gatewayID: GatewayID?
-    private var visibleGateways: [FleetGateway] { environment.gateways.filter { gatewayID == nil || $0.id == gatewayID } }
 
     @State private var searchText = ""
     @State private var revealingHidden = false
     @State private var showingCreate = false
     @State private var sectionsGateway: FleetGateway?
     @State private var createRoomGateway: FleetGateway?
-    /// Slice 8: collapsed section ids (per gateway+section). Search
-    /// temporarily expands everything — collapsing is a browsing aid, never
-    /// a way to lose a search match.
+    /// FOS-5 (SPEC §9): All / Bots / Groups scope over the collection.
+    @State private var scope: BotRosterPresentation.Scope = .all
+    /// FOS-5 (SPEC §9): All-gateways filter (nil) or one gateway. Only
+    /// offered on the fleet-root roster; a pushed per-gateway roster keeps
+    /// its fixed gateway.
+    @State private var gatewayFilter: GatewayID?
+    /// Slice 8 → FOS-5: collapsed section ids keyed GATEWAY+SECTION (SPEC
+    /// §9 — collapse state is keyed by `(GatewayID, SectionID)`, not
+    /// SectionID alone). Search temporarily expands everything — collapsing
+    /// is a browsing aid, never a way to lose a search match.
     @State private var collapsedSections: Set<String> = []
 
     public init(environment: AppEnvironment, gatewayID: GatewayID? = nil) {
@@ -43,9 +48,56 @@ public struct FleetRosterView: View {
         self.gatewayID = gatewayID
     }
 
+    /// The gateways this roster renders: the fixed `gatewayID` when pushed
+    /// (Bots on this Gateway), else the All-gateways filter's selection.
+    private var visibleGateways: [FleetGateway] {
+        let fixed = environment.gateways.filter { gatewayID == nil || $0.id == gatewayID }
+        guard gatewayID == nil, let gatewayFilter else { return fixed }
+        return fixed.filter { $0.id == gatewayFilter }
+    }
+
+    /// FOS-5: filter controls render on the fleet root only.
+    private var showsFilterBar: Bool { gatewayID == nil }
+
     private var hiddenBotsActive: Bool {
         visibleGateways.flatMap { environment.bots(on: $0.id) }
             .contains { environment.botPresence(for: $0.route) != .unreachable && HiddenBotActivity.hasSignal($0) }
+    }
+
+    // MARK: Sections — per-gateway grouping with outage states
+
+    /// Roster sections (bots + outages) for the visible gateways.
+    private var snapshotSections: [RosterSection] {
+        guard let snapshot = environment.rosterSnapshot else { return [] }
+        let visibleIDs = Set(visibleGateways.map(\.id))
+        return Self.sections(from: snapshot, cachedBots: environment.cachedBotsByGateway)
+            .filter { visibleIDs.contains($0.gateway.id) }
+    }
+
+    /// FOS-5: healthy zero-bot gateways that still host Groups get a
+    /// synthetic section so a Groups (or All) scope never hides them.
+    /// (Outage gateways always have a section already; a `.loaded` zero-bot
+    /// gateway is the case this adds.)
+    private var collection: [RosterSection] {
+        var result = snapshotSections
+        guard scope != .bots else { return result }
+        let present = Set(result.map(\.gateway.id))
+        for gateway in visibleGateways where !present.contains(gateway.id) {
+            if !environment.rooms(for: gateway.id).isEmpty {
+                result.append(RosterSection(gateway: gateway, bots: [], outage: nil))
+            }
+        }
+        return result
+    }
+
+    private var renderedBotsExist: Bool {
+        guard scope != .groups else { return false }
+        return snapshotSections.contains { !filteredRows(for: $0).isEmpty }
+    }
+
+    private var renderedRoomsExist: Bool {
+        guard scope != .bots else { return false }
+        return visibleGateways.contains { !filteredRooms(for: $0).isEmpty }
     }
 
     public var body: some View {
@@ -54,7 +106,7 @@ public struct FleetRosterView: View {
                 refreshing
             } else if environment.gateways.isEmpty {
                 emptyFleet
-            } else if sections.isEmpty {
+            } else if !renderedBotsExist && !renderedRoomsExist {
                 noBotsAnywhere
             } else {
                 rosterList
@@ -74,7 +126,9 @@ public struct FleetRosterView: View {
                         Button {
                             createRoomGateway = gateway
                         } label: {
-                            Label("Create Room — \(gateway.displayName)", systemImage: "person.3")
+                            // FOS-5 (SPEC §9): user-facing "Group"; room
+                            // stays the internal identity term.
+                            Label("Create Group — \(gateway.displayName)", systemImage: "person.3")
                         }
                         .disabled(!environment.canCreateRooms(on: gateway.id))
                         .accessibilityIdentifier("fleet.roster.createroom.\(gateway.id.rawValue)")
@@ -120,7 +174,7 @@ public struct FleetRosterView: View {
         .sheet(item: $createRoomGateway) { gateway in
             CreateRoomSheet(environment: environment, gateway: gateway) { _ in }
         }
-        .searchable(text: $searchText, prompt: "Bots, rooms, gateways")
+        .searchable(text: $searchText, prompt: "Bots, groups, gateways")
         .task {
             // Re-render from the latest snapshot on entry (idempotent).
             if environment.rosterSnapshot == nil {
@@ -131,17 +185,18 @@ public struct FleetRosterView: View {
         .accessibilityIdentifier("fleet.roster")
     }
 
-    // MARK: Sections — per-gateway grouping with outage states
-
-    private var sections: [RosterSection] {
-        guard let snapshot = environment.rosterSnapshot else { return [] }
-        return Self.sections(from: snapshot, cachedBots: environment.cachedBotsByGateway).filter { gatewayID == nil || $0.gateway.id == gatewayID }
-    }
-
     private var rosterList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: FleetTheme.spacingLg, pinnedViews: []) {
-                ForEach(sections) { section in
+                if showsFilterBar {
+                    filterBar
+                }
+                // FOS-5: ONE fleet-wide Active Now preview above the groups
+                // (the per-gateway strips are retired — SPEC §9).
+                if scope != .groups {
+                    fleetActiveNowPreview
+                }
+                ForEach(collection) { section in
                     rosterSection(section)
                 }
             }
@@ -151,148 +206,51 @@ public struct FleetRosterView: View {
         .background(FleetTheme.background)
     }
 
-    private func rosterSection(_ section: RosterSection) -> some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            gatewayHeader(section)
-
-            if let (status, detail) = section.outage {
-                outageRow(gateway: section.gateway, status: status, detail: detail)
-                // Ghost rows: a failed refresh still shows the CACHED bots
-                // (identity retained, dimmed) — never a same-name twin.
-                if !section.bots.isEmpty {
-                    Text("Last known bots")
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
-                    ForEach(section.bots) { bot in
-                        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
-                            BotRowView(
-                management: environment.botManagement,
-                                bot: bot,
-                                presence: .unreachable,
-                                anchor: BotRosterPresentation.activityAnchor(for: bot),
-                                duplicateLabel: nil,
-                                dimmed: true
-                            )
-                        }
-                        .buttonStyle(.fleetPressable)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
-                    }
-                }
-            } else {
-                botGroups(for: section)
-                roomsGroup(for: section.gateway)
+    /// FOS-5 (SPEC §9): All gateways filter + All / Bots / Groups scope.
+    private var filterBar: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Picker("Scope", selection: $scope) {
+                Text("All").tag(BotRosterPresentation.Scope.all)
+                Text("Bots").tag(BotRosterPresentation.Scope.bots)
+                Text("Groups").tag(BotRosterPresentation.Scope.groups)
             }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("fleet.roster.scope")
+            Picker("Gateways", selection: $gatewayFilter) {
+                Text("All Gateways").tag(Optional<GatewayID>.none)
+                ForEach(environment.gateways) { gateway in
+                    Text(gateway.displayName).tag(Optional(gateway.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("fleet.roster.gateway-filter")
         }
     }
 
-    /// User-section blocks (D10): registry order; each block a header + rows;
-    /// unassigned last with NO fabricated header; no sections → plain rows.
-    private func botGroups(for section: RosterSection) -> some View {
-        let registry = environment.botManagement.sectionsByGateway[section.gateway.id] ?? []
-        let gatewayLabel = section.gateway.displayName
-        let rows = BotRosterPresentation.filter(
-            BotRosterPresentation.order(section.bots),
-            query: searchText,
-            gatewayLabel: { _ in gatewayLabel },
-            revealingHidden: revealingHidden
-        )
-        let duplicateLabels = BotRosterPresentation.duplicateNameRoutes(
-            BotRosterPresentation.visible(section.bots, revealingHidden: revealingHidden),
-            gatewayLabel: { _ in gatewayLabel }
-        )
-        return VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            activeNowStrip(rows: rows)
-            if BotSectionRegistry.rendersSections(registry) {
-                let blocks = BotSectionRegistry.split(
-                    rows,
-                    sectionID: { $0.botModeMetadata?.sectionID },
-                    sections: registry
-                )
-                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                    if !block.isUnassigned {
-                        sectionHeader(block: block, rowCount: block.rows.count)
-                    }
-                    if !block.isUnassigned && isCollapsed(block) {
-                        // Slice 8: honest collapsed affordance — name the
-                        /// count so a collapsed section never reads as empty.
-                        Text(block.rows.isEmpty ? "No bots" : "\(block.rows.count) bot\(block.rows.count == 1 ? "" : "s")")
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .padding(.leading, FleetTheme.spacingLg)
-                            .accessibilityIdentifier("fleet.roster.section-count.\(block.id ?? "")")
-                    } else {
-                        ForEach(block.rows) { bot in
-                            botRow(bot, duplicateLabels: duplicateLabels, gatewayLabel: gatewayLabel)
-                        }
-                        if !block.isUnassigned && block.rows.isEmpty {
-                            Text("Empty — move bots here from a bot's actions menu.")
-                                .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
-                                .padding(.leading, FleetTheme.spacingLg)
-                                .accessibilityIdentifier("fleet.roster.section-empty.\(block.id ?? "")")
-                        }
-                    }
-                }
-            } else {
-                ForEach(rows) { bot in
-                    botRow(bot, duplicateLabels: duplicateLabels, gatewayLabel: gatewayLabel)
-                }
-            }
-        }
-    }
+    // MARK: Fleet-wide Active Now (SPEC §7 execution definition)
 
-    /// Slice 8: tappable section header — tap toggles collapse. Label names
-    /// the state ("Collapse Research" / "Expand Research") so it is never
-    /// color- or chevron-only. Skipped while searching (all expanded).
-    private func sectionHeader(block: SectionBlock<FleetBot>, rowCount: Int) -> some View {
-        let collapsed = isCollapsed(block)
-        return Button {
-            withAnimation {
-                if collapsed {
-                    collapsedSections.remove(block.id ?? "")
-                } else if let id = block.id {
-                    collapsedSections.insert(id)
-                }
-            }
-        } label: {
-            SectionHeader(title: collapsed ? "\(block.name) — \(rowCount)" : block.name)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("fleet.roster.section.\(block.id ?? "")")
-        .accessibilityLabel(collapsed ? "Expand \(block.name)" : "Collapse \(block.name)")
-    }
-
-    private func isCollapsed(_ block: SectionBlock<FleetBot>) -> Bool {
-        guard let id = block.id else { return false }
-        return searchText.isEmpty && collapsedSections.contains(id)
-    }
-
-    @ViewBuilder
-    private func botRow(
-        _ bot: FleetBot,
-        duplicateLabels: [Route: String],
-        gatewayLabel: String
-    ) -> some View {
-        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
-            BotRowView(
-                management: environment.botManagement,
-                bot: bot,
-                presence: environment.botPresence(for: bot.route),
-                anchor: BotRosterPresentation.activityAnchor(for: bot),
-                duplicateLabel: duplicateLabels[bot.route],
-                dimmed: bot.botModeMetadata?.hidden == true
+    /// Live-signal bots across every VISIBLE gateway (never fabricated;
+    /// `isActiveNow` admits working/thinking/using tool only).
+    private var fleetActiveBots: [FleetBot] {
+        var out: [FleetBot] = []
+        for section in snapshotSections where section.outage == nil {
+            let label = section.gateway.displayName
+            let rows = BotRosterPresentation.filter(
+                BotRosterPresentation.order(section.bots),
+                query: searchText,
+                gatewayLabel: { _ in label },
+                revealingHidden: revealingHidden
             )
+            out += rows.filter(BotRosterPresentation.isActiveNow)
         }
-        .buttonStyle(.fleetPressable)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
+        return out
     }
 
-    /// Active Now strip: live-signal bots (never fabricated).
+    /// One fleet-wide Active Now preview. Provenance (gateway) is always
+    /// displayed here — SPEC §9 row-density rule for fleet-wide surfaces.
     @ViewBuilder
-    private func activeNowStrip(rows: [FleetBot]) -> some View {
-        let active = rows.filter(BotRosterPresentation.isActiveNow)
+    private var fleetActiveNowPreview: some View {
+        let active = fleetActiveBots
         if !active.isEmpty {
             VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                 SectionHeader(title: "Active Now")
@@ -305,7 +263,7 @@ public struct FleetRosterView: View {
                                     Circle()
                                         .fill(FleetTheme.statusOnline)
                                         .frame(width: 8, height: 8)
-                                    Text(BotRosterPresentation.displayTitle(for: bot))
+                                    Text("\(BotRosterPresentation.displayTitle(for: bot)) · \(gatewayLabel(for: bot)) · \(activeStateText(bot))")
                                         .font(.footnote.weight(.semibold))
                                         .foregroundStyle(FleetTheme.textPrimary)
                                         .lineLimit(1)
@@ -325,15 +283,203 @@ public struct FleetRosterView: View {
         }
     }
 
-    /// Rooms group: rows from the room union (hosted + desktop legacy).
+    private func gatewayLabel(for bot: FleetBot) -> String {
+        environment.gateway(for: bot.route.gatewayID)?.displayName ?? bot.route.gatewayID.rawValue
+    }
+
+    /// §7 execution labels only — the same states that admit a bot into
+    /// the preview. Waiting/needs-attention never render here.
+    private func activeStateText(_ bot: FleetBot) -> String {
+        switch bot.activity {
+        case .working: return "Working"
+        case .thinking: return "Thinking"
+        case .usingTool: return "Using tool"
+        default: return "Active"
+        }
+    }
+
+    // MARK: Per-gateway sections
+
+    private func rosterSection(_ section: RosterSection) -> some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            gatewayHeader(section)
+
+            if let (status, detail) = section.outage {
+                outageRow(gateway: section.gateway, status: status, detail: detail)
+                // Ghost rows: a failed refresh still shows the CACHED bots
+                // (identity retained, dimmed) — never a same-name twin.
+                // FOS-5: search applies to the ghost branch equally, and
+                // the PORTRAIT dims — not the text.
+                let ghosts = filteredGhosts(for: section)
+                if !ghosts.isEmpty {
+                    Text("Last known bots")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                    ForEach(ghosts) { bot in
+                        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+                            BotRowView(
+                                management: environment.botManagement,
+                                bot: bot,
+                                presence: .unreachable,
+                                anchor: BotRosterPresentation.activityAnchor(for: bot),
+                                duplicateLabel: fleetDuplicateLabels[bot.route],
+                                dim: .portrait
+                            )
+                        }
+                        .buttonStyle(.fleetPressable)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
+                    }
+                }
+            } else {
+                if scope != .groups {
+                    botGroups(for: section)
+                }
+                if scope != .bots {
+                    roomsGroup(for: section.gateway)
+                }
+            }
+        }
+    }
+
+    /// Search + hidden rules applied to a section's cached ghost bots.
+    private func filteredGhosts(for section: RosterSection) -> [FleetBot] {
+        let label = section.gateway.displayName
+        return BotRosterPresentation.filter(
+            BotRosterPresentation.order(section.bots),
+            query: searchText,
+            gatewayLabel: { _ in label },
+            revealingHidden: revealingHidden
+        )
+    }
+
+    /// Search-filtered visible rows for a healthy section.
+    private func filteredRows(for section: RosterSection) -> [FleetBot] {
+        let label = section.gateway.displayName
+        return BotRosterPresentation.filter(
+            BotRosterPresentation.order(section.bots),
+            query: searchText,
+            gatewayLabel: { _ in label },
+            revealingHidden: revealingHidden
+        )
+    }
+
+    /// FOS-5 (SPEC §9): duplicate-name disambiguation over the WHOLE fleet
+    /// — live rows AND offline ghosts — so the same display title on two
+    /// machines is labeled even when one is a ghost.
+    private var fleetDuplicateLabels: [Route: String] {
+        var bots: [FleetBot] = []
+        for section in snapshotSections {
+            bots += BotRosterPresentation.visible(section.bots, revealingHidden: revealingHidden)
+        }
+        return BotRosterPresentation.duplicateNameRoutes(bots) { id in
+            environment.gateway(for: id)?.displayName ?? id.rawValue
+        }
+    }
+
+    /// User-section blocks (D10): registry order; each block a header + rows;
+    /// unassigned last with NO fabricated header; no sections → plain rows.
+    private func botGroups(for section: RosterSection) -> some View {
+        let registry = environment.botManagement.sectionsByGateway[section.gateway.id] ?? []
+        let gatewayLabel = section.gateway.displayName
+        let rows = filteredRows(for: section)
+        return VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            if BotSectionRegistry.rendersSections(registry) {
+                let blocks = BotSectionRegistry.split(
+                    rows,
+                    sectionID: { $0.botModeMetadata?.sectionID },
+                    sections: registry
+                )
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    if !block.isUnassigned {
+                        sectionHeader(block: block, gateway: section.gateway, rowCount: block.rows.count)
+                    }
+                    if !block.isUnassigned && isCollapsed(block, gateway: section.gateway) {
+                        // Slice 8: honest collapsed affordance — name the
+                        /// count so a collapsed section never reads as empty.
+                        Text(block.rows.isEmpty ? "No bots" : "\(block.rows.count) bot\(block.rows.count == 1 ? "" : "s")")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .padding(.leading, FleetTheme.spacingLg)
+                            .accessibilityIdentifier("fleet.roster.section-count.\(block.id ?? "")")
+                    } else {
+                        ForEach(block.rows) { bot in
+                            botRow(bot, gatewayLabel: gatewayLabel)
+                        }
+                        if !block.isUnassigned && block.rows.isEmpty {
+                            Text("Empty — move bots here from a bot's actions menu.")
+                                .font(FleetTheme.monoCaptionFont)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .padding(.leading, FleetTheme.spacingLg)
+                                .accessibilityIdentifier("fleet.roster.section-empty.\(block.id ?? "")")
+                        }
+                    }
+                }
+            } else {
+                ForEach(rows) { bot in
+                    botRow(bot, gatewayLabel: gatewayLabel)
+                }
+            }
+        }
+    }
+
+    /// Slice 8 → FOS-5: tappable section header — tap toggles collapse.
+    /// Label names the state ("Collapse Research" / "Expand Research") so it
+    /// is never color- or chevron-only. Skipped while searching (all
+    /// expanded).
+    private func sectionHeader(block: SectionBlock<FleetBot>, gateway: FleetGateway, rowCount: Int) -> some View {
+        let collapsed = isCollapsed(block, gateway: gateway)
+        return Button {
+            withAnimation {
+                if collapsed {
+                    collapsedSections.remove(Self.collapseKey(gateway.id, block.id ?? ""))
+                } else if let id = block.id {
+                    collapsedSections.insert(Self.collapseKey(gateway.id, id))
+                }
+            }
+        } label: {
+            SectionHeader(title: collapsed ? "\(block.name) — \(rowCount)" : block.name)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("fleet.roster.section.\(block.id ?? "")")
+        .accessibilityLabel(collapsed ? "Expand \(block.name)" : "Collapse \(block.name)")
+    }
+
+    /// FOS-5 (SPEC §9): collapse state is keyed (GatewayID, SectionID) —
+    /// section ids are unique only inside their own gateway's registry.
+    static func collapseKey(_ gatewayID: GatewayID, _ sectionID: String) -> String {
+        "\(gatewayID.rawValue)|\(sectionID)"
+    }
+
+    private func isCollapsed(_ block: SectionBlock<FleetBot>, gateway: FleetGateway) -> Bool {
+        guard let id = block.id else { return false }
+        return searchText.isEmpty && collapsedSections.contains(Self.collapseKey(gateway.id, id))
+    }
+
+    @ViewBuilder
+    private func botRow(_ bot: FleetBot, gatewayLabel: String) -> some View {
+        NavigationLink(value: FleetScreen.botDetail(bot.route)) {
+            BotRowView(
+                management: environment.botManagement,
+                bot: bot,
+                presence: environment.botPresence(for: bot.route),
+                anchor: BotRosterPresentation.activityAnchor(for: bot),
+                duplicateLabel: fleetDuplicateLabels[bot.route],
+                dim: bot.botModeMetadata?.hidden == true ? .row : .none
+            )
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.roster.row.\(bot.route.id)")
+    }
+
+    /// Groups (FOS-5 terminology; internal identity stays "room"): rows
+    /// from the room union (hosted + desktop legacy).
     @ViewBuilder
     private func roomsGroup(for gateway: FleetGateway) -> some View {
-        let rooms = environment.rooms(for: gateway.id)
-        let visible = searchText.isEmpty
-            ? rooms
-            : rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        let visible = filteredRooms(for: gateway)
         if !visible.isEmpty {
-            SectionHeader(title: "Rooms")
+            SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
             ForEach(visible) { room in
                 NavigationLink(value: FleetScreen.room(room.id)) {
@@ -344,6 +490,12 @@ public struct FleetRosterView: View {
                 .accessibilityIdentifier("fleet.room.row.\(room.id.key)")
             }
         }
+    }
+
+    private func filteredRooms(for gateway: FleetGateway) -> [FleetRoom] {
+        let rooms = environment.rooms(for: gateway.id)
+        guard !searchText.isEmpty else { return rooms }
+        return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
     private func gatewayHeader(_ section: RosterSection) -> some View {
@@ -491,21 +643,31 @@ public struct FleetRosterView: View {
     }
 }
 
+/// How a bot row dims: ghosts dim ONLY the portrait (identity stays
+/// readable — SPEC §9); revealed hidden bots dim the whole row (existing
+/// presentation signal).
+enum BotRowDim {
+    case none
+    case portrait
+    case row
+}
+
 /// A bot row (slice 2 anatomy): avatar | title (+dup label) + preview/time |
-/// status pill; dimmed when hidden-revealed or a ghost.
+/// status pill. Ghost rows dim the portrait, not the text; hidden-revealed
+/// rows dim the whole row.
 struct BotRowView: View {
     let management: BotManagementController
     let bot: FleetBot
     let presence: BotPresence
     let anchor: BotRosterPresentation.ActivityAnchor
     let duplicateLabel: String?
-    let dimmed: Bool
+    var dim: BotRowDim = .none
 
     var body: some View {
         FleetCard {
             HStack(spacing: FleetTheme.spacingMd) {
                 BotAvatar(bot: bot, management: management)
-                    .opacity(dimmed ? 0.4 : 1)
+                    .opacity(dim == .portrait ? 0.4 : (dim == .row ? 0.4 : 1))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text(BotRosterPresentation.displayTitle(for: bot))
@@ -547,7 +709,7 @@ struct BotRowView: View {
                 Spacer()
                 StatusPill(status: FleetStatus(activity: bot.activity, presence: presence))
             }
-            .opacity(dimmed ? 0.55 : 1)
+            .opacity(dim == .row ? 0.55 : 1)
         }
         .accessibilityElement(children: .combine)
     }
@@ -564,8 +726,9 @@ struct BotRowView: View {
     }
 }
 
-/// A room row: name, last speaker + preview, provenance label for legacy
-/// rooms, needs-attention badge only from real capability state.
+/// A Group row (internal identity: room): name, member/preview line,
+/// provenance label for legacy rows, read-only badge only from real
+/// capability state.
 struct RoomRowView: View {
     let room: FleetRoom
 
@@ -583,7 +746,7 @@ struct RoomRowView: View {
                             Image(systemName: "lock.fill")
                                 .font(.caption2)
                                 .foregroundStyle(FleetTheme.textSecondary)
-                                .accessibilityLabel("Managed by Hermes Desktop, read-only")
+                                .accessibilityLabel("Managed by Hermes Desktop · read only")
                         }
                     }
                     if let last = room.recentLog.last {
@@ -599,7 +762,8 @@ struct RoomRowView: View {
                             .lineLimit(1)
                     }
                     if room.isManagedByDesktop {
-                        Text("Managed by Hermes Desktop")
+                        // FOS-5 (SPEC §9): legacy rows say exactly this.
+                        Text("Managed by Hermes Desktop · Read only")
                             .font(FleetTheme.monoCaptionFont)
                             .foregroundStyle(FleetTheme.textSecondary)
                     }
@@ -611,7 +775,7 @@ struct RoomRowView: View {
     }
 }
 
-/// Composite room avatar: up to 4 member initials in a 2×2 grid.
+/// Composite group avatar: up to 4 member initials in a 2×2 grid.
 struct RoomAvatar: View {
     let members: [String]
 

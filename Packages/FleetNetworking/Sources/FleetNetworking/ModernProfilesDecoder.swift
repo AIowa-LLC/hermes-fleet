@@ -54,6 +54,9 @@ public enum ModernProfilesDecoder {
     }
 
     /// last_session row: `{id, title, preview, started_at, last_active, message_count}`.
+    /// FOS-5 (SPEC §10): `last_active` is decoded and preserved (0 when the
+    /// gateway omits it) so a later ranking upgrade can consume it — current
+    /// sort semantics remain `startedAt`-based.
     static func decodeLegacySession(_ json: JSONValue?) -> SessionSummary? {
         guard let o = json?.objectValue,
               let id = o["id"]?.stringValue, !id.isEmpty else { return nil }
@@ -62,6 +65,7 @@ public enum ModernProfilesDecoder {
             title: o["title"]?.stringValue ?? "",
             preview: o["preview"]?.stringValue ?? "",
             startedAt: o["started_at"]?.numberValue ?? 0,
+            lastActive: o["last_active"]?.numberValue ?? 0,
             messageCount: o["message_count"]?.numberValue.map(Int.init) ?? 0,
             source: nil
         )

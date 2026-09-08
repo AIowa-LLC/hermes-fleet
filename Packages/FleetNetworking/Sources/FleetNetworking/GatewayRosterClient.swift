@@ -86,6 +86,7 @@ public struct GatewayRosterClient: RosterProviding {
             title: object["title"]?.stringValue ?? "",
             preview: object["preview"]?.stringValue ?? "",
             startedAt: object["started_at"]?.numberValue ?? 0,
+            lastActive: object["last_active"]?.numberValue ?? 0,
             messageCount: object["message_count"]?.numberValue.map(Int.init) ?? 0,
             source: object["source"]?.stringValue
         )

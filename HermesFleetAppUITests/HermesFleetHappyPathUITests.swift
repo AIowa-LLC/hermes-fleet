@@ -114,11 +114,16 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),
                       "Render Box should expose its Default bot")
         tap(firstMatch(in: app, identifier: "fleet.roster.row.render-box#default"))
+        // FOS-5: the compact header shows title + friendly gateway; the
+        // canonical route lives in the Configuration segment's identity card.
+        let config = app.buttons["Configuration"].firstMatch
+        XCTAssertTrue(config.waitForExistence(timeout: 10), "Configuration segment must exist")
+        config.tap()
         let gamingRoute = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", "render-box#default"))
             .firstMatch
         XCTAssertTrue(gamingRoute.waitForExistence(timeout: 10),
-                      "Bot detail should show the canonical Render Box route")
+                      "Bot detail Configuration must show the canonical Render Box route")
     }
 
     // MARK: - Helpers

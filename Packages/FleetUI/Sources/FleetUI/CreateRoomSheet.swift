@@ -57,10 +57,12 @@ public struct CreateRoomSheet: View {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingLg) {
                     FleetCard {
                         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                            Label("New Room", systemImage: "person.3")
+                            // FOS-5 (SPEC §9): user-facing "Group"; room
+                            // stays the internal identity term.
+                            Label("New Group", systemImage: "person.3")
                                 .font(.subheadline.weight(.bold))
                                 .foregroundStyle(FleetTheme.textPrimary)
-                            TextField("Room name", text: $draft.name)
+                            TextField("Group name", text: $draft.name)
                                 .textFieldStyle(.roundedBorder)
                                 .accessibilityIdentifier("fleet.room.create.name")
                             Text("Hosted by \(gateway.displayName) — 2 to 6 members, frozen roster.")
@@ -128,7 +130,7 @@ public struct CreateRoomSheet: View {
             .background(FleetTheme.background.ignoresSafeArea())
             .searchable(text: $searchText, prompt: "Bots on \(gateway.displayName)")
             .task { compatibleGateways = await environment.compatibleRoomGateways(homeID: gateway.id) }
-            .navigationTitle("Create Room")
+            .navigationTitle("Create Group")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -138,7 +140,7 @@ public struct CreateRoomSheet: View {
                     Button {
                         Task { await submit() }
                     } label: {
-                        if isSubmitting { ProgressView() } else { Text("Create") }
+                        if isSubmitting { ProgressView() } else { Text("Create Group") }
                     }
                     .disabled(!draft.canSubmit || isSubmitting)
                     .accessibilityIdentifier("fleet.room.create.submit")

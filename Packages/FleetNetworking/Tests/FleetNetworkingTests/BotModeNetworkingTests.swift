@@ -90,6 +90,21 @@ final class BotModeNetworkingTests: XCTestCase {
         // Unknown keys retained:
         XCTAssertEqual(p.botModeMetadata?.unknownKeys["futureField"], .object(["nested": .bool(true)]))
         XCTAssertTrue(p.hasAvatar)
+        // FOS-5 (SPEC §10): last_session.last_active decoded and preserved
+        // (previously dropped) — ranking can upgrade to it later.
+        XCTAssertEqual(p.lastSession?.lastActive, 1_700_000_500)
+        XCTAssertEqual(p.lastSession?.startedAt, 1_700_000_000)
+    }
+
+    func testOlderGatewayLastSessionWithoutLastActiveDecodesZero() throws {
+        // An older gateway's last_session carries no last_active — the
+        // field decodes as 0 (unknown), never fabricated.
+        let older = #"{"profiles":[{"name":"default","last_session":{"id":"l1","title":"t","preview":"p","started_at":5,"message_count":1}}]}"#
+        let json = try JSONDecoder().decode(JSONValue.self, from: Data(older.utf8))
+        let decoded = try ModernProfilesDecoder.decode(json)
+        let p = try XCTUnwrap(decoded.profiles.first)
+        XCTAssertEqual(p.lastSession?.lastActive, 0)
+        XCTAssertEqual(p.lastSession?.startedAt, 5)
     }
 
     func testOlderGatewayOmitsGracefully() throws {

@@ -72,6 +72,11 @@ final class BotRosterSlice2UITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.tap()
 
+        // FOS-5: Edit lives in the Configuration segment.
+        let config = app.buttons["Configuration"].firstMatch
+        XCTAssertTrue(config.waitForExistence(timeout: 8), "Configuration segment must exist")
+        config.tap()
+
         // Edit affordance present on a reachable gateway.
         XCTAssertTrue(
             app.descendants(matching: .any)["fleet.bot-detail.edit"]

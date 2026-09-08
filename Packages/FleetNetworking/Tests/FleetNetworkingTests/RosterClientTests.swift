@@ -275,7 +275,7 @@ final class RosterClientTests: XCTestCase {
                     return [Self.responseFrame(
                         id: id,
                         result: ["sessions": [
-                            ["id": "s1", "title": "hi", "preview": "", "started_at": 1, "message_count": 2, "source": "tui"]
+                            ["id": "s1", "title": "hi", "preview": "", "started_at": 1, "last_active": 99, "message_count": 2, "source": "tui"]
                         ]])]
                 }
                 return []
@@ -296,6 +296,8 @@ final class RosterClientTests: XCTestCase {
         let sessions = try await client.fetchSessions(for: route, limit: 50)
         XCTAssertEqual(sessions.count, 1)
         XCTAssertEqual(sessions[0].id, "s1")
+        // FOS-5 (SPEC §10): session.list last_active decoded and preserved.
+        XCTAssertEqual(sessions[0].lastActive, 99)
 
         XCTAssertEqual(captured.profile, "researcher", "session.list must be scoped to the route's profile slug")
         XCTAssertEqual(captured.limit, 50)

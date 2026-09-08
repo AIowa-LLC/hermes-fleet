@@ -223,12 +223,16 @@ public final class BotRoutinesViewModel {
 public struct BotRoutinesView: View {
     private let environment: AppEnvironment
     private let route: Route
+    /// FOS-5: when embedded as Bot Detail's Routines segment, the view
+    /// suppresses its own navigation title (the detail screen owns it).
+    private let embedded: Bool
     @State private var model: BotRoutinesViewModel?
     @State private var isShowingForm = false
 
-    public init(environment: AppEnvironment, route: Route) {
+    public init(environment: AppEnvironment, route: Route, embedded: Bool = false) {
         self.environment = environment
         self.route = route
+        self.embedded = embedded
     }
 
     public var body: some View {
@@ -240,8 +244,8 @@ public struct BotRoutinesView: View {
             }
         }
         .background(FleetTheme.background)
-        .navigationTitle("Routines")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(embedded ? "" : "Routines")
+        .navigationBarTitleDisplayMode(embedded ? .inline : .automatic)
         .task {
             await bindModel()
         }
@@ -270,7 +274,10 @@ public struct BotRoutinesView: View {
 
     @ViewBuilder
     private func routinesContent(_ model: BotRoutinesViewModel) -> some View {
-        List {
+        // FOS-5: a Lazy stack (not a lazy List) — embedded inside Bot
+        // Detail's outer ScrollView a nested List never materializes rows
+        // below the fold for accessibility. Identifiers are unchanged.
+        LazyVStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             if model.isLoading && model.routines.isEmpty {
                 loadingRow
             } else if let error = model.errorMessage, model.routines.isEmpty {
@@ -285,21 +292,12 @@ public struct BotRoutinesView: View {
                 }
                 ForEach(model.routines) { routine in
                     routineRow(routine, model: model)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .listRowInsets(EdgeInsets(
-                            top: FleetTheme.spacingXs,
-                            leading: FleetTheme.spacingLg,
-                            bottom: FleetTheme.spacingXs,
-                            trailing: FleetTheme.spacingLg))
+                        .padding(.horizontal, FleetTheme.spacingLg)
+                        .padding(.vertical, FleetTheme.spacingXs)
                 }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .refreshable {
-            await model.refresh()
-        }
+        .padding(.vertical, FleetTheme.spacingSm)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -414,23 +412,10 @@ public struct BotRoutinesView: View {
                 .accessibilityIdentifier("routines.row.menu.\(routine.jobID)")
             }
         }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button {
-                Task { await model.setRoutine(routine, enabled: !routine.isEnabled) }
-            } label: {
-                Label(routine.isEnabled ? "Pause" : "Resume",
-                      systemImage: routine.isEnabled ? "pause.circle" : "arrow.up.circle")
-            }
-            .tint(routine.isEnabled ? FleetTheme.statusIdle : FleetTheme.statusOnline)
-            .accessibilityIdentifier("routines.swipe.toggle.\(routine.jobID)")
-
-            Button(role: .destructive) {
-                model.requestRemoval(of: routine)
-            } label: {
-                Label("Remove", systemImage: "trash")
-            }
-            .accessibilityIdentifier("routines.swipe.remove.\(routine.jobID)")
-        }
+        // FOS-5: the trailing swipeActions were removed — embedded in Bot
+        // Detail's segment the List no longer owns scrolling, so swipes
+        // could not activate; the row menu carries the identical
+        // Pause/Resume/Remove actions with the same identifiers.
     }
 
     @ViewBuilder

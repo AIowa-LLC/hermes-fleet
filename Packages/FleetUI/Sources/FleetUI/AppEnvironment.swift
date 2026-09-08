@@ -181,6 +181,8 @@ public final class AppEnvironment {
     /// originates outside the view tree (the canonical Bot Chat open).
     /// FleetTabView observes this and appends it to the active tab's path.
     public internal(set) var pendingBotChatNavigation: FleetScreen?
+    /// FOS-5: one-shot screen push request (consumed by the shell).
+    public internal(set) var pendingScreenNavigation: FleetScreen?
 
     /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
     /// avatar/sections) over the per-gateway seam.
@@ -228,6 +230,13 @@ public final class AppEnvironment {
     public func openBotChat(route: Route, sessionID: String) {
         pendingBotChatNavigation = .conversation(route, sessionID: sessionID, canonical: true)
         canonicalOpenIDs[route] = sessionID
+    }
+
+    /// FOS-5 (SPEC §10 Compose): request a screen push from anywhere in the
+    /// app (sheet-origin navigation that cannot embed a NavigationLink). The
+    /// shell observes this and opens the destination on the OWNING tab.
+    public func requestScreen(_ screen: FleetScreen) {
+        pendingScreenNavigation = screen
     }
 
     /// D03: whether (route, sessionID) is the canonical "Bot Chat" for the
@@ -489,11 +498,17 @@ public final class AppEnvironment {
         }
         // Slice 2: cache each SUCCESSFUL gateway's bots for offline-ghost
         // rendering on later failed refreshes (identity retained).
+        // FOS-5 (SPEC §9): a SUCCESSFUL refresh that reports ZERO bots clears
+        // that gateway's ghost cache — a failing-to-clear cache would
+        // resurrect deleted bots on a later outage. Empty is authoritative
+        // when the gateway answered.
         for gateway in snapshot.roster.allGateways {
             if case .loaded = snapshot.outcome(for: gateway.id) {
                 let bots = snapshot.bots(on: gateway.id)
                 if !bots.isEmpty {
                     cachedBotsByGateway[gateway.id] = bots
+                } else {
+                    cachedBotsByGateway[gateway.id] = nil
                 }
             }
         }
@@ -875,6 +890,24 @@ public final class AppEnvironment {
     /// The single bot for an exact route, or nil (fail closed).
     public func bot(for route: Route) -> FleetBot? {
         rosterSnapshot?.bot(for: route)
+    }
+
+    /// FOS-5 (SPEC §9 ghosts): the bot for an exact route from EITHER the
+    /// live roster or the offline-ghost cache. A ghost (owning gateway
+    /// failed its refresh) retains identity and opens the snapshot inspector
+    /// + cached sessions — `nil` here is what made a ghost row dead-end at
+    /// "Bot Unavailable". Never a name fallback: the exact Route is required.
+    public func botIncludingGhost(for route: Route) -> FleetBot? {
+        if let live = rosterSnapshot?.bot(for: route) { return live }
+        return cachedBotsByGateway[route.gatewayID]?.first { $0.route == route }
+    }
+
+    /// Whether `route` currently resolves ONLY through the ghost cache (the
+    /// owning gateway failed its latest refresh) — drives the snapshot
+    /// inspector presentation in Bot Detail.
+    public func isGhostRoute(_ route: Route) -> Bool {
+        guard rosterSnapshot?.bot(for: route) == nil else { return false }
+        return cachedBotsByGateway[route.gatewayID]?.contains { $0.route == route } == true
     }
 
     /// P0-7 multiplexer presence for one bot route, from the latest roster

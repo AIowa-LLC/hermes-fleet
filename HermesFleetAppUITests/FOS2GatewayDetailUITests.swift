@@ -172,6 +172,10 @@ final class FOS2GatewayDetailUITests: XCTestCase {
         UITabNavigation.openGatewayBots(app)
         tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#researcher"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
+        // FOS-5: Skills lives in Bot Detail's Configuration segment.
+        let config = app.buttons["Configuration"].firstMatch
+        XCTAssertTrue(config.waitForExistence(timeout: 10), "Configuration segment must exist")
+        config.tap()
 
         // Skills from Bot Detail carries the Route — NO chooser.
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.skills"))

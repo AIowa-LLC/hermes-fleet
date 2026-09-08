@@ -42,13 +42,16 @@ final class BotRoutinesUITests: XCTestCase {
         add(attachment)
     }
 
-    /// Gateways → Workstation → researcher bot → Routines.
+    /// Gateways → Workstation → researcher bot → Routines (FOS-5: a Bot
+    /// Detail SEGMENT, tapped via the segmented control).
     private func openResearcherRoutines(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         UITabNavigation.openGatewayBots(app)
         tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#researcher"))
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.routines"))
+        let segment = app.buttons["Routines"].firstMatch
+        XCTAssertTrue(segment.waitForExistence(timeout: 10), "Routines segment must exist")
+        segment.tap()
     }
 
     func testRoutinesListOnlyThisBotsNamespacedJobs() throws {
@@ -87,7 +90,10 @@ final class BotRoutinesUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
         UITabNavigation.openGatewayBots(app)
         tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.routines"))
+        // FOS-5: Routines is a Bot Detail segment now.
+        let segment = app.buttons["Routines"].firstMatch
+        XCTAssertTrue(segment.waitForExistence(timeout: 10), "Routines segment must exist")
+        segment.tap()
 
         let failure = firstMatch(in: app, identifier: "routines.row.failure.script-routine-3")
         XCTAssertTrue(failure.waitForExistence(timeout: 15),

@@ -228,9 +228,9 @@ final class RoomChatUITests: XCTestCase {
             app.descendants(matching: .any)["fleet.roster.row.workstation#researcher"]
                 .waitForExistence(timeout: 10))
 
-        // Manage menu → Create Room — Workstation.
+        // Manage menu → Create Group — Workstation (FOS-5 terminology).
         app.descendants(matching: .any)["fleet.roster.manage"].firstMatch.tap()
-        let createRoom = app.buttons["Create Room — Workstation"]
+        let createRoom = app.buttons["Create Group — Workstation"]
         XCTAssertTrue(createRoom.waitForExistence(timeout: 5), "create-room menu entry renders")
         XCTAssertTrue(createRoom.isEnabled, "create-room enabled on capable gateway")
         createRoom.tap()

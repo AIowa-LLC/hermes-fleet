@@ -81,21 +81,21 @@ final class U5BotDetailUITests: XCTestCase {
         let header = firstMatch(in: app, identifier: "fleet.bot-detail.header")
         XCTAssertTrue(header.waitForExistence(timeout: 10),
                       "bot detail must render the U5 header card")
-        // The header combines its children: name + canonical route both
-        // merge into the header's own accessibility label.
+        // FOS-5 compact header: preferred title text + friendly gateway.
+        // (The header card uses .contain so inner action identifiers stay
+        // addressable — assert on the title text itself.)
         XCTAssertTrue(
-            header.label.contains("workstation#default"),
-            "the header must show the canonical route (label: \(header.label))"
+            app.staticTexts["Default"].firstMatch.exists,
+            "the header must show the bot's title"
         )
 
-        // Segmented control with exactly Chat + Details. Segmented Picker
-        // segments expose either as top-level buttons or under the
-        // segmented-control element depending on iOS version — probe both.
+        // FOS-5 segmented control: Conversations / Routines / Configuration.
         let segment = firstMatch(in: app, identifier: "fleet.bot-detail.segment")
         XCTAssertTrue(segment.waitForExistence(timeout: 10),
                       "bot detail must render the segmented control")
-        XCTAssertTrue(segmentButton(app, "Conversations").exists, "Chat segment must exist")
-        XCTAssertTrue(segmentButton(app, "Overview").exists, "Details segment must exist")
+        XCTAssertTrue(segmentButton(app, "Conversations").exists, "Conversations segment must exist")
+        XCTAssertTrue(segmentButton(app, "Routines").exists, "Routines segment must exist")
+        XCTAssertTrue(segmentButton(app, "Configuration").exists, "Configuration segment must exist")
         XCTAssertFalse(segmentButton(app, "Metrics").exists,
                        "Metrics must be OMITTED (no real per-bot metrics data)")
 
@@ -119,8 +119,9 @@ final class U5BotDetailUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10))
 
-        // Switch to Details: the identity card renders.
-        segmentButton(app, "Overview").tap()
+        // Switch to Configuration: the identity card renders (FOS-5: the
+        // Details segment became Configuration).
+        segmentButton(app, "Configuration").tap()
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.route").waitForExistence(timeout: 10),
             "the Details segment must render the identity card"

@@ -11,13 +11,17 @@ import FleetCore
 public struct BotChatOpenButton: View {
     private let environment: AppEnvironment
     private let bot: FleetBot
+    /// FOS-5: an offline ghost cannot authorize a canonical open — the
+    /// owning gateway must be reachable to resolve the registry target.
+    private let externallyDisabled: Bool
 
     @State private var isResolving = false
     @State private var failureMessage: String?
 
-    public init(environment: AppEnvironment, bot: FleetBot) {
+    public init(environment: AppEnvironment, bot: FleetBot, disabled: Bool = false) {
         self.environment = environment
         self.bot = bot
+        self.externallyDisabled = disabled
     }
 
     public var body: some View {
@@ -46,7 +50,7 @@ public struct BotChatOpenButton: View {
                 .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusRow, style: .continuous))
             }
             .buttonStyle(FleetPressableStyle())
-            .disabled(isResolving)
+            .disabled(isResolving || externallyDisabled)
             .accessibilityIdentifier("fleet.bot-chat.open")
 
             if let failureMessage {

@@ -8,30 +8,108 @@ struct FleetChatEntry: Identifiable {
     var id: String { "\(route.id)/\(session.id)" }
 }
 
+/// FOS-5 (SPEC §10) Compose: a source-qualified Bot chooser — every roster
+/// bot carries its owning gateway; picking one + explicit Create opens an
+/// ordinary session on THAT bot's route. Never a silent first gateway.
+struct ComposeBotPickerSheet: View {
+    let environment: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var candidates: [(bot: FleetBot, gatewayName: String)] {
+        environment.rosterSnapshot?.roster.allBots
+            .compactMap { bot in
+                guard let gateway = environment.gateway(for: bot.route.gatewayID) else { return nil }
+                return (bot, gateway.displayName)
+            }
+            .filter { query.isEmpty || "\($0.bot.displayName) \($0.bot.route.profileSlug.rawValue) \($0.gatewayName)".localizedCaseInsensitiveContains(query) }
+            .sorted { $0.bot.route.id < $1.bot.route.id } ?? []
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(candidates, id: \.bot.route.id) { candidate in
+                Button {
+                    // Explicit Create: ordinary session (canonical: false),
+                    // exact source-qualified route.
+                    environment.requestScreen(
+                        .conversation(candidate.bot.route, sessionID: nil, canonical: false))
+                    dismiss()
+                } label: {
+                    HStack(spacing: FleetTheme.spacingMd) {
+                        BotAvatar(bot: candidate.bot, management: environment.botManagement)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(candidate.bot.displayName)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(FleetTheme.textPrimary)
+                            Text("\(candidate.bot.route.profileSlug.rawValue) · \(candidate.gatewayName)")
+                                .font(.caption)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                        }
+                    }
+                }
+                .accessibilityIdentifier("fleet.chats.compose.bot.\(candidate.bot.route.id)")
+                }
+            }
+            .searchable(text: $query, prompt: "Bots across every gateway")
+            .navigationTitle("New Conversation")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .scrollContentBackground(.hidden).background(FleetTheme.background)
+        }
+        .accessibilityIdentifier("fleet.chats.compose")
+    }
+}
+
 struct FleetChatsView: View {
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
+    @State private var showingCompose = false
 
+    /// FOS-5 (SPEC §10): entries retained during a gateway outage even when
+    /// the live roster no longer contains that Route — the ENTRY keeps its
+    /// source identity (Route), never a name fallback. `sessionsByRoute`
+    /// persists across refreshes (it is replaced only by a successful read),
+    /// so loaded conversations survive the outage; the roster lookup moves
+    /// from a hard requirement to a display-name enrichment.
     private var entries: [FleetChatEntry] {
         environment.sessionsByRoute.flatMap { route, sessions in
             sessions.filter { !environment.isCanonicalBotChat(route: route, sessionID: $0.id) }
                 .map { FleetChatEntry(route: route, session: $0) }
         }.filter { entry in
             environment.gateway(for: entry.route.gatewayID) != nil &&
-            environment.bot(for: entry.route) != nil &&
             (gatewayID == nil || entry.route.gatewayID == gatewayID) &&
-            (query.isEmpty || "\(entry.session.title) \(entry.session.preview) \(environment.bot(for: entry.route)?.displayName ?? "")".localizedCaseInsensitiveContains(query))
+            (query.isEmpty || "\(entry.session.title) \(entry.session.preview) \(botDisplayName(entry.route)) \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? "")".localizedCaseInsensitiveContains(query))
         }.sorted {
             if $0.session.startedAt == $1.session.startedAt { return $0.id < $1.id }
             return $0.session.startedAt > $1.session.startedAt
         }
     }
 
+    /// Route-qualified display name; falls back to the slug from the ROUTE
+    /// (identity), never a same-name bot from another gateway.
+    private func botDisplayName(_ route: Route) -> String {
+        environment.bot(for: route)?.displayName ?? route.profileSlug.rawValue
+    }
+
+    /// FOS-5: entries whose Route dropped out of the live roster (outage
+    /// retention) render an offline marker.
+    private func isRetainedDuringOutage(_ entry: FleetChatEntry) -> Bool {
+        environment.bot(for: entry.route) == nil
+    }
+
     var body: some View {
         List {
             Section {
-                NavigationLink(value: FleetScreen.roster) {
+                Button {
+                    showingCompose = true
+                } label: {
                     Label("Start a conversation", systemImage: "square.and.pencil")
                         .foregroundStyle(FleetTheme.accent)
                 }.accessibilityIdentifier("fleet.chats.new")
@@ -41,6 +119,7 @@ struct FleetChatsView: View {
                         Text(gateway.displayName).tag(Optional(gateway.id))
                     }
                 }
+                .accessibilityIdentifier("fleet.chats.gateway-filter")
             }
             if !environment.loadingRoutes.isEmpty {
                 ProgressView("Refreshing conversations…")
@@ -52,6 +131,10 @@ struct FleetChatsView: View {
                     Button("Retry") { Task { await refresh() } }
                 }
             }
+            // FOS-5 (SPEC §10): heading stays "Newest sessions" — honest
+            // startedAt ordering; not renamed to "Recent" (no last-activity
+            // ranking until it is real). lastActive IS decoded+preserved on
+            // SessionSummary for the future upgrade.
             Section("Newest sessions") {
                 ForEach(entries) { entry in
                     NavigationLink(value: FleetScreen.conversation(entry.route, sessionID: entry.session.id)) {
@@ -62,8 +145,13 @@ struct FleetChatsView: View {
                                 Text(entry.session.preview).font(.subheadline)
                                     .foregroundStyle(FleetTheme.textSecondary).lineLimit(2)
                             }
-                            Text("\(environment.bot(for: entry.route)?.displayName ?? entry.route.profileSlug.rawValue) · \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? entry.route.gatewayID.rawValue)")
+                            Text("\(botDisplayName(entry.route)) · \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? entry.route.gatewayID.rawValue)")
                                 .font(.caption).foregroundStyle(FleetTheme.accent)
+                            if isRetainedDuringOutage(entry) {
+                                Label("Last synced — bot offline from this phone", systemImage: "wifi.slash")
+                                    .font(.caption2).foregroundStyle(FleetTheme.textSecondary)
+                                    .accessibilityIdentifier("fleet.chats.retained.\(entry.id)")
+                            }
                         }.padding(.vertical, 6)
                     }.accessibilityIdentifier("fleet.chats.session.\(entry.id)")
                 }
@@ -71,6 +159,15 @@ struct FleetChatsView: View {
                     ContentUnavailableView(query.isEmpty ? "Your next idea starts here" : "No matching conversations", systemImage: "bubble.left.and.bubble.right", description: Text(query.isEmpty ? "Choose a bot to begin, or refresh to load its conversations." : "Try a different title or bot name."))
                 }
             }
+            if !query.isEmpty {
+                Section {
+                    Text("Search loaded conversations")
+                        .font(.caption).foregroundStyle(FleetTheme.textSecondary)
+                }
+            }
+        }
+        .sheet(isPresented: $showingCompose) {
+            ComposeBotPickerSheet(environment: environment)
         }
         .scrollContentBackground(.hidden).background(FleetTheme.background)
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")

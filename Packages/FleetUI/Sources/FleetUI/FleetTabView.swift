@@ -100,6 +100,11 @@ public struct FleetTabView: View {
             navigation.open(target)
             environment.pendingBotChatNavigation = nil
         }
+        .onChange(of: environment.pendingScreenNavigation) { target in
+            guard let target else { return }
+            navigation.open(target)
+            environment.pendingScreenNavigation = nil
+        }
         .task {
             if !restored {
                 if ProcessInfo.processInfo.environment["HERMES_FLEET_AUTO_NAV"] == nil && ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] != "1" {

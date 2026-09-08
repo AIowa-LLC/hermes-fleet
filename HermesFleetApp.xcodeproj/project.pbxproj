@@ -35,6 +35,7 @@
 		3144AA84AD28AA9738D7D690 /* BotRosterSlice2UITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74C2D0202C4833017A3A976A /* BotRosterSlice2UITests.swift */; };
 		316AD24DA48B5B359159BC3E /* ProjectsBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53074EB2159A1156DFDF11FD /* ProjectsBrowserTests.swift */; };
 		34879804AE54086055BC7960 /* RoomLinkMentionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AF95D840A084BE9C9CAD33C /* RoomLinkMentionsUITests.swift */; };
+		36426EF83499A5696EE6B978 /* FOS5BotsGroupsChatsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA14D54A4EAB999E0168F92 /* FOS5BotsGroupsChatsUITests.swift */; };
 		3A8B99EBFA16CC3747BB4E66 /* BotRoutinesViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C448C88190523F3B23998EC /* BotRoutinesViewModelTests.swift */; };
 		3BC9D5C1D9DB0AAA16B7E9E4 /* ModuleBoundaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */; };
 		3DF5C922278BEF5E7C68652B /* FleetComponentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BAF2911DD7A9A273ED1D5D2 /* FleetComponentsTests.swift */; };
@@ -85,6 +86,7 @@
 		AB02B84E3EE16C4A0E9F47F1 /* ProjectsSnapshotStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261A5784C89B6D7B55044B5F /* ProjectsSnapshotStoreTests.swift */; };
 		ABD9FAEBC67BC5E829AE92F6 /* VoiceIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36FAEE832413ACBA6AF7F206 /* VoiceIO.swift */; };
 		AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */; };
+		B0D8C00E8769592687D1B510 /* FOS5BotsGroupsChatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7476BD8D66AF84CF099DA07 /* FOS5BotsGroupsChatsTests.swift */; };
 		B1306E98F67503207DCCAC67 /* F1FailureCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EDD0C9EA5DA66D6FA4D2F1C /* F1FailureCopyTests.swift */; };
 		B1AB16A9F5EB927CD0BADA2C /* H2HealthDashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81A1A63C6F0F29A8454980F6 /* H2HealthDashboardUITests.swift */; };
 		B370F267CF80B8A8161A8527 /* FleetWing.icon in Resources */ = {isa = PBXBuildFile; fileRef = 9A05382B633430B51638CBE2 /* FleetWing.icon */; };
@@ -228,9 +230,11 @@
 		C5B652485831E5050A35169A /* ApprovalFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalFlowTests.swift; sourceTree = "<group>"; };
 		CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewayFormDraftStoreTests.swift; sourceTree = "<group>"; };
+		CEA14D54A4EAB999E0168F92 /* FOS5BotsGroupsChatsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS5BotsGroupsChatsUITests.swift; sourceTree = "<group>"; };
 		D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetThemeTests.swift; sourceTree = "<group>"; };
 		D337F869D057A934E90AF5FD /* MemoryGraphTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryGraphTests.swift; sourceTree = "<group>"; };
 		D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleBoundaryTests.swift; sourceTree = "<group>"; };
+		D7476BD8D66AF84CF099DA07 /* FOS5BotsGroupsChatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS5BotsGroupsChatsTests.swift; sourceTree = "<group>"; };
 		D8AD8785E7085FFB646B0A9C /* FleetUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetUI; path = Packages/FleetUI; sourceTree = SOURCE_ROOT; };
 		D8DF5B94BC0B059D55DDF707 /* ScriptedCreateFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCreateFlowTests.swift; sourceTree = "<group>"; };
 		DE435C9B85312695131CC209 /* FleetPersistence */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetPersistence; path = Packages/FleetPersistence; sourceTree = SOURCE_ROOT; };
@@ -307,6 +311,7 @@
 				611B38ADDEA10100322CB58F /* FOS2GatewayScopingTests.swift */,
 				EA314A289DB06BFD6157CC65 /* FOS3FourRootShellTests.swift */,
 				90F68797AD9C57818CDC7085 /* FOS4TruthfulHomeTests.swift */,
+				D7476BD8D66AF84CF099DA07 /* FOS5BotsGroupsChatsTests.swift */,
 				CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */,
 				BD81D83119A185906F3FABB8 /* GatewayPersistenceRelaunchTests.swift */,
 				AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */,
@@ -401,6 +406,7 @@
 				65CA49DCCE4D28E086A7ABE5 /* FOS2GatewayDetailUITests.swift */,
 				9D049EEAAB53A7AB714E7F2B /* FOS3FourRootShellUITests.swift */,
 				EE4159F90136D3243A7471A8 /* FOS4TruthfulHomeUITests.swift */,
+				CEA14D54A4EAB999E0168F92 /* FOS5BotsGroupsChatsUITests.swift */,
 				0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */,
 				81A1A63C6F0F29A8454980F6 /* H2HealthDashboardUITests.swift */,
 				5637DB7B24B46E1A35E0B3ED /* HermesFleetHappyPathUITests.swift */,
@@ -618,6 +624,7 @@
 				6797022A8029048FEAA7EA69 /* FOS2GatewayScopingTests.swift in Sources */,
 				B9636652BB9842B72178D9E2 /* FOS3FourRootShellTests.swift in Sources */,
 				1DECF9B55382047514145BE4 /* FOS4TruthfulHomeTests.swift in Sources */,
+				B0D8C00E8769592687D1B510 /* FOS5BotsGroupsChatsTests.swift in Sources */,
 				3DF5C922278BEF5E7C68652B /* FleetComponentsTests.swift in Sources */,
 				2C1CA3847CBD066D704AE4C8 /* FleetCoreLogicTests.swift in Sources */,
 				C5377CCD5DCFD49530466CE3 /* FleetDashboardFormattingTests.swift in Sources */,
@@ -660,6 +667,7 @@
 				58BA21B387FA162A823AC1F4 /* FOS2GatewayDetailUITests.swift in Sources */,
 				1FEA331E9B5D63C3ABD9E40E /* FOS3FourRootShellUITests.swift in Sources */,
 				5FEC189081EDC141B9EB8581 /* FOS4TruthfulHomeUITests.swift in Sources */,
+				36426EF83499A5696EE6B978 /* FOS5BotsGroupsChatsUITests.swift in Sources */,
 				44D3313BD3B75361ECF04043 /* FleetSettingsAccentUITests.swift in Sources */,
 				EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */,
 				B1AB16A9F5EB927CD0BADA2C /* H2HealthDashboardUITests.swift in Sources */,

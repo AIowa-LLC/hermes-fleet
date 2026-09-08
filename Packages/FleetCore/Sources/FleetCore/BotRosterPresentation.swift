@@ -87,15 +87,19 @@ public enum BotRosterPresentation {
         }
     }
 
-    /// Whether a bot belongs in the "Active Now" strip: an authoritative
-    /// live activity signal (never fabricated — `unknown`/`idle`/`offline`
-    /// do not qualify) and not hidden.
+    /// Whether a bot belongs in the "Active Now" preview: an authoritative
+    /// executing signal ONLY — working / thinking / using tool (SPEC §7
+    /// execution definition). `waiting` stays DISTINCT (§7: excluded from
+    /// Active; an approval separately creates attention), and
+    /// `needsAttention` is an attention signal, not execution. Never
+    /// fabricated — `idle`/`offline`/`unknown` do not qualify — and hidden
+    /// bots are excluded.
     public static func isActiveNow(_ bot: FleetBot) -> Bool {
         guard bot.botModeMetadata?.hidden != true else { return false }
         switch bot.activity {
-        case .working, .thinking, .usingTool, .waiting, .needsAttention:
+        case .working, .thinking, .usingTool:
             return true
-        case .idle, .offline, .unknown:
+        case .waiting, .needsAttention, .idle, .offline, .unknown:
             return false
         }
     }
