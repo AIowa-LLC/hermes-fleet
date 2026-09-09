@@ -48,14 +48,32 @@ fi
 
 # --- secrets scan (gitleaks) --------------------------------------------------
 note "gitleaks detect"
-# Match CI's depth-1 checkout semantics: scan the TIP commit only. A local
-# full-history scan also flags F2's known fixture-password noise in the
-# superseded commit 5ed93e3 (files no longer contain those strings at HEAD).
-TIP_SHA=$(git -C "$REPO" rev-parse HEAD)
-if command -v gitleaks >/dev/null 2>&1 && gitleaks detect --source "$REPO" --no-banner --log-opts="$TIP_SHA -1" >/tmp/c1_gitleaks.log 2>&1; then
-  ok "gitleaks: no leaks found"
+# Scan the WORKING TREE (--no-git). Rationale: in CI's depth-1 checkout the
+# old tip-commit git scan silently collapsed to a whole-tree scan anyway
+# (shallow clone -> no parent to diff against), so --no-git is the honest
+# equivalent of what CI always scanned — and its fingerprints are stable
+# across checkouts, unlike git-mode fingerprints that embed the introducing
+# commit SHA (unstable on PR merge commits). Known-good exceptions live in
+# .gitleaksignore (currently one: the fleet.navigation.v1 UserDefaults
+# storage-key string, a generic-api-key rule false positive).
+# A full local git-history scan would additionally flag F2's known
+# fixture-password noise in the superseded commit 5ed93e3 (files no longer
+# contain those strings at HEAD) — not a leak, not a gate concern.
+# Scan EXACTLY the tracked tree at HEAD: extract via git archive into a temp
+# dir and --no-git scan that. This is deterministic in any clone (shallow or
+# full — the old git-mode tip scan silently collapsed to a whole-tree scan in
+# CI's depth-1 checkout anyway), never touches untracked build artifacts, and
+# yields stable fingerprints (no introducing-commit SHA embedded).
+GL_DIR=$(mktemp -d /tmp/c1_gitleaks_tree.XXXXXX)
+if git -C "$REPO" archive HEAD | tar -x -C "$GL_DIR" 2>/dev/null; then
+  if command -v gitleaks >/dev/null 2>&1 && (cd "$GL_DIR" && gitleaks detect --source . --no-git --no-banner) >/tmp/c1_gitleaks.log 2>&1; then
+    ok "gitleaks: no leaks found (tracked tree at HEAD)"
+    rm -rf "$GL_DIR"
+  else
+    bad "gitleaks FAILED"; tail -15 /tmp/c1_gitleaks.log; rm -rf "$GL_DIR"
+  fi
 else
-  bad "gitleaks FAILED"; tail -15 /tmp/c1_gitleaks.log
+  bad "gitleaks FAILED: could not extract tracked tree (git archive)"; rm -rf "$GL_DIR"
 fi
 
 # --- Summary -------------------------------------------------------------------
