@@ -2,6 +2,30 @@
 
 This directory contains the public developer documentation for Hermes Fleet.
 
+## Source-of-truth hierarchy
+
+Sources of truth for Hermes Fleet, in order of authority:
+
+1. **Current source code** — implemented behavior. The code is the final
+   arbiter of what the app actually does.
+2. **Current public docs** (this directory) — supported surfaces and behavior
+   descriptions, maintained to match the source.
+3. **Accepted ADRs** ([`adr/`](adr/)) — durable architectural decisions.
+4. **Historical specs and milestone files** — historical context only when
+   superseded; never release truth.
+
+The original **Product & Protocol Specification v0.1** is not stored in this
+repository; it is retained outside the active repository in the maintainer's
+private project authority documents. Its **foundational principles remain
+normative** — iPhone as control plane, Hermes machines as compute plane,
+stock-Hermes-first integration, permanent gateway provenance,
+server-authoritative state, fail-closed routing, reconnect/replay safety, and
+direct-to-gateway privacy/security boundaries — but its **feature scope is
+superseded**: the current app implements substantially more (Bot Mode,
+SOUL/profile management, approvals, cron, memory/project surfaces, Groups,
+RoomLink, attachments, reactions, and other Hermes Desktop-parity work) than
+the v0.1 document deferred or excluded.
+
 ## Start here
 
 - [`architecture.md`](architecture.md) - module boundaries, runtime composition, data flow, and known architectural work
