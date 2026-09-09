@@ -41,13 +41,17 @@ final class U5BotDetailUITests: XCTestCase {
         let row = firstMatch(in: app, identifier: "fleet.roster.row.workstation#default")
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "the per-gateway bot list must render a U5 row")
-        // Real status pill from the scripted bot's activity (Idle in the
-        // fixture → the pill's "Status: Idle" label merges into the combined
-        // row label).
+        // Real status pill from the scripted bot's activity — FOS-8: the
+        // composite VoiceOver label carries the status WORD in SPEC §16
+        // order (name → gateway → status → preview → time); any of the ten
+        // vocabulary words proves the state surfaced.
         let rowLabel = row.label
+        let statusWords = ["Online", "Working", "Thinking", "Using tool",
+                           "Waiting", "Needs you", "Sign in required",
+                           "Degraded", "Offline", "Unknown"]
         XCTAssertTrue(
-            rowLabel.contains("Status:"),
-            "bot rows must carry a status pill (row label: \(rowLabel))"
+            statusWords.contains { rowLabel.contains($0) },
+            "bot rows must carry a status word (row label: \(rowLabel))"
         )
         attachScreenshot(of: app, name: "u5-bots-rows-gold")
     }
