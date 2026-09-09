@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import UIKit
 import FleetCore
 import FleetPersistence
 @testable import FleetUI
@@ -288,5 +290,74 @@ final class BotManagementTests: XCTestCase {
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 300, now: now), "5m")
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 7_200, now: now), "2h")
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 172_800, now: now), "2d")
+    }
+    // MARK: - D2 (FOS-DF dogfood): slug keyboard traits
+
+    /// D2 regression: the Create Bot "Name (profile slug)" field must disable
+    /// autocapitalization and autocorrection — the default keyboard mangles
+    /// slugs ("df-ops-bot" -> "DF Ops Bot") and the gateway rejects them
+    /// (4062, rule [a-z0-9][a-z0-9_-]{0,63}). Asserted on the resolved
+    /// UITextField traits through a real UIKit window, the layer iOS actually
+    /// applies the SwiftUI modifiers at.
+    func testCreateBotSlugFieldDisablesAutocapitalizeAndAutocorrect() async throws {
+        let gateways = [FleetGateway(
+            id: GatewayID(rawValue: "gw"),
+            displayName: "GW",
+            endpoint: nil)]
+        let environment = AppEnvironment(
+            registry: StubRegistry(gateways: gateways),
+            roster: SnapshotRoster(),
+            cache: try SwiftDataCacheStore.makeInMemory(),
+            sessionList: EmptySessionList(),
+            connectionFactory: { gateway, _ in StubConnection(gatewayID: gateway.id) },
+            health: StubHealth()
+        )
+        await environment.load()
+
+        let sheet = CreateBotSheet(environment: environment) { _, _ in }
+        let hosted = UIHostingController(rootView: sheet)
+        hosted.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = hosted
+        window.makeKeyAndVisible()
+
+        var slugField: UITextField?
+        var titleField: UITextField?
+        for _ in 0..<50 where slugField == nil || titleField == nil {
+            hosted.view.setNeedsLayout()
+            hosted.view.layoutIfNeeded()
+            var stack: [UIView] = [hosted.view]
+            while let view = stack.popLast() {
+                if let field = view as? UITextField {
+                    if field.accessibilityIdentifier == "fleet.bot.create.name"
+                        || field.placeholder == "Name (profile slug)" {
+                        slugField = field
+                    }
+                    if field.accessibilityIdentifier == "fleet.bot.create.title"
+                        || field.placeholder == "Title (display name, optional)" {
+                        titleField = field
+                    }
+                }
+                stack.append(contentsOf: view.subviews)
+            }
+            if slugField == nil || titleField == nil {
+                await Task.yield()
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        window.isHidden = true
+
+        let unwrappedSlug = try XCTUnwrap(
+            slugField, "slug field materialized in the UIKit hierarchy")
+        let unwrappedTitle = try XCTUnwrap(
+            titleField, "title field materialized in the UIKit hierarchy")
+        XCTAssertEqual(unwrappedSlug.autocapitalizationType, .none,
+                       "slug field must not autocapitalize (gateway rejects uppercase)")
+        XCTAssertEqual(unwrappedSlug.autocorrectionType, .no,
+                       "slug field must not autocorrect (keyboard mangles slugs)")
+        // Sanity: the plain display-name field next to it keeps default
+        // behavior — the modifiers are targeted, not form-wide.
+        XCTAssertNotEqual(unwrappedTitle.autocapitalizationType, .none,
+                          "display-name field keeps default capitalization")
     }
 }

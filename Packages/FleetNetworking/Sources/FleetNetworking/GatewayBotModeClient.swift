@@ -3,7 +3,6 @@ import FleetCore
 
 /// Errors for Bot Mode profile operations.
 public enum BotModeProfileError: Error, Sendable, Equatable, LocalizedError {
-    case notConnected
     case malformedPayload(String)
     case rpcFailed(String)
     case profileNotFound(String)
@@ -23,7 +22,6 @@ public enum BotModeProfileError: Error, Sendable, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .notConnected: return "gateway not connected"
         case .malformedPayload(let s): return "malformed payload: \(s)"
         case .rpcFailed(let s): return "RPC failed: \(s)"
         case .profileNotFound(let s): return "profile not found: \(s)"
@@ -66,7 +64,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// bot's OWN gateway/profile. Rows returned re-verified for the exact
     /// title; `resolved_id` (compression tip) preferred as the open id.
     public func lookupCanonicalChat(profile: String) async throws -> CanonicalLookup {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         let result = try await request(method: "session.list", params: .object([
             "profile": .string(profile),
             "title": .string(BotModeContract.canonicalChatTitle),
@@ -96,7 +93,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// Safe canonical creation (registry-miss path only): hidden session +
     /// eager exact title. Returns the runtime/stored session id.
     public func createCanonicalChat(profile: String) async throws -> String {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         let created = try await request(method: "session.create", params: .object([
             "profile": .string(profile),
             "title": .string(BotModeContract.canonicalChatTitle),
@@ -222,7 +218,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// `profiles.set_asset {clear: true}` — remove the avatar asset
     /// (methods_profiles.py:595-630; `{ok, asset, size: 0, removed}`).
     public func clearAvatarAsset(profile: String) async throws {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         let result = try await request(method: "profiles.set_asset", params: .object([
             "name": .string(profile),
             "asset": .string("avatar"),
@@ -252,7 +247,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// (methods_profiles.py:400-433): soul, model{provider,default}, skills,
     /// toolsets, mcp_servers.
     public func describeProfile(_ profile: String) async throws -> BotProfileDescription {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         let result = try await request(method: "profiles.describe", params: .object([
             "name": .string(profile),
         ]))
@@ -322,7 +316,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
         edit: BotProfileEdit,
         confirmExpensiveModel: Bool
     ) async throws -> BotProfileEditOutcome {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         var params: [String: JSONValue] = ["name": .string(profile)]
         if let metadata = edit.metadata {
             var wireObject = metadata.toWire()
@@ -409,7 +402,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// (`share_auth`, `mirror_credentials`) copied from the wire contract.
     @discardableResult
     public func createProfile(_ spec: BotCreateSpec) async throws -> String {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         var params: [String: JSONValue] = [
             "name": .string(spec.name),
             "share_auth": .bool(spec.shareAuth),
@@ -443,7 +435,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// Read one profile's full ui_meta row via `profiles.list` (used by the
     /// sections-registry sync on the DEFAULT profile).
     public func profileUIMeta(profile: String) async throws -> [String: MetadataValue]? {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         let result = try await request(method: "profiles.list", params: .object([:]))
         guard let profiles = result["profiles"]?.arrayValue else {
             throw BotModeProfileError.malformedPayload("profiles.list missing 'profiles'")
@@ -463,7 +454,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
         value: MetadataValue,
         expectedRevision: Int?
     ) async throws -> MetadataWriteReceipt {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         var params: [String: JSONValue] = [
             "name": .string(profile),
             "ui_meta": .object([key: toJSON(value)]),
@@ -483,7 +473,6 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
     /// Read the current revision of one ui_meta key for a profile
     /// (`ui_meta_revisions` from `profiles.list`).
     public func uiMetaRevision(profile: String, key: String) async throws -> Int? {
-        guard case .connected = transport.state else { throw BotModeProfileError.notConnected }
         let result = try await request(method: "profiles.list", params: .object([:]))
         guard let profiles = result["profiles"]?.arrayValue else {
             throw BotModeProfileError.malformedPayload("profiles.list missing 'profiles'")

@@ -408,4 +408,138 @@ final class BotModeNetworkingTests: XCTestCase {
         XCTAssertEqual(result.rooms[0].recentLog.first?.text, "shipping now")
         _ = p
     }
+    // MARK: - D1 (FOS-DF dogfood): cold seams must auto-connect
+
+    /// D1 regression: the bot-chat seam's transport is built by the factory
+    /// and NOTHING else connects it. `lookupCanonicalChat` on a never-
+    /// connected transport must connect on demand and land the wire call —
+    /// previously the pre-guard threw before request()'s idempotent connect
+    /// could run (cold Bot Chat tap failure: "Couldn't check the Bot Chat
+    /// registry").
+    func testColdCanonicalLookupAutoConnectsAndLandsWireCall() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "session.list" {
+                    return [Self.responseFrame(id: id, resultObject: #"{"sessions":[]}"#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        // COLD: no transport.connect() — exactly the production seam state.
+        let transport = makeTransport(serverPort: server.listeningPort)
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        let lookup = try await client.lookupCanonicalChat(profile: "researcher")
+        XCTAssertEqual(lookup.rows.count, 0)
+        XCTAssertEqual(log.params(of: "session.list").count, 1,
+                       "the wire call landed without any explicit connect")
+    }
+
+    /// D1 regression: `createCanonicalChat` on a cold transport must
+    /// auto-connect and create the hidden canonical session (registry-miss
+    /// path of the canonical Bot Chat open).
+    func testColdCanonicalCreationAutoConnects() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                switch method {
+                case "session.create":
+                    return [Self.responseFrame(id: id, resultObject: #"{"session_id":"cold-1","stored_session_id":"stored-1"}"#)]
+                case "session.title":
+                    return [Self.responseFrame(id: id, resultObject: #"{"ok":true}"#)]
+                default:
+                    return []
+                }
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        let id = try await client.createCanonicalChat(profile: "researcher")
+        XCTAssertEqual(id, "cold-1")
+        XCTAssertEqual(log.params(of: "session.create").count, 1)
+    }
+
+    /// D1 regression: `createProfile` (Create Bot submit) on a cold transport
+    /// must auto-connect and land `profiles.create` — the exact cold
+    /// Create-Bot failure ("gateway not connected", nothing on the wire).
+    func testColdCreateProfileAutoConnectsAndLandsWireCall() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "profiles.create" {
+                    return [Self.responseFrame(id: id, resultObject: #"{"ok":true,"name":"dfops-cold"}"#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        let name = try await client.createProfile(
+            BotCreateSpec(name: "dfops-cold", title: "DF Ops Cold"))
+        XCTAssertEqual(name, "dfops-cold")
+        let params = log.params(of: "profiles.create").first
+        XCTAssertEqual(params?["name"] as? String, "dfops-cold",
+                       "profiles.create landed on the wire without any explicit connect")
+    }
+
+    /// D1 regression: `describeProfile` (the Edit sheet's first wire call) on
+    /// a cold transport must auto-connect — the bot-profile seam is a
+    /// separate transport nothing else connects.
+    func testColdDescribeProfileAutoConnects() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "profiles.describe" {
+                    return [Self.responseFrame(id: id, resultObject: #"{"name":"researcher","soul":"s","model":{"provider":"nous","default":"hermes"},"skills":[],"toolsets":[],"mcp_servers":[]}"#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        let description = try await client.describeProfile("researcher")
+        XCTAssertEqual(description.name, "researcher")
+        XCTAssertEqual(log.params(of: "profiles.describe").count, 1)
+    }
+
 }

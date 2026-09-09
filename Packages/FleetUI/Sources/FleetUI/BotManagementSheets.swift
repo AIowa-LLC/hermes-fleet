@@ -45,7 +45,13 @@ public struct CreateBotSheet: View {
         NavigationStack {
             Form {
                 Section("New Bot") {
+                    // D2 (FOS-DF dogfood): the slug must survive the keyboard
+                    // — autocorrect/autocapitalize mangles it ("df-ops-bot"
+                    // → "DF Ops Bot") and the gateway rejects non-slug text
+                    // (4062, rule [a-z0-9][a-z0-9_-]{0,63}).
                     TextField("Name (profile slug)", text: $name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                         .accessibilityIdentifier("fleet.bot.create.name")
                     TextField("Title (display name, optional)", text: $title)
                         .accessibilityIdentifier("fleet.bot.create.title")
@@ -71,7 +77,11 @@ public struct CreateBotSheet: View {
                             }
                         }
                         if seedMode == .clone {
+                            // Same wire rule as the slug field (D2): a clone
+                            // source is a profile name, keep it slug-clean.
                             TextField("Clone from (profile name)", text: $cloneSource)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
                         }
                         TextField("SOUL (optional)", text: $soul, axis: .vertical)
                             .lineLimit(3...6)
