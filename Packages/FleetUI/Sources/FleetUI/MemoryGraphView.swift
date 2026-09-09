@@ -12,6 +12,17 @@ public struct MemoryGraphView: View {
     private let gatewayID: GatewayID
     private let profile: ProfileSlug
     @State private var model: MemoryGraphViewModel?
+    /// FOS-8 (SPEC §16): the accessible LIST alternative to the graph —
+    /// equivalent filters and node actions, no pan/pinch/tap-gesture
+    /// dependence. Persists for the screen lifetime; defaults to graph.
+    @State private var presentation: MemoryPresentation = .graph
+
+    public enum MemoryPresentation: String, CaseIterable, Identifiable {
+        case graph
+        case list
+        public var id: String { rawValue }
+        public var title: String { self == .graph ? "Graph" : "List" }
+    }
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
@@ -108,17 +119,118 @@ public struct MemoryGraphView: View {
             }
             mutationBanner(model)
             summaryHeader(model)
+            // FOS-8: Graph ⇄ List — the accessible list alternative carries
+            // the SAME filters and node actions (SPEC §16).
+            presentationPicker
             filterChips(model)
-            MemoryGraphCanvas(model: model) { nodeID in
-                Task { await model.loadDetail(for: nodeID) }
+            if presentation == .list {
+                nodeList(model)
+            } else {
+                MemoryGraphCanvas(model: model) { nodeID in
+                    Task { await model.loadDetail(for: nodeID) }
+                }
+                .frame(maxHeight: .infinity)
             }
-            .frame(maxHeight: .infinity)
             scrubber(model)
         }
         .padding(FleetTheme.spacingMd)
         .refreshable {
             await model.reload(profile: profileScope)
         }
+    }
+
+    /// Chronological groups for the list alternative: the layout's spiral
+    /// walk is chronological; consecutive nodes sharing a bucket date label
+    /// group together. The label comes from each node's `meta` date segment
+    /// (fixture and live payloads both carry "kind · date · xN"); nodes
+    /// whose meta lacks a date fall into the previous group.
+    private func nodeGroups(_ layout: MemoryStarLayout) -> [(label: String, nodes: [MemoryStarLayout.PlacedNode])] {
+        var out: [(String, [MemoryStarLayout.PlacedNode])] = []
+        for placed in layout.orderedNodes {
+            let segs = placed.node.meta.components(separatedBy: " · ")
+            let label = segs.count >= 2 ? segs[1] : (out.last?.0 ?? "Learning")
+            if let last = out.last, last.0 == label {
+                out[out.count - 1].1.append(placed)
+            } else {
+                out.append((label, [placed]))
+            }
+        }
+        return out.map { (label: $0.0, nodes: $0.1) }
+    }
+
+    /// Graph ⇄ List presentation switch. Scoped identifier (NOT a bare
+    /// "List" match — see FOS-5 lesson on segmented-control queries).
+    private var presentationPicker: some View {
+        Picker("Presentation", selection: $presentation) {
+            ForEach(MemoryPresentation.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("memorygraph.presentation")
+    }
+
+    /// The accessible LIST alternative (FOS-8, SPEC §16): the same
+    /// filtered/reveal-windowed node set as the canvas (single source of
+    /// truth: MemoryStarLayout.orderedNodes), grouped by chronological
+    /// bucket, each row opening the SAME detail sheet (equivalent edit and
+    /// delete node actions without gesture dependence).
+    private func nodeList(_ model: MemoryGraphViewModel) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                if let layout = model.layout {
+                    ForEach(nodeGroups(layout), id: \.label) { group in
+                        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                            Text(group.label)
+                                .font(FleetTheme.sectionHeaderFont)
+                                .foregroundStyle(FleetTheme.textSecondary)
+                                .accessibilityAddTraits(.isHeader)
+                            ForEach(group.nodes) { placed in
+                                Button {
+                                    Task { await model.loadDetail(for: placed.id) }
+                                } label: {
+                                    HStack(spacing: FleetTheme.spacingSm) {
+                                        Image(systemName: placed.isMemory ? "diamond" : "circle")
+                                            .font(.caption)
+                                            .foregroundStyle(placed.isMemory ? FleetTheme.accent : FleetTheme.textSecondary)
+                                            .accessibilityHidden(true)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(placed.node.label)
+                                                .font(.body.weight(.semibold))
+                                                .foregroundStyle(FleetTheme.textPrimary)
+                                                .lineLimit(1)
+                                            Text(placed.node.meta)
+                                                .font(FleetTheme.monoCaptionFont)
+                                                .foregroundStyle(FleetTheme.textSecondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(FleetTheme.textSecondary)
+                                            .accessibilityHidden(true)
+                                    }
+                                    .padding(.vertical, FleetTheme.spacingSm)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.fleetPressable)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("memorygraph.list.row.\(placed.id)")
+                            }
+                        }
+                    }
+                    if layout.orderedNodes.isEmpty {
+                        Text("No nodes in this filter.")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                            .padding(.vertical, FleetTheme.spacingLg)
+                    }
+                }
+            }
+            .padding(.horizontal, FleetTheme.spacingSm)
+        }
+        .accessibilityIdentifier("memorygraph.list")
     }
 
     /// R10-T5 — outcome of the last edit/delete: the gateway's message
@@ -504,6 +616,9 @@ struct LearningNodeDetailSheet: View {
                                 await model.performEdit(
                                     nodeID: detail.id, content: content, profile: profile)
                                 if model.mutationError == nil {
+                                    UIAccessibility.post(
+                                        notification: .announcement,
+                                        argument: "Saved \(detail.label).")
                                     isEditing = false
                                     draft = ""
                                     dismiss()
@@ -524,7 +639,14 @@ struct LearningNodeDetailSheet: View {
                 Button("Delete", role: .destructive) {
                     Task {
                         await model.performDelete(nodeID: detail.id, profile: profile)
-                        if model.mutationError == nil { dismiss() }
+                        if model.mutationError == nil {
+                            // FOS-8 (SPEC §16 Focus): concise result
+                            // announcement after finishing an item.
+                            UIAccessibility.post(
+                                notification: .announcement,
+                                argument: "Deleted \(detail.label).")
+                            dismiss()
+                        }
                     }
                 }
                 .accessibilityIdentifier("memorygraph.detail.delete.confirm")
@@ -596,12 +718,20 @@ struct LearningNodeDetailSheet: View {
             if let refusal = model.mutationError {
                 // Verbatim gateway refusal (names the remedy) — inline in
                 // the editor so the user can fix the content and retry.
+                // FOS-8 (SPEC §16 Focus): on failed Save the first error
+                // summary TAKES FOCUS; the draft is preserved untouched.
                 Text(refusal)
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(FleetTheme.statusDestructive)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("memorygraph.detail.edit.refusal")
+                    .accessibilityAddTraits(.isStaticText)
+                    .onAppear {
+                        UIAccessibility.post(
+                            notification: .layoutChanged,
+                            argument: "Save failed. \(refusal)")
+                    }
             }
             TextEditor(text: $draft)
                 .font(.system(.caption, design: .monospaced))

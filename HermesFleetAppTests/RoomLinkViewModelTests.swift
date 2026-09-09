@@ -332,7 +332,9 @@ final class RoomLinkViewModelTests: XCTestCase {
             vm.errorMessage,
             "Taking over a room needs your explicit confirmation that the previous authority can no longer commit — promotion does not fence it, and Fleet cannot verify that for you.")
 
-        // Confirmed → confirm:true on the wire, receipt named.
+        // Confirmed AND fencing-asserted (FOS-8 SPEC §9) → confirm:true on
+        // the wire, receipt named.
+        vm.operatorAssertedFencing = true
         let promoted = await vm.promote(confirmed: true)
         XCTAssertTrue(promoted)
         let confirms = await seam.promoteConfirms

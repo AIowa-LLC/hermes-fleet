@@ -155,6 +155,14 @@ final class RoomLinkMentionsUITests: XCTestCase {
         openHostedRoom(app)
         openRoomLink(app)
 
+        // FOS-8 (SPEC §9): the operator fencing assertion gates takeover —
+        // enable it before the confirmation dialog can open.
+        let fencing = app.descendants(matching: .any)["fleet.roomlink.fencing-toggle"]
+        if fencing.waitForExistence(timeout: 10) {
+            let fencingSwitch = fencing.descendants(matching: .switch).firstMatch
+            if fencingSwitch.exists { fencingSwitch.tap() } else { fencing.tap() }
+        }
+
         let promote = app.buttons["fleet.roomlink.promote"]
         XCTAssertTrue(promote.waitForExistence(timeout: 10))
         promote.tap()

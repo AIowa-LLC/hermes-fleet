@@ -49,6 +49,21 @@ public final class RoomLinkViewModel {
     /// Test observability: writes attempted through the seam.
     public private(set) var attemptedWriteCount = 0
 
+    // FOS-8 (SPEC §9 Takeover) recovery state:
+    /// The operator's explicit assertion that the old writer is fenced.
+    /// Promotion is refused (client-side, before the wire) until this is
+    /// set AND re-verified against fresh state — Fleet cannot verify
+    /// infrastructure fencing itself.
+    public var operatorAssertedFencing = false
+    /// Lineage from the last observed replica state (the EXACT observed
+    /// authorityGatewayID/epoch — demote must use these, never guessed).
+    public private(set) var observedLineage: (gatewayID: String, epoch: Int)?
+    /// The receipt of the last successful promotion, verbatim.
+    public private(set) var lastPromotionReceipt: RoomPromotionReceipt?
+    /// Readback after the last promote/demote: the refreshed replica state
+    /// (proves both sides' truth after the operation).
+    public private(set) var recoveryReadback: RoomReplicaState?
+
     // MARK: Dependencies
 
     private let room: FleetRoom
@@ -81,6 +96,11 @@ public final class RoomLinkViewModel {
                 promotionReadiness = RoomPromotionReadiness.evaluate(
                     replica: replica,
                     localAuthorityGatewayID: negotiation?.authorityGatewayID)
+                // FOS-8: capture the EXACT observed lineage — controlled
+                // demote later uses these exact values (SPEC §9).
+                if let replica {
+                    observedLineage = (replica.authorityGatewayID, replica.authorityEpoch)
+                }
             }
         } catch {
             errorMessage = Self.explain(error)
@@ -199,6 +219,9 @@ public final class RoomLinkViewModel {
             promotionReadiness = RoomPromotionReadiness.evaluate(
                 replica: replica,
                 localAuthorityGatewayID: negotiation?.authorityGatewayID)
+            if let replica {
+                observedLineage = (replica.authorityGatewayID, replica.authorityEpoch)
+            }
             errorMessage = nil
             return true
         } catch {
@@ -209,16 +232,35 @@ public final class RoomLinkViewModel {
 
     // MARK: - Promotion (explicit confirmation)
 
-    /// Promotion executes ONLY with the user's explicit confirmation. The
+    /// Promotion executes ONLY with the user's explicit confirmation AND the
+    /// operator's fencing assertion (FOS-8, SPEC §9 Takeover). The
     /// confirmation copy names the previous authority (never generic).
+    /// "Recheck state immediately before promotion": readiness is
+    /// re-evaluated from the CURRENT replica at call time, not the cached
+    /// view-model snapshot.
     @discardableResult
-    public func promote(confirmed: Bool) async -> Bool {
+    public func promote(confirmed: Bool, operatorAssertedFencing: Bool? = nil) async -> Bool {
         guard let commands else { return false }
+        if let operatorAssertedFencing { self.operatorAssertedFencing = operatorAssertedFencing }
         guard confirmed else {
             // Never silently promote: without confirmation the wire rejects
             // with 4118 — surface that honestly instead of firing the RPC.
             errorMessage = Self.unconfirmedPromotionMessage
             return false
+        }
+        guard self.operatorAssertedFencing else {
+            errorMessage = Self.fencingAssertionRequiredMessage
+            return false
+        }
+        // Recheck immediately before promotion (SPEC §9): re-read the
+        // replica state and re-evaluate readiness from fresh truth.
+        let freshReplica = try? await commands.replicaState(roomID: room.id.key)
+        if let freshReplica {
+            replica = freshReplica
+            observedLineage = (freshReplica.authorityGatewayID, freshReplica.authorityEpoch)
+            promotionReadiness = RoomPromotionReadiness.evaluate(
+                replica: freshReplica,
+                localAuthorityGatewayID: negotiation?.authorityGatewayID)
         }
         guard promotionReadiness.isReady else {
             errorMessage = promotionReadiness.confirmationMessage
@@ -229,7 +271,50 @@ public final class RoomLinkViewModel {
         attemptedWriteCount += 1
         do {
             let receipt = try await commands.promote(roomID: room.id.key, confirm: true)
+            lastPromotionReceipt = receipt
             notice = "This gateway is now the authority (epoch \(receipt.authorityEpoch)). Previous: \(receipt.previousGatewayID)."
+            // Readback (SPEC §9): read BOTH sides after promotion — the
+            // refreshed replica state is the post-operation truth.
+            recoveryReadback = try? await commands.replicaState(roomID: room.id.key)
+            await refresh()
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = Self.explain(error)
+            return false
+        }
+    }
+
+    // MARK: - Controlled demotion (FOS-8, SPEC §9 Takeover)
+
+    /// Controlled demotion using the EXACT observed lineage. The observed
+    /// authority (gateway + epoch) is re-read immediately before the call;
+    /// demote sends those exact values. Readback refreshes both sides after.
+    @discardableResult
+    public func demote() async -> Bool {
+        guard let commands else { return false }
+        // Re-observe the lineage NOW — a stale snapshot must not drive a
+        // demotion of an authority that already changed.
+        guard let fresh = try? await commands.replicaState(roomID: room.id.key) else {
+            errorMessage = Self.demoteWithoutLineageMessage
+            return false
+        }
+        replica = fresh
+        observedLineage = (fresh.authorityGatewayID, fresh.authorityEpoch)
+        promotionReadiness = RoomPromotionReadiness.evaluate(
+            replica: fresh,
+            localAuthorityGatewayID: negotiation?.authorityGatewayID)
+        isMutating = true
+        defer { isMutating = false }
+        attemptedWriteCount += 1
+        do {
+            try await commands.demote(
+                roomID: room.id.key,
+                observedGatewayID: fresh.authorityGatewayID,
+                observedEpoch: fresh.authorityEpoch)
+            notice = "Demoted authority \(fresh.authorityGatewayID) (epoch \(fresh.authorityEpoch)) on this room, as observed."
+            // Readback (SPEC §9): both sides after demotion.
+            recoveryReadback = try? await commands.replicaState(roomID: room.id.key)
             await refresh()
             errorMessage = nil
             return true
@@ -245,6 +330,22 @@ public final class RoomLinkViewModel {
     /// synthetic `.ready` value (readiness carries real authority lineage).
     static let unconfirmedPromotionMessage =
         "Taking over a room needs your explicit confirmation that the previous authority can no longer commit — promotion does not fence it, and Fleet cannot verify that for you."
+
+    /// FOS-8 (SPEC §9): the operator fencing-assertion gate copy. Fleet
+    /// cannot verify infrastructure fencing — the operator asserts it.
+    static let fencingAssertionRequiredMessage =
+        "Turn on the operator assertion that the previous authority is fenced before taking over. Fleet cannot verify infrastructure fencing, and a timeout, disconnect, or Stop action is not enough."
+
+    /// FOS-8 (SPEC §9): demotion needs the exact observed lineage.
+    static let demoteWithoutLineageMessage =
+        "No replica state is available — the exact authority lineage can't be observed, so this room can't be demoted safely right now."
+
+    /// Surfaces the fencing-assertion requirement inline (view-side hook:
+    /// the Take over affordance explains instead of opening a dialog).
+    public func surfaceFencingAssertionRequired() {
+        errorMessage = Self.fencingAssertionRequiredMessage
+        notice = nil
+    }
 
     static func shortRemaining(_ grant: RoomLinkGrant?) -> String {
         guard let grant else { return "" }
@@ -285,24 +386,28 @@ public struct RoomLinkView: View {
     }
 
     public var body: some View {
+        // FOS-8 (SPEC §9): ONE room-owned inspector. Links and Recovery are
+        // child sections of this screen — not four stacked technical cards.
+        // The room owns the object; sections carry subject headers.
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                negotiationCard
+            LazyVStack(alignment: .leading, spacing: FleetTheme.spacingLg) {
+                negotiationSection
                 if viewModel.unsupportedExplanation == nil {
-                    grantCard
-                    routesCard
-                    replicationCard
+                    linksSection
+                    recoverySection
                 }
                 if let error = viewModel.errorMessage {
                     Text(error)
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.statusDestructive)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("fleet.roomlink.error")
                 }
                 if let notice = viewModel.notice {
                     Text(notice)
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("fleet.roomlink.notice")
                 }
             }
@@ -314,6 +419,11 @@ public struct RoomLinkView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.start() }
         .refreshable { await viewModel.refresh() }
+        // FOS-8 (SPEC §9): the takeover confirmation re-states lineage and
+        // the fencing contract. The dialog opens ONLY when the operator
+        // assertion is on — without it, the Take over tap surfaces the
+        // honest fencing-required explanation inline (no disabled dialog
+        // buttons; disabled dialog buttons don't enter the iOS 26 AX tree).
         .confirmationDialog(
             viewModel.promotionReadiness.confirmationTitle ?? "Take over this room?",
             isPresented: $showingPromotionConfirm,
@@ -329,15 +439,29 @@ public struct RoomLinkView: View {
         .accessibilityIdentifier("fleet.roomlink.screen")
     }
 
+    /// Section header: subject + symbol, 44pt actionable bar, hidden from
+    /// VoiceOver as a standalone stop (the section content carries the
+    /// semantics; the header text rides inside each section's first read).
+    private struct InspectorSectionHeader: View {
+        let title: String
+        let symbol: String
+
+        var body: some View {
+            Label(title, systemImage: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(FleetTheme.textPrimary)
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+        }
+    }
+
     // MARK: Negotiation (honest unsupported state)
 
     @ViewBuilder
-    private var negotiationCard: some View {
-        // FOS-6: inspector section — plain, no card chrome (SPEC §18).
+    private var negotiationSection: some View {
+        // FOS-6/FOS-8: inspector section — plain, no card chrome (SPEC §18).
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
-                Label("Cross-machine link", systemImage: "link")
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                InspectorSectionHeader(title: "Cross-machine link", symbol: "link")
                 if viewModel.isLoading && viewModel.negotiation == nil {
                     Text("Checking this gateway…")
                         .font(FleetTheme.secondaryFont)
@@ -366,12 +490,23 @@ public struct RoomLinkView: View {
         // overrides every child identifier in the AX tree)
     }
 
-    // MARK: Grant card (invite + TTL + revoke)
+    // MARK: Links section (grant + routes) — FOS-8 child section of the
+    // room-owned inspector.
+
+    /// The Links child section: access grant lifecycle + linked peer
+    /// routes, one visual group under one subject header.
+    @ViewBuilder
+    private var linksSection: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            InspectorSectionHeader(title: "Links", symbol: "link.badge.plus")
+            grantContent
+            routesContent
+        }
+    }
 
     @ViewBuilder
-    private var grantCard: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+    private var grantContent: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 Label("Access grant", systemImage: "key")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(FleetTheme.textPrimary)
@@ -428,14 +563,10 @@ public struct RoomLinkView: View {
                 }
             }
         }
-        // overrides every child identifier in the AX tree)
-    }
-
-    // MARK: Routes
 
     @ViewBuilder
-    private var routesCard: some View {
-        // FOS-6: inspector section — plain (SPEC §18).
+    private var routesContent: some View {
+        // FOS-6/FOS-8: links child section — plain (SPEC §18).
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                 Label("Linked peers", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.subheadline.weight(.semibold))
@@ -465,66 +596,165 @@ public struct RoomLinkView: View {
                         .accessibilityIdentifier("fleet.roomlink.route.\(route.memberID)")
                     }
                 }
-            }
-        // (see slice-5 lessons)
+        }
     }
 
-    // MARK: Replication / promotion
+    // MARK: Recovery section (replication + takeover) — FOS-8
 
+    /// The Recovery child section: replica coverage, EXACT observed lineage
+    /// (authorityGatewayID/epoch), the operator fencing-assertion toggle,
+    /// explicit takeover, controlled demotion using the exact observed
+    /// lineage, and readback both sides after each operation.
     @ViewBuilder
-    private var replicationCard: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                Label("Replay & takeover", systemImage: "externaldrive.badge.timemachine")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
-                if let replica = viewModel.replica {
-                    HStack {
-                        Text("Replay \(replica.isCaughtUp ? "complete" : "in progress")")
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textPrimary)
-                        Spacer()
-                        Text("event \(replica.lastSeq)/\(replica.latestSeq)")
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .accessibilityIdentifier("fleet.roomlink.replica-progress")
-                    }
-                    ProgressView(value: replica.progress)
-                        .accessibilityIdentifier("fleet.roomlink.replay-progress")
-                    HStack(spacing: FleetTheme.spacingSm) {
-                        Button {
-                            Task { await viewModel.replicateNow() }
-                        } label: {
-                            Label("Replay now", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .buttonStyle(.fleetPressable)
-                        .accessibilityIdentifier("fleet.roomlink.replicate")
-                        Button {
-                            showingPromotionConfirm = true
-                        } label: {
-                            Label("Take over…", systemImage: "crown")
-                        }
-                        .buttonStyle(.fleetPressable)
-                        .disabled(!viewModel.promotionReadiness.isReady)
-                        .accessibilityIdentifier("fleet.roomlink.promote")
-                    }
-                    if !viewModel.promotionReadiness.isReady {
-                        Text(viewModel.promotionReadiness.confirmationMessage)
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .accessibilityIdentifier("fleet.roomlink.promotion-blocked")
-                    }
-                } else {
-                    Text("No replay copy on this gateway yet.")
+    private var recoverySection: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            InspectorSectionHeader(title: "Recovery", symbol: "externaldrive.badge.timemachine")
+
+            if let replica = viewModel.replica {
+                // Replica coverage (SPEC §9: takeover requires current
+                // replica coverage).
+                HStack {
+                    Text("Replay \(replica.isCaughtUp ? "complete" : "in progress")")
                         .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.textPrimary)
+                    Spacer()
+                    Text("event \(replica.lastSeq)/\(replica.latestSeq)")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .accessibilityIdentifier("fleet.roomlink.replica-progress")
+                }
+                ProgressView(value: replica.progress)
+                    .accessibilityIdentifier("fleet.roomlink.replay-progress")
+
+                // EXACT observed lineage (SPEC §9: "named old/new authorities
+                // and epoch") — mono, machine data.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Observed authority")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                    Text("\(replica.authorityGatewayID) · epoch \(replica.authorityEpoch)")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textPrimary)
+                        .textSelection(.enabled)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Observed authority \(replica.authorityGatewayID), epoch \(replica.authorityEpoch)")
+                .accessibilityIdentifier("fleet.roomlink.observed-lineage")
+
+                // Replay + takeover row.
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Button {
+                        Task { await viewModel.replicateNow() }
+                    } label: {
+                        Label("Replay now", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityIdentifier("fleet.roomlink.replicate")
+                    Button {
+                        if viewModel.operatorAssertedFencing {
+                            showingPromotionConfirm = true
+                        } else {
+                            // Honest inline refusal — Fleet cannot verify
+                            // fencing; the operator must assert it first.
+                            viewModel.surfaceFencingAssertionRequired()
+                        }
+                    } label: {
+                        Label("Take over…", systemImage: "crown")
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .disabled(!viewModel.promotionReadiness.isReady)
+                    .accessibilityIdentifier("fleet.roomlink.promote")
+                }
+
+                if !viewModel.promotionReadiness.isReady {
+                    Text(viewModel.promotionReadiness.confirmationMessage)
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("fleet.roomlink.promotion-blocked")
+                }
+
+                // Operator fencing assertion (SPEC §9 Takeover): a separate,
+                // explicit toggle. Promote stays disabled until BOTH the
+                // replica is caught up AND the operator has asserted fencing.
+                fencingAssertionToggle
+
+                // Last promotion receipt lineage (verbatim).
+                if let receipt = viewModel.lastPromotionReceipt {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Last takeover")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                        Text("\(receipt.authorityGatewayID) · epoch \(receipt.authorityEpoch) · previous \(receipt.previousGatewayID) (epoch \(receipt.previousEpoch))")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Last takeover: authority \(receipt.authorityGatewayID), epoch \(receipt.authorityEpoch), previous \(receipt.previousGatewayID), epoch \(receipt.previousEpoch)")
+                    .accessibilityIdentifier("fleet.roomlink.last-promotion")
+                }
+
+                // Readback after promote/demote: the refreshed replica
+                // truth, both sides stated.
+                if let readback = viewModel.recoveryReadback {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Readback after last recovery step")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textSecondary)
+                        Text("authority \(readback.authorityGatewayID) · epoch \(readback.authorityEpoch) · event \(readback.lastSeq)/\(readback.latestSeq)")
+                            .font(FleetTheme.monoCaptionFont)
+                            .foregroundStyle(FleetTheme.textPrimary)
+                            .textSelection(.enabled)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Readback: authority \(readback.authorityGatewayID), epoch \(readback.authorityEpoch), event \(readback.lastSeq) of \(readback.latestSeq)")
+                    .accessibilityIdentifier("fleet.roomlink.readback")
+                }
+
+                // Controlled demotion using the exact observed lineage.
+                Button(role: .destructive) {
+                    Task { await viewModel.demote() }
+                } label: {
+                    Label(
+                        "Demote \(viewModel.observedLineage.map { "\($0.gatewayID) (epoch \($0.epoch))" } ?? "observed authority")",
+                        systemImage: "arrow.down.circle")
+                }
+                .buttonStyle(.fleetPressable)
+                .disabled(viewModel.isMutating)
+                .accessibilityIdentifier("fleet.roomlink.demote")
+            } else {
+                Text("No replay copy on this gateway yet.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(FleetTheme.textSecondary)
+            }
+        }
+    }
+
+    /// The operator fencing-assertion toggle (SPEC §9): Fleet cannot verify
+    /// infrastructure fencing; the operator asserts the old writer is
+    /// fenced. Copy explains exactly what a timeout/disconnect/Stop is NOT
+    /// sufficient for.
+    private var fencingAssertionToggle: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            Toggle(isOn: Binding(
+                get: { viewModel.operatorAssertedFencing },
+                set: { viewModel.operatorAssertedFencing = $0 }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("I confirm the previous authority is fenced")
+                        .font(FleetTheme.secondaryFont)
+                    Text("Fleet can't verify that the old writer stopped. A timeout, disconnect, or Stop action is not enough — confirm it can no longer commit before taking over.")
+                        .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(FleetTheme.textSecondary)
                 }
             }
+            .toggleStyle(.switch)
+            .accessibilityIdentifier("fleet.roomlink.fencing-toggle")
         }
-        // (see slice-5 lessons)
     }
-}
 
+}
 extension RoomLinkViewModel {
     func setTTLAndInvite(_ seconds: Double) async {
         setTTL(seconds)

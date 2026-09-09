@@ -351,6 +351,14 @@ public struct RoomChatView: View {
     @State private var renameDraft = ""
     @State private var showingDisbandConfirm = false
     @State private var showingRoomLink = false
+    // FOS-8 (SPEC §16 Focus / §9 Groups): no auto-scroll away from history
+    // reading — new events only follow when the user is already at the
+    // bottom; an explicit Latest control returns them there.
+    @State private var followingLatest = true
+    /// True while the viewport sits at (or near) the transcript bottom.
+    @State private var isAtBottomLatest = true
+    /// Suppresses unfollow while a programmatic follow-scroll settles.
+    @State private var isProgrammaticFollow = false
     @FocusState private var composing: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
@@ -378,6 +386,11 @@ public struct RoomChatView: View {
                 }
                 .padding(.horizontal, FleetTheme.spacingLg)
                 .padding(.vertical, FleetTheme.spacingMd)
+                // FOS-8: screen identity rides the CONTENT, not the
+                // ScrollView — a container id on the scroll view overrides
+                // every safeAreaInset control's identifier (the Latest
+                // button lost its own id this way).
+                .accessibilityIdentifier("fleet.room.chat")
             }
             .overlay(alignment: .bottom) { composer }
             .background(FleetTheme.background.ignoresSafeArea())
@@ -417,12 +430,77 @@ public struct RoomChatView: View {
                 Text("The gateway tombstones the room permanently. This can't be undone.")
             }
             .onChange(of: viewModel.transcript.count) { _, _ in
+                // FOS-8 (SPEC §16 Focus): new events never steal the user's
+                // reading position — auto-follow only when already at the
+                // bottom (followingLatest).
+                guard followingLatest else { return }
                 if let last = viewModel.transcript.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
+            .onAppear {
+                // Open at the LATEST content (pre-FOS-8 behavior preserved:
+                // the room opens following the latest; only an explicit
+                // upward escape unfollows).
+                if let last = viewModel.transcript.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                // At-bottom detection (tolerance covers the composer overlay
+                // and lazy height estimation). This observer only CONFIRMS
+                // arrival — unfollowing is USER-driven (see phase observer).
+                geometry.contentSize.height
+                    - geometry.contentOffset.y
+                    - geometry.visibleRect.height <= 160
+            } action: { _, atBottom in
+                isAtBottomLatest = atBottom
+                if atBottom {
+                    isProgrammaticFollow = false
+                }
+            }
+            .onScrollPhaseChange { _, phase in
+                // FOS-8 (SPEC §16 Focus / §9 Groups): the user's own drag
+                // away from the bottom is the ONLY thing that unfollows —
+                // programmatic scrolls, lazy height corrections, and last
+                // rows taller than the viewport all shift geometry while
+                // still "following latest".
+                if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow {
+                    followingLatest = false
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                // The explicit Latest control (SPEC §9 Groups): visible only
+                // while the user is reading earlier history.
+                if !followingLatest {
+                    HStack {
+                        Spacer()
+                        Button {
+                            followingLatest = true
+                            if let last = viewModel.transcript.last {
+                                isProgrammaticFollow = true
+                                proxy.scrollTo(last.id, anchor: .bottom)
+                                // Bounded settle window: if the geometry
+                                // observer never confirms (edge layouts),
+                                // stop suppressing after 1.5s (test load
+                                // slows scroll settling).
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(1500))
+                                    isProgrammaticFollow = false
+                                }
+                            }
+                        } label: {
+                            Label("Latest", systemImage: "arrow.down")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.fleetPressable)
+                        .accessibilityIdentifier("fleet.room.timeline.latest")
+                    }
+                    .padding(.horizontal, FleetTheme.spacingLg)
+                    .frame(minHeight: 44)
+                }
+            }
         }
-        .accessibilityIdentifier("fleet.room.chat")
     }
 
     // MARK: Header (member strip, D18)
@@ -698,8 +776,11 @@ public struct RoomChatView: View {
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.title2)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSending)
+                        .accessibilityLabel("Send message")
                         .accessibilityIdentifier("fleet.room.send")
                     }
                 }

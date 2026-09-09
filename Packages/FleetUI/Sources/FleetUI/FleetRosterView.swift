@@ -662,66 +662,131 @@ struct BotRowView: View {
     /// FOS-6: optional own-gateway-process badge (gateway-scoped collection).
     var showsGatewayRunningBadge = false
 
+    @Environment(\.dynamicTypeSize) private var typeSize
+
     var body: some View {
         // FOS-6: operational row — no card chrome, hairline separator
         // (SPEC §18 "Operational row").
+        // FOS-8 (SPEC §16 Text and reflow): at accessibility sizes the row
+        // STACKS — status below identity — and drops nonessential previews
+        // (message preview, model·provider) before essential provenance
+        // (route + time) can clip. Fonts are never shrunk to preserve row
+        // counts.
         FleetListRow {
-            HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(bot: bot, management: management)
-                    .opacity(dim == .portrait ? 0.4 : (dim == .row ? 0.4 : 1))
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(BotRosterPresentation.displayTitle(for: bot))
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(FleetTheme.textPrimary)
-                            .lineLimit(1)
-                        if let duplicateLabel {
-                            Text("· \(duplicateLabel)")
-                                .font(.caption)
-                                .foregroundStyle(FleetTheme.textSecondary)
-                                .lineLimit(1)
+            Group {
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                        HStack(alignment: .top, spacing: FleetTheme.spacingMd) {
+                            BotAvatar(bot: bot, management: management)
+                                .opacity(dim == .portrait ? 0.4 : (dim == .row ? 0.4 : 1))
+                            VStack(alignment: .leading, spacing: 2) {
+                                nameLine
+                                provenanceLine
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        if bot.botModeMetadata?.hidden == true {
-                            Image(systemName: "eye.slash")
-                                .font(.caption2)
-                                .foregroundStyle(FleetTheme.textSecondary)
-                                .accessibilityLabel("Hidden")
+                        // Status BELOW identity at accessibility sizes.
+                        StatusPill(status: FleetStatus(activity: bot.activity, presence: presence))
+                    }
+                    .opacity(dim == .row ? 0.55 : 1)
+                } else {
+                    HStack(spacing: FleetTheme.spacingMd) {
+                        BotAvatar(bot: bot, management: management)
+                            .opacity(dim == .portrait ? 0.4 : (dim == .row ? 0.4 : 1))
+                        VStack(alignment: .leading, spacing: 2) {
+                            nameLine
+                            if let preview = anchor.preview, !preview.isEmpty {
+                                Text(preview)
+                                    .font(FleetTheme.secondaryFont)
+                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            if let modelProviderText {
+                                Text(modelProviderText)
+                                    .font(FleetTheme.secondaryFont)
+                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            if showsGatewayRunningBadge && bot.gatewayRunning {
+                                GatewayRunningBadge(isRunning: true)
+                            }
+                            provenanceLine
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Spacer()
+                        StatusPill(status: FleetStatus(activity: bot.activity, presence: presence))
                     }
-                    if let preview = anchor.preview, !preview.isEmpty {
-                        Text(preview)
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    if let modelProviderText {
-                        Text(modelProviderText)
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    if showsGatewayRunningBadge && bot.gatewayRunning {
-                        GatewayRunningBadge(isRunning: true)
-                    }
-                    HStack(spacing: 4) {
-                        Text(bot.route.id)
-                        if anchor.lastActive > 0 {
-                            Text("· \(BotRowView.relativeTime(anchor.lastActive))")
-                        }
-                    }
-                    .font(FleetTheme.monoCaptionFont)
+                    .opacity(dim == .row ? 0.55 : 1)
+                }
+            }
+        }
+        // FOS-8 (SPEC §16 VoiceOver): the composite row label reads in the
+        // mandated order — name → gateway → status → preview → time. The
+        // avatar is already decorative-hidden; the route line carries
+        // provenance (gateway identity + last-activity time); the pill is
+        // "Status: <word>" and lands after provenance in the combined read.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.voiceOverLabel(
+            name: BotRosterPresentation.displayTitle(for: bot),
+            duplicateLabel: duplicateLabel,
+            hidden: bot.botModeMetadata?.hidden == true,
+            status: FleetStatus(activity: bot.activity, presence: presence).label,
+            preview: anchor.preview,
+            routeID: bot.route.id,
+            lastActive: anchor.lastActive))
+    }
+
+    /// Identity line: title + duplicate qualifier + hidden marker.
+    private var nameLine: some View {
+        HStack(spacing: 4) {
+            Text(BotRosterPresentation.displayTitle(for: bot))
+                .font(.body.weight(.semibold))
+                .foregroundStyle(FleetTheme.textPrimary)
+                .lineLimit(1)
+            if let duplicateLabel {
+                Text("· \(duplicateLabel)")
+                    .font(.caption)
                     .foregroundStyle(FleetTheme.textSecondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer()
-                StatusPill(status: FleetStatus(activity: bot.activity, presence: presence))
             }
-            .opacity(dim == .row ? 0.55 : 1)
+            if bot.botModeMetadata?.hidden == true {
+                Image(systemName: "eye.slash")
+                    .font(.caption2)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .accessibilityLabel("Hidden")
+            }
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    /// Essential provenance (SPEC §16): route identity + last-activity time.
+    private var provenanceLine: some View {
+        HStack(spacing: 4) {
+            Text(bot.route.id)
+            if anchor.lastActive > 0 {
+                Text("· \(BotRowView.relativeTime(anchor.lastActive))")
+            }
+        }
+        .font(FleetTheme.monoCaptionFont)
+        .foregroundStyle(FleetTheme.textSecondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+
+    /// The row's single VoiceOver read, in SPEC §16 order: name → gateway →
+    /// status → preview → time. Route id doubles as the gateway provenance.
+    static func voiceOverLabel(
+        name: String, duplicateLabel: String?, hidden: Bool,
+        status: String, preview: String?, routeID: String, lastActive: Double
+    ) -> String {
+        var parts: [String] = [name]
+        if let duplicateLabel, !duplicateLabel.isEmpty { parts.append(duplicateLabel) }
+        if hidden { parts.append("Hidden") }
+        parts.append(routeID)
+        parts.append(status)
+        if let preview, !preview.isEmpty { parts.append(preview) }
+        if lastActive > 0 { parts.append(Self.relativeTime(lastActive)) }
+        return parts.joined(separator: ", ")
     }
 
     /// Short relative-time copy ("now", "5m", "3h", "2d") from epoch seconds.
@@ -782,7 +847,31 @@ struct RoomRowView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .accessibilityElement(children: .combine)
+        // FOS-8 (SPEC §16 VoiceOver): the Group composite announces name,
+        // member count, authority, and member names in its details — the
+        // decorative 2×2 face grid stays hidden.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(room.voiceOverLabel)
+    }
+}
+
+extension FleetRoom {
+    /// The Group row's single VoiceOver read: name, member count, authority
+    /// gateway (when observed), read-only marker, then member names.
+    var voiceOverLabel: String {
+        var parts: [String] = ["\(name), \(members.count) member\(members.count == 1 ? "" : "s")"]
+        if let authority = hosted?.authorityGatewayID, !authority.isEmpty {
+            parts.append("Authority \(authority)")
+        }
+        if isManagedByDesktop {
+            parts.append("Managed by Hermes Desktop, read only")
+        }
+        if !members.isEmpty {
+            parts.append(members.map(\.name).joined(separator: ", "))
+        } else if let last = recentLog.last {
+            parts.append("\(last.from.name): \(last.text)")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
