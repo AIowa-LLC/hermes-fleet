@@ -17,12 +17,6 @@ public struct FleetPressableStyle: ButtonStyle {
     public static let pressedOpacity: Double = 0.85
     /// Press feedback duration (seconds), ease-out.
     public static let duration: TimeInterval = 0.12
-    /// FOS-8 (SPEC §16 Targets): every actionable control adopting this
-    /// style is held to at least 44×44 points — row menus, disclosures,
-    /// avatar actions, and compact icons included. The minimum is applied
-    /// HERE (single choke point) so no call site can silently regress the
-    /// bar; full-width labels are unaffected (they already exceed it).
-    public static let minTargetSide: CGFloat = 44
 
     public func makeBody(configuration: Configuration) -> some View {
         Pressable(configuration: configuration)
@@ -35,9 +29,6 @@ public struct FleetPressableStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .frame(minWidth: FleetPressableStyle.minTargetSide,
-                       minHeight: FleetPressableStyle.minTargetSide)
-                .contentShape(Rectangle())
                 .scaleEffect(
                     configuration.isPressed && !reduceMotion
                         ? FleetPressableStyle.pressedScale : 1
