@@ -208,8 +208,11 @@ final class FOS3FourRootShellUITests: XCTestCase {
         // Open Settings. The toggle defaults ON: turn it OFF first, then ON —
         // `setEnabled(true)` on an unlocked controller relocks IMMEDIATELY
         // (AppLockController), which must tear down the presented sheet.
-        app.buttons["fleet.settings.open"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        // NOTE: the lock-env cold launch can stall first paint for seconds
+        // (AX tree live, screen still white) and DROP the synthesized tap —
+        // verified at pre-FOS-8 71ecb49 too, so this is a launch flake, not
+        // a regression. openScreen retries the tap until the sheet lands.
+        openScreen(app, button: "fleet.settings.open", navTitle: "Settings")
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         XCTAssertEqual(toggle.value as? String, "1", "App Lock defaults ON")
@@ -236,13 +239,11 @@ final class FOS3FourRootShellUITests: XCTestCase {
         // the controller in .locked, so the biometric Unlock control shows)
         // and prove Command Center dismissal the same way: open Command
         // Center, then its OWN Settings entry (the gear beneath the sheet is
-        // not hittable), then relock.
+        // not hittable), then relock. Same launch-flake retry as above.
         app.buttons["fleet.app-lock.unlock"].tap()
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 15))
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
-        app.buttons["fleet.command-center.settings"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        openScreen(app, button: "fleet.command-center.open", navTitle: "Command Center")
+        openScreen(app, button: "fleet.command-center.settings", navTitle: "Settings")
         let toggle2 = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle2.waitForExistence(timeout: 10))
         flipSwitch(toggle2, to: "0")
@@ -283,6 +284,23 @@ final class FOS3FourRootShellUITests: XCTestCase {
     }
 
     // MARK: Helpers — deterministic toggle flips (existence-safe polls)
+
+    /// Open a screen via a toolbar/sheet button, retrying the tap when the
+    /// expected navigation bar does not appear. Guards the lock-env cold
+    /// launch flake where first paint stalls (AX tree live, screen white)
+    /// and the synthesized tap is silently dropped.
+    private func openScreen(_ app: XCUIApplication, button identifier: String, navTitle: String) {
+        let button = app.buttons[identifier]
+        let navBar = app.navigationBars[navTitle]
+        XCTAssertTrue(button.waitForExistence(timeout: 10),
+                      "\(identifier) must exist to open \(navTitle)")
+        for _ in 0..<3 {
+            if navBar.exists { return }
+            if button.exists { button.tap() }
+            if navBar.waitForExistence(timeout: 5) { return }
+        }
+        XCTFail("\(identifier) tap dropped by launch render stall — \(navTitle) never opened after 3 attempts")
+    }
 
     /// Tap the switch knob until its value reads `to`. The knob-only tap
     /// avoids the row-label pitfall (S3 lesson).
