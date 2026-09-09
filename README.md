@@ -12,6 +12,9 @@ This repository contains source code and development tooling. It does not requir
 
 Current surfaces include:
 
+- four-tab navigation — **Fleet, Chats, Bots, Gateways** — where every screen has exactly one owning tab (see [`docs/navigation.md`](docs/navigation.md))
+- **Fleet Home** — a truthful glance surface: connected/known-bot facts, known attention items, real execution activity, this phone's recent destinations, and connection summaries (coverage limits below)
+- **Gateway Detail** — one cockpit per machine: identity, connection controls, current work, the machine's attention item, and its resource rows (Bots, Groups, Projects, Kanban, Schedules, Skills, Memory)
 - multi-gateway registration, connection state, health, and fleet roster
 - **Bot Mode**: a fleet-wide Bots roster with full bot lifecycle management (see [Bot Mode](#bot-mode) below)
 - canonical Bot Chat with continuous-chat semantics, `@Bot` mentions, and Bot Routines
@@ -24,6 +27,15 @@ Current surfaces include:
 - attachments, message reactions, and on-device voice input/output
 
 Some features depend on methods exposed by the connected Hermes gateway version. Unsupported capabilities should fail closed or remain unavailable rather than fabricate state.
+
+### Fleet Home coverage honesty
+
+Fleet Home's attention and activity sections are **known-items only**:
+
+- **Needs You** lists already-observed actionable items (classified gateway failures plus attention seen in rooms this phone has opened). It is not a fleet-wide pending-action inbox — unobserved rooms contribute nothing, and incomplete coverage is labeled as such ("N known items"), never rendered as an empty inbox.
+- **Active Now** shows real execution signals from roster data only. There is no fleet-wide execution telemetry; when coverage is incomplete the section says so instead of guessing.
+- **Continue** is device-local: a recent-open index on this phone (at most 50 references, 30-day retention, pruned on gateway removal). It is not synchronized across devices.
+- Unknown never renders as zero. A partial fleet outage is shown as partial, not as "all quiet".
 
 ## Bot Mode
 
@@ -112,6 +124,7 @@ Start with [`docs/README.md`](docs/README.md).
 
 - [`docs/architecture.md`](docs/architecture.md) - module boundaries, data flow, and architectural constraints
 - [`docs/features.md`](docs/features.md) - current feature surfaces and important limitations
+- [`docs/navigation.md`](docs/navigation.md) - four-tab structure, ownership model, and restoration
 - [`docs/gateway-pairing.md`](docs/gateway-pairing.md) - gateway setup and QR pairing
 - [`docs/adr/`](docs/adr/) - architectural decision records
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - development and pull request guidance

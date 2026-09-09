@@ -43,6 +43,14 @@ HermesFleetApp → all modules
 
 The module-boundary test guards the rule that `FleetUI` does not import `FleetNetworking`.
 
+## Navigation and ownership model
+
+The app shell is a four-tab `sidebarAdaptable` navigation (Fleet, Chats, Bots, Gateways) with one independent typed `NavigationStack` per tab, an App Lock gate over all content, and a versioned, non-secret per-tab path state (`FleetNavigationState`, persisted under `fleet.navigation.v1`) that is restored on launch. Destinations are a Codable identity enum (`FleetScreen`) carrying gateway IDs, routes, session IDs, and resource scope — never credentials, grants, or mutable room-authority snapshots.
+
+Every screen has exactly one owning tab (ordinary sessions → Chats; bot details, canonical chats, Routines, Groups → Bots; gateway resources and diagnostics → Gateways; fleet summaries → Fleet). Cross-tab navigation switches to the owner and opens the target there while preserving the source stack; repeated opens focus the existing destination instead of stacking duplicates. Legacy Control/Workspace roots were retired and their surfaces redistributed under Gateways (Gateway Detail) and the Fleet Settings sheet. See [`navigation.md`](navigation.md) for the full model.
+
+Fleet Home and Gateway Detail render bounded observations, not fabricated telemetry: attention is known-items only, activity is limited to real execution signals, and unknown or partial coverage is displayed as such. The UI layer issues no per-bot `session.list` or per-room `groups.state` calls from Home; roster observation is coordinated through the app-seam scheduler. See [`features.md`](features.md#fleet-home-and-coverage-honesty) for the coverage contract.
+
 ## Direct-to-gateway model
 
 A gateway is registered with a user-supplied endpoint and authentication strategy. Hermes Fleet does not require a central AIowa relay.

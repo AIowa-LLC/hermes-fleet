@@ -219,8 +219,8 @@ final class H2HealthDashboardUITests: XCTestCase {
     }
 
     private func openHealthDashboard(in app: XCUIApplication) {
-        // U3: the Health dashboard lives on the Activity tab's stack (the
-        // Gateways toolbar entry moved with the tab shell).
+        // The Health dashboard lives on the Gateways tab's Connection
+        // history stack (no Activity tab in the current four-tab shell).
         UITabNavigation.openActivity(app)
         let health = firstMatch(in: app, identifier: "fleet.activity.health")
         XCTAssertTrue(health.waitForExistence(timeout: 10), "Health toolbar entry should exist")

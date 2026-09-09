@@ -2,7 +2,8 @@ import SwiftUI
 import FleetCore
 import FleetPersistence
 
-/// Activity tab (U3 Gold Fleet) — REAL connection activity, honestly scoped.
+/// Connection activity (Fleet section, reachable from Gateways → Connection
+/// history and Fleet Home) — REAL connection activity, honestly scoped.
 ///
 /// The fleet has no persistent event log yet (the gateway event stream exists
 /// per-conversation, and connection-health accumulation is per-gateway). This

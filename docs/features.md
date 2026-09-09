@@ -2,6 +2,10 @@
 
 Hermes Fleet exposes Hermes fleet and session controls in a native iOS interface. Availability can vary with the capabilities provided by a connected gateway.
 
+## Navigation surfaces
+
+The app is organized into four tabs — **Fleet, Chats, Bots, Gateways** — each owning an independent navigation stack. Every screen has exactly one owning tab; cross-tab links change to the owner and open the target there. Settings is a sheet from the Fleet toolbar; Command Center is a global search-and-jump sheet. See [`navigation.md`](navigation.md) for the full ownership model and restoration behavior.
+
 ## Fleet and gateways
 
 - register, edit, test, and remove gateways
@@ -11,6 +15,16 @@ Hermes Fleet exposes Hermes fleet and session controls in a native iOS interface
 - bot and session discovery
 - per-gateway health information
 - QR-assisted gateway pairing
+- **Gateway Detail** — per-machine cockpit: identity, contextual connection controls, current work, the machine's Needs You item, and dense resource rows (Bots, Groups, Projects, Kanban, Schedules, Skills, Memory, Connection)
+
+## Fleet Home and coverage honesty
+
+The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, Continue, gateway summary rows, and connection activity. Its coverage is deliberately bounded:
+
+- **Needs You is known-items only.** It lists already-observed actionable items — classified gateway authentication/configuration failures plus attention observed in rooms this phone has opened. Unobserved rooms contribute nothing; when gateway coverage is incomplete the section is labeled "N known items" rather than reading as a complete (empty) inbox. There is no fleet-wide pending-action summary.
+- **Active Now is real execution only.** Working/thinking/using-tool states come from actual roster signals; a recent worker heartbeat renders as "Recent worker activity", never as executing. There is no fleet-wide execution telemetry — unseen bots are not claimed to be idle, and incomplete coverage renders honest copy instead of a partial list dressed as the whole fleet.
+- **Continue is device-local.** A recent-open index stored on this phone (at most 50 references, 30-day retention, pruned when gateways are removed or destinations tombstone). It is not synchronized across devices and implies nothing about other clients.
+- **Unknown never renders as zero.** Not-yet-loaded bot counts, partial outages, and unclassifiable gateways display as unknown or partial — never as "0" or "all quiet".
 
 ## Conversations
 

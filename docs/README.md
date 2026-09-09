@@ -6,6 +6,7 @@ This directory contains the public developer documentation for Hermes Fleet.
 
 - [`architecture.md`](architecture.md) - module boundaries, runtime composition, data flow, and known architectural work
 - [`features.md`](features.md) - current user-facing and management surfaces
+- [`navigation.md`](navigation.md) - four-tab structure, screen ownership, and navigation restoration
 - [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
 - [`adr/`](adr/) - architectural decision records
 

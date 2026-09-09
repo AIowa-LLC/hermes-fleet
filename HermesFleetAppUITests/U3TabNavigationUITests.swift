@@ -3,10 +3,13 @@ import XCTest
 /// U3 (Gold Fleet) — root tab-bar navigation regression suite.
 ///
 /// Drives the DEBUG build (scripted fleet, deterministic) and proves the
-/// five-tab structure from the plan of record:
-///   1. cold launch lands on Home with all five tabs in the tab bar;
+/// four-tab structure of the current shell (the old five-tab shell with
+/// Activity and Settings tabs is retired — those surfaces moved under
+/// Fleet/Gateways; see docs/navigation.md):
+///   1. cold launch lands on Fleet with all four tabs in the tab bar;
 ///   2. each tab opens its real screen (roster on Bots, registry on
-///      Gateways, activity on Activity, App Lock toggle on Settings);
+///      Gateways, connection activity via Gateways → Connection history,
+///      App Lock toggle in the Settings sheet);
 ///   3. Gateways → Bots drill-in still pushes bot detail + conversation on
 ///      the tab's own NavigationStack, and switching tabs preserves it.
 final class U3TabNavigationUITests: XCTestCase {
@@ -20,19 +23,19 @@ final class U3TabNavigationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // The tab bar exposes the five plan tabs by label.
+        // The tab bar exposes the four current tabs by label.
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.waitForExistence(timeout: 15), "the root shell must render a tab bar")
         for label in ["Fleet", "Chats", "Bots", "Gateways"] {
             XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
         }
 
-        // Home is the initial tab and shows the real dashboard (the scripted
+        // Fleet is the initial tab and shows the real dashboard (the scripted
         // fleet's gateways render in the summary section — real data only).
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
-                      "Home should render the fleet dashboard with real scripted-fleet data")
-        XCTAssertTrue(app.navigationBars["Fleet"].exists, "Home tab is initially selected")
-        attachScreenshot(of: app, name: "u3-home-five-tabs")
+                      "Fleet should render the fleet dashboard with real scripted-fleet data")
+        XCTAssertTrue(app.navigationBars["Fleet"].exists, "Fleet tab is initially selected")
+        attachScreenshot(of: app, name: "u3-fleet-four-tabs")
     }
 
     func testBotsTabOpensFleetRoster() throws {
@@ -68,7 +71,7 @@ final class U3TabNavigationUITests: XCTestCase {
         // events accumulate (no fabricated timeline).
         let row = firstMatch(in: app, identifier: "fleet.activity.row.workstation")
         XCTAssertTrue(row.waitForExistence(timeout: 10),
-                      "Activity must list the scripted fleet's gateways from real data")
+                      "Connection activity must list the scripted fleet's gateways from real data")
         attachScreenshot(of: app, name: "u3-activity-real-summary")
     }
 
@@ -84,9 +87,9 @@ final class U3TabNavigationUITests: XCTestCase {
         openSettingsTab(app)
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15),
-                      "the Settings tab must host the App Lock toggle")
+                      "the Settings sheet must host the App Lock toggle")
         XCTAssertEqual(toggle.value as? String, "1",
-                       "App Lock toggle must default to ON in the Settings tab")
+                       "App Lock toggle must default to ON in the Settings sheet")
         attachScreenshot(of: app, name: "u3-settings-app-lock")
     }
 

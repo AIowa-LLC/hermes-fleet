@@ -28,11 +28,11 @@ final class RT4RosterEmptyStateUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // The fleet still lists the seeded gateways (Home tab, real data).
+        // The fleet still lists the seeded gateways (Fleet tab, real data).
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10),
-                      "Home should list Workstation from the scripted fleet")
+                      "Fleet should list Workstation from the scripted fleet")
 
-        // Open the fleet roster (Bots tab under the U3 tab shell).
+        // Open the fleet roster (Bots tab under the current tab shell).
         UITabNavigation.openBotsTab(app)
 
         // FOS-6: default All scope legitimately renders the workstation's
