@@ -54,8 +54,8 @@ public enum FleetScreen: Hashable, Sendable, Codable {
 /// One stack per domain. Opening an existing exact object focuses it and removes
 /// only destinations above it; another domain's source stack is untouched.
 public struct FleetNavigationState: Codable, Equatable, Sendable {
-    // gitleaks:allow — a UserDefaults storage-key identifier, not a secret
-    public static let storageKey = "fleet.navigation.v1"
+    /// Identifier for the UserDefaults-backed navigation-state store — not a secret.
+    public static let storageKey = "fleet.navigation.v1" // gitleaks:allow
     public private(set) var version = 1
     public var selection: FleetTab = .fleet
     public var paths: [FleetTab: [FleetScreen]] = [:]
