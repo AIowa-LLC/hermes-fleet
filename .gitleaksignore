@@ -1,0 +1,3 @@
+# fleet.navigation.v1 is a UserDefaults storage-key string, not a secret.
+# The generic-api-key rule matches its shape; ignored narrowly (file:rule).
+Packages/FleetUI/Sources/FleetUI/FleetScreen.swift:generic-api-key
