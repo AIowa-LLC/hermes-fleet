@@ -242,8 +242,6 @@ public struct FleetDashboardView: View {
     private var needsYouHeader: some View {
         Text("Needs You")
             .font(FleetTheme.sectionHeaderFont)
-            .textCase(.uppercase)
-            .tracking(FleetTheme.microLabelTracking)
             .foregroundStyle(FleetTheme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.needsYou.header")
     }
@@ -303,8 +301,6 @@ public struct FleetDashboardView: View {
     private var activeHeader: some View {
         Text("Active Now")
             .font(FleetTheme.sectionHeaderFont)
-            .textCase(.uppercase)
-            .tracking(FleetTheme.microLabelTracking)
             .foregroundStyle(FleetTheme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.active.header")
     }
@@ -402,8 +398,6 @@ public struct FleetDashboardView: View {
     private var continueHeader: some View {
         Text("Continue")
             .font(FleetTheme.sectionHeaderFont)
-            .textCase(.uppercase)
-            .tracking(FleetTheme.microLabelTracking)
             .foregroundStyle(FleetTheme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.continue.header")
     }

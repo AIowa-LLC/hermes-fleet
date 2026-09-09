@@ -29,10 +29,10 @@ public struct ApprovalBanner: View {
             Label {
                 Text("APPROVAL REQUIRED")
                     .font(FleetTheme.monoCaptionFont.weight(.semibold))
-                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
             } icon: {
                 Image(systemName: "exclamationmark.shield.fill")
-                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
             }
             .accessibilityIdentifier("approval.banner.title")
 
@@ -52,7 +52,7 @@ public struct ApprovalBanner: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                        .strokeBorder(FleetTheme.statusDegraded.opacity(0.4), lineWidth: 1)
+                        .strokeBorder(FleetTheme.statusNeedsIntervention.opacity(0.4), lineWidth: 1)
                 )
                 .accessibilityIdentifier("approval.banner.command")
 
@@ -99,7 +99,7 @@ public struct ApprovalBanner: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: FleetTheme.radiusCard)
-                .strokeBorder(FleetTheme.statusDegraded.opacity(0.5), lineWidth: 1)
+                .strokeBorder(FleetTheme.statusNeedsIntervention.opacity(0.5), lineWidth: 1)
         )
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, FleetTheme.spacingSm)
@@ -163,7 +163,7 @@ public struct ApprovalBanner: View {
     private func hint(_ text: String) -> some View {
         Text(text)
             .font(.caption)
-            .foregroundStyle(FleetTheme.statusDegraded)
+            .foregroundStyle(FleetTheme.statusNeedsIntervention)
             .accessibilityIdentifier("approval.banner.hint")
     }
 }

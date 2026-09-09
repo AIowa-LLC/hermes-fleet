@@ -76,9 +76,8 @@ public struct SkillsView: View {
                     }
                     ForEach(groupedRows, id: \.category) { group in
                         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                            Text(group.category.uppercased())
+                            Text(group.category)
                                 .font(FleetTheme.sectionHeaderFont)
-                                .tracking(FleetTheme.microLabelTracking)
                                 .foregroundStyle(FleetTheme.textSecondary)
                                 .padding(.top, FleetTheme.spacingSm)
                             ForEach(group.rows) { skill in

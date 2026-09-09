@@ -161,15 +161,13 @@ public struct KanbanBoardView: View {
                 Circle().fill(FleetTheme.statusDegraded).frame(width: 7, height: 7)
                 Text("Reconnecting…")
             case .idle:
-                Circle().fill(FleetTheme.statusOffline).frame(width: 7, height: 7)
+                Circle().fill(FleetTheme.textSecondary).frame(width: 7, height: 7)
                 Text("Stream idle")
             }
         }
-        // V3: the stream banner reads like a process-table status line —
-        // uppercase micro-label voice, semantic status dot (no icon soup).
+        // FOS-7 (SPEC §14): the stream banner reads as a plain sentence-
+        // case status line — semantic status dot, no tracked uppercase.
         .font(FleetTheme.microLabelFont)
-        .textCase(.uppercase)
-        .tracking(FleetTheme.microLabelTracking)
         .foregroundStyle(FleetTheme.textSecondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(for: model.streamPhase))
@@ -242,8 +240,6 @@ public struct KanbanBoardView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text("Recent Activity")
                 .font(FleetTheme.sectionHeaderFont)
-                .textCase(.uppercase)
-                .tracking(FleetTheme.microLabelTracking)
                 .foregroundStyle(FleetTheme.textSecondary)
             ForEach(model.recentEvents.prefix(5)) { event in
                 HStack(spacing: FleetTheme.spacingSm) {
@@ -272,15 +268,12 @@ struct KanbanColumnSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            // V3 showcase: uppercase column label + MONO count chip + a
-            // hairline divider structuring the lane (terminal process-table
-            // voice). The column title itself is DATA (UI-test landmark) —
-            // no forced case on the title text.
+            // FOS-7 (SPEC §14): sentence-case column label + mono count
+            // chip + a hairline divider structuring the lane. The column
+            // title itself is DATA (UI-test landmark).
             HStack(spacing: FleetTheme.spacingSm) {
                 Text(title.capitalized)
                     .font(FleetTheme.sectionHeaderFont)
-                    .textCase(.uppercase)
-                    .tracking(FleetTheme.microLabelTracking)
                     .foregroundStyle(FleetTheme.textSecondary)
                 Text("\(cards.count)")
                     .font(FleetTheme.monoCaptionFont.monospacedDigit())

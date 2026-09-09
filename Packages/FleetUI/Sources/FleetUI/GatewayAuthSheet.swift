@@ -92,10 +92,10 @@ struct GatewayAuthSheet: View {
                     Section {
                         Text(errorText)
                             .font(.caption)
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     } header: {
                         Text("Error")
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
             }

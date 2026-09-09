@@ -27,7 +27,7 @@ public struct SessionYoloToggle: View {
         } label: {
             Image(systemName: model.isYoloEnabled ? "bolt.fill" : "bolt.slash")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(model.isYoloEnabled ? FleetTheme.statusDegraded : FleetTheme.textSecondary)
+                .foregroundStyle(model.isYoloEnabled ? FleetTheme.statusNeedsIntervention : FleetTheme.textSecondary)
         }
         .buttonStyle(.fleetPressable)
         .accessibilityLabel(model.isYoloEnabled ? "YOLO on" : "YOLO off")

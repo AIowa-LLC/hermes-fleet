@@ -24,7 +24,7 @@ public struct FleetMetadataRow: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     /// - Parameters:
-    ///   - key: metadata key, rendered uppercased with a trailing colon.
+    ///   - key: metadata key, rendered with a trailing colon.
     ///   - value: metadata value.
     ///   - showDivider: whether to render the hairline divider underneath.
     public init(_ key: String, _ value: String, showDivider: Bool = true) {
@@ -36,7 +36,7 @@ public struct FleetMetadataRow: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingSm) {
-                Text(key.uppercased() + ":")
+                Text(key + ":")
                     .font(FleetTheme.monoFont)
                     .foregroundStyle(FleetTheme.textSecondary)
                 Text(value)

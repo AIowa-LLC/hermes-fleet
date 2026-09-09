@@ -110,7 +110,6 @@ public struct ModelPickerSheet: View {
                             Text(group.name.isEmpty ? group.slug : group.name)
                                 .font(FleetTheme.sectionHeaderFont)
                                 .foregroundStyle(FleetTheme.textSecondary)
-                                .tracking(FleetTheme.microLabelTracking)
                             Spacer()
                             Text(group.slug)
                                 .font(FleetTheme.monoCaptionFont)
@@ -176,7 +175,7 @@ public struct ModelPickerSheet: View {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: choice.isCurrent ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(choice.isCurrent ? FleetTheme.statusOnline : FleetTheme.textMuted)
+                    .foregroundStyle(choice.isCurrent ? FleetTheme.accent : FleetTheme.textMuted)
                     .accessibilityHidden(true)
                 Text(choice.model)
                     .font(FleetTheme.monoFont)
@@ -185,10 +184,9 @@ public struct ModelPickerSheet: View {
                     .truncationMode(.middle)
                 Spacer()
                 if choice.isCurrent {
-                    Text("CURRENT")
+                    Text("Current")
                         .font(FleetTheme.microLabelFont)
                         .foregroundStyle(FleetTheme.textMuted)
-                        .tracking(FleetTheme.microLabelTracking)
                 }
             }
             .padding(.horizontal, FleetTheme.spacingLg)

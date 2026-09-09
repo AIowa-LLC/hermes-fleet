@@ -280,11 +280,15 @@ public struct ConversationView: View {
             )
         }
         switch model.phase {
-        case .ready, .streaming:
+        case .streaming:
+            return .executing(.working)
+        case .ready:
             return .online
         case .idle, .opening, .connecting, .reconnecting:
-            return .idle
-        case .authRequired, .failed:
+            return .waiting
+        case .authRequired:
+            return .authRequired
+        case .failed:
             return .degraded
         case .disconnected:
             return .offline
@@ -297,7 +301,7 @@ public struct ConversationView: View {
     private func bannerArea(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
             if let integrityNotice = model.integrityNotice, model.phase != .streaming {
-                banner(text: integrityNotice, symbol: "checkmark.shield", tint: FleetTheme.statusDegraded)
+                banner(text: integrityNotice, symbol: "checkmark.shield", tint: FleetTheme.statusDestructive)
             }
             if let replayNotice = model.replayNotice, model.phase != .streaming {
                 banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accent)
@@ -312,7 +316,7 @@ public struct ConversationView: View {
             case .disconnected:
                 HStack(spacing: 12) {
                     banner(text: "Connection lost — replayed history is shown. Reconnect to continue.",
-                           symbol: "wifi.slash", tint: FleetTheme.statusDegraded)
+                           symbol: "wifi.slash", tint: FleetTheme.statusDestructive)
                     Button("Reconnect") {
                         Task { await model.reconnect() }
                     }
@@ -323,7 +327,7 @@ public struct ConversationView: View {
             case .authRequired:
                 HStack(spacing: 12) {
                     banner(text: model.errorMessage ?? "Authentication required.",
-                           symbol: "exclamationmark.lock", tint: FleetTheme.statusDegraded)
+                           symbol: "exclamationmark.lock", tint: FleetTheme.statusDestructive)
                     Button("Re-authenticate") {
                         Task { await model.reauthenticate() }
                     }
@@ -333,7 +337,7 @@ public struct ConversationView: View {
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
                 }
             case .failed(let detail):
-                banner(text: detail, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
+                banner(text: detail, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDestructive)
             case .ready, .streaming:
                 if model.hydratedFromCache {
                     banner(text: "Showing saved history — connecting for live updates.",
@@ -341,9 +345,9 @@ public struct ConversationView: View {
                 } else if let historyError = model.historyLoadError {
                     // H1: the authoritative fetch failed — cached rows (if
                     // any) stay rendered; honest, non-secret notice.
-                    banner(text: historyError, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
+                    banner(text: historyError, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDestructive)
                 } else if let errorMessage = model.errorMessage {
-                    banner(text: errorMessage, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDegraded)
+                    banner(text: errorMessage, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDestructive)
                 }
             }
         }
@@ -684,7 +688,7 @@ public struct ConversationView: View {
                     } label: {
                         Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDegraded) : AnyShapeStyle(FleetTheme.accent))
+                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(FleetTheme.accent))
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
                             .background(Circle().fill(FleetTheme.surfaceElevated))
                             .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
@@ -831,7 +835,7 @@ public struct ConversationView: View {
     private func attachmentErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
             Text(message)
                 .font(.caption)
                 .foregroundStyle(FleetTheme.textPrimary)
@@ -856,7 +860,7 @@ public struct ConversationView: View {
     private func reactionErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
             Text(message)
                 .font(.caption)
                 .foregroundStyle(FleetTheme.textPrimary)
@@ -884,7 +888,7 @@ public struct ConversationView: View {
     private func voiceDeniedBanner(_ model: ConversationViewModel) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "mic.slash")
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
             Text("Voice needs microphone + speech recognition access. Enable them in Settings to transcribe.")
                 .font(.caption)
                 .foregroundStyle(FleetTheme.textPrimary)
@@ -912,7 +916,7 @@ public struct ConversationView: View {
     private func voiceErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
             Text(message)
                 .font(.caption)
                 .foregroundStyle(FleetTheme.textPrimary)
@@ -1296,7 +1300,7 @@ private struct ConversationBubbleView: View {
                 }
                 Text(row.text.isEmpty ? (row.isStreaming ? "…" : "") : row.text)
                     .font(.body)
-                    .foregroundStyle(row.isFailed ? FleetTheme.statusDegraded : FleetTheme.textPrimary)
+                    .foregroundStyle(row.isFailed ? FleetTheme.statusDestructive : FleetTheme.textPrimary)
                     .textSelection(.enabled)
                 if row.isStreaming {
                     // P2-7: decorative streaming dots — hidden from assistive
@@ -1330,7 +1334,7 @@ private struct ConversationBubbleView: View {
         case .error:
             Label(row.text, systemImage: "exclamationmark.triangle")
                 .font(.caption)
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

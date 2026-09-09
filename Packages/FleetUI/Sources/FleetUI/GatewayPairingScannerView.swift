@@ -141,7 +141,7 @@ struct GatewayPairingScannerView: View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "video.slash")
                 .font(.system(size: 44))
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityHidden(true)
             Text("Camera access is off.\nAllow camera access in Settings to scan pairing codes, or enter the gateway details manually below.")
                 .font(.callout)
@@ -183,7 +183,7 @@ struct GatewayPairingScannerView: View {
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.7), in: Capsule())
-                    .overlay(Capsule().strokeBorder(FleetTheme.statusDegraded, lineWidth: 1))
+                    .overlay(Capsule().strokeBorder(FleetTheme.statusDestructive, lineWidth: 1))
                     .accessibilityIdentifier("fleet.gateways.scan.error")
             } else {
                 Label(
@@ -227,7 +227,7 @@ struct GatewayPairingScannerView: View {
                     .foregroundStyle(FleetTheme.textPrimary)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, 10)
-                    .background(FleetTheme.statusDegraded.opacity(0.35), in: Capsule())
+                    .background(FleetTheme.statusDestructive.opacity(0.35), in: Capsule())
                     .accessibilityIdentifier("fleet.gateways.scan.error")
             }
 

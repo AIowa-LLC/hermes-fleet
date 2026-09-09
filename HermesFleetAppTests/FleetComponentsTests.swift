@@ -23,9 +23,9 @@ final class FleetComponentsTests: XCTestCase {
     func testStatusPillInitForAllStates() {
         for status in FleetStatus.allCases {
             let pill = StatusPill(status: status)
-            XCTAssertNotNil(pill.body, "StatusPill must init for \(status.rawValue)")
+            XCTAssertNotNil(pill.body, "StatusPill must init for \(status.label)")
         }
-        XCTAssertEqual(FleetStatus.allCases.count, 4, "exactly four pill states per the mock")
+        XCTAssertEqual(FleetStatus.allCases.count, 10, "FOS-7 §7 vocabulary: 10 presentation states")
     }
 
     // MARK: - FOS-6 component family (SPEC §18)
@@ -71,13 +71,19 @@ final class FleetComponentsTests: XCTestCase {
         XCTAssertNotNil(BotAvatar(displayName: "123").body, "no-letter names fall back to '?'")
     }
 
-    // MARK: - FleetStatus labels + colors (all four states)
+    // MARK: - FleetStatus labels + colors (FOS-7 §7 vocabulary)
 
     func testFleetStatusLabels() {
         XCTAssertEqual(FleetStatus.online.label, "Online")
-        XCTAssertEqual(FleetStatus.idle.label, "Idle")
+        XCTAssertEqual(FleetStatus.executing(.working).label, "Working")
+        XCTAssertEqual(FleetStatus.executing(.thinking).label, "Thinking")
+        XCTAssertEqual(FleetStatus.executing(.usingTool).label, "Using tool")
+        XCTAssertEqual(FleetStatus.waiting.label, "Waiting")
+        XCTAssertEqual(FleetStatus.needsYou.label, "Needs you")
+        XCTAssertEqual(FleetStatus.authRequired.label, "Sign in required")
         XCTAssertEqual(FleetStatus.degraded.label, "Degraded")
         XCTAssertEqual(FleetStatus.offline.label, "Offline")
+        XCTAssertEqual(FleetStatus.unknown.label, "Unknown")
     }
 
     func testFleetStatusColorsUseThemeStatusTokens() {
@@ -93,33 +99,37 @@ final class FleetComponentsTests: XCTestCase {
             )
         }
         assertSameColor(FleetStatus.online.color, FleetTheme.statusOnline, "online")
-        assertSameColor(FleetStatus.idle.color, FleetTheme.statusIdle, "idle")
+        assertSameColor(FleetStatus.executing(.working).color, FleetTheme.statusExecuting, "executing")
+        assertSameColor(FleetStatus.needsYou.color, FleetTheme.statusNeedsIntervention, "needsYou")
+        assertSameColor(FleetStatus.authRequired.color, FleetTheme.statusNeedsIntervention, "authRequired")
         assertSameColor(FleetStatus.degraded.color, FleetTheme.statusDegraded, "degraded")
-        assertSameColor(FleetStatus.offline.color, FleetTheme.statusOffline, "offline")
+        assertSameColor(FleetStatus.waiting.color, FleetTheme.textSecondary, "waiting (no alarm tint)")
+        assertSameColor(FleetStatus.offline.color, FleetTheme.textSecondary, "offline (no alarm tint)")
+        assertSameColor(FleetStatus.unknown.color, FleetTheme.textSecondary, "unknown (no alarm tint)")
     }
 
     // MARK: - GatewayStatus collapse (exhaustive: all 6 cases)
 
     func testFleetStatusFromGatewayStatusIsExhaustive() {
         XCTAssertEqual(FleetStatus(gatewayStatus: .online), .online)
-        XCTAssertEqual(FleetStatus(gatewayStatus: .connecting), .idle)
+        XCTAssertEqual(FleetStatus(gatewayStatus: .connecting), .waiting)
         XCTAssertEqual(FleetStatus(gatewayStatus: .degraded), .degraded)
-        XCTAssertEqual(FleetStatus(gatewayStatus: .authenticationRequired), .offline)
+        XCTAssertEqual(FleetStatus(gatewayStatus: .authenticationRequired), .authRequired)
         XCTAssertEqual(FleetStatus(gatewayStatus: .offline), .offline)
-        XCTAssertEqual(FleetStatus(gatewayStatus: .unsupported), .offline)
+        XCTAssertEqual(FleetStatus(gatewayStatus: .unsupported), .degraded)
     }
 
-    // MARK: - BotActivity collapse (exhaustive: all 8 cases)
+    // MARK: - BotActivity collapse via presence (exhaustive: all 8 cases)
 
     func testFleetStatusFromBotActivityIsExhaustive() {
-        XCTAssertEqual(FleetStatus(activity: .working), .online)
-        XCTAssertEqual(FleetStatus(activity: .thinking), .online)
-        XCTAssertEqual(FleetStatus(activity: .usingTool), .online)
-        XCTAssertEqual(FleetStatus(activity: .waiting), .idle)
-        XCTAssertEqual(FleetStatus(activity: .idle), .idle)
-        XCTAssertEqual(FleetStatus(activity: .needsAttention), .degraded)
-        XCTAssertEqual(FleetStatus(activity: .offline), .offline)
-        XCTAssertEqual(FleetStatus(activity: .unknown), .offline, "unknown never fabricates activity")
+        XCTAssertEqual(FleetStatus(activity: .working, presence: .reachable), .executing(.working))
+        XCTAssertEqual(FleetStatus(activity: .thinking, presence: .reachable), .executing(.thinking))
+        XCTAssertEqual(FleetStatus(activity: .usingTool, presence: .reachable), .executing(.usingTool))
+        XCTAssertEqual(FleetStatus(activity: .waiting, presence: .reachable), .waiting)
+        XCTAssertEqual(FleetStatus(activity: .idle, presence: .reachable), .online)
+        XCTAssertEqual(FleetStatus(activity: .needsAttention, presence: .reachable), .needsYou)
+        XCTAssertEqual(FleetStatus(activity: .offline, presence: .unreachable), .offline)
+        XCTAssertEqual(FleetStatus(activity: .unknown, presence: .unknown), .unknown, "unknown never fabricates activity or offline")
     }
 
     // MARK: - P0-7 presence-aware pill (multiplexer model)
@@ -133,18 +143,21 @@ final class FleetComponentsTests: XCTestCase {
     }
 
     func testFleetStatusReachablePresenceRefinesWithRealActivity() {
-        XCTAssertEqual(FleetStatus(activity: .working, presence: .reachable), .online)
-        XCTAssertEqual(FleetStatus(activity: .thinking, presence: .reachable), .online)
-        XCTAssertEqual(FleetStatus(activity: .usingTool, presence: .reachable), .online)
-        XCTAssertEqual(FleetStatus(activity: .waiting, presence: .reachable), .idle)
-        XCTAssertEqual(FleetStatus(activity: .idle, presence: .reachable), .idle)
-        XCTAssertEqual(FleetStatus(activity: .needsAttention, presence: .reachable), .degraded)
+        XCTAssertEqual(FleetStatus(activity: .working, presence: .reachable), .executing(.working))
+        XCTAssertEqual(FleetStatus(activity: .thinking, presence: .reachable), .executing(.thinking))
+        XCTAssertEqual(FleetStatus(activity: .usingTool, presence: .reachable), .executing(.usingTool))
+        XCTAssertEqual(FleetStatus(activity: .waiting, presence: .reachable), .waiting)
+        XCTAssertEqual(FleetStatus(activity: .idle, presence: .reachable), .online)
+        XCTAssertEqual(FleetStatus(activity: .needsAttention, presence: .reachable), .needsYou)
     }
 
-    func testFleetStatusUnreachableOrUnknownPresenceIsOfflineRegardlessOfActivity() {
+    func testFleetStatusUnreachableOrUnknownPresence() {
         for activity in [BotActivity.working, .thinking, .usingTool, .waiting, .idle, .needsAttention, .offline, .unknown] {
             XCTAssertEqual(FleetStatus(activity: activity, presence: .unreachable), .offline)
-            XCTAssertEqual(FleetStatus(activity: activity, presence: .unknown), .offline)
+        }
+        // Presence-unknown never claims idle/offline — "Unknown" (SPEC §7).
+        for activity in [BotActivity.working, .waiting, .idle, .unknown] {
+            XCTAssertEqual(FleetStatus(activity: activity, presence: .unknown), .unknown)
         }
     }
 

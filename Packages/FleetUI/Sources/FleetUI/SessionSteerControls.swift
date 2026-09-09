@@ -162,10 +162,10 @@ public struct ToolingNoticeBanner: View {
     public var body: some View {
         VStack(spacing: 0) {
             if let forkError = model.forkError {
-                row(text: forkError, symbol: "arrow.triangle.branch", tint: FleetTheme.statusDegraded)
+                row(text: forkError, symbol: "arrow.triangle.branch", tint: FleetTheme.statusDestructive)
             }
             if let renameNotice = model.renameNotice {
-                row(text: renameNotice, symbol: "pencil", tint: FleetTheme.statusDegraded)
+                row(text: renameNotice, symbol: "pencil", tint: FleetTheme.statusDestructive)
             }
         }
     }

@@ -18,8 +18,8 @@ public struct FleetNoticeBar: View {
         var symbolColor: Color {
             switch self {
             case .info: FleetTheme.textSecondary
-            case .warning: FleetTheme.statusDegraded
-            case .error: FleetTheme.statusDegraded
+            case .warning: FleetTheme.statusNeedsIntervention
+            case .error: FleetTheme.statusDestructive
             }
         }
     }
@@ -75,7 +75,8 @@ public struct FleetNoticeBar: View {
                 .accessibilityHidden(true)
             Text(text)
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(tone == .info ? FleetTheme.textSecondary : FleetTheme.statusDegraded)
+                .foregroundStyle(tone == .info ? FleetTheme.textSecondary
+                    : (tone == .warning ? FleetTheme.statusNeedsIntervention : FleetTheme.statusDestructive))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let actionTitle, let action {

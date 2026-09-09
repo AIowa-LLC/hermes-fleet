@@ -106,11 +106,11 @@ struct GatewayFormSheet: View {
                         Label {
                             Text("Password will be sent unencrypted to a public address.")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                         }
                         .accessibilityIdentifier("fleet.gateways.form.cleartext-warning")
 
@@ -118,7 +118,7 @@ struct GatewayFormSheet: View {
                             .accessibilityIdentifier("fleet.gateways.form.cleartext-confirm")
                     } header: {
                         Text("Security Warning")
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
 
@@ -168,16 +168,16 @@ struct GatewayFormSheet: View {
                         Label {
                             Text(saveError)
                                 .font(.caption)
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                         }
                         .accessibilityIdentifier("fleet.gateways.form.error")
                     } header: {
                         Text("Save Failed")
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
             }

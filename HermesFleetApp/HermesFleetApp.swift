@@ -16,9 +16,6 @@ struct HermesFleetApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var environment = FleetServiceGraph.makeDefaultEnvironment()
     @State private var lockController = FleetServiceGraph.makeLockController()
-    // Observe the accent selection at the root so app-level tint updates live
-    // when the user changes it in Settings > Appearance.
-    @State private var accentController = FleetAccentController.shared
     // FOS-3 (§12): System/Light/Dark appearance preference applied at the
     // app root (nil = System — defer to the device setting).
     @State private var appearanceController = FleetAppearanceController.shared
@@ -40,9 +37,11 @@ struct HermesFleetApp: App {
                     SplashOverlayView()
                 }
             }
-            // Apply the selected accent at app scope so sheets, covers, and
-            // the lock overlay inherit the same tint.
-            .tint(accentController.selection.color)
+            // FOS-7 (SPEC §14): one fixed Fleet violet interactive tint at
+            // app scope — sheets, covers, and the lock overlay inherit it.
+            // The retired V7.5 accent pick stays persisted (rollback-safe)
+            // but no longer applies.
+            .tint(FleetTheme.accent)
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
         }

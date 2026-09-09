@@ -139,7 +139,7 @@ public struct MemoryGraphView: View {
                 HStack(spacing: FleetTheme.spacingSm) {
                     Text(refusal)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.statusDegraded)
+                        .foregroundStyle(FleetTheme.statusDestructive)
                         .lineLimit(4)
                         .accessibilityIdentifier("memorygraph.mutation-banner.text")
                     Spacer()
@@ -230,11 +230,11 @@ public struct MemoryGraphView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: "wifi.slash")
                 .font(.caption)
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityHidden(true)
             Text("Offline — showing the last captured map. \(text)")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .lineLimit(2)
             Spacer()
             Button("Retry") {
@@ -444,10 +444,10 @@ struct LearningNodeDetailErrorSheet: View {
             VStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.title3)
-                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .foregroundStyle(FleetTheme.statusDestructive)
                 Text(errorText)
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .foregroundStyle(FleetTheme.statusDestructive)
                     .multilineTextAlignment(.center)
             }
             .padding(FleetTheme.spacingXl)
@@ -568,9 +568,8 @@ struct LearningNodeDetailSheet: View {
                         .font(.caption)
                         .foregroundStyle(FleetTheme.accent)
                         .accessibilityHidden(true)
-                    Text(detail.kind.uppercased())
+                    Text(detail.kind)
                         .font(FleetTheme.sectionHeaderFont)
-                        .tracking(FleetTheme.microLabelTracking)
                         .foregroundStyle(FleetTheme.textSecondary)
                 }
                 Text(detail.label)
@@ -592,7 +591,6 @@ struct LearningNodeDetailSheet: View {
         VStack(spacing: FleetTheme.spacingSm) {
             Text("Content")
                 .font(FleetTheme.sectionHeaderFont)
-                .tracking(FleetTheme.microLabelTracking)
                 .foregroundStyle(FleetTheme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let refusal = model.mutationError {
@@ -600,7 +598,7 @@ struct LearningNodeDetailSheet: View {
                 // the editor so the user can fix the content and retry.
                 Text(refusal)
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .foregroundStyle(FleetTheme.statusDestructive)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("memorygraph.detail.edit.refusal")

@@ -296,7 +296,7 @@ public struct RoomLinkView: View {
                 if let error = viewModel.errorMessage {
                     Text(error)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.statusDegraded)
+                        .foregroundStyle(FleetTheme.statusDestructive)
                         .accessibilityIdentifier("fleet.roomlink.error")
                 }
                 if let notice = viewModel.notice {
@@ -345,7 +345,7 @@ public struct RoomLinkView: View {
                 } else if let explanation = viewModel.unsupportedExplanation {
                     Label(explanation, systemImage: "xmark.shield")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.statusDegraded)
+                        .foregroundStyle(FleetTheme.statusDestructive)
                         .accessibilityIdentifier("fleet.roomlink.unsupported")
                 } else if let negotiation = viewModel.negotiation {
                     Text(negotiation.transportSummary)
@@ -384,7 +384,7 @@ public struct RoomLinkView: View {
                         if grant.isNearExpiry() {
                             Label("expires \(RoomLinkViewModel.shortRemaining(grant))", systemImage: "clock.badge.exclamationmark")
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                         } else {
                             Text("expires \(RoomLinkViewModel.shortRemaining(grant))")
                                 .font(FleetTheme.monoCaptionFont)
@@ -449,7 +449,7 @@ public struct RoomLinkView: View {
                         HStack {
                             Image(systemName: route.status == .ready ? "checkmark.circle.fill" : "exclamationmark.triangle")
                                 .font(.caption)
-                                .foregroundStyle(route.status == .ready ? FleetTheme.statusOnline : FleetTheme.statusDegraded)
+                                .foregroundStyle(route.status == .ready ? FleetTheme.statusOnline : FleetTheme.statusDestructive)
                             Text(route.memberID)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(FleetTheme.textPrimary)

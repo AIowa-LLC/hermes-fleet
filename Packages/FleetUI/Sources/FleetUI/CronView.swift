@@ -121,7 +121,7 @@ public struct CronView: View {
         FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Circle()
-                    .fill(job.isEnabled ? FleetTheme.statusOnline : FleetTheme.statusOffline)
+                    .fill(job.isEnabled ? FleetTheme.statusOnline : FleetTheme.textMuted)
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -185,7 +185,7 @@ public struct CronView: View {
             } label: {
                 Label(job.isEnabled ? "Disable" : "Enable", systemImage: job.isEnabled ? "pause.circle" : "arrow.up.circle")
             }
-            .tint(job.isEnabled ? FleetTheme.statusIdle : FleetTheme.statusOnline)
+            .tint(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOnline)
             .accessibilityIdentifier("cron.swipe.toggle.\(job.jobID)")
 
             Button(role: .destructive) {
@@ -211,11 +211,11 @@ public struct CronView: View {
                 .accessibilityHidden(true)
             Text(job.isEnabled ? (job.nextRunAt ?? "no upcoming run") : "Paused")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOffline)
+                .foregroundStyle(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.textMuted)
             if let last = job.lastStatus, !last.isEmpty {
                 Label(last, systemImage: ["failed", "error", "failure"].contains(last.lowercased()) ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(["failed", "error", "failure"].contains(last.lowercased()) ? FleetTheme.statusDegraded : FleetTheme.textMuted)
+                    .foregroundStyle(["failed", "error", "failure"].contains(last.lowercased()) ? FleetTheme.statusDestructive : FleetTheme.textMuted)
             }
         }
     }
@@ -300,16 +300,16 @@ struct CronJobFormSheet: View {
                         Label {
                             Text(formError)
                                 .font(.caption)
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                         }
                         .accessibilityIdentifier("cron.form.error")
                     } header: {
                         Text("Save Failed")
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
             }

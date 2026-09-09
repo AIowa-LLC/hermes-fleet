@@ -343,7 +343,7 @@ public struct BotRoutinesView: View {
         FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Circle()
-                    .fill(routine.isEnabled ? FleetTheme.statusOnline : FleetTheme.statusOffline)
+                    .fill(routine.isEnabled ? FleetTheme.statusOnline : FleetTheme.textMuted)
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -370,11 +370,11 @@ public struct BotRoutinesView: View {
                         HStack(spacing: FleetTheme.spacingXs) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.caption2)
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                                 .accessibilityHidden(true)
                             Text(failure)
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                                 .lineLimit(2)
                         }
                         .accessibilityElement(children: .combine)
@@ -432,7 +432,7 @@ public struct BotRoutinesView: View {
                 .accessibilityHidden(true)
             Text(routine.isEnabled ? (routine.nextRunAt ?? "no upcoming run") : "Paused")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(routine.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOffline)
+                .foregroundStyle(routine.isEnabled ? FleetTheme.textSecondary : FleetTheme.textMuted)
             if let last = routine.lastRunAt {
                 Text("· last \(last)")
                     .font(FleetTheme.monoCaptionFont)
@@ -443,7 +443,7 @@ public struct BotRoutinesView: View {
                     .font(FleetTheme.monoCaptionFont)
                     .foregroundStyle(
                         ["failed", "error", "failure", "fire_failed"].contains(status.lowercased())
-                            ? FleetTheme.statusDegraded : FleetTheme.textMuted)
+                            ? FleetTheme.statusDestructive : FleetTheme.textMuted)
             }
         }
         .accessibilityIdentifier("routines.row.status.\(routine.jobID)")
@@ -605,16 +605,16 @@ struct BotRoutineFormSheet: View {
                         Label {
                             Text(formError)
                                 .font(.caption)
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .foregroundStyle(FleetTheme.statusDestructive)
                         }
                         .accessibilityIdentifier("routines.form.error")
                     } header: {
                         Text("Save Failed")
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
             }

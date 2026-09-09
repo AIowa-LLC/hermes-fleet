@@ -131,8 +131,9 @@ private struct ActivityRowView: View {
         if let state = environment.connectionStates[gateway.id] {
             switch state {
             case .connected: return .online
-            case .connecting: return .idle
-            case .idle, .disconnected: return .offline
+            case .connecting: return .waiting
+            case .idle: return .unknown
+            case .disconnected: return .offline
             case .failed(let status): return FleetStatus(gatewayStatus: status)
             }
         }

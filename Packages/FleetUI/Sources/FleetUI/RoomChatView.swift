@@ -439,7 +439,7 @@ public struct RoomChatView: View {
                     .font(.headline.weight(.bold))
                     .foregroundStyle(FleetTheme.textPrimary)
                 if viewModel.driverWorking {
-                    StatusPill(status: FleetStatus(activity: .working, presence: .reachable))
+                    StatusPill(status: .executing(.working))
                 }
             }
             // Source-qualified member chips: gateway label always present so
@@ -568,13 +568,13 @@ public struct RoomChatView: View {
         if let explanation = viewModel.disabledExplanation {
             Text(explanation)
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityIdentifier("fleet.room.disabled-explanation")
         }
         if let error = viewModel.errorMessage {
             Text(error)
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityIdentifier("fleet.room.error")
         }
         if let notice = viewModel.notice {
@@ -644,7 +644,7 @@ public struct RoomChatView: View {
                     case .failure:
                         Label(entry.text ?? "Turn failed", systemImage: "xmark.octagon")
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
             }

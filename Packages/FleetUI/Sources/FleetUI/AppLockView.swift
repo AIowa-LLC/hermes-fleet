@@ -86,7 +86,7 @@ public struct AppLockView: View {
         VStack(spacing: FleetTheme.spacingMd) {
             Label("Authentication unavailable", systemImage: "exclamationmark.triangle.fill")
                 .font(.subheadline)
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityIdentifier("fleet.app-lock.passcode.banner")
 
             Text("Use your device passcode to continue.")

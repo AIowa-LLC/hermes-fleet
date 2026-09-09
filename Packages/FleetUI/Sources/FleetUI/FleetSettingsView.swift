@@ -2,23 +2,21 @@ import SwiftUI
 
 /// FOS-3 (SPEC §12) — Settings is an app-level SHEET reached from the Fleet
 /// root's leading gearshape and Command Center. First item is useful
-/// configuration, not a brand block (the U7 gold banner is retired with this
-/// card). No invented preferences: Security (App Lock), Appearance
-/// (System/Light/Dark — new; the accent picker retires in FOS-7), and the
-/// always-reachable Agent Setup Prompt (C2) plus app version.
+/// configuration, not a brand block. No invented preferences: Security
+/// (App Lock), Appearance (System/Light/Dark — FOS-3), and the always-
+/// reachable Agent Setup Prompt (C2) plus app version. FOS-7 (SPEC §14):
+/// the accent picker is retired — Fleet uses one consistent interface
+/// accent (fixed Fleet violet); the stored pick is preserved for rollback.
 public struct FleetSettingsView: View {
     private let controller: AppLockController
-    private let accentController: FleetAccentController
     private let appearanceController: FleetAppearanceController
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
 
     public init(controller: AppLockController,
-                accentController: FleetAccentController = FleetAccentController.shared,
                 appearanceController: FleetAppearanceController = FleetAppearanceController.shared) {
         self.controller = controller
-        self.accentController = accentController
         self.appearanceController = appearanceController
     }
 
@@ -44,8 +42,10 @@ public struct FleetSettingsView: View {
             }
 
             // FOS-3 (§12 Appearance): System / Light / Dark, default System.
-            // The accent picker RETIRES in FOS-7; until then the V7.5 picker
-            // keeps applying unchanged (its tests migrate with FOS-7).
+            // FOS-7 (SPEC §14): the accent picker is RETIRED — the section is
+            // the appearance preference plus a short note that Fleet uses one
+            // consistent interface accent. The stored pick is preserved
+            // untouched (rollback-safe; do not delete migration-unsafe state).
             Section {
                 Picker("Appearance", selection: Binding(
                     get: { appearanceController.selection },
@@ -57,33 +57,11 @@ public struct FleetSettingsView: View {
                 }
                 .pickerStyle(.inline)
                 .accessibilityIdentifier("fleet.settings.appearance")
-                ForEach(FleetAccent.allCases) { accent in
-                    Button {
-                        accentController.selection = accent
-                    } label: {
-                        HStack(spacing: FleetTheme.spacingMd) {
-                            Circle()
-                                .fill(accent.color)
-                                .frame(width: 24, height: 24)
-                                .overlay(Circle().strokeBorder(FleetTheme.border, lineWidth: 1))
-                            Text(accent.label)
-                                .foregroundStyle(FleetTheme.textPrimary)
-                            Spacer()
-                            if accentController.selection == accent {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(FleetTheme.accent)
-                                    .accessibilityIdentifier("fleet.settings.accent.selected.\(accent.rawValue)")
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("fleet.settings.accent.\(accent.rawValue)")
-                }
             } header: {
                 Text("Appearance")
                     .foregroundStyle(FleetTheme.textSecondary)
             } footer: {
-                Text("Choose Light or Dark, or follow your device's system setting. The accent picker retires in a coming update in favor of one consistent Fleet interface accent.")
+                Text("Choose Light or Dark, or follow your device's system setting. Fleet uses one consistent interface accent, so buttons and links share the same color everywhere.")
                     .foregroundStyle(FleetTheme.textSecondary)
             }
 

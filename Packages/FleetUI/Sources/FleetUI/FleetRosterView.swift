@@ -261,7 +261,7 @@ public struct FleetRosterView: View {
                             NavigationLink(value: FleetScreen.botDetail(bot.route)) {
                                 HStack(spacing: 6) {
                                     Circle()
-                                        .fill(FleetTheme.statusOnline)
+                                        .fill(FleetTheme.statusExecuting)
                                         .frame(width: 8, height: 8)
                                     Text("\(BotRosterPresentation.displayTitle(for: bot)) · \(gatewayLabel(for: bot)) · \(activeStateText(bot))")
                                         .font(.footnote.weight(.semibold))
@@ -271,7 +271,7 @@ public struct FleetRosterView: View {
                                 .padding(.horizontal, FleetTheme.spacingSm)
                                 .padding(.vertical, 6)
                                 .background(Capsule().fill(FleetTheme.surfaceElevated))
-                                .overlay(Capsule().strokeBorder(FleetTheme.statusOnline.opacity(0.4), lineWidth: 1))
+                                .overlay(Capsule().strokeBorder(FleetTheme.statusExecuting.opacity(0.4), lineWidth: 1))
                             }
                             .buttonStyle(.fleetPressable)
                             .accessibilityElement(children: .combine)
@@ -807,7 +807,7 @@ struct RoomAvatar: View {
                     let h = geo.size.height / CGFloat(rows)
                     ForEach(Array(chips.enumerated()), id: \.offset) { i, name in
                         Text(FleetDashboardFormatting.avatarInitials(from: name))
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .font(.system(size: 9, weight: .bold, design: .default))
                             .foregroundStyle(FleetTheme.accent)
                             .frame(width: w, height: h)
                             .position(

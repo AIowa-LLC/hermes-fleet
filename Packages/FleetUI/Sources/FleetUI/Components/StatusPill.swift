@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// V2 (Nous Direction A) — status pill: leading semantic dot + label, on a
-/// subtle tint of the status color, with a hairline stroke of the same color
-/// for definition on the near-black canvas. Fully rounded (Capsule).
+/// FOS-7 (SPEC §14/§16/§15) — status pill: leading symbol + exact state
+/// word on a subtle tint of the status color. Symbol + word are ALWAYS
+/// rendered (color is never the only differentiator). The word renders in
+/// primary label with the colored glyph (SPEC §14 status row).
 ///
-/// The dot + semantic tint IS the status read (process-table voice); text
-/// stays title-case (FleetStatus.label) — it is data, not a micro-label.
+/// Motion (SPEC §15): one 150–200 ms crossfade when the status changes;
+/// Reduce Motion replaces it with an instant label swap.
 public struct StatusPill: View {
     private let status: FleetStatus
 
@@ -15,19 +16,12 @@ public struct StatusPill: View {
 
     public var body: some View {
         HStack(spacing: FleetTheme.spacingXs) {
-            Circle()
-                .fill(status.color)
-                .frame(width: Self.dotDiameter, height: Self.dotDiameter)
-            // V5 Differentiate Without Color: when the user enables it, a
-            // decorative SF Symbol reinforces the state beyond color+dot.
-            if differentiateWithoutColor {
-                Image(systemName: status.symbolName)
-                    .font(.system(size: Self.symbolFontSize, weight: .semibold))
-                    .foregroundStyle(status.labelColor)
-                    .accessibilityHidden(true)
-            }
+            Image(systemName: status.symbolName)
+                .font(.system(size: Self.symbolFontSize, weight: .semibold))
+                .foregroundStyle(status.color)
+                .accessibilityHidden(true)
             Text(status.label)
-                .font(.footnote.weight(.semibold))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(status.labelColor)
         }
         .padding(.horizontal, FleetTheme.spacingSm)
@@ -36,19 +30,20 @@ public struct StatusPill: View {
         .overlay(
             Capsule().strokeBorder(status.color.opacity(Self.strokeOpacity), lineWidth: 1)
         )
+        // SPEC §15: one 150–200 ms status crossfade; instant under Reduce Motion.
+        .animation(reduceMotion ? nil : .easeInOut(duration: Self.crossfadeDuration), value: status)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Status: \(status.label)")
     }
 
-    @Environment(\.accessibilityDifferentiateWithoutColor)
-    private var differentiateWithoutColor
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Pill dot diameter (pt).
-    static let dotDiameter: CGFloat = 8
-    /// Hairline status-color stroke opacity (subtle definition on #0A0A0A).
+    /// Hairline status-color stroke opacity (subtle definition on canvas).
     static let strokeOpacity: Double = 0.25
-    /// Differentiate-Without-Color reinforcement glyph size (pt).
-    static let symbolFontSize: CGFloat = 10
+    /// Status crossfade duration (seconds) — SPEC §15 budget 150–200 ms.
+    static let crossfadeDuration: TimeInterval = 0.18
+    /// Pill glyph size (pt).
+    static let symbolFontSize: CGFloat = 11
 }
 
 #Preview("StatusPill — all states") {

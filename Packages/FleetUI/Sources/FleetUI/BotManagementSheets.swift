@@ -84,7 +84,7 @@ public struct CreateBotSheet: View {
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                             .accessibilityIdentifier("fleet.bot.create.error")
                     }
                 }
@@ -208,7 +208,7 @@ public struct EditBotSheet: View {
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                             .accessibilityIdentifier("fleet.bot.edit.error")
                     }
                 }
@@ -346,7 +346,7 @@ public struct EditBotSheet: View {
                     "Not applied: \(outcome.failedSections.map(\.rawValue).sorted().joined(separator: ", "))",
                     systemImage: "exclamationmark.circle"
                 )
-                .foregroundStyle(FleetTheme.statusDegraded)
+                .foregroundStyle(FleetTheme.statusDestructive)
             }
         }
         .accessibilityIdentifier("fleet.bot.edit.partial")
@@ -532,7 +532,7 @@ public struct SectionsManagementSheet: View {
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .foregroundStyle(FleetTheme.statusDegraded)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }
             }

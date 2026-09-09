@@ -17,7 +17,7 @@ public struct FleetGlanceFact: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(FleetTheme.secondaryFont.weight(.semibold))
+                .font(FleetTheme.statFont)
                 .foregroundStyle(FleetTheme.textPrimary)
                 .lineLimit(1)
             Text(label)

@@ -18,8 +18,8 @@ public struct ContextMeterView: View {
 
     private var tint: Color {
         switch model.meterLevel {
-        case .alert: return FleetTheme.statusDegraded
-        case .warn: return FleetTheme.statusIdle
+        case .alert: return FleetTheme.statusDestructive
+        case .warn: return FleetTheme.statusNeedsIntervention
         case .normal, nil: return FleetTheme.accent
         }
     }
@@ -174,10 +174,9 @@ public struct ContextBreakdownSheet: View {
 
     private func summaryHeader(_ breakdown: ContextBreakdown) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
-            Text("CONTEXT")
+            Text("Context")
                 .font(FleetTheme.sectionHeaderFont)
                 .foregroundStyle(FleetTheme.textSecondary)
-                .tracking(FleetTheme.microLabelTracking)
             HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingSm) {
                 Text("\(breakdown.contextPercent)%")
                     .font(FleetTheme.statFont)
@@ -202,7 +201,7 @@ public struct ContextBreakdownSheet: View {
 
     private func categoryRow(_ category: ContextBreakdownCategory, total: Int) -> some View {
         HStack(spacing: FleetTheme.spacingMd) {
-            Text(category.label.uppercased())
+            Text(category.label)
                 .font(FleetTheme.monoCaptionFont)
                 .foregroundStyle(FleetTheme.textSecondary)
                 .lineLimit(1)
@@ -226,10 +225,9 @@ public struct ContextBreakdownSheet: View {
 
     private func usageFooter(_ usage: SessionUsageSnapshot) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
-            Text("SESSION USAGE")
+            Text("Session usage")
                 .font(FleetTheme.sectionHeaderFont)
                 .foregroundStyle(FleetTheme.textSecondary)
-                .tracking(FleetTheme.microLabelTracking)
             HStack(spacing: FleetTheme.spacingXl) {
                 stat("CALLS", "\(usage.calls)")
                 stat("IN", Self.compact(usage.input))
@@ -247,7 +245,6 @@ public struct ContextBreakdownSheet: View {
             Text(key)
                 .font(FleetTheme.microLabelFont)
                 .foregroundStyle(FleetTheme.textMuted)
-                .tracking(FleetTheme.microLabelTracking)
             Text(value)
                 .font(FleetTheme.monoFont)
                 .foregroundStyle(FleetTheme.textPrimary)
@@ -257,8 +254,8 @@ public struct ContextBreakdownSheet: View {
 
     private func tint(for percent: Int) -> Color {
         switch ContextMeterLevel.level(forPercent: percent) {
-        case .alert: return FleetTheme.statusDegraded
-        case .warn: return FleetTheme.statusIdle
+        case .alert: return FleetTheme.statusDestructive
+        case .warn: return FleetTheme.statusNeedsIntervention
         case .normal: return FleetTheme.accent
         }
     }

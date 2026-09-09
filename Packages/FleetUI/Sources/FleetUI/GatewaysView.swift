@@ -614,7 +614,9 @@ private struct GatewayRowView: View {
         switch state {
         case .failed(let status):
             switch status {
-            case .authenticationRequired, .degraded, .unsupported:
+            case .authenticationRequired:
+                return FleetTheme.statusNeedsIntervention
+            case .degraded, .unsupported:
                 return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
                 return FleetTheme.textSecondary
@@ -694,7 +696,9 @@ private struct ConnectionStateBadge: View {
         switch state {
         case .failed(let status):
             switch status {
-            case .authenticationRequired, .degraded, .unsupported:
+            case .authenticationRequired:
+                return FleetTheme.statusNeedsIntervention
+            case .degraded, .unsupported:
                 return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
                 return FleetTheme.textSecondary

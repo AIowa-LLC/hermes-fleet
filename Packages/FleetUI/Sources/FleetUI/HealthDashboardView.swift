@@ -215,7 +215,9 @@ private struct HealthStateBadge: View {
         switch state {
         case .failed(let status):
             switch status {
-            case .authenticationRequired, .degraded, .unsupported:
+            case .authenticationRequired:
+                return FleetTheme.statusNeedsIntervention
+            case .degraded, .unsupported:
                 return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
                 return FleetTheme.textSecondary
