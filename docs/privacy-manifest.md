@@ -46,6 +46,18 @@ to information accessible only to this app. A future use of an app group,
 file metadata, boot time, disk-space, or active-keyboard API must update both
 the source manifest and the audit rationale with the exact approved reason.
 
+The source scanner's API table is pinned to Apple's current
+[`NSPrivacyAccessedAPIType` documentation](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
+The current File Timestamp list includes `creationDate`, `modificationDate`,
+`fileModificationDate`, `contentModificationDateKey`, `creationDateKey`,
+`getattrlist`, `getattrlistbulk`, `fgetattrlist`, `stat`, and `fstat`. The
+current Disk Space list includes the four capacity keys, `systemFreeSize`,
+`systemSize`, `statfs`, `statvfs`, `fstatfs`, `fstatvfs`, `getattrlist`,
+`fgetattrlist`, and `getattrlistat`. `lstat` and `fstatat` were specifically
+reviewed but are not listed in Apple's current table, so the audit does not
+pretend they are covered required-reason APIs. Shared APIs are mapped to every
+Apple category that lists them.
+
 Third-party SDK manifests remain the SDK owners' responsibility; the app
 manifest does not substitute for a manifest inside an SDK bundle.
 
@@ -56,6 +68,7 @@ Run from the repository root:
 ```bash
 bash scripts/privacy_manifest_validate.sh
 bash scripts/privacy_required_reason_audit.sh
+bash scripts/privacy_required_reason_audit_test.sh
 bash scripts/xcodegen_drift_gate.sh
 ```
 

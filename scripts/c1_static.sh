@@ -67,6 +67,12 @@ else
   bad "required-reason API audit FAILED"; cat /tmp/c1_privacy_reason.log
 fi
 
+if bash scripts/privacy_required_reason_audit_test.sh >/tmp/c1_privacy_reason_test.log 2>&1; then
+  ok "required-reason scanner positive/negative fixtures: complete API table covered"
+else
+  bad "required-reason scanner tests FAILED"; cat /tmp/c1_privacy_reason_test.log
+fi
+
 # --- public-safety residue guard ----------------------------------------------
 note "public-safety residue guard"
 if bash scripts/public_safety_guard.sh >/tmp/c1_guard.log 2>&1; then
