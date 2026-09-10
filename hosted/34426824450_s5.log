@@ -1,0 +1,195 @@
+UI matrix shard 5/5	UNKNOWN STEP	﻿2026-09-10T01:46:50.5129750Z Current runner version: '2.337.0'
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5145160Z ##[group]Runner Image Provisioner
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5145670Z Hosted Compute Agent
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5146060Z Version: 20260828.587
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5146480Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5146960Z Build Date: 2026-08-28T16:44:25Z
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5147420Z Worker ID: {2c6625cf-75e8-4295-8964-b0fa80f61f47}
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5147910Z Azure Region: westus
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5148290Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5149180Z ##[group]Operating System
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5149580Z macOS
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5149910Z 26.6.2
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5150250Z 25G83
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5150600Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5151490Z ##[group]Runner Image
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5152080Z Image: macos-26-arm64
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5152480Z Version: 20260831.0337.3
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5153360Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20260831.0337/images/macos/macos-26-arm64-Readme.md
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5154410Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20260831.0337
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5155060Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5155880Z ##[group]GITHUB_TOKEN Permissions
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5157190Z Contents: read
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5157590Z Metadata: read
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5157960Z Packages: read
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5158340Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5159880Z Secret source: Actions
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5160460Z Cache mode: write
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5160930Z Prepare workflow directory
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5374650Z Prepare all required actions
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.5411920Z Getting action download info
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.6985160Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.8499220Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:50.9958210Z Complete job name: UI matrix shard 5/5
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0388310Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0394810Z ##[group]Run actions/checkout@v4
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0395290Z with:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0395600Z   fetch-depth: 1
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0395940Z   repository: AIowa-LLC/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0398710Z   token: ***
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0399020Z   ssh-strict: true
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0399340Z   ssh-user: git
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0399670Z   persist-credentials: true
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0400030Z   clean: true
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0400420Z   sparse-checkout-cone-mode: true
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0400800Z   fetch-tags: false
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0401260Z   show-progress: true
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0401610Z   lfs: false
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0401970Z   submodules: false
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0402360Z   set-safe-directory: true
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0402740Z   allow-unsafe-pr-checkout: false
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.0403340Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2349200Z Syncing repository: AIowa-LLC/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2350300Z ##[group]Getting Git version info
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2350790Z Working directory is '/Users/runner/work/hermes-fleet/hermes-fleet'
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2351620Z [command]/opt/homebrew/bin/git version
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2568760Z git version 2.55.0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2580240Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2586020Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/eab84573-4a71-451e-a156-3cf8f77f1faf/.gitconfig'
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2592400Z Temporarily overriding HOME='/Users/runner/work/_temp/eab84573-4a71-451e-a156-3cf8f77f1faf' before making global git config changes
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2593340Z Adding repository directory to the temporary git global config as a safe directory
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2595910Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/hermes-fleet/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2692560Z Deleting the contents of '/Users/runner/work/hermes-fleet/hermes-fleet'
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2696150Z ##[group]Initializing the repository
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2698680Z [command]/opt/homebrew/bin/git init /Users/runner/work/hermes-fleet/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2879050Z hint: Using 'master' as the name for the initial branch. This default branch name
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2880100Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2882150Z hint: to use in all of your new repositories, which will suppress this warning,
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2883280Z hint: call:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2883730Z hint:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2884200Z hint: 	git config --global init.defaultBranch <name>
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2884720Z hint:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2885220Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2886920Z hint: 'development'. The just-created branch can be renamed via this command:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2887560Z hint:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2888330Z hint: 	git branch -m <name>
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2889000Z hint:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2891740Z hint: Disable this message with "git config set advice.defaultBranchName false"
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2892670Z Initialized empty Git repository in /Users/runner/work/hermes-fleet/hermes-fleet/.git/
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2894780Z [command]/opt/homebrew/bin/git remote add origin https://github.com/AIowa-LLC/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2955030Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2955590Z ##[group]Disabling automatic garbage collection
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.2958100Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.3010760Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.3011350Z ##[group]Setting up auth
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.3014870Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.3067520Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.3785010Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.3835040Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.4453850Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.4504750Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.5519510Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.5596450Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.5597120Z ##[group]Fetching the repository
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:51.5691370Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +34a6c444de1b4d5a88cacdd5ce740bf310ab84a5:refs/remotes/pull/3/merge
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0887090Z From https://github.com/AIowa-LLC/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0888180Z  * [new ref]         34a6c444de1b4d5a88cacdd5ce740bf310ab84a5 -> pull/3/merge
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0889900Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0890600Z ##[group]Determining the checkout info
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0891300Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0894250Z [command]/opt/homebrew/bin/git sparse-checkout disable
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.0970160Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.1045680Z ##[group]Checking out the ref
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.1047720Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/3/merge
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2290610Z HEAD is now at 34a6c44 Merge d41388c9d4502e95dee85d750b118cd737abfa7c into 3ef3437017dee63288b541968b2fa4189a486c55
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2298880Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2376210Z [command]/opt/homebrew/bin/git log -1 --format=%H
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2448550Z 34a6c444de1b4d5a88cacdd5ce740bf310ab84a5
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2918470Z ##[group]Run bash scripts/c1_ui_matrix.sh --shard 5 --shards 5
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2919980Z ^[[36;1mbash scripts/c1_ui_matrix.sh --shard 5 --shards 5^[[0m
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2957020Z shell: /bin/bash -e {0}
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.2957880Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:53.3427810Z audit: 40 CI suites + 11 environmental suites = 51 bundle classes — every class accounted for exactly once.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:56.7208790Z   using simulator: iPhone 17 Pro
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:46:56.7291680Z C1 UI (shard) [01/08] HermesFleetAppUITests/RT2RemovalAndEndpointSanitizationUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:51:43.7300400Z PASS  UI RT2RemovalAndEndpointSanitization — executed=2 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:51:43.7304450Z C1 UI (shard) [02/08] HermesFleetAppUITests/SplashUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.3922270Z FAIL  UI Splash FAILED or incomplete
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4031410Z Test Suite 'Selected tests' started at 2026-09-10 01:53:13.469.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4038010Z Test Suite 'HermesFleetAppUITests.xctest' started at 2026-09-10 01:53:13.469.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4044940Z Test Suite 'SplashUITests' started at 2026-09-10 01:53:13.469.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4063710Z /Users/runner/work/hermes-fleet/hermes-fleet/HermesFleetAppUITests/SplashUITests.swift:40: error: -[HermesFleetAppUITests.SplashUITests testSplashAppearsHoldsThenFadesIntoApp] : XCTAssertTrue failed - splash white-wing mark should appear at launch
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4065060Z Test Case '-[HermesFleetAppUITests.SplashUITests testSplashAppearsHoldsThenFadesIntoApp]' failed (30.119 seconds).
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4066310Z Test Suite 'SplashUITests' failed at 2026-09-10 01:53:43.589.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4067420Z 	 Executed 1 test, with 1 failure (0 unexpected) in 30.119 (30.120) seconds
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4068620Z Test Suite 'HermesFleetAppUITests.xctest' failed at 2026-09-10 01:53:43.590.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4072320Z 	 Executed 1 test, with 1 failure (0 unexpected) in 30.119 (30.121) seconds
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4102700Z Test Suite 'Selected tests' failed at 2026-09-10 01:53:43.590.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4104740Z 	 Executed 1 test, with 1 failure (0 unexpected) in 30.119 (30.122) seconds
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:54:22.4106770Z C1 UI (shard) [03/08] HermesFleetAppUITests/U4DashboardUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:56:33.6803770Z PASS  UI U4Dashboard — executed=4 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:56:33.6805620Z C1 UI (shard) [04/08] HermesFleetAppUITests/C2SetupPromptUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:58:29.6808790Z PASS  UI C2SetupPrompt — executed=2 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T01:58:29.6821290Z C1 UI (shard) [05/08] HermesFleetAppUITests/R9MemoryGraphUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:00:39.0612050Z PASS  UI R9MemoryGraph — executed=1 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:00:39.0633270Z C1 UI (shard) [06/08] HermesFleetAppUITests/R10MemoryGraphEditUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:05:36.3084120Z PASS  UI R10MemoryGraphEdit — executed=3 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:05:36.3095840Z C1 UI (shard) [07/08] HermesFleetAppUITests/FOS2GatewayDetailUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:10:06.3003240Z PASS  UI FOS2GatewayDetail — executed=5 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:10:06.3010220Z C1 UI (shard) [08/08] HermesFleetAppUITests/FOS8AccessibilityUITests ...
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.8576070Z PASS  UI FOS8Accessibility — executed=6 failed=0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.8578280Z UI MATRIX (shard): suites=8 tests=23 FAIL=1
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.8689160Z ##[error]Process completed with exit code 1.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9024570Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9026090Z ##[group]Run actions/upload-artifact@v4
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9029480Z with:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9029680Z   name: xcresults-shard-5
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9030010Z   path: /tmp/hermes-c1-results/
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9030260Z   retention-days: 7
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9030560Z   if-no-files-found: ignore
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9030870Z   compression-level: 6
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9031290Z   overwrite: false
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9031550Z   include-hidden-files: false
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:36.9031940Z ##[endgroup]
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:37.4007130Z (node:61490) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:37.4007850Z (Use `node --trace-deprecation ...` to show where the warning was created)
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:37.5369610Z With the provided path, there will be 1795 files uploaded
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:37.5372740Z Artifact name is valid!
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:37.5372960Z Root directory input is valid!
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:37.7553400Z Beginning upload of artifact content to blob storage
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:38.0568500Z (node:61490) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:38.2181190Z Uploaded bytes 8388608
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:38.5698200Z Uploaded bytes 16777216
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:38.8468200Z Uploaded bytes 25165824
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:39.1393530Z Uploaded bytes 33554432
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:39.4298890Z Uploaded bytes 41943040
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:39.5984580Z Uploaded bytes 50331648
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:39.7662610Z Uploaded bytes 58720256
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:40.0765550Z Uploaded bytes 67108864
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:40.3978740Z Uploaded bytes 75497472
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.0714900Z Uploaded bytes 83886080
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.0809340Z Uploaded bytes 83894880
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.0967650Z Finished uploading artifact content to blob storage!
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.0973420Z SHA256 digest of uploaded artifact zip is b6f2b44edd1b8dea05cd04e0adbfceb4504564095fb1818e9128a65481773d11
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.0978440Z Finalizing artifact upload
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.3851890Z Artifact xcresults-shard-5.zip successfully finalized. Artifact ID 10133612701
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.3852770Z Artifact xcresults-shard-5 has been successfully uploaded! Final size is 83894880 bytes. Artifact ID is 10133612701
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.4654010Z Artifact download URL: https://github.com/AIowa-LLC/hermes-fleet/actions/runs/34426824450/artifacts/10133612701
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.6352570Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.6353730Z Post job cleanup.
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.7735630Z [command]/opt/homebrew/bin/git version
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8254710Z git version 2.55.0
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8273240Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/a8d9b56d-7d98-49b1-8e3f-87b8dc6d56d5/.gitconfig'
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8279810Z Temporarily overriding HOME='/Users/runner/work/_temp/a8d9b56d-7d98-49b1-8e3f-87b8dc6d56d5' before making global git config changes
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8280610Z Adding repository directory to the temporary git global config as a safe directory
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8284150Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/hermes-fleet/hermes-fleet
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8401240Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.8465080Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.9214350Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.9263270Z http.https://github.com/.extraheader
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.9269990Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:41.9327190Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:42.0007410Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:42.0065650Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:42.0836850Z Cleaning up orphan processes
+UI matrix shard 5/5	UNKNOWN STEP	2026-09-10T02:14:43.2282430Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
