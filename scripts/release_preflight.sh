@@ -292,11 +292,13 @@ if codesign -dvv "$APP" >"$SIGNING_LOG" 2>&1; then
   codesign --verify --deep --strict "$APP"
   SIGNING_IDENTITY="$(awk -F= '/^Authority=/ { print $2; exit }' "$SIGNING_LOG")"
   TEAM_IDENTIFIER="$(awk -F= '/^TeamIdentifier=/ { print $2; exit }' "$SIGNING_LOG")"
+  DISTRIBUTION_AUTHORITY="$(awk -F= '/^Authority=(Apple Distribution|iPhone Distribution):/ { print $2; exit }' "$SIGNING_LOG")"
   echo "Code-sign verification: PASS"
   echo "  authority: $SIGNING_IDENTITY"
   echo "  team identifier: $TEAM_IDENTIFIER"
-  if [[ "$STRUCTURE_ONLY" -eq 0 && ( -z "$SIGNING_IDENTITY" || "$SIGNING_IDENTITY" == "adhoc" ) ]]; then
-    echo "ERROR: signed archive did not expose a distribution signing authority" >&2
+  if [[ "$STRUCTURE_ONLY" -eq 0 && -z "$DISTRIBUTION_AUTHORITY" ]]; then
+    echo "ERROR: signed archive did not expose an Apple Distribution signing authority" >&2
+    echo "  found: ${SIGNING_IDENTITY:-none}" >&2
     exit 1
   fi
 else
@@ -316,10 +318,15 @@ if [[ -f "$PROFILE" ]]; then
   PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST" 2>/dev/null || true)"
   PROFILE_EXPIRY="$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$PROFILE_PLIST" 2>/dev/null || true)"
   PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST" 2>/dev/null || true)"
+  PROFILE_DEVICES="$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" 2>/dev/null || true)"
   echo "Provisioning profile: PASS"
   echo "  name: $PROFILE_NAME"
   echo "  expiration: $PROFILE_EXPIRY"
   echo "  application identifier: $PROFILE_APP_ID"
+  if [[ "$STRUCTURE_ONLY" -eq 0 && -n "$PROFILE_DEVICES" ]]; then
+    echo "ERROR: signed archive embeds a device-limited profile; TestFlight requires an App Store profile" >&2
+    exit 1
+  fi
 else
   if [[ "$STRUCTURE_ONLY" -eq 0 ]]; then
     echo "ERROR: signed archive has no embedded provisioning profile" >&2

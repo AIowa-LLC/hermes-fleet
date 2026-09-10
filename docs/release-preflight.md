@@ -29,9 +29,10 @@ archive, and inspects the archive for:
 - code-signing authority, team identifier, and the embedded provisioning profile.
 
 The report and logs are under
-`build/release-preflight/<full-sha>/`. The signed path fails if the archive is
-ad-hoc or lacks an embedded provisioning profile; that is a release blocker,
-not a successful preflight.
+`build/release-preflight/<full-sha>/`. The signed path fails unless the archive
+has an Apple Distribution authority and an embedded App Store provisioning
+profile. Development- or ad-hoc-signed archives are release blockers, not
+successful TestFlight preflights.
 
 ## Machines without distribution signing
 
