@@ -92,9 +92,16 @@ final class H1AppLockUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "enabled"
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        // Cross-suite nav-leakage hermeticity (i16): without NAV_RESET this
+        // launch restores fleet.navigation.v1 persisted by whichever suite
+        // ran before us on the same simulator — on hosted shards HappyPath
+        // precedes H1 and leaves paths deep in Render Box bot detail, where
+        // the roster's "Workstation" text never appears and this test times
+        // out (the proven H7 root cause; NOT latency — 100s hosted failures).
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Scripted biometric success → the gate releases and the roster
+        // Scripted biometric success → the lock gate releases and the roster
         // renders (the DEBUG fleet's first gateway is Workstation).
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
                       "scripted biometric success should unlock to the roster")
@@ -111,6 +118,10 @@ final class H1AppLockUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "follow"
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
+        // Cross-suite nav-leakage hermeticity (i16, same H7 root cause as
+        // test B): skip nav restore so the launch lands on the Fleet root
+        // regardless of what the preceding suite persisted.
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
@@ -134,14 +145,22 @@ final class H1AppLockUITests: XCTestCase {
         // U3: Settings is a tab, not a sheet — no Done dismissal; leaving the
         // tab persists the toggle immediately (UserDefaults write-through).
 
-        // Restart the app. The reset flag must NOT be applied on relaunch —
-        // we want the PERSISTED OFF toggle to drive the cold start.
+        // Restart the app. The reset flags must NOT be applied on relaunch —
+        // we want the PERSISTED OFF toggle to drive the cold start. NAV_RESET
+        // also comes off so this relaunch exercises true restore semantics;
+        // the persisted nav stack lands wherever the session left it, so
+        // "roster rendered" is asserted on the lock-gate release (the tab
+        // shell renders on EVERY root; AppLockView replaces the whole TabView
+        // while locked) instead of root-specific content like "Workstation".
+        // The lock must NOT re-engage: absence of the passcode fallback plus
+        // the unlocked shell proves the OFF toggle persisted.
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = nil
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = nil
         app.terminate()
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
-                      "roster should render immediately when the toggle is OFF")
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 60),
+                      "unlocked tab shell should render immediately when the toggle is OFF (any root)")
         XCTAssertFalse(app.buttons["fleet.app-lock.passcode.unlock"].exists,
                        "no lock screen when the persisted toggle is OFF")
 

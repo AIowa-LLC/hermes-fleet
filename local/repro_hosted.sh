@@ -4,10 +4,11 @@
 # on the SAME simulator, same derived-data, serial xcodebuild invocations
 # (exactly how c1_ui_matrix.sh runs them).
 set -u
-OUT=/tmp/hgoal/i16-evidence/local/repro
-UDID=hgoal-i16-UDID-redacted
+OUT=/tmp/hgoal/i16-fix/local/runs
+# Resolve the lane simulator by name at runtime (no UDID literals in-repo).
+UDID=$(xcrun simctl list devices | grep "hgoal-i16" | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/' | head -1)
 mkdir -p "$OUT"
-cd /tmp/hgoal/i16-evidence
+cd /tmp/hgoal/i16-fix
 run_suite() {  # cls outname
   local cls=$1 nm=$2
   rm -rf "$OUT/$nm.xcresult"
