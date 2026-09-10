@@ -111,7 +111,7 @@ gitleaks. Run `make ci` (or the script directly) before opening a pull
 request.
 
 On GitHub, the same validation runs as parallel jobs (static guards, package
-tests, unit tests, four UI-matrix shards) summarized by a single `CI Gate`
+tests, unit tests, UI-matrix shards) summarized by a single `CI Gate`
 check; locally `make ci` runs the identical phases in sequence.
 
 For the repository safety gates:
