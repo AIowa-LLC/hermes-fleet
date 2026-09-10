@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -52,6 +52,11 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
     /// display_metadata). Same fail-closed-by-seam discipline.
     public let reactions: any ReactionProviding
 
+    /// Issue #4 slash-command client bound to the same transport as the
+    /// conversation stream. The client owns the canonical Hermes discovery /
+    /// completion / dispatch RPCs; FleetUI sees only the FleetCore seam.
+    public let slashCommands: any SlashCommandProviding
+
     public init(
         gatewayID: GatewayID,
         displayName: String,
@@ -72,6 +77,7 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         self.tooling = GatewayConversationToolingClient(gatewayID: gatewayID, transport: transport)
         self.attachments = GatewayAttachmentClient(gatewayID: gatewayID, transport: transport)
         self.reactions = GatewayReactionClient(gatewayID: gatewayID, transport: transport)
+        self.slashCommands = GatewaySlashCommandClient(gatewayID: gatewayID, transport: transport)
         self.conversation = GatewayConversationClient(gatewayID: gatewayID, transport: transport)
         self.replay = GatewayReplayEngine(gatewayID: gatewayID, transport: transport, history: history)
     }
