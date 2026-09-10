@@ -106,7 +106,7 @@ public struct BotPetPickerSheet: View {
 
     private var galleryGrid: some View {
         ScrollView {
-            if filteredPets.isEmpty && phase == .loaded {
+            if filteredPets.isEmpty && phaseShowsFullCatalog {
                 Text(pets.isEmpty ? "No pets are available." : "No pets match your search.")
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(FleetTheme.textSecondary)
@@ -133,7 +133,8 @@ public struct BotPetPickerSheet: View {
                     }
                 }
                 .padding()
-                if phase == .hydrating {
+                switch phase {
+                case .hydrating:
                     HStack(spacing: 8) {
                         ProgressView()
                         Text("Loading the full Petdex catalog…")
@@ -141,9 +142,33 @@ public struct BotPetPickerSheet: View {
                             .foregroundStyle(FleetTheme.textSecondary)
                     }
                     .accessibilityIdentifier("fleet.bot.pet.hydrating")
+                case .loaded(.hydrateFailed(let message)):
+                    // W3 review finding 1: local pets stay visible; the
+                    // hydrate failure is honest and retryable inline.
+                    VStack(spacing: 8) {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(FleetTheme.statusDestructive)
+                            .multilineTextAlignment(.center)
+                        Button("Retry") {
+                            Task { await management.retryPetGallery(for: bot) }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .accessibilityIdentifier("fleet.bot.pet.hydrate-retry")
+                    }
+                    .padding(.bottom, 12)
+                default:
+                    EmptyView()
                 }
             }
         }
+    }
+
+    /// Whether the gallery is presenting the full (possibly empty)
+    /// catalog — only a fully-hydrated load can honestly say "no pets".
+    private var phaseShowsFullCatalog: Bool {
+        if case .loaded(.full) = phase { return true }
+        return false
     }
 
     private func select(_ pet: HermesPet) async {

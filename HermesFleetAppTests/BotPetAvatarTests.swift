@@ -24,10 +24,21 @@ final class BotPetAvatarTests: XCTestCase {
         private(set) var thumbCalls: [(profile: String, slug: String, sourceURL: String?)] = []
         var galleryError: Error?
         var thumbErrorBySlug: [String: Error] = [:]
+        /// W3 finding 1: fails ONLY the full-catalog hydrate stage
+        /// (localOnly == false) — the local phase succeeds.
+        var hydrateError: Error?
+        /// W3 finding 3: artificial per-thumb latency so concurrent
+        /// callers overlap the in-flight window deterministically.
+        var thumbDelayNanos: UInt64 = 0
 
         init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
 
         func setGalleryError(_ error: Error?) { galleryError = error }
+        func setHydrateError(_ error: Error?) { hydrateError = error }
+        func setThumbDelay(nanoseconds: UInt64) { thumbDelayNanos = nanoseconds }
+        func setThumbError(forSlug slug: String, error: Error?) {
+            if let error { thumbErrorBySlug[slug] = error } else { thumbErrorBySlug[slug] = nil }
+        }
 
         // BotProfileManaging: unavailable on this fixture (the tests only
         // exercise the pet surface through it).
@@ -65,6 +76,7 @@ final class BotPetAvatarTests: XCTestCase {
         func petGallery(profile: String, localOnly: Bool) async throws -> HermesPetGallery {
             galleryCalls.append((profile, localOnly))
             if let galleryError { throw galleryError }
+            if !localOnly, let hydrateError { throw hydrateError }
             let pets: [HermesPet] = [
                 HermesPet(slug: "spark-fox", displayName: "Spark Fox", installed: true,
                           curated: false, generated: false, spritesheetURL: nil),
@@ -80,6 +92,9 @@ final class BotPetAvatarTests: XCTestCase {
         }
 
         func petThumbnail(profile: String, slug: String, sourceURL: String?) async throws -> Data {
+            if thumbDelayNanos > 0 {
+                try await Task.sleep(nanoseconds: thumbDelayNanos)
+            }
             thumbCalls.append((profile, slug, sourceURL))
             if let error = thumbErrorBySlug[slug] { throw error }
             let table = gatewayID.rawValue == "gw-a" ? Self.thumbsA : Self.thumbsB
@@ -190,8 +205,8 @@ final class BotPetAvatarTests: XCTestCase {
         // Merged: installed + generated + remote all present.
         let pets = controller.petGalleryByRoute[bot.route] ?? []
         XCTAssertEqual(Set(pets.map(\.slug)), ["spark-fox", "pixel-owl", "gen-cat"])
-        if case .loaded? = controller.petGalleryPhaseByRoute[bot.route] {} else {
-            XCTFail("expected .loaded, got \(String(describing: controller.petGalleryPhaseByRoute[bot.route]))")
+        if case .loaded(.full)? = controller.petGalleryPhaseByRoute[bot.route] {} else {
+            XCTFail("expected .loaded(.full), got \(String(describing: controller.petGalleryPhaseByRoute[bot.route]))")
         }
     }
 
@@ -250,7 +265,7 @@ final class BotPetAvatarTests: XCTestCase {
         // Recovery: clear the error, retry succeeds.
         await seam.setGalleryError(nil)
         await controller.retryPetGallery(for: bot)
-        if case .loaded? = controller.petGalleryPhaseByRoute[bot.route] {} else {
+        if case .loaded(.full)? = controller.petGalleryPhaseByRoute[bot.route] {} else {
             XCTFail("expected .loaded after retry")
         }
     }
@@ -397,6 +412,151 @@ final class BotPetAvatarTests: XCTestCase {
         XCTAssertEqual(result.assetApplied, false)
         // Metadata DID land — the outcome records it.
         XCTAssertEqual(result.editOutcome.appliedSections.contains(.metadata), true)
+    }
+
+    // MARK: - W3 finding 1: local success + hydrate failure
+
+    /// Regression (W3 review finding 1): the local gallery succeeds, the
+    /// full-catalog hydrate fails transiently, and local pets are already
+    /// non-empty. The controller MUST (1) keep the local pets visible,
+    /// (2) leave the honest retryable `loaded(.hydrateFailed)` state —
+    /// never a permanent `.hydrating` spinner — and (3) recover fully on
+    /// retry once the transient error clears.
+    func testHydrateFailureOverLocalSuccessKeepsPetsAndRetryRecovers() async throws {
+        let seam = ScriptedPetSeam(gatewayID: GatewayID(rawValue: "gw-a"))
+        await seam.setHydrateError(BotSectionSyncError.conflict("transient hydrate failure"))
+        let bot = makeBot()
+        let controller = BotManagementController(
+            factory: { _ in Box(seam) },
+            gatewayProvider: { [
+                FleetGateway(id: bot.route.gatewayID, displayName: "A", endpoint: nil)
+            ] })
+
+        // (1) local gallery call succeeds; (2) full hydrate fails transiently.
+        await controller.loadPetGallery(for: bot)
+        let calls = await seam.galleryCalls
+        XCTAssertEqual(calls.map { $0.localOnly }, [true, false])
+
+        // (3) local pets remain visible (installed/generated only).
+        let pets = controller.petGalleryByRoute[bot.route] ?? []
+        XCTAssertEqual(Set(pets.map(\.slug)), ["spark-fox", "gen-cat"],
+                       "local-phase pets must survive the hydrate failure")
+
+        // (4) state is no longer .hydrating — it is honestly loaded with
+        // a hydrate-failure payload.
+        guard case .loaded(.hydrateFailed(let message))? =
+            controller.petGalleryPhaseByRoute[bot.route] else {
+            XCTFail("expected .loaded(.hydrateFailed), got \(String(describing: controller.petGalleryPhaseByRoute[bot.route]))")
+            return
+        }
+        // (5) a retry affordance exists: the retryable message is carried.
+        XCTAssertFalse(message.isEmpty, "the hydrate failure message must be surfaced")
+
+        // (6) clearing the failure + retrying successfully hydrates the
+        // full catalog (curated pet merges in, phase becomes full).
+        await seam.setHydrateError(nil)
+        await controller.retryPetGallery(for: bot)
+        guard case .loaded(.full)? = controller.petGalleryPhaseByRoute[bot.route] else {
+            XCTFail("expected .loaded(.full) after retry, got \(String(describing: controller.petGalleryPhaseByRoute[bot.route]))")
+            return
+        }
+        let merged = controller.petGalleryByRoute[bot.route] ?? []
+        XCTAssertEqual(Set(merged.map(\.slug)), ["spark-fox", "pixel-owl", "gen-cat"],
+                       "retry must hydrate and merge the full Petdex catalog")
+    }
+
+    /// A hydrate failure with NO local content stays a plain retryable
+    /// failure (the pre-W3 behavior for the empty case is preserved).
+    func testHydrateFailureWithNoLocalPetsIsPlainFailure() async throws {
+        let seam = ScriptedPetSeam(gatewayID: GatewayID(rawValue: "gw-a"))
+        // Fail BOTH stages: no local pets can populate.
+        await seam.setGalleryError(BotSectionSyncError.conflict("flaky"))
+        let bot = makeBot()
+        let controller = BotManagementController(
+            factory: { _ in Box(seam) },
+            gatewayProvider: { [
+                FleetGateway(id: bot.route.gatewayID, displayName: "A", endpoint: nil)
+            ] })
+        await controller.loadPetGallery(for: bot)
+        guard case .failed? = controller.petGalleryPhaseByRoute[bot.route] else {
+            XCTFail("expected .failed when there is no local content to show")
+            return
+        }
+    }
+
+    // MARK: - W3 finding 3: thumbnail coalescing + sticky failure
+
+    /// True in-flight coalescing: concurrent callers for the same
+    /// route/profile/pet key SHARE the same underlying request — exactly
+    /// ONE seam call for N overlapping callers, and every caller receives
+    /// the same bytes (no caller is handed a misleading nil).
+    func testConcurrentThumbnailCallersShareOneRequest() async throws {
+        let seam = ScriptedPetSeam(gatewayID: GatewayID(rawValue: "gw-a"))
+        // Long enough that all three callers overlap the in-flight window.
+        await seam.setThumbDelay(nanoseconds: 150_000_000)
+        let bot = makeBot()
+        let controller = BotManagementController(
+            factory: { _ in Box(seam) },
+            gatewayProvider: { [
+                FleetGateway(id: bot.route.gatewayID, displayName: "A", endpoint: nil)
+            ] })
+        let fox = HermesPet(slug: "spark-fox", displayName: "Spark Fox", installed: true,
+                            curated: false, generated: false, spritesheetURL: nil)
+
+        async let a = controller.petThumbnailData(for: bot, pet: fox)
+        async let b = controller.petThumbnailData(for: bot, pet: fox)
+        async let c = controller.petThumbnailData(for: bot, pet: fox)
+        let results = await [a, b, c]
+
+        XCTAssertEqual(results.compactMap { $0 }, results,
+                       "every concurrent caller must get the shared request's bytes")
+        XCTAssertEqual(results.first, ScriptedPetSeam.thumbsA["spark-fox"])
+        let calls = await seam.thumbCalls
+        XCTAssertEqual(calls.count, 1,
+                       "exactly ONE seam request for N concurrent same-key callers")
+    }
+
+    /// Sticky failure + no automatic refetch: after a failed fetch, a
+    /// plain (non-retry) call does NOT hit the gateway again — cell
+    /// re-materialization/scrolling must not auto-hammer the gateway.
+    /// An EXPLICIT retry clears the failure and performs a new fetch.
+    func testFailedThumbnailSticksUntilExplicitRetry() async throws {
+        let seam = ScriptedPetSeam(gatewayID: GatewayID(rawValue: "gw-a"))
+        await seam.setThumbError(forSlug: "spark-fox",
+                                 error: BotSectionSyncError.conflict("thumb down"))
+        let bot = makeBot()
+        let controller = BotManagementController(
+            factory: { _ in Box(seam) },
+            gatewayProvider: { [
+                FleetGateway(id: bot.route.gatewayID, displayName: "A", endpoint: nil)
+            ] })
+        let fox = HermesPet(slug: "spark-fox", displayName: "Spark Fox", installed: true,
+                            curated: false, generated: false, spritesheetURL: nil)
+
+        // First attempt fails.
+        let first = await controller.petThumbnailData(for: bot, pet: fox)
+        XCTAssertNil(first)
+        let afterFirst = await seam.thumbCalls.count
+        XCTAssertEqual(afterFirst, 1)
+
+        // Re-materialization does NOT auto-refetch (sticky failure).
+        let second = await controller.petThumbnailData(for: bot, pet: fox)
+        XCTAssertNil(second)
+        let afterSecond = await seam.thumbCalls.count
+        XCTAssertEqual(afterSecond, 1,
+                       "a failed thumbnail must not be auto-refetched by scroll/rematerialize")
+
+        // Explicit retry clears the failure and fetches fresh.
+        await seam.setThumbError(forSlug: "spark-fox", error: nil)
+        await controller.retryPetThumbnail(for: bot, pet: fox)
+        let afterRetry = await seam.thumbCalls.count
+        XCTAssertEqual(afterRetry, 2, "explicit retry performs a new fetch")
+        // The successful retry is cached; a subsequent call is served
+        // from cache with no further seam traffic.
+        let cached = await controller.petThumbnailData(for: bot, pet: fox)
+        XCTAssertEqual(cached, ScriptedPetSeam.thumbsA["spark-fox"])
+        let afterCache = await seam.thumbCalls.count
+        XCTAssertEqual(afterCache, 2, "cached success serves without refetching")
     }
 
     // MARK: - search (controller-level, mirrors sheet behavior)

@@ -241,9 +241,19 @@ public final class BotManagementController {
         }
         // 1. The configure write (metadata + any other carried sections)
         //    with existing CAS discipline — throws typed conflicts on a
-        //    stale revision BEFORE any asset mutation.
-        let outcome = try await seam.configureProfile(
-            bot.route.profileSlug.rawValue, edit: edit)
+        //    stale revision BEFORE any asset mutation. W3 review finding
+        //    2: an EMPTY edit (the pure asset-mutation retry after a
+        //    partial save — every metadata section already applied)
+        //    performs NO configure call at all: re-sending an empty
+        //    payload would be a redundant RPC against the already-bumped
+        //    revision with nothing to apply.
+        let outcome: BotProfileEditOutcome
+        if edit.isEmpty {
+            outcome = BotProfileEditOutcome()
+        } else {
+            outcome = try await seam.configureProfile(
+                bot.route.profileSlug.rawValue, edit: edit)
+        }
         if edit.metadata != nil {
             guard outcome.appliedSections.contains(.metadata) else {
                 throw BotSectionSyncError.conflict("The gateway did not apply the appearance metadata")
@@ -352,14 +362,30 @@ public final class BotManagementController {
     /// the full Petdex catalog. State is keyed by full route —
     /// GatewayID + ProfileSlug — never the profile slug alone.
     public enum PetGalleryPhase: Hashable, Sendable {
+        /// Content state of a `loaded` gallery (W3 review finding 1): the
+        /// local phase is a legitimate rest state when full-catalog
+        /// hydration failed — local pets stay visible and the failure is
+        /// carried honestly instead of leaving a permanent spinner.
+        public enum Hydration: Hashable, Sendable {
+            /// The full Petdex catalog merged over the local phase.
+            case full
+            /// Local/generated pets only (transient between stages).
+            case localOnly
+            /// Local pets remain visible; the full-catalog hydrate FAILED
+            /// (transient, retryable — the sheet surfaces the message with
+            /// a retry affordance; the local phase is never discarded).
+            case hydrateFailed(String)
+        }
+
         case idle
         case loadingLocal
         case hydrating
-        case loaded
+        case loaded(Hydration)
         /// Pets are unavailable on this gateway (JSON-RPC
         /// method-not-found) — a capability fact, not a transient failure.
         case unsupported
-        /// A load failed; retryable (transient network/RPC failure).
+        /// A load failed with NO content to show; retryable (transient
+        /// network/RPC failure).
         case failed(String)
     }
 
@@ -371,8 +397,13 @@ public final class BotManagementController {
     public let petThumbnailCache = PetThumbnailCache()
 
     @ObservationIgnored private var petGalleryLoads: Set<Route> = []
-    @ObservationIgnored private var petThumbLoads: Set<PetThumbnailCache.Key> = []
     @ObservationIgnored private var petThumbFailed: Set<PetThumbnailCache.Key> = []
+    /// In-flight thumbnail fetches keyed by full route provenance (W3
+    /// review finding 3): concurrent callers for the same key SHARE the
+    /// same underlying request (await the same Task) instead of getting
+    /// nil and rendering misleading failure UI. One request per key.
+    @ObservationIgnored private var petThumbTasks:
+        [PetThumbnailCache.Key: Task<Data?, Never>] = [:]
 
     /// Pet seam for a route: the Bot's own gateway's profile seam when it
     /// also speaks the Pet surface, else nil (the caller renders the
@@ -404,7 +435,7 @@ public final class BotManagementController {
                 profile: route.profileSlug.rawValue, localOnly: true)
             if petGalleryLoads.contains(route) {
                 petGalleryByRoute[route] = local.pets
-                petGalleryPhaseByRoute[route] = .loaded
+                petGalleryPhaseByRoute[route] = .loaded(.localOnly)
             }
         } catch { /* fall through to hydrate */ }
         guard petGalleryLoads.contains(route) else { return }
@@ -415,27 +446,37 @@ public final class BotManagementController {
                 profile: route.profileSlug.rawValue, localOnly: false)
             let merged = local.merged(with: full)
             petGalleryByRoute[route] = merged.pets
-            petGalleryPhaseByRoute[route] = .loaded
+            petGalleryPhaseByRoute[route] = .loaded(.full)
         } catch let error as BotPetError {
             if case .petsUnavailable = error {
                 petGalleryByRoute[route] = []
                 petGalleryPhaseByRoute[route] = .unsupported
             } else if petGalleryByRoute[route]?.isEmpty != false {
                 petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+            } else {
+                // W3 review finding 1: local pets stay visible and the
+                // hydrate failure is honest, transient, and retryable —
+                // never a silent permanent spinner over .hydrating.
+                petGalleryPhaseByRoute[route] =
+                    .loaded(.hydrateFailed(error.localizedDescription))
             }
-            // else: keep the local-phase pets visible; the hydrate failure
-            // is surfaced by the retry affordance in the sheet.
         } catch {
             if petGalleryByRoute[route]?.isEmpty != false {
                 petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+            } else {
+                petGalleryPhaseByRoute[route] =
+                    .loaded(.hydrateFailed(error.localizedDescription))
             }
         }
     }
 
-    /// Cached-or-fetch PNG thumbnail for one pet cell. Coalesces
-    /// in-flight requests per key; a failed fetch stays failed until the
-    /// caller retries (so a LazyVGrid scroll does not re-hammer the
-    /// gateway). Zero remote writes — `pet.thumb` is read-only.
+    /// Cached-or-fetch PNG thumbnail for one pet cell (W3 review finding
+    /// 3): cached success returns immediately; exactly ONE request per
+    /// route/profile/pet key is in flight and concurrent callers for the
+    /// same key AWAIT the same underlying request; a failed fetch stays
+    /// failed until an EXPLICIT retry (so a LazyVGrid scroll or cell
+    /// re-materialization never auto-hammers the gateway). Zero remote
+    /// writes — `pet.thumb` is read-only.
     public func petThumbnailData(
         for bot: FleetBot, pet: HermesPet
     ) async -> Data? {
@@ -444,25 +485,40 @@ public final class BotManagementController {
             profileSlug: bot.route.profileSlug,
             petSlug: pet.slug)
         if let cached = petThumbnailCache.pngData(for: key) { return cached }
-        guard !petThumbLoads.contains(key) else { return nil }
+        // Sticky failure: a previously failed fetch is NOT retried here —
+        // only `retryPetThumbnail` clears the failure and re-fetches.
+        guard !petThumbFailed.contains(key) else { return nil }
+        if let existing = petThumbTasks[key] {
+            // Coalescing: share the single in-flight request for this key.
+            return await existing.value
+        }
         guard let petSeam = petSeam(for: bot) else { return nil }
-        petThumbLoads.insert(key)
-        defer { petThumbLoads.remove(key) }
-        do {
-            let bytes = try await petSeam.petThumbnail(
-                profile: bot.route.profileSlug.rawValue,
-                slug: pet.slug,
-                sourceURL: pet.thumbnailSourceURL)
+        let profile = bot.route.profileSlug.rawValue
+        let slug = pet.slug
+        let sourceURL = pet.thumbnailSourceURL
+        let task = Task<Data?, Never> { [petSeam] in
+            do {
+                return try await petSeam.petThumbnail(
+                    profile: profile, slug: slug, sourceURL: sourceURL)
+            } catch {
+                return nil
+            }
+        }
+        petThumbTasks[key] = task
+        let bytes = await task.value
+        petThumbTasks[key] = nil
+        if let bytes {
             petThumbnailCache.set(bytes, for: key)
             petThumbFailed.remove(key)
-            return bytes
-        } catch {
+        } else {
             petThumbFailed.insert(key)
-            return nil
         }
+        return bytes
     }
 
-    /// Reset a failed thumbnail fetch so the cell can retry.
+    /// Reset a failed thumbnail fetch so the cell can retry: clears the
+    /// sticky failure FIRST, then performs a fresh fetch through the
+    /// normal coalesced path.
     public func retryPetThumbnail(for bot: FleetBot, pet: HermesPet) async {
         let key = PetThumbnailCache.Key(
             gatewayID: bot.route.gatewayID,

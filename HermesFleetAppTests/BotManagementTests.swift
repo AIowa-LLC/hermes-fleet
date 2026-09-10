@@ -730,6 +730,210 @@ final class BotManagementTests: XCTestCase {
         }
     }
 
+    // MARK: - W3 review finding 2: production partial-save retry path
+
+    /// ACCEPTANCE (W3 review finding 2), through the ACTUAL production
+    /// save-building path (`EditBotSheet.SaveInput` + `outgoingEdit` +
+    /// `reseedAfterPartialFailure` — the exact functions `save()` calls):
+    /// (1) first save applies metadata, (2) the asset upload fails,
+    /// (3) the sheet reseeds with the explicit partial failure state,
+    /// (4) the second Save carries NO already-applied avatar metadata
+    /// (and NO redundant CAS write — a single configure total),
+    /// (5) only the failed asset mutation is retried, (6) the second
+    /// attempt succeeds, and (7) unrelated LATER form edits survive the
+    /// reseed as an honest fresh delta instead of being lost.
+    func testProductionPartialSaveRetryResendsOnlyFailedAsset() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.failNextUploadAvatar(1)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var roster = FleetRoster()
+        roster.upsertGateway(gateway)
+        roster.upsertBot(bot)
+        let (env, rosterDouble, _) = await makeEnvironment(
+            gateways: [gateway],
+            snapshot: FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]),
+            profileSeam: seam)
+        await env.refreshRoster()
+
+        // The sheet's save-relevant state at FIRST Save: a staged Pet PNG
+        // replacement (W1 flow) plus the loaded form baseline.
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 3, 3, 3])
+        var draft = BotAvatarAppearanceDraft.seeded(
+            from: BotModeMetadata(title: "Default"), hasAvatar: false)
+        draft.stageReplacement(data: png)
+        let loadedDescription = BotProfileDescription(
+            name: "default", soul: "soul text", defaultModel: "m1", provider: "nous")
+        let input1 = EditBotSheet.SaveInput(
+            avatarDraft: draft,
+            baselineMetadata: BotModeMetadata(title: "Default"),
+            metadataRevision: 0,
+            title: "Default",
+            descriptionText: "",
+            initialDescriptionText: "",
+            hidden: false,
+            pinned: false,
+            sectionID: nil,
+            soul: "soul text",
+            model: "m1",
+            provider: "nous",
+            draftDescription: nil,
+            loadedDescription: loadedDescription,
+            previousMetadataRaw: nil)
+
+        // (1) The production save builder produces the first edit: the
+        // appearance metadata IS dirty (staged replacement → "photo").
+        let edit1 = EditBotSheet.outgoingEdit(input1)
+        XCTAssertNotNil(edit1.metadata, "first save must carry the appearance metadata")
+
+        // (1)+(2) First coordinated save: metadata APPLIES, upload FAILS.
+        let first = try await env.botManagement.applyAvatarAppearance(
+            input1.avatarDraft, edit: edit1, to: bot)
+        XCTAssertNotNil(first.partialFailure, "upload failed as scripted")
+        XCTAssertTrue(first.editOutcome.appliedSections.contains(.metadata),
+                      "metadata section applied before the asset failure")
+
+        // (3)+(4) The production reseed (exactly what save() runs after a
+        // partial failure): the roster refresh reports revision 1.
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 1])
+        roster.upsertBot(bot)
+        await rosterDouble.set(FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]))
+        await env.refreshRoster()
+        let reseeded = EditBotSheet.reseedAfterPartialFailure(
+            draft: input1.avatarDraft,
+            baselineMetadata: input1.baselineMetadata,
+            appliedMetadata: edit1.metadata,
+            metadataRevision: input1.metadataRevision,
+            outcome: first.editOutcome,
+            rosterRevision: env.bot(for: bot.route)?
+                .uiMetaRevisions?[BotModeContract.botsMetaKey])
+
+        // The second Save rebuilds through the SAME production builder
+        // with the reseeded sheet state and unchanged form fields.
+        var input2 = input1
+        input2.avatarDraft = reseeded.draft
+        input2.baselineMetadata = reseeded.baselineMetadata
+        input2.metadataRevision = reseeded.revision
+        let edit2 = EditBotSheet.outgoingEdit(input2)
+
+        // (5) THE fix: no already-applied avatar metadata is re-sent.
+        XCTAssertNil(edit2.metadata,
+                     "second Save must not re-send the already-applied avatar metadata")
+        XCTAssertNil(edit2.soul)
+        XCTAssertNil(edit2.model)
+        XCTAssertTrue(edit2.isEmpty,
+                      "the retry carries ONLY the outstanding asset mutation")
+
+        // (5)+(6) Second coordinated save: no CAS write at all (one
+        // configure total), the failed upload is retried, it succeeds.
+        let second = try await env.botManagement.applyAvatarAppearance(
+            input2.avatarDraft, edit: edit2, to: bot)
+        XCTAssertNil(second.partialFailure)
+        XCTAssertTrue(second.succeeded, "the retry must complete the transaction")
+        let configureTotal = await seam.configureCalls.count
+        XCTAssertEqual(configureTotal, 1,
+                       "no stale/redundant CAS write on retry — exactly the first configure")
+        let uploadAttempts = await seam.uploadAvatarAttempts
+        XCTAssertEqual(uploadAttempts, 2, "the failed asset mutation is retried exactly once more")
+        let stored = await seam.avatarAssets["default"]
+        XCTAssertEqual(stored, png, "the staged PNG lands byte-identically")
+
+        // (7) Unrelated LATER form edits survive the reseed as an honest
+        // fresh delta: a title edit after the partial failure produces a
+        // metadata section that is the APPLIED appearance + the new title
+        // (never a loss of the edit, never a re-send of stale appearance).
+        var input3 = input2
+        input3.title = "Renamed"
+        let edit3 = EditBotSheet.outgoingEdit(input3)
+        XCTAssertNotNil(edit3.metadata, "a post-reseed title edit must still be carried")
+        XCTAssertEqual(edit3.metadata?.title, "Renamed")
+        XCTAssertEqual(edit3.metadata?.custom, true, "applied appearance keys ride the new baseline")
+        XCTAssertEqual(edit3.metadata?.imageKind, "photo")
+    }
+
+    /// Roster-revision fallback (W3 acceptance extension): when the
+    /// outcome carries NO `newMetadataRevisions` the production reseed
+    /// must take the refreshed roster's revision — proven end-to-end by
+    /// retrying through the production builder without a CAS conflict.
+    func testProductionRetryUsesRosterRevisionFallbackWhenOutcomeLacksRevisions() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.failNextUploadAvatar(1)
+        await seam.setReportsRevisions(false)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var roster = FleetRoster()
+        roster.upsertGateway(gateway)
+        roster.upsertBot(bot)
+        let (env, rosterDouble, _) = await makeEnvironment(
+            gateways: [gateway],
+            snapshot: FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]),
+            profileSeam: seam)
+        await env.refreshRoster()
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+        draft.stageReplacement(data: Data([0x89, 0x50, 0x4E, 0x47, 9]))
+        let input1 = EditBotSheet.SaveInput(
+            avatarDraft: draft,
+            baselineMetadata: BotModeMetadata(),
+            metadataRevision: 0,
+            title: "",
+            descriptionText: "",
+            initialDescriptionText: "",
+            hidden: false,
+            pinned: false,
+            sectionID: nil,
+            soul: "",
+            model: "",
+            provider: "",
+            draftDescription: nil,
+            loadedDescription: nil,
+            previousMetadataRaw: nil)
+        let edit1 = EditBotSheet.outgoingEdit(input1)
+        let first = try await env.botManagement.applyAvatarAppearance(
+            draft, edit: edit1, to: bot)
+        XCTAssertNotNil(first.partialFailure)
+        XCTAssertTrue(first.editOutcome.newMetadataRevisions.isEmpty,
+                      "scripted gateway reports no revisions (fallback path)")
+
+        // Refreshed roster reports the authoritative post-write revision.
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 1])
+        roster.upsertBot(bot)
+        await rosterDouble.set(FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]))
+        await env.refreshRoster()
+        let reseeded = EditBotSheet.reseedAfterPartialFailure(
+            draft: draft,
+            baselineMetadata: BotModeMetadata(),
+            appliedMetadata: edit1.metadata,
+            metadataRevision: 0,
+            outcome: first.editOutcome,
+            rosterRevision: env.bot(for: bot.route)?
+                .uiMetaRevisions?[BotModeContract.botsMetaKey])
+        XCTAssertEqual(reseeded.revision, 1,
+                       "revision reseeds from the refreshed roster when the outcome carries none")
+
+        var input2 = input1
+        input2.avatarDraft = reseeded.draft
+        input2.baselineMetadata = reseeded.baselineMetadata
+        input2.metadataRevision = reseeded.revision
+        let edit2 = EditBotSheet.outgoingEdit(input2)
+        XCTAssertNil(edit2.metadata, "retry still re-sends no applied metadata")
+
+        // End-to-end proof the fallback revision is usable: the retry
+        // save does not CAS-conflict and completes the upload.
+        let second = try await env.botManagement.applyAvatarAppearance(
+            reseeded.draft, edit: edit2, to: bot)
+        XCTAssertNil(second.partialFailure)
+        XCTAssertTrue(second.succeeded)
+    }
+
     // MARK: - D2 (FOS-DF dogfood): slug keyboard traits
 
     // MARK: - D2 (FOS-DF dogfood): slug keyboard traits

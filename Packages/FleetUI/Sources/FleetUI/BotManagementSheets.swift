@@ -211,6 +211,101 @@ public struct EditBotSheet: View {
         return (reseededDraft, revision)
     }
 
+    /// W3 review finding 2: full sheet-state reseed after a partial
+    /// avatar-save failure. `save()` rebuilds outgoing metadata from
+    /// `baselineMetadata`, so advancing ONLY the draft's baseline (the
+    /// t_3ce28479 fix) still left the retry re-building and RE-SENDING
+    /// the already-applied avatar metadata. This advances the sheet's
+    /// authoritative `baselineMetadata` to the metadata the gateway just
+    /// APPLIED (`appliedMetadata` — the first save's `edit.metadata`,
+    /// which includes the form fields as sent), so the next Save carries
+    /// `metadata: nil` when nothing else changed and re-sends only the
+    /// still-failing asset mutation. Unrelated LATER form edits simply
+    /// show up as a fresh, honest dirty delta on top of the new baseline.
+    static func reseedAfterPartialFailure(
+        draft: BotAvatarAppearanceDraft,
+        baselineMetadata: BotModeMetadata,
+        appliedMetadata: BotModeMetadata?,
+        metadataRevision: Int?,
+        outcome: BotProfileEditOutcome,
+        rosterRevision: Int?
+    ) -> (draft: BotAvatarAppearanceDraft,
+          baselineMetadata: BotModeMetadata,
+          revision: Int?) {
+        let reseeded = partialFailureReseed(
+            draft: draft,
+            metadataRevision: metadataRevision,
+            outcome: outcome,
+            rosterRevision: rosterRevision)
+        var advancedBaseline = baselineMetadata
+        if outcome.appliedSections.contains(.metadata), let applied = appliedMetadata {
+            advancedBaseline = applied
+        }
+        return (reseeded.draft, advancedBaseline, reseeded.revision)
+    }
+
+    /// The sheet's save-relevant form state (W3 review finding 2):
+    /// `save()` builds its outgoing `BotProfileEdit` from exactly these
+    /// inputs via `outgoingEdit(_:)` — extracted verbatim so the
+    /// partial-failure retry contract is acceptance-testable through
+    /// the PRODUCTION save-building path, not a hand-built approximation.
+    struct SaveInput {
+        var avatarDraft: BotAvatarAppearanceDraft
+        var baselineMetadata: BotModeMetadata
+        var metadataRevision: Int?
+        var title: String
+        var descriptionText: String
+        var initialDescriptionText: String
+        var hidden: Bool
+        var pinned: Bool
+        var sectionID: String?
+        var soul: String
+        var model: String
+        var provider: String
+        var draftDescription: BotProfileDescription?
+        var loadedDescription: BotProfileDescription?
+        var previousMetadataRaw: MetadataValue?
+    }
+
+    /// Production outgoing-edit builder (verbatim from the pre-W3 save()
+    /// body): an untouched section is nil and therefore never written.
+    static func outgoingEdit(_ input: SaveInput) -> BotProfileEdit {
+        var metadata = input.baselineMetadata
+        // The unified appearance draft owns shape/color/custom/imageKind —
+        // one source of truth shared with the live preview.
+        metadata.shape = input.avatarDraft.metadataAfterSave.shape
+        metadata.color = input.avatarDraft.metadataAfterSave.color
+        metadata.custom = input.avatarDraft.metadataAfterSave.custom
+        metadata.imageKind = input.avatarDraft.metadataAfterSave.imageKind
+        metadata.title = input.title.isEmpty ? nil : input.title
+        if input.descriptionText != input.initialDescriptionText {
+            metadata.descriptionText = input.descriptionText.isEmpty ? nil : input.descriptionText
+        }
+        metadata.hidden = input.hidden == (input.baselineMetadata.hidden ?? false)
+            ? input.baselineMetadata.hidden : input.hidden
+        metadata.pinned = input.pinned == (input.baselineMetadata.pinned ?? false)
+            ? input.baselineMetadata.pinned : input.pinned
+        metadata.sectionID = input.sectionID
+        let modelChanged = input.model != (input.loadedDescription?.defaultModel ?? "")
+            || input.provider != (input.loadedDescription?.provider ?? "")
+        return BotProfileEdit(
+            metadata: (metadata == input.baselineMetadata) ? nil : metadata,
+            metadataExpectedRevision: input.metadataRevision,
+            previousMetadataRaw: input.previousMetadataRaw,
+            soul: input.soul == (input.loadedDescription?.soul ?? "") ? nil : input.soul,
+            descriptionText: input.descriptionText == (input.loadedDescription?.descriptionText ?? "")
+                ? nil : input.descriptionText,
+            model: modelChanged ? input.model : nil,
+            provider: modelChanged ? input.provider : nil,
+            disabledSkills: input.draftDescription?.skills == input.loadedDescription?.skills
+                ? nil : input.draftDescription?.disabledSkillNames,
+            enabledToolsets: input.draftDescription?.toolsets == input.loadedDescription?.toolsets
+                ? nil : input.draftDescription?.enabledToolsetNames,
+            enabledMCPServers: input.draftDescription?.mcpServers == input.loadedDescription?.mcpServers
+                ? nil : input.draftDescription?.enabledMCPServerNames
+        )
+    }
+
     public init(environment: AppEnvironment, bot: FleetBot) {
         self.environment = environment
         self.bot = bot
@@ -438,56 +533,53 @@ public struct EditBotSheet: View {
         defer { isSubmitting = false }
         errorMessage = nil
         avatarStatus = nil
-        var metadata = baselineMetadata
-        // The unified appearance draft owns shape/color/custom/imageKind —
-        // one source of truth shared with the live preview.
-        metadata.shape = avatarDraft.metadataAfterSave.shape
-        metadata.color = avatarDraft.metadataAfterSave.color
-        metadata.custom = avatarDraft.metadataAfterSave.custom
-        metadata.imageKind = avatarDraft.metadataAfterSave.imageKind
-        metadata.title = title.isEmpty ? nil : title
-        if descriptionText != initialDescriptionText {
-            metadata.descriptionText = descriptionText.isEmpty ? nil : descriptionText
-        }
-        metadata.hidden = hidden == (baselineMetadata.hidden ?? false) ? baselineMetadata.hidden : hidden
-        metadata.pinned = pinned == (baselineMetadata.pinned ?? false) ? baselineMetadata.pinned : pinned
-        metadata.sectionID = sectionID
-        let modelChanged = model != (loadedDescription?.defaultModel ?? "") || provider != (loadedDescription?.provider ?? "")
-        let appearanceDirty = avatarDraft.isDirty
-        let edit = BotProfileEdit(
-            metadata: (metadata == baselineMetadata) ? nil : metadata,
-            metadataExpectedRevision: metadataRevision,
-            previousMetadataRaw: bot.uiMeta?[BotModeContract.botsMetaKey],
-            soul: soul == (loadedDescription?.soul ?? "") ? nil : soul,
-            descriptionText: descriptionText == (loadedDescription?.descriptionText ?? "") ? nil : descriptionText,
-            model: modelChanged ? model : nil,
-            provider: modelChanged ? provider : nil,
-            disabledSkills: draftDescription?.skills == loadedDescription?.skills ? nil : draftDescription?.disabledSkillNames,
-            enabledToolsets: draftDescription?.toolsets == loadedDescription?.toolsets ? nil : draftDescription?.enabledToolsetNames,
-            enabledMCPServers: draftDescription?.mcpServers == loadedDescription?.mcpServers ? nil : draftDescription?.enabledMCPServerNames
-        )
+        let edit = Self.outgoingEdit(Self.SaveInput(
+            avatarDraft: avatarDraft,
+            baselineMetadata: baselineMetadata,
+            metadataRevision: metadataRevision,
+            title: title,
+            descriptionText: descriptionText,
+            initialDescriptionText: initialDescriptionText,
+            hidden: hidden,
+            pinned: pinned,
+            sectionID: sectionID,
+            soul: soul,
+            model: model,
+            provider: provider,
+            draftDescription: draftDescription,
+            loadedDescription: loadedDescription,
+            previousMetadataRaw: bot.uiMeta?[BotModeContract.botsMetaKey]))
         do {
             // #7: appearance changes ride the coordinated transaction
             // (metadata CAS first, then the staged asset mutation) so a
             // partial application is surfaced explicitly; everything else
             // keeps the plain applyEdit path.
             let result: BotProfileEditOutcome
-            if appearanceDirty || avatarDraft.image != .unchanged {
+            if avatarDraft.isDirty || avatarDraft.image != .unchanged {
                 let appearance = try await environment.botManagement.applyAvatarAppearance(
                     avatarDraft, edit: edit, to: bot)
                 result = appearance.editOutcome
                 if let partial = appearance.partialFailure {
                     avatarStatus = partial
-                    // t_3ce28479: reseed the CAS state so an in-sheet retry
-                    // re-sends ONLY the still-failing asset mutation.
+                    // t_3ce28479 + W3 review finding 2: reseed the CAS
+                    // state so an in-sheet retry re-sends ONLY the
+                    // still-failing asset mutation. The reseed advances
+                    // BOTH baselines — the draft's AND the sheet's
+                    // authoritative `baselineMetadata` that `save()`
+                    // rebuilds outgoing metadata from (advancing only the
+                    // draft's left the retry re-sending already-applied
+                    // avatar metadata).
                     await environment.refreshRoster()
-                    let reseeded = Self.partialFailureReseed(
+                    let reseeded = Self.reseedAfterPartialFailure(
                         draft: avatarDraft,
+                        baselineMetadata: baselineMetadata,
+                        appliedMetadata: edit.metadata,
                         metadataRevision: metadataRevision,
                         outcome: appearance.editOutcome,
                         rosterRevision: environment.bot(for: bot.route)?
                             .uiMetaRevisions?[BotModeContract.botsMetaKey])
                     avatarDraft = reseeded.draft
+                    baselineMetadata = reseeded.baselineMetadata
                     metadataRevision = reseeded.revision
                     return
                 }
