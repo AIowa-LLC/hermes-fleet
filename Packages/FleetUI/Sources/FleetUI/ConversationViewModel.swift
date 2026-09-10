@@ -181,6 +181,17 @@ public final class ConversationViewModel {
     public private(set) var integrityNotice: String?
     /// Non-secret error / auth surface text.
     public private(set) var errorMessage: String?
+    /// Issue #4 — live skill suggestions for the slash composer palette.
+    public private(set) var skillSuggestions: [SlashCommandSuggestion] = []
+    /// True while a catalog/completion request is in flight.
+    public private(set) var isLoadingSkillSuggestions = false
+    /// Non-secret discovery/dispatch compatibility or stale-command error.
+    /// The composer keeps the text editable while this is shown.
+    public private(set) var skillSuggestionError: String?
+    /// Whether the slash palette has content worth rendering above the input.
+    public var isSlashPaletteVisible: Bool {
+        isLoadingSkillSuggestions || !skillSuggestions.isEmpty || skillSuggestionError != nil
+    }
     /// R9-T1 — the approval banner state (pending request + YOLO readback).
     /// Lazily built once the session opens; nil when the concrete session
     /// exposes no approvals seam (fail-soft feature detection).
@@ -240,6 +251,9 @@ public final class ConversationViewModel {
     /// the concrete session exposes one (`ReactionCapable`), so the
     /// long-press menu surfaces an honest error instead of pretending.
     private let reactionSeam: any ReactionProviding
+    /// Issue #4 slash seam — fail-closed for older/scripted sessions that do
+    /// not advertise Hermes' canonical slash RPCs.
+    private let slashCommands: any SlashCommandProviding
     /// Non-secret reaction error banner text (never silent).
     public private(set) var reactionError: String?
 
@@ -321,6 +335,12 @@ public final class ConversationViewModel {
     /// longer matches is STALE and its completion is dropped (the
     /// `OnboardingViewModel.beginOperation()` fencing pattern).
     @ObservationIgnored private var operationGeneration = 0
+    /// Generation fence for live slash completion requests. A slow response
+    /// from an older query must never overwrite the newest composer state.
+    @ObservationIgnored private var slashSuggestionGeneration = 0
+    /// Canceled from `deinit`; all creation and replacement happens on the
+    /// main actor while the VM is alive.
+    nonisolated(unsafe) private var slashSuggestionTask: Task<Void, Never>?
     /// Status poll cadence (short in tests; production uses the default).
     private let statusInterval: Duration
     /// Authoritative transcript history — unbounded, persisted to the cache
@@ -361,6 +381,12 @@ public final class ConversationViewModel {
         } else {
             self.reactionSeam = UnsupportedReactionProviding()
         }
+        // Issue #4: same one-cast/fail-closed discipline for slash commands.
+        if let capable = session as? SlashCommandCapable {
+            self.slashCommands = capable.slashCommands
+        } else {
+            self.slashCommands = UnsupportedSlashCommandProviding()
+        }
     }
 
     /// P2-3: when the VM is permanently released (the conversation screen is
@@ -372,6 +398,7 @@ public final class ConversationViewModel {
         eventTask?.cancel()
         statusWatcher?.cancel()
         micTask?.cancel()
+        slashSuggestionTask?.cancel()
     }
 
     // MARK: Lifecycle
@@ -596,40 +623,198 @@ public final class ConversationViewModel {
     /// mirror of `mark_speech_interrupted` (server.py:17191: the gateway cuts
     /// its own TTS when a new user turn arrives; here the iOS TTS is local,
     /// so the cut is local too).
+    /// Canonical Bot Chat/mention preparation hook supplied by AppEnvironment.
+    /// Ordinary chat keeps this behavior; skill dispatch runs the expanded
+    /// model-facing text through the same preparation boundary.
     public var prepareBotDraft: ((String, String) -> BotConversationDraft)?
     public private(set) var botDraftNotice: String?
 
-    public func send(_ text: String) async {
+    ///
+    /// Issue #4 keeps skill display text separate from the expanded model
+    /// payload. The Bool tells the SwiftUI composer whether it may clear the
+    /// field: a stale/unknown slash command returns false so the invocation
+    /// remains editable for correction.
+    @discardableResult
+    public func send(_ text: String) async -> Bool {
         if isVoiceModeEnabled {
             await voice.stopSpeaking()
             await speechQueue.drain()
         }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sid = openedSessionID,
               !isStreaming,
-              phase == .ready || phase == .streaming else { return }
-        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return }
+              phase == .ready || phase == .streaming else { return false }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return false }
 
+        // A leading slash is a deliberate skill invocation. Never pass it to
+        // ordinary prompt.submit: dispatch is the canonical Hermes expansion
+        // path, and a failed/stale dispatch must leave the field editable.
+        if let invocation = Self.parseSlashInvocation(in: text) {
+            do {
+                let dispatch = try await slashCommands.dispatchSkill(
+                    sessionID: sid,
+                    name: invocation.name,
+                    argument: invocation.argument)
+                skillSuggestionError = nil
+                return await sendPrepared(
+                    modelText: dispatch.message,
+                    displayText: dispatch.display.isEmpty ? trimmed : dispatch.display,
+                    sessionID: sid)
+            } catch {
+                skillSuggestionError = Self.nonSecret(error)
+                return false
+            }
+        }
+        if Self.isSlashPrefixed(text) {
+            skillSuggestionError = "Enter a skill name after /, or remove / to send ordinary chat."
+            return false
+        }
+
+        return await sendPrepared(modelText: trimmed, displayText: trimmed, sessionID: sid)
+    }
+
+    /// The shared send path for ordinary messages and expanded skill
+    /// invocations. Attachments are appended to both representations so the
+    /// transcript remains honest while the model receives the staged refs.
+    private func sendPrepared(modelText: String, displayText: String, sessionID sid: String) async -> Bool {
+        guard !isStreaming,
+              phase == .ready || phase == .streaming else { return false }
         let refTexts = pendingAttachments.map(\.refText)
-        let prepared = prepareBotDraft?(trimmed, sid) ?? BotConversationDraft(text: trimmed)
+        let prepared = prepareBotDraft?(modelText, sid) ?? BotConversationDraft(text: modelText)
         botDraftNotice = prepared.notice
-        let composed = AttachmentStagingRules.promptAppending(refs: refTexts, to: prepared.text)
-        guard !composed.isEmpty else { return }
+        let modelPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: prepared.text)
+        // Ordinary chat uses one representation, so Bot Chat draft preparation
+        // remains visible exactly as it was before slash support. Skill turns
+        // keep Hermes' compact dispatch display separate from the expanded
+        // (and possibly bot-prepared) model text.
+        let visibleText = modelText == displayText ? prepared.text : displayText
+        let displayPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: visibleText)
+        guard !modelPayload.isEmpty else { return false }
 
-        appendRow(.init(id: nextRowID(), kind: .user, text: composed))
+        appendRow(.init(id: nextRowID(), kind: .user, text: displayPayload))
         // The refs were staged successfully at pick time — the tray clears
         // with the send (image/PDF bytes are already queued server-side;
         // removing them here would orphan the upload).
         pendingAttachments = []
         do {
-            let submission = try await session.conversation.submitPrompt(sessionID: sid, text: composed)
+            let submission = try await session.conversation.submitPrompt(sessionID: sid, text: modelPayload)
             guard submission.isStreaming else {
                 phase = .ready
-                return
+                return true
             }
         } catch {
             classifyTurnFailure(error)
         }
+        return true
+    }
+
+    // MARK: Issue #4 — slash discovery/composer state
+
+    /// Update the palette for a composer edit. Bare `/` uses the catalog;
+    /// every other slash-prefixed value uses Hermes' live completer.
+    /// Requests are canceled and generation-fenced so an older response can
+    /// never replace a newer query's results.
+    public func updateSlashSuggestions(for text: String) {
+        slashSuggestionTask?.cancel()
+        slashSuggestionGeneration += 1
+        let generation = slashSuggestionGeneration
+        guard let slashText = Self.normalizedSlashInput(text) else {
+            skillSuggestions = []
+            skillSuggestionError = nil
+            isLoadingSkillSuggestions = false
+            return
+        }
+        guard let sessionID = openedSessionID else {
+            skillSuggestions = []
+            isLoadingSkillSuggestions = false
+            return
+        }
+
+        skillSuggestions = []
+        skillSuggestionError = nil
+        isLoadingSkillSuggestions = true
+        let provider = slashCommands
+        slashSuggestionTask = Task { [weak self] in
+            do {
+                let suggestions: [SlashCommandSuggestion]
+                if slashText == "/" {
+                    suggestions = try await provider.skillCatalog(sessionID: sessionID)
+                } else {
+                    suggestions = try await provider.completeSkills(
+                        sessionID: sessionID,
+                        text: slashText)
+                }
+                guard !Task.isCancelled, let self,
+                      generation == self.slashSuggestionGeneration else { return }
+                self.skillSuggestions = suggestions
+                self.isLoadingSkillSuggestions = false
+            } catch is CancellationError {
+                // A newer keystroke owns the palette state.
+            } catch {
+                guard !Task.isCancelled, let self,
+                      generation == self.slashSuggestionGeneration else { return }
+                self.skillSuggestions = []
+                self.skillSuggestionError = Self.nonSecret(error)
+                self.isLoadingSkillSuggestions = false
+            }
+        }
+    }
+
+    /// Insert a selected canonical skill token while retaining any argument
+    /// suffix already typed. The view restores focus after calling this.
+    public func selectedSkillText(_ suggestion: SlashCommandSuggestion, replacing text: String) -> String {
+        guard suggestion.kind == .skill else { return text }
+        let leading = String(text.prefix(while: { $0.isWhitespace }))
+        let body = String(text.dropFirst(leading.count))
+        guard body.first == "/" else { return text }
+        let suffix = body.drop(while: { !$0.isWhitespace })
+        return leading + suggestion.text + (suffix.isEmpty ? " " : String(suffix))
+    }
+
+    /// Dismiss the slash palette without touching the composer text.
+    public func clearSlashSuggestions() {
+        slashSuggestionTask?.cancel()
+        slashSuggestionGeneration += 1
+        skillSuggestions = []
+        skillSuggestionError = nil
+        isLoadingSkillSuggestions = false
+    }
+
+    private struct SlashInvocation {
+        let name: String
+        let argument: String
+    }
+
+    private static func normalizedSlashInput(_ text: String) -> String? {
+        let leading = text.drop(while: { $0.isWhitespace })
+        guard leading.first == "/" else { return nil }
+        return String(leading)
+    }
+
+    private static func isSlashPrefixed(_ text: String) -> Bool {
+        normalizedSlashInput(text) != nil
+    }
+
+    /// Parses only the first command token. The syntactic separator is
+    /// removed, while intentional internal/trailing argument whitespace is
+    /// preserved, so Hermes receives the user's argument text exactly.
+    private static func parseSlashInvocation(in text: String) -> SlashInvocation? {
+        guard let normalized = normalizedSlashInput(text), normalized.count > 1 else { return nil }
+        let afterSlash = normalized.dropFirst()
+        let boundary = afterSlash.firstIndex(where: { $0.isWhitespace })
+        let rawName: String
+        let argument: String
+        if let boundary {
+            rawName = String(afterSlash[..<boundary])
+            // The whitespace separating the command token from its argument
+            // is syntax, not part of `arg`; preserve everything after it.
+            argument = String(afterSlash[boundary...].drop(while: { $0.isWhitespace }))
+        } else {
+            rawName = String(afterSlash)
+            argument = ""
+        }
+        guard !rawName.isEmpty, RoutingGuard.isValidRouteComponent(rawName) else { return nil }
+        return SlashInvocation(name: rawName, argument: argument)
     }
 
     // MARK: R10-T1 — attachment staging (composer tray)

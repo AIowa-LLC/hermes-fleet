@@ -51,6 +51,7 @@ public struct ConversationView: View {
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingFileImporter = false
+    @FocusState private var composerFocused: Bool
     /// R10-T4: voice transcript review confirmation (sheet). Presented when a
     /// transcript lands for review (submit-on-silence OFF).
     @State private var showingTranscriptReview = false
@@ -603,6 +604,11 @@ public struct ConversationView: View {
                 Text(notice).font(.caption).padding(8)
                     .accessibilityIdentifier("fleet.conversation.bot-notice")
             }
+            // Issue #4: skill discovery lives in the same compact composer
+            // surface as the input, never as a full-screen command browser.
+            if model.isSlashPaletteVisible {
+                slashPalette(model)
+            }
             // R10-T1: pending-attachment chips (name + size, removable) and
             // the never-silent error banner sit directly above the input row.
             if !model.pendingAttachments.isEmpty || model.isUploadingAttachment {
@@ -700,6 +706,7 @@ public struct ConversationView: View {
 
                 TextField("Message", text: $composerText, axis: .vertical)
                     .lineLimit(1...4)
+                    .focused($composerFocused)
                     .font(.body)
                     .foregroundStyle(FleetTheme.textPrimary)
                     .tint(FleetTheme.accent)
@@ -766,6 +773,9 @@ public struct ConversationView: View {
             selectedPhoto = nil
             Task { await loadPickedPhoto(item, model: model) }
         }
+        .onChange(of: composerText) { _, newValue in
+            model.updateSlashSuggestions(for: newValue)
+        }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
             guard case .success(let url) = result else {
                 // User-cancelled picker: not an error.
@@ -773,6 +783,81 @@ public struct ConversationView: View {
             }
             Task { await loadPickedFile(url, model: model) }
         }
+    }
+
+    /// Compact, touch-friendly skill palette backed entirely by the active
+    /// Hermes session's discovery/completion responses.
+    private func slashPalette(_ model: ConversationViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: FleetTheme.spacingSm) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(FleetTheme.accent)
+                Text("Skills")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(FleetTheme.textSecondary)
+                Spacer()
+                if model.isLoadingSkillSuggestions {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.vertical, FleetTheme.spacingXs)
+
+            if let error = model.skillSuggestionError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.statusDegraded)
+                    .padding(.horizontal, FleetTheme.spacingLg)
+                    .padding(.vertical, FleetTheme.spacingSm)
+                    .accessibilityIdentifier("fleet.conversation.skill.error")
+            } else if model.skillSuggestions.isEmpty && !model.isLoadingSkillSuggestions {
+                Text("No skills available in this Hermes profile")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.textSecondary)
+                    .padding(.horizontal, FleetTheme.spacingLg)
+                    .padding(.vertical, FleetTheme.spacingSm)
+                    .accessibilityIdentifier("fleet.conversation.skill.empty")
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ForEach(model.skillSuggestions) { suggestion in
+                            Button {
+                                composerText = model.selectedSkillText(
+                                    suggestion,
+                                    replacing: composerText)
+                                composerFocused = true
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(suggestion.text)
+                                        .font(FleetTheme.monoCaptionFont)
+                                        .foregroundStyle(FleetTheme.textPrimary)
+                                    if !suggestion.description.isEmpty {
+                                        Text(suggestion.description)
+                                            .font(.caption2)
+                                            .foregroundStyle(FleetTheme.textSecondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, FleetTheme.spacingLg)
+                                .padding(.vertical, FleetTheme.spacingSm)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("fleet.conversation.skill.\(suggestion.text.dropFirst())")
+                        }
+                    }
+                }
+                .frame(maxHeight: 176)
+            }
+        }
+        .background(FleetTheme.surfaceElevated)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                .frame(height: 1)
+        }
+        .accessibilityIdentifier("fleet.conversation.skill.palette")
     }
 
     // MARK: R10-T1 — attachment tray + pickers
@@ -1076,9 +1161,10 @@ public struct ConversationView: View {
               !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pendingAttachments.isEmpty else { return }
         followingLatest = true
         let text = composerText
-        composerText = ""
         sendPulse += 1
-        await model.send(text)
+        if await model.send(text) {
+            composerText = ""
+        }
     }
 
     private var unavailable: some View {

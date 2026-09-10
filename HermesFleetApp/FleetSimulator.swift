@@ -842,7 +842,7 @@ private extension String {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
@@ -858,6 +858,9 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// R10-T2: scripted reaction seam (records react calls + failure hook so
     /// long-press Tapback is fully walkable in the simulator + UI tests).
     let reactionsBox = ScriptedReactionSeam()
+    /// Issue #4: scripted Hermes skill discovery/completion/dispatch so the
+    /// slash palette is walkable in simulator UI tests without a gateway.
+    let slashCommandsBox = ScriptedSlashCommandBox()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
@@ -923,6 +926,10 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
         reactionsBox
     }
 
+    var slashCommands: any SlashCommandProviding {
+        slashCommandsBox
+    }
+
     /// R9-T1 UI-test hook: push a scripted approval request into the
     /// conversation event stream (drives the banner deterministically).
     func pushApprovalRequest(_ request: ApprovalRequest) {
@@ -935,6 +942,43 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
 
     var history: any SessionHistoryProviding {
         ScriptedHistory(gatewayID: gatewayID)
+    }
+}
+
+/// Issue #4 scripted slash capability. The submitted expanded message still
+/// travels through the regular scripted conversation client, preserving the
+/// same streaming transcript path as a live Hermes gateway.
+private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked Sendable {
+    private let catalog: [SlashCommandSuggestion] = [
+        SlashCommandSuggestion(
+            text: "/hermes-change-review",
+            description: "Review a change against its issue",
+            kind: .skill),
+        SlashCommandSuggestion(
+            text: "/hermes-plan",
+            description: "Build an implementation plan",
+            kind: .skill),
+    ]
+
+    func skillCatalog(sessionID: String?) async throws -> [SlashCommandSuggestion] {
+        catalog
+    }
+
+    func completeSkills(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
+        let query = text.drop(while: { $0 == "/" }).split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
+        return catalog.filter { $0.text.dropFirst().lowercased().hasPrefix(query.lowercased()) }
+    }
+
+    func dispatchSkill(sessionID: String, name: String, argument: String) async throws -> SkillCommandDispatch {
+        let canonical = name.hasPrefix("/") ? String(name.dropFirst()) : name
+        guard catalog.contains(where: { $0.text.dropFirst().lowercased() == canonical.lowercased() }) else {
+            throw SlashCommandError.notSkillCommand(canonical)
+        }
+        let suffix = argument.isEmpty ? "" : (argument.first?.isWhitespace == true ? argument : " (argument)")
+        return SkillCommandDispatch(
+            name: canonical,
+            message: "[Scripted expanded skill: \(canonical)]\n\(argument)",
+            display: "/\(canonical)\(suffix)")
     }
 }
 

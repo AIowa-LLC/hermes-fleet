@@ -28,6 +28,7 @@ final class ConversationViewModelTests: XCTestCase {
         ReplayProviding,
         SessionHistoryProviding,
         ApprovalsCapable,
+        SlashCommandCapable,
         @unchecked Sendable
     {
         let gatewayID = GatewayID(rawValue: "workstation")
@@ -75,6 +76,9 @@ final class ConversationViewModelTests: XCTestCase {
         /// in-flight observation (see replayParkedCount).
         var historyParkedCount = 0
 
+        // slash commands
+        let slashBox = ScriptedSlashCommands()
+
         init() {
             self.streamPair = AsyncStream.makeStream()
         }
@@ -101,6 +105,7 @@ final class ConversationViewModelTests: XCTestCase {
         // MARK: ApprovalsCapable (R9-T1 rework: approval.pending restore)
         var approvals: any ApprovalsProviding { approvalsBox }
         let approvalsBox = ScriptedPendingApprovals()
+        var slashCommands: any SlashCommandProviding { slashBox }
         func reauthenticate() async throws {
             reauthenticateCount += 1
             if let connectError { throw connectError }
@@ -247,6 +252,39 @@ final class ConversationViewModelTests: XCTestCase {
         }
     }
 
+    private final class ScriptedSlashCommands: SlashCommandProviding, @unchecked Sendable {
+        private let catalog = [
+            SlashCommandSuggestion(
+                text: "/hermes-change-review",
+                description: "Review a change",
+                kind: .skill),
+            SlashCommandSuggestion(
+                text: "/hermes-plan",
+                description: "Plan a change",
+                kind: .skill),
+        ]
+        var completionTexts: [String] = []
+        var dispatchError: SlashCommandError?
+
+        func skillCatalog(sessionID: String?) async throws -> [SlashCommandSuggestion] {
+            catalog
+        }
+
+        func completeSkills(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
+            completionTexts.append(text)
+            let query = text.dropFirst().lowercased()
+            return catalog.filter { $0.text.dropFirst().lowercased().hasPrefix(query) }
+        }
+
+        func dispatchSkill(sessionID: String, name: String, argument: String) async throws -> SkillCommandDispatch {
+            if let dispatchError { throw dispatchError }
+            return SkillCommandDispatch(
+                name: name,
+                message: "<expanded skill instructions>\(argument.isEmpty ? "" : " \(argument)")",
+                display: "/\(name)\(argument.isEmpty ? "" : " \(argument)")")
+        }
+    }
+
     // MARK: - Fixture
 
     private var cache: SwiftDataCacheStore!
@@ -281,6 +319,54 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(scripted.connectCount, 1)
         XCTAssertEqual(viewModel.phase, .ready)
         XCTAssertEqual(viewModel.sessionTitle, "default")
+    }
+
+    func testSkillSendUsesHumanDisplayAndExpandedModelMessage() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+
+        let didSend = await viewModel.send("/hermes-change-review Review this PR against the issue")
+
+        XCTAssertTrue(didSend)
+        XCTAssertEqual(
+            scripted.submittedTexts,
+            ["<expanded skill instructions> Review this PR against the issue"])
+        XCTAssertEqual(
+            viewModel.transcript.last?.text,
+            "/hermes-change-review Review this PR against the issue")
+    }
+
+    func testSlashSuggestionsUseCatalogThenLiveCompletion() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+
+        viewModel.updateSlashSuggestions(for: "/")
+        for _ in 0..<100 where viewModel.isLoadingSkillSuggestions {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(viewModel.skillSuggestions.map(\.text), ["/hermes-change-review", "/hermes-plan"])
+
+        viewModel.updateSlashSuggestions(for: "/hermes-c")
+        for _ in 0..<100 where viewModel.isLoadingSkillSuggestions {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(viewModel.skillSuggestions.map(\.text), ["/hermes-change-review"])
+        XCTAssertEqual(scripted.slashBox.completionTexts, ["/hermes-c"])
+    }
+
+    func testUnknownSlashCommandStaysEditableAndDoesNotSubmit() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        scripted.slashBox.dispatchError = .notSkillCommand("does-not-exist")
+
+        let didSend = await viewModel.send("/does-not-exist keep this text")
+
+        XCTAssertFalse(didSend)
+        XCTAssertTrue(scripted.submittedTexts.isEmpty)
+        XCTAssertEqual(
+            viewModel.skillSuggestionError,
+            "/does-not-exist is no longer an available skill. Refresh the list and try again.")
+        XCTAssertTrue(viewModel.transcript.isEmpty)
     }
 
     /// R9-T1 rework: opening a session pulls `approval.pending` and restores
