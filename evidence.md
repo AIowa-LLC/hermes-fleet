@@ -9,7 +9,7 @@ NOT biometric/runner platform behavior.**
   identical at the failing commits in all app/test sources (see §1.3).
 - Environment: Xcode 26.6 (17F113), Swift 6.3.3, iOS 26.5 simulator runtime
   (23F77), dedicated simulator `hgoal-i16` (UDID redacted; internal ref
-  E147…EFCE), macOS 26.6.2 host.
+  hgoal-i16 (UDID redacted)), macOS 26.6.2 host.
 - Date: 2026-09-10 (America/Chicago).
 
 ## 1. Hosted-run forensics (gh CLI, real logs pulled from the runs)
