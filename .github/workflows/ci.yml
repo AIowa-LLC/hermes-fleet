@@ -93,6 +93,15 @@ jobs:
       - name: Run UI shard
         run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
 
+      - name: Upload xcresults (failure diagnostics)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresults-shard-${{ matrix.shard }}
+          path: /tmp/hermes-c1-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   ci-gate:
     name: CI Gate
     needs: [static-guards, packages, units, ui-shard]
