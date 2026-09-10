@@ -103,6 +103,13 @@ make test-core
 make validate
 ```
 
+`make validate` is the fast local development loop. The authoritative broad
+repository/CI validation gate is `scripts/c1_ci_validate.sh` — XcodeGen
+generation and drift gate, package tests, hosted unit tests, simulator UI
+suites, module-boundary enforcement, the public-safety residue guard, and
+gitleaks. Run `make ci` (or the script directly) before opening a pull
+request.
+
 For the repository safety gates:
 
 ```sh

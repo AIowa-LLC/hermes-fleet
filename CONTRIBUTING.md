@@ -31,6 +31,17 @@ bash scripts/public_safety_guard.sh
 gitleaks detect --source . --no-git
 ```
 
+`make validate` is the fast local development loop. Before opening a pull
+request, run the authoritative broad repository/CI validation gate instead:
+
+```sh
+make ci        # wraps scripts/c1_ci_validate.sh
+```
+
+This covers XcodeGen generation and the drift gate, package tests, hosted unit
+tests, simulator UI suites, module-boundary enforcement, the public-safety
+residue guard, and gitleaks.
+
 Run focused tests while iterating, then run the broadest relevant validation before opening a pull request.
 
 Live gateway, physical-device, signing, LAN, and tailnet checks are environmental tests. Ordinary contributions must not depend on a maintainer's private infrastructure.
