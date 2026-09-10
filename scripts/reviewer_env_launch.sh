@@ -3,9 +3,11 @@
 # for external TestFlight review (issue #18).
 #
 # Creates a throwaway HERMES_HOME with synthetic demo content, launches an
-# authenticated `hermes serve` bound to loopback with the dashboard auth gate
-# engaged via HERMES_DASHBOARD_PUBLIC_URL, and prints (never executes) the
-# cloudflared tunnel commands for the operator.
+# `hermes serve` bound to loopback with the dashboard auth gate engaged via
+# HERMES_DASHBOARD_PUBLIC_URL (the gate engages whenever the public URL's
+# host is non-loopback; a loopback rehearsal URL leaves it off, by hermes
+# design), and prints (never executes) the cloudflared tunnel commands for
+# the operator.
 #
 # SECRET-FREE BY CONSTRUCTION: no endpoint, credential, or token is committed
 # here. Credentials come from env vars, a Keychain item, or are freshly
@@ -49,8 +51,22 @@ resolve_credentials() {
   fi
   if [ -n "$KEYCHAIN_ITEM" ]; then
     command -v security >/dev/null 2>&1 || die "security(1) unavailable for Keychain read"
-    REVIEWER_USERNAME="${REVIEWER_USERNAME:-$(security find-generic-password -s "$KEYCHAIN_ITEM" -a username -w 2>/dev/null || true)}"
-    REVIEWER_PASSWORD="${REVIEWER_PASSWORD:-$(security find-generic-password -s "$KEYCHAIN_ITEM" -w 2>/dev/null || true)}"
+    # Documented resolution: ONE generic-password item named by
+    # REVIEWER_KEYCHAIN_ITEM. The reviewer username is the item's account
+    # ("acct") attribute; the reviewer password is the item's password field
+    # (read with -w; never echoed). Lookup is by service name (-s). An
+    # explicit REVIEWER_USERNAME from the environment is kept and used to
+    # disambiguate the lookup (-a).
+    local kc_args=(-s "$KEYCHAIN_ITEM")
+    if [ -n "${REVIEWER_USERNAME:-}" ]; then
+      kc_args+=(-a "$REVIEWER_USERNAME")
+    else
+      REVIEWER_USERNAME="$(security find-generic-password "${kc_args[@]}" 2>/dev/null \
+        | sed -n 's/^[[:space:]]*"acct"<blob>="\([^"]*\)".*/\1/p' | head -1)"
+    fi
+    if [ -z "${REVIEWER_PASSWORD:-}" ]; then
+      REVIEWER_PASSWORD="$(security find-generic-password "${kc_args[@]}" -w 2>/dev/null || true)"
+    fi
     [ -n "$REVIEWER_USERNAME" ] && [ -n "$REVIEWER_PASSWORD" ] \
       || die "Keychain item '$KEYCHAIN_ITEM' missing username/password data"
     REVIEWER_SECRET="${REVIEWER_SECRET:-$(openssl rand -hex 32)}"
@@ -185,7 +201,21 @@ do_start() {
     rm -f "$PID_FILE"
     die "reviewer gateway did not start"
   fi
-  info "backend up on loopback :$SERVE_PORT (auth gate engaged via HERMES_DASHBOARD_PUBLIC_URL)"
+  # Same rule as hermes web_server.py should_require_dashboard_auth(): the
+  # dashboard gate is engaged by a NON-loopback bind or a non-loopback
+  # public-URL hostname. A loopback REVIEWER_PUBLIC_URL (rehearsal only) does
+  # NOT engage the gate — the loopback token middleware still requires the
+  # session cookie, but no external reviewer traffic ever travels plain
+  # loopback HTTP in a real setup.
+  case "$REVIEWER_PUBLIC_URL" in
+    http://127.0.0.1*|http://localhost*|http://\[::1\]*)
+      info "backend up on loopback :$SERVE_PORT"
+      info "auth gate NOT engaged: loopback REVIEWER_PUBLIC_URL cannot engage the dashboard gate (rehearsal transport only)"
+      ;;
+    *)
+      info "backend up on loopback :$SERVE_PORT (auth gate engaged via HERMES_DASHBOARD_PUBLIC_URL)"
+      ;;
+  esac
 
   printf '\nTUNNEL (operator/Tony executes — this script never does):\n'
   printf '  quick rehearsal:  cloudflared tunnel --url http://127.0.0.1:%s\n' "$SERVE_PORT"
@@ -241,9 +271,9 @@ do_stop() {
 # -------------------------------------------------------------------- clean
 do_clean() {
   do_stop
-  local purge=1
-  [ "${1:-}" = "--purge" ] && purge=1
-  if [ "$purge" = 1 ]; then
+  # Non-destructive by default: plain `clean` only stops the serve and keeps
+  # all state (home, credentials, logs). `clean --purge` destroys it.
+  if [ "${1:-}" = "--purge" ]; then
     local repo_root
     repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     case "$REVIEWER_ENV_DIR/" in
@@ -262,7 +292,8 @@ do_clean() {
       fi
     done
   else
-    info "state kept under $REVIEWER_ENV_DIR"
+    info "state kept under $REVIEWER_ENV_DIR (home, credentials, logs)"
+    info "to destroy state, run: $0 clean --purge"
   fi
 }
 

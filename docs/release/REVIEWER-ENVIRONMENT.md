@@ -65,11 +65,16 @@ against this repository's existing hermetic-launch script
    requires an auth provider. The supported remote-access deployment is
    "bind loopback + tunnel", which is what this design does.
 2. Setting `dashboard.public_url` (or the `HERMES_DASHBOARD_PUBLIC_URL` env
-   var) engages the dashboard auth gate EVEN on a loopback bind — it is the
-   operator's declaration of "this backend is reached through a public URL",
-   and it registers the public host as the trusted Host/Origin for WebSocket
-   upgrade validation behind a reverse proxy. The launcher therefore always
-   sets it to the tunnel URL.
+   var) engages the dashboard auth gate on an otherwise-loopback bind
+   whenever the public URL's host is non-loopback — it is the operator's
+   declaration of "this backend is reached through a public URL", and it
+   registers the public host as the trusted Host/Origin for WebSocket
+   upgrade validation behind a reverse proxy. A LOOPBACK public URL (e.g.
+   `http://127.0.0.1:<port>`, pure transport rehearsal) does NOT engage the
+   gate: `should_require_dashboard_auth()` only engages for a non-loopback
+   bind or a non-loopback public-URL host. The launcher therefore reports
+   gate engagement honestly and always sets the variable to the real tunnel
+   URL for the review window.
 3. The bundled basic-auth provider activates from
    `dashboard.basic_auth.{username,password,secret}` in `config.yaml` OR the
    `HERMES_DASHBOARD_BASIC_AUTH_{USERNAME,PASSWORD,SECRET}` env vars, with env
@@ -124,7 +129,8 @@ synthetic, disposable home.
 - **Separate Hermes home.** The launcher refuses to run against the default
   `~/.hermes` (it fails fast if `HERMES_HOME` would resolve there). All
   state — config, sessions, skills, state DB, logs — lives under
-  `$REVIEWER_ENV_DIR/home` which is created empty and deleted on `clean`.
+  `$REVIEWER_ENV_DIR/home` which is created empty and destroyed only by
+  `clean --purge` (plain `clean` stops the serve and keeps state).
 - **Hermetic process environment.** The serve process is launched with
   `env -i` and an explicit minimal environment (the pattern already proven in
   `scripts/p08_launch_gateways_hermetic.sh`), so no agent-session, kanban, or
@@ -170,9 +176,12 @@ disposable home — no secrets involved:
 
 - Username/password/session-secret are resolved at launch in this order:
   explicit `REVIEWER_USERNAME`/`REVIEWER_PASSWORD`/`REVIEWER_SECRET` env →
-  Keychain generic-password item named by `REVIEWER_KEYCHAIN_ITEM` (read via
-  `security find-generic-password -w`, never echoed) → freshly generated with
-  `openssl rand` and stored `0600` in `$REVIEWER_ENV_DIR/credentials`.
+  one Keychain generic-password item named by `REVIEWER_KEYCHAIN_ITEM`
+  (service = the item name; the reviewer USERNAME is the item's `acct`
+  account attribute; the reviewer PASSWORD is the item's password field,
+  read via `security find-generic-password -w`, never echoed) → freshly
+  generated with `openssl rand` and stored `0600` in
+  `$REVIEWER_ENV_DIR/credentials`.
 - The pairing QR for Apple is generated AFTER the tunnel exists, with the
   existing checked-in generator, into the (untracked) env dir:
   `bash scripts/f2_generate_pairing_qr.sh "$REVIEWER_PUBLIC_URL" "$REVIEWER_USERNAME" "$REVIEWER_PASSWORD"`
@@ -184,7 +193,25 @@ disposable home — no secrets involved:
 ## Operations
 
 ```sh
-# one-time rehearsal (no real tunnel, loopback only):
+# FULL REHEARSAL (primary quick-start — all 5 checks, auth gate genuinely
+# engaged; verified working end-to-end). Use a NON-loopback rehearsal
+# hostname (any name you control locally is fine; nothing resolves it —
+# REVIEWER_CONNECT_TO routes it to the loopback serve without DNS changes):
+REVIEWER_ENV_DIR=${TMPDIR:-/tmp}/hermes-fleet-reviewer
+REVIEWER_PUBLIC_URL=http://fleet-reviewer.example.com:9318 \
+  bash scripts/reviewer_env_launch.sh start
+REVIEWER_BASE_URL=http://fleet-reviewer.example.com:9318 \
+REVIEWER_ALLOW_INSECURE_HTTP=1 \
+REVIEWER_CONNECT_TO='fleet-reviewer.example.com:9318:127.0.0.1:9318' \
+REVIEWER_CRED_FILE=$REVIEWER_ENV_DIR/credentials \
+  bash scripts/reviewer_env_check.sh
+#   -> expect 6/6 OK, exit 0 (transport policy, health, providers, login,
+#      ws-ticket, negative probe)
+#   (CONNECT_TO maps the URL's host AND port to the loopback serve.)
+
+# TRANSPORT SMOKE ONLY (loopback URL — gate NOT engaged by design, checks
+# 2-5 auto-skipped; proves serve-up/health only, never a pre-submission
+# result):
 REVIEWER_PUBLIC_URL=http://127.0.0.1:9318 bash scripts/reviewer_env_launch.sh start
 bash scripts/reviewer_env_check.sh   # auto-targets the loopback instance
 
@@ -199,6 +226,7 @@ REVIEWER_CRED_FILE=</persistent/path>/credentials \
 
 bash scripts/reviewer_env_launch.sh status
 bash scripts/reviewer_env_launch.sh stop
+bash scripts/reviewer_env_launch.sh clean           # stops serve, KEEPS state
 bash scripts/reviewer_env_launch.sh clean --purge   # destroys home + aliases
 ```
 
@@ -227,11 +255,14 @@ secrets:
    NOT return `200` — proving the auth gate is genuinely engaged, so an
    accidentally unauthenticated tunnel cannot pass the check.
 
-It refuses non-HTTPS URLs except explicit loopback smoke (gate off by
-design; checks 1–4 only) and a rehearsal-only
-`REVIEWER_ALLOW_INSECURE_HTTP=1` escape hatch for exercising the gate
-locally via `REVIEWER_CONNECT_TO` (routes the public hostname to the
-loopback serve without DNS changes — verified working against a live
+It refuses non-HTTPS URLs except an explicit loopback smoke (gate off by
+design; auth checks 2–5 are skipped with a printed note — a healthy ungated
+loopback serve 401s `/api/auth/providers` because it is not in the loopback
+public path set, so a loopback smoke proves transport only, never
+readiness) and a rehearsal-only `REVIEWER_ALLOW_INSECURE_HTTP=1` escape
+hatch for exercising the gate locally via `REVIEWER_CONNECT_TO` (routes the
+public hostname to the loopback serve without DNS changes — this is the
+PRIMARY documented rehearsal above, verified working against a live
 auth-gated serve). Credentials are never accepted as command-line
 arguments, and the cookie jar is a `0600` temp dir removed on exit. Run it
 from an off-network vantage (phone hotspot, or the public host via SSH)
