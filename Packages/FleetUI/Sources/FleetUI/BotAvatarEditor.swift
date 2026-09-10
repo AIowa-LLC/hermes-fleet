@@ -28,7 +28,59 @@ struct BotAvatarEditor: View {
 
     var body: some View {
         // The preview consumes the DRAFT — never stale roster metadata.
+        // i7-gapfill: the preview is also the presentation anchor for the
+        // alert/sheet/fileImporter modifiers below. They were previously
+        // chained on a zero-height Color.clear at the section's END — a row
+        // a lazy Form may never materialize once the Avatar section grew,
+        // which silently dropped the Generate alert (proven by the R1 UI
+        // journey: alert never presented). The preview is the section's
+        // FIRST row and always materializes.
         BotAvatarAppearancePreview(draft: draft, identityName: bot.route.profileSlug.rawValue)
+            .task {
+                guard let seam = environment.botManagement.seam(for: bot.route.gatewayID) else { return }
+                supportsAssets = await seam.supportsAvatarUpload(bot.profileSlug.rawValue)
+                if supportsAssets { supportsGeneration = await seam.supportsPortraitGeneration() }
+                // #9: Pets render alongside the other sources when the
+                // Bot's own gateway speaks the pet surface. The picker
+                // itself distinguishes unsupported gateways at load time.
+                supportsPets = environment.botManagement.petSeam(for: bot) != nil
+            }
+            .sheet(isPresented: $petPickerShown) {
+                BotPetPickerSheet(environment: environment, bot: bot) { pet, pngBytes in
+                    // #7's unified draft: the pet's idle frame is just
+                    // another image source — staged replacement bytes
+                    // (custom=true, imageKind="photo" semantics inside),
+                    // zero remote writes until Save.
+                    draft.stageReplacement(data: pngBytes)
+                    status = "Pet “\(pet.displayName)” staged as the new avatar. Save to apply."
+                }
+            }
+            .onChange(of: photo) { _, item in
+                guard let item else { return }
+                Task {
+                    do {
+                        guard let data = try await item.loadTransferable(type: Data.self) else { throw BotPortraitError.invalidImage }
+                        try stageNormalizedImage(data)
+                    } catch { status = "Could not read the selected photo." }
+                }
+            }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.image]) { result in
+                Task {
+                    do {
+                        let url = try result.get()
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                        guard BotAvatarImageNormalization.isInputSizeAllowed(size) else { throw BotPortraitError.invalidImage }
+                        try stageNormalizedImage(try Data(contentsOf: url))
+                    } catch { status = "Could not read the selected image (maximum input size 20 MB)." }
+                }
+            }
+            .alert("Generate Portrait", isPresented: $generating) {
+                TextField("Description or style (optional)", text: $style)
+                Button("Generate") { Task { await generate() } }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Your gateway generates a preview. You choose whether to save it.") }
         if supportsAssets {
             PhotosPicker("Upload from Photos", selection: $photo, matching: .images)
                 .accessibilityIdentifier("fleet.bot.avatar.photos")
@@ -77,74 +129,24 @@ struct BotAvatarEditor: View {
             .accessibilityIdentifier("fleet.bot.avatar.confirm")
             Button("Discard portrait", role: .cancel) { self.portraitPreview = nil }
         }
-        Color.clear.frame(height: 0)
-            .task {
-                guard let seam = environment.botManagement.seam(for: bot.route.gatewayID) else { return }
-                supportsAssets = await seam.supportsAvatarUpload(bot.profileSlug.rawValue)
-                if supportsAssets { supportsGeneration = await seam.supportsPortraitGeneration() }
-                // #9: Pets render alongside the other sources when the
-                // Bot's own gateway speaks the pet surface. The picker
-                // itself distinguishes unsupported gateways at load time.
-                supportsPets = environment.botManagement.petSeam(for: bot) != nil
-            }
-            .sheet(isPresented: $petPickerShown) {
-                BotPetPickerSheet(environment: environment, bot: bot) { pet, pngBytes in
-                    // #7's unified draft: the pet's idle frame is just
-                    // another image source — staged replacement bytes
-                    // (custom=true, imageKind="photo" semantics inside),
-                    // zero remote writes until Save.
-                    draft.stageReplacement(data: pngBytes)
-                    status = "Pet “\(pet.displayName)” staged as the new avatar. Save to apply."
-                }
-            }
-            .onChange(of: photo) { _, item in
-                guard let item else { return }
-                Task {
-                    do {
-                        guard let data = try await item.loadTransferable(type: Data.self) else { throw BotPortraitError.invalidImage }
-                        try stageNormalizedImage(data)
-                    } catch { status = "Could not read the selected photo." }
-                }
-            }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.image]) { result in
-                Task {
-                    do {
-                        let url = try result.get()
-                        let scoped = url.startAccessingSecurityScopedResource()
-                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                        guard size <= 20_000_000 else { throw BotPortraitError.invalidImage }
-                        try stageNormalizedImage(try Data(contentsOf: url))
-                    } catch { status = "Could not read the selected image (maximum input size 20 MB)." }
-                }
-            }
-            .alert("Generate Portrait", isPresented: $generating) {
-                TextField("Description or style (optional)", text: $style)
-                Button("Generate") { Task { await generate() } }
-                Button("Cancel", role: .cancel) {}
-            } message: { Text("Your gateway generates a preview. You choose whether to save it.") }
     }
 
     /// Stage picked/uploaded bytes into the draft (normalized, ≤2 MB JPEG).
-    /// Local draft mutation only — the upload happens on Save.
+    /// Local draft mutation only — the upload happens on Save. The caps and
+    /// normalization live in `BotAvatarImageNormalization` (i7-gapfill R1:
+    /// behavior-identical extraction so the policy is unit-testable).
     private func stageNormalizedImage(_ bytes: Data) throws {
-        guard let image = UIImage(data: bytes), image.size.width > 0, image.size.height > 0 else {
+        switch BotAvatarImageNormalization.normalize(bytes) {
+        case .staged(let data):
+            draft.stageReplacement(data: data)
+            status = nil
+        case .invalidImage:
             status = "Choose a valid image."
             throw BotPortraitError.invalidImage
-        }
-        let scale = min(1, 1024 / max(image.size.width, image.size.height))
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let normalized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-        guard let data = normalized.jpegData(compressionQuality: 0.85), data.count <= 2_000_000 else {
+        case .exceedsUploadCap:
             status = "Choose a smaller image (maximum upload 2 MB)."
             throw BotPortraitError.invalidImage
         }
-        draft.stageReplacement(data: data)
-        status = nil
     }
 
     private func generate() async {
