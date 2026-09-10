@@ -1,0 +1,6 @@
+classes_at_31a4 = ["HermesFleetHappyPath","HermesFleetReconnect","P0_7SessionStateMachine","S3CleartextWarning","RT2RemovalAndEndpointSanitization","RT4RosterEmptyState","RT4FormSaveFailure","RT4VoiceOver","Splash","P2GatewayFormDraft","F2QRPairing","U3TabNavigation","SecondGeneration","U4Dashboard","U5BotDetail","U6ConversationSkin","U7GatewayQrLockSettings","F3Onboarding","C2SetupPrompt","KanbanBoard","R9ApprovalBanner","R9ConversationTooling","R9ManagementPanes","R9MemoryGraph","R10AttachmentTray","R10MessageReactions","R10ProjectsBrowser","R10Voice","R10MemoryGraphEdit","Issue4SlashSkill","FleetSettingsAccent","BotRoutines","RoomChat","RoomLinkMentions","FOS2GatewayDetail","FOS3FourRootShell","FOS4TruthfulHome","FOS5BotsGroupsChats","FOS6ComponentDensity","FOS8Accessibility","BotAvatarAppearance","BotPetAvatar"]
+assert classes_at_31a4[39] == "FOS8Accessibility", classes_at_31a4[39]
+assert len(classes_at_31a4) == 42, len(classes_at_31a4)
+print("31a4ab8: FOS8 0-based idx 39 -> shard", 39 % 5 + 1, "(42 CI classes)")
+cur = classes_at_31a4[:29] + ["Issue5StreamingRichText"] + classes_at_31a4[29:]
+print("2e9a16f: total", len(cur), "FOS8 idx", cur.index("FOS8Accessibility"), "-> shard", cur.index("FOS8Accessibility") % 5 + 1)
