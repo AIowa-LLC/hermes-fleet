@@ -15,13 +15,44 @@ final class BotManagementTests: XCTestCase {
     // MARK: scripted seams
 
     /// Actor-based scripted profile seam (async-safe by construction).
-    actor ScriptedProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting {
+    /// #7: records avatar asset mutations + every carried configure so the
+    /// coordinated appearance save can be asserted at the controller level.
+    actor ScriptedProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, BotPetManaging {
         private var sections: [BotSection] = []
         private var sectionsRevision = 0
         private var revisions: [String: Int] = [:]
+        private(set) var avatarAssets: [String: Data] = [:]
+        private(set) var configureCalls: [BotProfileEdit] = []
+        private(set) var clearAvatarCalls: [String] = []
+        private(set) var uploadAvatarCalls: [String] = []
+        private(set) var describeCalls: [String] = []
+        private var clearAvatarFailures = 0
+        private var uploadAvatarFailures = 0
+        private var reportsRevisions = true
+        private(set) var clearAvatarAttempts = 0
+        private(set) var uploadAvatarAttempts = 0
+        private var clearAvatarError: Error?
+        private var uploadAvatarError: Error?
+
+        func injectClearAvatarError(_ error: Error?) { clearAvatarError = error }
+        func injectUploadAvatarError(_ error: Error?) { uploadAvatarError = error }
+        /// Scripted N-shot clear failures (t_3ce28479 retry-path tests):
+        /// the first N clear attempts throw, later ones succeed.
+        func failNextClearAvatar(_ count: Int) { clearAvatarFailures = count }
+        /// Scripted N-shot upload failures (t_3ce28479 retry-path tests).
+        func failNextUploadAvatar(_ count: Int) { uploadAvatarFailures = count }
+        /// Toggle revision reporting (t_3ce28479: exercises the sheet's
+        /// roster-revision fallback when an outcome carries no
+        /// `newMetadataRevisions`).
+        func setReportsRevisions(_ value: Bool) { reportsRevisions = value }
+
+        /// The scripted gateway is asset-capable (mirrors the DEBUG
+        /// Workstation scripted fleet, which has avatar assets).
+        func supportsAvatarUpload(_ profile: String) async -> Bool { true }
 
         func describeProfile(_ profile: String) async throws -> BotProfileDescription {
-            BotProfileDescription(name: profile, soul: "soul text", defaultModel: "m1", provider: "nous")
+            describeCalls.append(profile)
+            return BotProfileDescription(name: profile, soul: "soul text", defaultModel: "m1", provider: "nous")
         }
 
         func configureProfile(_ profile: String, edit: BotProfileEdit) async throws -> BotProfileEditOutcome {
@@ -32,6 +63,7 @@ final class BotManagementTests: XCTestCase {
             _ profile: String, edit: BotProfileEdit, confirmExpensiveModel: Bool
         ) async throws -> BotProfileEditOutcome {
             var applied: [String: Bool] = [:]
+            configureCalls.append(edit)
             if let metadata = edit.metadata {
                 let current = revisions[profile] ?? 0
                 if let expected = edit.metadataExpectedRevision, expected != current {
@@ -43,14 +75,90 @@ final class BotManagementTests: XCTestCase {
             if edit.soul != nil { applied["soul"] = true }
             if edit.descriptionText != nil { applied["description"] = true }
             if edit.hasModelSection { applied["model"] = true }
-            return BotProfileEditOutcome(edit: edit, applied: applied)
+            // Real-client parity (GatewayBotModeClient.decodeEditOutcome):
+            // a successful ui_meta write reports the bumped revision.
+            let newRevisions: [String: Int] =
+                (applied["ui_meta"] == true && reportsRevisions)
+                ? [BotModeContract.botsMetaKey: revisions[profile] ?? 0]
+                : [:]
+            return BotProfileEditOutcome(
+                edit: edit, applied: applied, newMetadataRevisions: newRevisions)
         }
 
         func createProfile(_ spec: BotCreateSpec) async throws -> String { spec.name }
 
-        func uploadAvatar(_ profile: String, dataURL: String) async throws {}
-        func clearAvatar(_ profile: String) async throws {}
-        func avatarData(_ profile: String) async throws -> Data? { nil }
+        func uploadAvatar(_ profile: String, dataURL: String) async throws {
+            uploadAvatarAttempts += 1
+            if uploadAvatarFailures > 0 {
+                uploadAvatarFailures -= 1
+                throw BotSectionSyncError.conflict("scripted upload failure")
+            }
+            if let uploadAvatarError { throw uploadAvatarError }
+            uploadAvatarCalls.append(profile)
+            if let range = dataURL.range(of: "base64,"),
+               let data = Data(base64Encoded: String(dataURL[range.upperBound...])) {
+                avatarAssets[profile] = data
+            }
+        }
+
+        func clearAvatar(_ profile: String) async throws {
+            clearAvatarAttempts += 1
+            if clearAvatarFailures > 0 {
+                clearAvatarFailures -= 1
+                throw BotSectionSyncError.conflict("scripted clear failure")
+            }
+            if let clearAvatarError { throw clearAvatarError }
+            clearAvatarCalls.append(profile)
+            avatarAssets[profile] = nil
+        }
+
+        func avatarData(_ profile: String) async throws -> Data? { avatarAssets[profile] }
+
+        /// Live hermes-bots revision for one profile (t_3ce28479 dynamic
+        /// roster double: a real gateway's roster refresh reports the
+        /// authoritative post-write revision).
+        func currentMetadataRevision(_ profile: String) async -> Int {
+            revisions[profile] ?? 0
+        }
+
+        // #9 — scripted pet surface
+        private(set) var petGalleryCalls: [(profile: String, localOnly: Bool)] = []
+        private(set) var petThumbCalls: [(profile: String, slug: String, sourceURL: String?)] = []
+        var petGalleryError: Error?
+        var petThumbError: Error?
+        /// Pet thumbnails keyed by slug; per-gateway divergence is driven
+        /// by the seam's gateway identity when the test constructs it.
+        var petThumbnails: [String: Data] = [
+            "spark-fox": Data([0x89, 0x50, 0x4E, 0x47, 1, 1, 1]),
+            "pixel-owl": Data([0x89, 0x50, 0x4E, 0x47, 2, 2, 2]),
+        ]
+
+        func petGallery(profile: String, localOnly: Bool) async throws -> HermesPetGallery {
+            petGalleryCalls.append((profile, localOnly))
+            if let petGalleryError { throw petGalleryError }
+            let pets: [HermesPet] = [
+                HermesPet(slug: "spark-fox", displayName: "Spark Fox", installed: true,
+                          curated: false, generated: false, spritesheetURL: nil),
+                HermesPet(slug: "pixel-owl", displayName: "Pixel Owl", installed: false,
+                          curated: true, generated: false,
+                          spritesheetURL: "https://petdex.dev/sheets/pixel-owl.png"),
+                HermesPet(slug: "gen-cat", displayName: "Gen Cat", installed: true,
+                          curated: false, generated: true, spritesheetURL: nil),
+            ]
+            // Two-stage truth: localOnly returns installed/generated only.
+            return HermesPetGallery(
+                pets: localOnly ? pets.filter(\.installed) : pets,
+                displayEnabled: true, activeSlug: "spark-fox")
+        }
+
+        func petThumbnail(profile: String, slug: String, sourceURL: String?) async throws -> Data {
+            petThumbCalls.append((profile, slug, sourceURL))
+            if let petThumbError { throw petThumbError }
+            guard let bytes = petThumbnails[slug] else {
+                throw BotPetError.thumbnailUnavailable(slug: slug)
+            }
+            return bytes
+        }
 
         func loadSectionRegistry() async throws -> (sections: [BotSection], revision: Int?) {
             (sections, sectionsRevision)
@@ -73,6 +181,34 @@ final class BotManagementTests: XCTestCase {
         private var snapshot = FleetRosterSnapshot()
         func set(_ value: FleetRosterSnapshot) { snapshot = value }
         func refreshRoster() async -> FleetRosterSnapshot { snapshot }
+    }
+
+    /// Roster double whose bot revision tracks the seam's LIVE revision —
+    /// models a real gateway whose roster refresh reports the
+    /// authoritative post-write ui_meta revision (t_3ce28479 fallback
+    /// path: outcomes that carry no `newMetadataRevisions`).
+    actor SeamTrackingRoster: FleetRosterProviding {
+        private let seam: ScriptedProfileSeam
+        private let gateway: FleetGateway
+        private let botSeed: FleetBot
+        init(seam: ScriptedProfileSeam, gateway: FleetGateway, bot: FleetBot) {
+            self.seam = seam
+            self.gateway = gateway
+            self.botSeed = bot
+        }
+        func refreshRoster() async -> FleetRosterSnapshot {
+            var bot = botSeed
+            let revision = await seam.currentMetadataRevision(
+                bot.route.profileSlug.rawValue)
+            bot.uiMetaRevisions = MetadataRevisions(
+                revisions: [BotModeContract.botsMetaKey: revision])
+            var roster = FleetRoster()
+            roster.upsertGateway(gateway)
+            roster.upsertBot(bot)
+            return FleetRosterSnapshot(
+                roster: roster,
+                gatewayOutcomes: [gateway.id: .loaded(profileCount: 1)])
+        }
     }
 
     final class EmptySessionList: SessionListProviding {
@@ -291,6 +427,515 @@ final class BotManagementTests: XCTestCase {
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 7_200, now: now), "2h")
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 172_800, now: now), "2d")
     }
+    // MARK: - #7 unified avatar appearance save
+
+    /// Controller-level: seeding the draft, staging a shape over an
+    /// existing image, saving — metadata applies FIRST, then the asset
+    /// clear, and the result succeeds with explicit ordering.
+    func testApplyAvatarAppearanceShapeSupersedesImage() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        XCTAssertEqual(draft.image, .remove, "shape selection stages image removal")
+
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.assetApplied, true)
+        let cleared = await seam.clearAvatarCalls
+        XCTAssertEqual(cleared, ["default"], "the staged removal must clear the asset on save")
+        let configs = await seam.configureCalls
+        XCTAssertEqual(configs.count, 1)
+        XCTAssertEqual(configs.first?.metadata?.shape, "cloud")
+        XCTAssertEqual(configs.first?.metadata?.custom, true)
+        XCTAssertEqual(configs.first?.metadata?.imageKind, "shape")
+    }
+
+    /// Controller-level: a staged image replacement uploads on save with
+    /// imageKind "photo", superseding any existing asset.
+    func testApplyAvatarAppearanceImageReplacement() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "researcher")),
+            displayName: "Researcher")
+        bot.hasAvatar = false
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+        let bytes = Data(repeating: 7, count: 64)
+        draft.stageReplacement(data: bytes)
+
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.assetApplied, true)
+        let uploads = await seam.uploadAvatarCalls
+        XCTAssertEqual(uploads, ["researcher"])
+        let assets = await seam.avatarAssets
+        XCTAssertEqual(assets["researcher"], bytes)
+        let configs = await seam.configureCalls
+        XCTAssertEqual(configs.first?.metadata?.imageKind, "photo")
+        XCTAssertEqual(configs.first?.metadata?.custom, true)
+    }
+
+    /// Controller-level partial failure: metadata applies but the asset
+    /// clear fails — the result must NOT succeed and must carry an
+    /// explicit explanation (never generic success).
+    func testApplyAvatarAppearancePartialFailureSurfacesExplicitly() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.injectClearAvatarError(BotSectionSyncError.conflict("asset clear failed"))
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertFalse(result.succeeded, "partial application must never read as success")
+        XCTAssertEqual(result.assetApplied, false)
+        XCTAssertNotNil(result.partialFailure)
+        XCTAssertTrue(result.partialFailure?.contains("could not be removed") ?? false,
+                      "the partial failure names the image-still-active state")
+        // Metadata DID apply — the failure message must reflect reality.
+        let configs = await seam.configureCalls
+        XCTAssertEqual(configs.count, 1)
+    }
+
+    /// Controller-level: a CAS conflict on the metadata write must throw
+    /// BEFORE any asset mutation (the previous image is never cleared).
+    func testApplyAvatarAppearanceCASConflictNeverClearsImage() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        // The roster reported revision 0, but the gateway is at 5 — a
+        // stale local view (another client wrote).
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+        // Seed the seam's revision to 5 by writing once through it.
+        _ = try await seam.configureProfile("default", edit: BotProfileEdit(
+            metadata: BotModeMetadata(title: "someone else"), metadataExpectedRevision: nil))
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        do {
+            _ = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+            XCTFail("expected a CAS conflict")
+        } catch {
+            // expected: stale revision
+        }
+        let cleared = await seam.clearAvatarCalls
+        XCTAssertTrue(cleared.isEmpty, "a conflicted metadata write must never clear the image")
+    }
+
+    /// Draft lifecycle: an untouched draft performs ZERO remote writes
+    /// (Cancel semantics — save would send nothing).
+    func testUntouchedAvatarDraftPerformsNoWrites() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = false
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var meta = BotModeMetadata()
+        meta.shape = "cloud"
+        meta.custom = true
+        meta.imageKind = "shape"
+        let draft = BotAvatarAppearanceDraft.seeded(from: meta, hasAvatar: false)
+        XCTAssertFalse(draft.isDirty)
+
+        // The sheet's save() would not carry a metadata section for an
+        // untouched draft; the coordinator is never invoked with one.
+        let edit = BotProfileEdit(metadata: nil, metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.succeeded)
+        let cleared = await seam.clearAvatarCalls
+        let uploads = await seam.uploadAvatarCalls
+        XCTAssertTrue(cleared.isEmpty && uploads.isEmpty,
+                      "an untouched draft must cause zero avatar asset writes")
+        let configs = await seam.configureCalls
+        XCTAssertTrue(configs.allSatisfy { $0.metadata == nil && $0.isEmpty },
+                      "an untouched draft carries no writable sections")
+    }
+
+    // MARK: - t_3ce28479: stale CAS revision on partial-failure retry
+
+    /// The real sheet reseed logic (EditBotSheet.partialFailureReseed):
+    /// after a partial failure (metadata applied, asset clear failed) the
+    /// draft's metadata baseline advances and the CAS revision reseeds
+    /// from the outcome's newMetadataRevisions — so a retry Save carries
+    /// only the still-failing asset mutation, never a stale metadata
+    /// write against the already-bumped gateway revision.
+    func testPartialFailureReseedAdvancesDraftAndRevision() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.failNextClearAvatar(1)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave, metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertNotNil(result.partialFailure, "clear failed as scripted")
+
+        let reseeded = EditBotSheet.partialFailureReseed(
+            draft: draft, metadataRevision: 0,
+            outcome: result.editOutcome, rosterRevision: nil)
+
+        XCTAssertEqual(reseeded.draft.image, .remove,
+                       "the staged removal is preserved for the retry")
+        XCTAssertEqual(reseeded.draft.metadataAfterSave, reseeded.draft.baseline,
+                       "the metadata section is no longer dirty after reseed")
+        XCTAssertEqual(reseeded.revision, 1,
+                       "revision reseeds from the outcome's newMetadataRevisions")
+    }
+
+    /// Roster fallback: when the outcome carries NO newMetadataRevisions
+    /// the reseed must take the refreshed roster's revision instead of
+    /// keeping the stale pre-write one.
+    func testPartialFailureReseedFallsBackToRosterRevision() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.setReportsRevisions(false)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave, metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.editOutcome.appliedSections.contains(.metadata))
+        XCTAssertTrue(result.editOutcome.newMetadataRevisions.isEmpty,
+                      "scripted gateway reports no revisions")
+
+        let reseeded = EditBotSheet.partialFailureReseed(
+            draft: draft, metadataRevision: 0,
+            outcome: result.editOutcome, rosterRevision: 1)
+
+        XCTAssertEqual(reseeded.revision, 1,
+                       "revision falls back to the refreshed roster's revision")
+        XCTAssertEqual(reseeded.draft.metadataAfterSave, reseeded.draft.baseline,
+                       "draft baseline still advances")
+    }
+
+    /// Full acceptance sequence: metadata applies + asset clear fails →
+    /// retry save with the reseeded state (metadata section nil because it
+    /// matches the applied baseline; revision reseeded) → the second save
+    /// does NOT throw a CAS conflict and the clear is re-attempted.
+    /// The negative control reproduces the defect mechanism: retrying the
+    /// ORIGINAL edit (stale revision + applied metadata) CAS-throws.
+    func testRetryAfterPartialFailureSavesWithoutCASConflict() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.failNextClearAvatar(1)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var roster = FleetRoster()
+        roster.upsertGateway(gateway)
+        roster.upsertBot(bot)
+        let (env, rosterDouble, _) = await makeEnvironment(
+            gateways: [gateway],
+            snapshot: FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]),
+            profileSeam: seam)
+        await env.refreshRoster()
+
+        // First save: metadata applies (revision 0→1), clear FAILS.
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave, metadataExpectedRevision: 0)
+        let first = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertNotNil(first.partialFailure)
+
+        // The sheet refreshes the roster, then reseeds (real sheet logic).
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 1])
+        roster.upsertBot(bot)
+        await rosterDouble.set(FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]))
+        await env.refreshRoster()
+        let reseeded = EditBotSheet.partialFailureReseed(
+            draft: draft, metadataRevision: 0,
+            outcome: first.editOutcome,
+            rosterRevision: env.bot(for: bot.route)?
+                .uiMetaRevisions?[BotModeContract.botsMetaKey])
+
+        // The retry edit the sheet builds from the reseeded state: the
+        // metadata matches the applied baseline → nil (never re-sent).
+        let retryMetadata = reseeded.draft.metadataAfterSave
+        let metadataCarried = (retryMetadata != reseeded.draft.baseline) ? retryMetadata : nil
+        let retryEdit = BotProfileEdit(
+            metadata: metadataCarried, metadataExpectedRevision: reseeded.revision)
+        XCTAssertNil(retryEdit.metadata,
+                     "retry must not re-send the applied metadata section")
+
+        // Second save: NO CAS conflict, clear re-attempted, succeeds.
+        let second = try await env.botManagement.applyAvatarAppearance(
+            reseeded.draft, edit: retryEdit, to: bot)
+        XCTAssertNil(second.partialFailure)
+        XCTAssertTrue(second.succeeded, "the retry must complete the transaction")
+        let attempts = await seam.clearAvatarAttempts
+        XCTAssertEqual(attempts, 2, "the clear is re-attempted on retry")
+
+        // Negative control — the defect mechanism itself: retrying the
+        // ORIGINAL edit (applied metadata + stale revision 0) CAS-throws.
+        do {
+            _ = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+            XCTFail("the stale-revision retry must CAS-conflict")
+        } catch {
+            // expected: revision conflict on the already-bumped key
+        }
+    }
+
+    // MARK: - W3 review finding 2: production partial-save retry path
+
+    /// ACCEPTANCE (W3 review finding 2), through the ACTUAL production
+    /// save-building path (`EditBotSheet.SaveInput` + `outgoingEdit` +
+    /// `reseedAfterPartialFailure` — the exact functions `save()` calls):
+    /// (1) first save applies metadata, (2) the asset upload fails,
+    /// (3) the sheet reseeds with the explicit partial failure state,
+    /// (4) the second Save carries NO already-applied avatar metadata
+    /// (and NO redundant CAS write — a single configure total),
+    /// (5) only the failed asset mutation is retried, (6) the second
+    /// attempt succeeds, and (7) unrelated LATER form edits survive the
+    /// reseed as an honest fresh delta instead of being lost.
+    func testProductionPartialSaveRetryResendsOnlyFailedAsset() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.failNextUploadAvatar(1)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var roster = FleetRoster()
+        roster.upsertGateway(gateway)
+        roster.upsertBot(bot)
+        let (env, rosterDouble, _) = await makeEnvironment(
+            gateways: [gateway],
+            snapshot: FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]),
+            profileSeam: seam)
+        await env.refreshRoster()
+
+        // The sheet's save-relevant state at FIRST Save: a staged Pet PNG
+        // replacement (W1 flow) plus the loaded form baseline.
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 3, 3, 3])
+        var draft = BotAvatarAppearanceDraft.seeded(
+            from: BotModeMetadata(title: "Default"), hasAvatar: false)
+        draft.stageReplacement(data: png)
+        let loadedDescription = BotProfileDescription(
+            name: "default", soul: "soul text", defaultModel: "m1", provider: "nous")
+        let input1 = EditBotSheet.SaveInput(
+            avatarDraft: draft,
+            baselineMetadata: BotModeMetadata(title: "Default"),
+            metadataRevision: 0,
+            title: "Default",
+            descriptionText: "",
+            initialDescriptionText: "",
+            hidden: false,
+            pinned: false,
+            sectionID: nil,
+            soul: "soul text",
+            model: "m1",
+            provider: "nous",
+            draftDescription: nil,
+            loadedDescription: loadedDescription,
+            previousMetadataRaw: nil)
+
+        // (1) The production save builder produces the first edit: the
+        // appearance metadata IS dirty (staged replacement → "photo").
+        let edit1 = EditBotSheet.outgoingEdit(input1)
+        XCTAssertNotNil(edit1.metadata, "first save must carry the appearance metadata")
+
+        // (1)+(2) First coordinated save: metadata APPLIES, upload FAILS.
+        let first = try await env.botManagement.applyAvatarAppearance(
+            input1.avatarDraft, edit: edit1, to: bot)
+        XCTAssertNotNil(first.partialFailure, "upload failed as scripted")
+        XCTAssertTrue(first.editOutcome.appliedSections.contains(.metadata),
+                      "metadata section applied before the asset failure")
+
+        // (3)+(4) The production reseed (exactly what save() runs after a
+        // partial failure): the roster refresh reports revision 1.
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 1])
+        roster.upsertBot(bot)
+        await rosterDouble.set(FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]))
+        await env.refreshRoster()
+        let reseeded = EditBotSheet.reseedAfterPartialFailure(
+            draft: input1.avatarDraft,
+            baselineMetadata: input1.baselineMetadata,
+            appliedMetadata: edit1.metadata,
+            metadataRevision: input1.metadataRevision,
+            outcome: first.editOutcome,
+            rosterRevision: env.bot(for: bot.route)?
+                .uiMetaRevisions?[BotModeContract.botsMetaKey])
+
+        // The second Save rebuilds through the SAME production builder
+        // with the reseeded sheet state and unchanged form fields.
+        var input2 = input1
+        input2.avatarDraft = reseeded.draft
+        input2.baselineMetadata = reseeded.baselineMetadata
+        input2.metadataRevision = reseeded.revision
+        let edit2 = EditBotSheet.outgoingEdit(input2)
+
+        // (5) THE fix: no already-applied avatar metadata is re-sent.
+        XCTAssertNil(edit2.metadata,
+                     "second Save must not re-send the already-applied avatar metadata")
+        XCTAssertNil(edit2.soul)
+        XCTAssertNil(edit2.model)
+        XCTAssertTrue(edit2.isEmpty,
+                      "the retry carries ONLY the outstanding asset mutation")
+
+        // (5)+(6) Second coordinated save: no CAS write at all (one
+        // configure total), the failed upload is retried, it succeeds.
+        let second = try await env.botManagement.applyAvatarAppearance(
+            input2.avatarDraft, edit: edit2, to: bot)
+        XCTAssertNil(second.partialFailure)
+        XCTAssertTrue(second.succeeded, "the retry must complete the transaction")
+        let configureTotal = await seam.configureCalls.count
+        XCTAssertEqual(configureTotal, 1,
+                       "no stale/redundant CAS write on retry — exactly the first configure")
+        let uploadAttempts = await seam.uploadAvatarAttempts
+        XCTAssertEqual(uploadAttempts, 2, "the failed asset mutation is retried exactly once more")
+        let stored = await seam.avatarAssets["default"]
+        XCTAssertEqual(stored, png, "the staged PNG lands byte-identically")
+
+        // (7) Unrelated LATER form edits survive the reseed as an honest
+        // fresh delta: a title edit after the partial failure produces a
+        // metadata section that is the APPLIED appearance + the new title
+        // (never a loss of the edit, never a re-send of stale appearance).
+        var input3 = input2
+        input3.title = "Renamed"
+        let edit3 = EditBotSheet.outgoingEdit(input3)
+        XCTAssertNotNil(edit3.metadata, "a post-reseed title edit must still be carried")
+        XCTAssertEqual(edit3.metadata?.title, "Renamed")
+        XCTAssertEqual(edit3.metadata?.custom, true, "applied appearance keys ride the new baseline")
+        XCTAssertEqual(edit3.metadata?.imageKind, "photo")
+    }
+
+    /// Roster-revision fallback (W3 acceptance extension): when the
+    /// outcome carries NO `newMetadataRevisions` the production reseed
+    /// must take the refreshed roster's revision — proven end-to-end by
+    /// retrying through the production builder without a CAS conflict.
+    func testProductionRetryUsesRosterRevisionFallbackWhenOutcomeLacksRevisions() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.failNextUploadAvatar(1)
+        await seam.setReportsRevisions(false)
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var roster = FleetRoster()
+        roster.upsertGateway(gateway)
+        roster.upsertBot(bot)
+        let (env, rosterDouble, _) = await makeEnvironment(
+            gateways: [gateway],
+            snapshot: FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]),
+            profileSeam: seam)
+        await env.refreshRoster()
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+        draft.stageReplacement(data: Data([0x89, 0x50, 0x4E, 0x47, 9]))
+        let input1 = EditBotSheet.SaveInput(
+            avatarDraft: draft,
+            baselineMetadata: BotModeMetadata(),
+            metadataRevision: 0,
+            title: "",
+            descriptionText: "",
+            initialDescriptionText: "",
+            hidden: false,
+            pinned: false,
+            sectionID: nil,
+            soul: "",
+            model: "",
+            provider: "",
+            draftDescription: nil,
+            loadedDescription: nil,
+            previousMetadataRaw: nil)
+        let edit1 = EditBotSheet.outgoingEdit(input1)
+        let first = try await env.botManagement.applyAvatarAppearance(
+            draft, edit: edit1, to: bot)
+        XCTAssertNotNil(first.partialFailure)
+        XCTAssertTrue(first.editOutcome.newMetadataRevisions.isEmpty,
+                      "scripted gateway reports no revisions (fallback path)")
+
+        // Refreshed roster reports the authoritative post-write revision.
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 1])
+        roster.upsertBot(bot)
+        await rosterDouble.set(FleetRosterSnapshot(roster: roster, gatewayOutcomes: [:]))
+        await env.refreshRoster()
+        let reseeded = EditBotSheet.reseedAfterPartialFailure(
+            draft: draft,
+            baselineMetadata: BotModeMetadata(),
+            appliedMetadata: edit1.metadata,
+            metadataRevision: 0,
+            outcome: first.editOutcome,
+            rosterRevision: env.bot(for: bot.route)?
+                .uiMetaRevisions?[BotModeContract.botsMetaKey])
+        XCTAssertEqual(reseeded.revision, 1,
+                       "revision reseeds from the refreshed roster when the outcome carries none")
+
+        var input2 = input1
+        input2.avatarDraft = reseeded.draft
+        input2.baselineMetadata = reseeded.baselineMetadata
+        input2.metadataRevision = reseeded.revision
+        let edit2 = EditBotSheet.outgoingEdit(input2)
+        XCTAssertNil(edit2.metadata, "retry still re-sends no applied metadata")
+
+        // End-to-end proof the fallback revision is usable: the retry
+        // save does not CAS-conflict and completes the upload.
+        let second = try await env.botManagement.applyAvatarAppearance(
+            reseeded.draft, edit: edit2, to: bot)
+        XCTAssertNil(second.partialFailure)
+        XCTAssertTrue(second.succeeded)
+    }
+
+    // MARK: - D2 (FOS-DF dogfood): slug keyboard traits
+
     // MARK: - D2 (FOS-DF dogfood): slug keyboard traits
 
     /// D2 regression: the Create Bot "Name (profile slug)" field must disable

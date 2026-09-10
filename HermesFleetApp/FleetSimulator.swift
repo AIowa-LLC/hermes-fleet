@@ -1491,6 +1491,16 @@ private struct ScriptedHistory: SessionHistoryProviding {
 /// healthy, one unreachable) each with a couple of bots (profiles) and
 /// sessions, so every navigation destination and the partial-outage roster
 /// state have content.
+/// Deterministic 8x8 PNG fixtures for the scripted pet surface (#9) —
+/// tiny valid PNGs (magenta / solid green) standing in for pet.thumb
+/// idle frames. Distinct per gateway to prove route-scoped caching.
+enum ScriptedPetPNG {
+    static let magenta = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP4z7DoP8MoQS4BAPMYqAH2vyKxAAAAAElFTkSuQmCC")!
+    static let green = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGNgOFHxn2GUIJcAAIjXj8EqoCrvAAAAAElFTkSuQmCC")!
+}
+
 enum ScriptedFleet {
     static let registrations: [GatewayRegistration] = [
         GatewayRegistration(
@@ -1515,30 +1525,58 @@ enum ScriptedFleet {
         // THIS app process join the roster on the next refresh (created bots
         // must become visible; the seam mints them).
         let created = ScriptedBotProfileSeamStore.shared.createdDescriptors(on: gatewayID)
+        // #7: appearance writes (metadata + avatar asset state) through the
+        // scripted seam overlay the static descriptors — a roster refresh
+        // after an avatar Save reflects gateway-authoritative appearance.
+        func overlay(_ descriptor: ProfileDescriptor) -> ProfileDescriptor {
+            guard let appearance = ScriptedBotProfileSeamStore.shared.appearanceOverlay(
+                on: gatewayID, profile: descriptor.name) else { return descriptor }
+            var uiMeta = descriptor.uiMeta ?? [:]
+            uiMeta[BotModeContract.botsMetaKey] = .object(appearance.metadata.toWire())
+            var revisions = descriptor.uiMetaRevisions ?? MetadataRevisions(revisions: [:])
+            revisions.revisions[BotModeContract.botsMetaKey] =
+                (revisions.revisions[BotModeContract.botsMetaKey] ?? 0) + 1
+            return ProfileDescriptor(
+                name: descriptor.name,
+                path: descriptor.path,
+                isDefault: descriptor.isDefault,
+                model: descriptor.model,
+                provider: descriptor.provider,
+                profileDescription: descriptor.profileDescription,
+                displayName: descriptor.displayName,
+                skillCount: descriptor.skillCount,
+                hasAvatar: appearance.hasAvatar,
+                lastSession: descriptor.lastSession,
+                gatewayRunning: descriptor.gatewayRunning,
+                canonicalSession: descriptor.canonicalSession,
+                workerSession: descriptor.workerSession,
+                uiMetaRevisions: revisions,
+                uiMeta: uiMeta)
+        }
         switch gatewayID.rawValue {
         case "workstation":
             return [
-                ProfileDescriptor(
+                overlay(ProfileDescriptor(
                     name: "default", path: "~/.hermes/profiles/default",
                     isDefault: true, model: "hermes", provider: "nous",
                     displayName: "Default", skillCount: 12, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "default")
-                ),
-                ProfileDescriptor(
+                )),
+                overlay(ProfileDescriptor(
                     name: "researcher", path: "~/.hermes/profiles/researcher",
                     isDefault: false, model: "hermes", provider: "openrouter",
                     displayName: "Researcher", skillCount: 8, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "researcher")
-                ),
+                )),
             ] + created
         case "render-box":
             return [
-                ProfileDescriptor(
+                overlay(ProfileDescriptor(
                     name: "default", path: "~/.hermes/profiles/default",
                     isDefault: true, model: "hermes", provider: "nous",
                     displayName: "Default", skillCount: 10, hasAvatar: true,
                     lastSession: ScriptedFleet.session(on: "default")
-                ),
+                )),
             ] + created
         default:
             return created
@@ -1697,11 +1735,16 @@ private struct ScriptedRosterSession: GatewayRosterSession {
 
 /// Shared record of profiles created through scripted management seams in
 /// this app process, so the scripted roster can surface created bots on the
-/// next refresh (deterministic create-visible flow).
+/// next refresh (deterministic create-visible flow) — and of appearance
+/// writes (metadata + avatar asset state) so a roster refresh after an
+/// avatar Save reflects gateway-authoritative state (#7 UI journeys).
 final class ScriptedBotProfileSeamStore: @unchecked Sendable {
     static let shared = ScriptedBotProfileSeamStore()
     private let lock = NSLock()
     private var created: [GatewayID: [ProfileDescriptor]] = [:]
+    /// Appearance writes through scripted seams, keyed gateway → profile:
+    /// hermes-bots metadata + whether an avatar asset exists.
+    private var appearance: [GatewayID: [String: (metadata: BotModeMetadata, hasAvatar: Bool)]] = [:]
 
     func record(gatewayID: GatewayID, name: String, title: String?) {
         lock.lock(); defer { lock.unlock() }
@@ -1715,6 +1758,21 @@ final class ScriptedBotProfileSeamStore: @unchecked Sendable {
         created[gatewayID] = list
     }
 
+    func recordAppearance(
+        gatewayID: GatewayID, profile: String,
+        metadata: BotModeMetadata, hasAvatar: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        appearance[gatewayID, default: [:]][profile] = (metadata, hasAvatar)
+    }
+
+    /// The authoritative scripted appearance for a profile, if a scripted
+    /// seam ever wrote one (nil = keep the static descriptor).
+    func appearanceOverlay(on gatewayID: GatewayID, profile: String)
+        -> (metadata: BotModeMetadata, hasAvatar: Bool)? {
+        lock.lock(); defer { lock.unlock() }
+        return appearance[gatewayID]?[profile]
+    }
+
     func createdDescriptors(on gatewayID: GatewayID) -> [ProfileDescriptor] {
         lock.lock(); defer { lock.unlock() }
         return created[gatewayID] ?? []
@@ -1725,11 +1783,12 @@ final class ScriptedBotProfileSeamStore: @unchecked Sendable {
 /// simulator only) — in-memory metadata/section/avatar state with the same
 /// semantics as the real client (CAS conflict on stale revision, model
 /// confirmation knob, partial-success outcomes). Presentation data only.
-final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, @unchecked Sendable {
+final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, BotPetManaging, @unchecked Sendable {
     private let lock = NSLock()
     private let gatewayID: GatewayID
     private var metadataByProfile: [String: BotModeMetadata] = [:]
     private var revisionByProfile: [String: Int] = [:]
+    private var avatarBytesByProfile: [String: Data] = [:]
     private var sections: [BotSection] = []
     private var sectionsRevision = 0
 
@@ -1789,6 +1848,7 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
                     "expected revision \(expected ?? 0) but the gateway has \(current)")
             }
             applied["ui_meta"] = true
+            recordAppearanceWrite(profile)
         }
         if edit.soul != nil { applied["soul"] = true }
         if edit.descriptionText != nil { applied["description"] = true }
@@ -1813,11 +1873,89 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
         return spec.name
     }
 
-    func uploadAvatar(_ profile: String, dataURL: String) async throws {}
+    func uploadAvatar(_ profile: String, dataURL: String) async throws {
+        storeAvatarBytes(profile, dataURL: dataURL)
+        recordAppearanceWrite(profile)
+    }
 
-    func clearAvatar(_ profile: String) async throws {}
+    func clearAvatar(_ profile: String) async throws {
+        dropAvatarBytes(profile)
+        recordAppearanceWrite(profile)
+    }
 
-    func avatarData(_ profile: String) async throws -> Data? { nil }
+    func avatarData(_ profile: String) async throws -> Data? {
+        currentAvatarBytes(profile)
+    }
+
+    // MARK: #9 — scripted pet surface (pet.gallery / pet.thumb)
+
+    /// Scripted Petdex rows per gateway. The SAME slug deliberately maps
+    /// to different thumbnails per gateway (route-provenance proof: the
+    /// cache and every request key on GatewayID + ProfileSlug + PetSlug).
+    private static let petThumbnails: [String: [String: Data]] = [
+        "workstation": [
+            "spark-fox": ScriptedPetPNG.magenta,
+            "pixel-owl": ScriptedPetPNG.green,
+            "null-cat": ScriptedPetPNG.magenta,
+        ],
+        "render-box": [
+            // Same three slugs, DIFFERENT images on this gateway.
+            "spark-fox": ScriptedPetPNG.green,
+            "pixel-owl": ScriptedPetPNG.magenta,
+            "null-cat": ScriptedPetPNG.green,
+        ],
+    ]
+
+    private func scriptedPets(for gatewayID: GatewayID, localOnly: Bool) -> [HermesPet] {
+        let thumbs = Self.petThumbnails[gatewayID.rawValue] ?? [:]
+        let rows: [HermesPet] = [
+            HermesPet(slug: "spark-fox", displayName: "Spark Fox", installed: true,
+                      curated: false, generated: false, spritesheetURL: nil),
+            HermesPet(slug: "pixel-owl", displayName: "Pixel Owl", installed: false,
+                      curated: true, generated: false,
+                      spritesheetURL: "https://petdex.dev/sheets/pixel-owl.png"),
+            HermesPet(slug: "null-cat", displayName: "Null Cat", installed: true,
+                      curated: false, generated: true, spritesheetURL: nil),
+        ]
+        // Two-stage: localOnly returns installed/generated pets only.
+        return localOnly ? rows.filter { thumbs[$0.slug] != nil && $0.installed } : rows
+    }
+
+    func petGallery(profile: String, localOnly: Bool) async throws -> HermesPetGallery {
+        // petsUnsupported gate for the unavailable-state UI journey.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_PETS_UNSUPPORTED"] == "1" {
+            throw BotPetError.petsUnavailable("Hermes Pets are not available on this gateway.")
+        }
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_PETS_FAIL"] == "1" {
+            throw BotModeProfileError.rpcFailed("transient fixture failure")
+        }
+        return HermesPetGallery(
+            pets: scriptedPets(for: gatewayID, localOnly: localOnly),
+            displayEnabled: true,
+            activeSlug: "spark-fox")
+    }
+
+    func petThumbnail(profile: String, slug: String, sourceURL: String?) async throws -> Data {
+        guard let bytes = Self.petThumbnails[gatewayID.rawValue]?[slug] else {
+            throw BotPetError.thumbnailUnavailable(slug: slug)
+        }
+        return bytes
+    }
+
+    /// Scripted roster support: whether an avatar asset exists for this
+    /// profile (the `profiles.list has_avatar` equivalent) and the bot
+    /// metadata written through the seam (the ui_meta equivalent).
+    var hasAvatarByProfile: [String: Bool] {
+        lock.lock(); defer { lock.unlock() }
+        var out: [String: Bool] = [:]
+        for profile in metadataByProfile.keys { out[profile] = avatarBytesByProfile[profile] != nil }
+        return out
+    }
+
+    var metadataSnapshot: [String: BotModeMetadata] {
+        lock.lock(); defer { lock.unlock() }
+        return metadataByProfile
+    }
 
     func loadSectionRegistry() async throws -> (sections: [BotSection], revision: Int?) {
         currentSections()
@@ -1837,6 +1975,38 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
     }
 
     // Sync lock helpers (NSLock is unavailable from async contexts).
+
+    /// Push the current metadata + asset state into the shared store so
+    /// the scripted roster reflects appearance writes on refresh (#7).
+    /// Sync (lock-scoped) per the file's async-safe locking discipline.
+    private func recordAppearanceWrite(_ profile: String) {
+        lock.lock()
+        let metadata = metadataByProfile[profile] ?? BotModeMetadata()
+        let hasAvatar = avatarBytesByProfile[profile] != nil
+        lock.unlock()
+        ScriptedBotProfileSeamStore.shared.recordAppearance(
+            gatewayID: gatewayID, profile: profile,
+            metadata: metadata, hasAvatar: hasAvatar)
+    }
+
+    /// Sync lock-scoped avatar asset helpers (NSLock is unavailable from
+    /// async contexts).
+    private func storeAvatarBytes(_ profile: String, dataURL: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard let range = dataURL.range(of: "base64,"),
+              let data = Data(base64Encoded: String(dataURL[range.upperBound...])) else { return }
+        avatarBytesByProfile[profile] = data
+    }
+
+    private func dropAvatarBytes(_ profile: String) {
+        lock.lock(); defer { lock.unlock() }
+        avatarBytesByProfile[profile] = nil
+    }
+
+    private func currentAvatarBytes(_ profile: String) -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return avatarBytesByProfile[profile]
+    }
 
     /// CAS-apply bot metadata; returns (currentRevision, applied).
     private func applyMetadata(

@@ -493,6 +493,89 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
         }
     }
 
+    // MARK: - pets (#9: pet.gallery / pet.thumb, read-only avatar source)
+
+    /// `pet.gallery` — Petdex catalog + local install state, profile-
+    /// scoped (the handler binds params.profile's HERMES_HOME).
+    /// `localOnly: true` skips the remote manifest (installed/generated
+    /// pets only; the gateway warms the manifest cache in the background
+    /// for the hydrate phase).
+    public func petGallery(profile: String, localOnly: Bool) async throws -> HermesPetGallery {
+        var params: [String: JSONValue] = ["profile": .string(profile)]
+        if localOnly {
+            params["localOnly"] = .bool(true)
+        }
+        let result: JSONValue
+        do {
+            result = try await request(method: "pet.gallery", params: .object(params))
+        } catch let error as BotModeProfileError {
+            // JSON-RPC method-not-found = Pets are UNAVAILABLE on this
+            // gateway — a capability fact, never a transient failure.
+            if case .unsupportedMethod = error {
+                throw BotPetError.petsUnavailable(
+                    "Hermes Pets are not available on this gateway.")
+            }
+            throw error
+        }
+        guard let rows = result["pets"]?.arrayValue else {
+            throw BotPetError.malformed("pet.gallery missing 'pets'")
+        }
+        var seen = Set<String>()
+        var pets: [HermesPet] = []
+        for row in rows {
+            guard let o = row.objectValue,
+                  let slug = o["slug"]?.stringValue, !slug.isEmpty,
+                  !seen.contains(slug) else { continue }
+            seen.insert(slug)
+            let sheetURL = o["spritesheetUrl"]?.stringValue ?? ""
+            pets.append(HermesPet(
+                slug: slug,
+                displayName: o["displayName"]?.stringValue ?? slug,
+                installed: o["installed"]?.boolValue ?? false,
+                curated: o["curated"]?.boolValue ?? false,
+                generated: o["generated"]?.boolValue ?? false,
+                spritesheetURL: sheetURL.isEmpty ? nil : sheetURL))
+        }
+        return HermesPetGallery(
+            pets: pets,
+            displayEnabled: result["enabled"]?.boolValue ?? false,
+            activeSlug: result["active"]?.stringValue)
+    }
+
+    /// `pet.thumb` — the pet's idle/first frame as a small PNG data URI
+    /// (gateway-side crop + nearest-neighbor downscale; remote fetches
+    /// restricted to petdex.dev hosts). `url` carries the catalog
+    /// spritesheet URL for not-yet-installed entries; installed/generated
+    /// pets resolve from the gateway's own sheet without it.
+    public func petThumbnail(profile: String, slug: String, sourceURL: String?) async throws -> Data {
+        var params: [String: JSONValue] = [
+            "profile": .string(profile),
+            "slug": .string(slug),
+        ]
+        if let sourceURL, !sourceURL.isEmpty {
+            params["url"] = .string(sourceURL)
+        }
+        let result: JSONValue
+        do {
+            result = try await request(method: "pet.thumb", params: .object(params))
+        } catch let error as BotModeProfileError {
+            if case .unsupportedMethod = error {
+                throw BotPetError.petsUnavailable(
+                    "Hermes Pets are not available on this gateway.")
+            }
+            throw error
+        }
+        guard result["ok"]?.boolValue == true,
+              let dataURI = result["dataUri"]?.stringValue else {
+            throw BotPetError.thumbnailUnavailable(slug: slug)
+        }
+        guard dataURI.hasPrefix("data:image/png;base64,"),
+              let bytes = Self.decodeDataURL(dataURI), !bytes.isEmpty else {
+            throw BotPetError.malformed("pet.thumb returned a non-PNG or undecodable payload")
+        }
+        return bytes
+    }
+
     // MARK: - transport plumbing
 
     private func request(method: String, params: JSONValue) async throws -> JSONValue {
@@ -564,6 +647,10 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
 // (_:edit:confirmExpensiveModel:) / createProfile / uploadAvatar /
 // clearAvatar / avatarData) satisfy the seam via the overloads below.
 extension GatewayBotModeClient: BotProfileManaging {}
+
+/// #9: the same concrete client speaks the Pet catalog surface (pet.gallery
+/// / pet.thumb) over the Bot's own gateway transport.
+extension GatewayBotModeClient: BotPetManaging {}
 
 /// Receipt of a successful CAS write.
 public struct MetadataWriteReceipt: Hashable, Sendable {

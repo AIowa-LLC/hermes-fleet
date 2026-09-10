@@ -197,7 +197,114 @@ public final class BotManagementController {
         return outcome
     }
 
-    // MARK: - Avatar (D08)
+    // MARK: - Avatar (D08, #7 unified appearance save)
+
+    /// Avatar appearance save outcome (#7): the coordinated metadata +
+    /// asset transaction reconciled against the refreshed roster. A
+    /// partial application is NEVER reported as plain success.
+    public struct BotAvatarAppearanceResult: Hashable, Sendable {
+        /// The profiles.configure outcome (metadata + carried sections).
+        public var editOutcome: BotProfileEditOutcome
+        /// The asset mutation (replacement/clear) applied when one was staged.
+        public var assetApplied: Bool?
+        /// Partial-failure explanation when the intended visible appearance
+        /// is NOT authoritative after the transaction.
+        public var partialFailure: String?
+
+        /// True only when everything the draft requested is now
+        /// authoritative (and nothing failed).
+        public var succeeded: Bool { partialFailure == nil && editOutcome.succeeded }
+    }
+
+    /// Coordinated avatar appearance Save (#7): the full form edit (metadata
+    /// section carries the draft's appearance + custom/imageKind semantics)
+    /// FIRST with the existing per-key CAS protection, then the staged asset
+    /// mutation, then cache reconciliation for the roster refresh.
+    ///
+    /// Ordering rationale (issue #7 §5): writing shape metadata first
+    /// leaves the current image masking it until the clear succeeds —
+    /// less visually destructive than clearing first and failing the
+    /// metadata write, which would expose the old/default shape.
+    ///
+    /// Partial failure semantics: a metadata success + asset failure
+    /// surfaces an explicit "shape saved but image still active" message
+    /// and the caller must keep the editor open — never generic success.
+    /// A metadata CAS conflict throws BEFORE any asset mutation (the old
+    /// image is never cleared on a conflicted write).
+    public func applyAvatarAppearance(
+        _ draft: BotAvatarAppearanceDraft,
+        edit: BotProfileEdit,
+        to bot: FleetBot
+    ) async throws -> BotAvatarAppearanceResult {
+        guard let seam = seam(for: bot.route.gatewayID) else {
+            throw BotSectionSyncError.unavailable("Profile management is unavailable on this gateway")
+        }
+        // 1. The configure write (metadata + any other carried sections)
+        //    with existing CAS discipline — throws typed conflicts on a
+        //    stale revision BEFORE any asset mutation. W3 review finding
+        //    2: an EMPTY edit (the pure asset-mutation retry after a
+        //    partial save — every metadata section already applied)
+        //    performs NO configure call at all: re-sending an empty
+        //    payload would be a redundant RPC against the already-bumped
+        //    revision with nothing to apply.
+        let outcome: BotProfileEditOutcome
+        if edit.isEmpty {
+            outcome = BotProfileEditOutcome()
+        } else {
+            outcome = try await seam.configureProfile(
+                bot.route.profileSlug.rawValue, edit: edit)
+        }
+        if edit.metadata != nil {
+            guard outcome.appliedSections.contains(.metadata) else {
+                throw BotSectionSyncError.conflict("The gateway did not apply the appearance metadata")
+            }
+        }
+        editOutcomes[bot.route] = outcome
+        editErrors[bot.route] = nil
+        // 2. Asset mutation — only after the metadata section applied.
+        switch draft.image {
+        case .unchanged:
+            return BotAvatarAppearanceResult(
+                editOutcome: outcome, assetApplied: nil, partialFailure: nil)
+        case .remove:
+            do {
+                try await seam.clearAvatar(bot.route.profileSlug.rawValue)
+            } catch {
+                await refreshAvatarCaches(for: bot)
+                return BotAvatarAppearanceResult(
+                    editOutcome: outcome, assetApplied: false,
+                    partialFailure: "Shape saved, but the previous image could not be removed. The image is still active. Retry removing it.")
+            }
+            await refreshAvatarCaches(for: bot)
+            return BotAvatarAppearanceResult(
+                editOutcome: outcome, assetApplied: true, partialFailure: nil)
+        case .replacement(let data):
+            // #9 §6: a Pet thumbnail PNG must NEVER route through the JPEG
+            // normalization semantics of user-photo uploads — the staged
+            // bytes travel as-is, mime-typed by their actual PNG/JPEG
+            // signature so pixel edges stay crisp through set_asset.
+            let dataURL = BotAvatarAssetCodec.dataURL(forStaged: data)
+            do {
+                try await seam.uploadAvatar(bot.route.profileSlug.rawValue, dataURL: dataURL)
+            } catch {
+                await refreshAvatarCaches(for: bot)
+                return BotAvatarAppearanceResult(
+                    editOutcome: outcome, assetApplied: false,
+                    partialFailure: "Metadata saved, but the new image could not be uploaded. Your previous avatar remains active. Retry saving it.")
+            }
+            await refreshAvatarCaches(for: bot)
+            return BotAvatarAppearanceResult(
+                editOutcome: outcome, assetApplied: true, partialFailure: nil)
+        }
+    }
+
+    /// Post-save reconciliation: drop stale avatar caches so the refreshed
+    /// roster's hasAvatar is the visible truth, and reseed fetch stamps.
+    private func refreshAvatarCaches(for bot: FleetBot) async {
+        avatarFetchedAt[bot.route] = nil
+        avatarGenerations[bot.route, default: 0] += 1
+        avatarDataByRoute[bot.route] = nil
+    }
 
     /// Fetch avatar bytes for a bot (display cache; authoritative flag is
     /// roster hasAvatar). Uses the profiles.get_asset surface.
@@ -246,6 +353,186 @@ public final class BotManagementController {
         try await seam.clearAvatar(bot.route.profileSlug.rawValue)
         avatarGenerations[bot.route, default: 0] += 1
         avatarDataByRoute[bot.route] = nil
+    }
+
+    // MARK: - Pets (#9: route-scoped gallery + thumbnail loading)
+
+    /// Pet picker load phase (two-stage, issue #9): the local phase
+    /// (localOnly) is a fast best-effort render; the hydrate phase merges
+    /// the full Petdex catalog. State is keyed by full route —
+    /// GatewayID + ProfileSlug — never the profile slug alone.
+    public enum PetGalleryPhase: Hashable, Sendable {
+        /// Content state of a `loaded` gallery (W3 review finding 1): the
+        /// local phase is a legitimate rest state when full-catalog
+        /// hydration failed — local pets stay visible and the failure is
+        /// carried honestly instead of leaving a permanent spinner.
+        public enum Hydration: Hashable, Sendable {
+            /// The full Petdex catalog merged over the local phase.
+            case full
+            /// Local/generated pets only (transient between stages).
+            case localOnly
+            /// Local pets remain visible; the full-catalog hydrate FAILED
+            /// (transient, retryable — the sheet surfaces the message with
+            /// a retry affordance; the local phase is never discarded).
+            case hydrateFailed(String)
+        }
+
+        case idle
+        case loadingLocal
+        case hydrating
+        case loaded(Hydration)
+        /// Pets are unavailable on this gateway (JSON-RPC
+        /// method-not-found) — a capability fact, not a transient failure.
+        case unsupported
+        /// A load failed with NO content to show; retryable (transient
+        /// network/RPC failure).
+        case failed(String)
+    }
+
+    public private(set) var petGalleryByRoute: [Route: [HermesPet]] = [:]
+    public private(set) var petGalleryPhaseByRoute: [Route: PetGalleryPhase] = [:]
+    /// Bounded, route-aware thumbnail cache (GatewayID + ProfileSlug +
+    /// PetSlug keys — same-slug pets on different routes never share an
+    /// entry).
+    public let petThumbnailCache = PetThumbnailCache()
+
+    @ObservationIgnored private var petGalleryLoads: Set<Route> = []
+    @ObservationIgnored private var petThumbFailed: Set<PetThumbnailCache.Key> = []
+    /// In-flight thumbnail fetches keyed by full route provenance (W3
+    /// review finding 3): concurrent callers for the same key SHARE the
+    /// same underlying request (await the same Task) instead of getting
+    /// nil and rendering misleading failure UI. One request per key.
+    @ObservationIgnored private var petThumbTasks:
+        [PetThumbnailCache.Key: Task<Data?, Never>] = [:]
+
+    /// Pet seam for a route: the Bot's own gateway's profile seam when it
+    /// also speaks the Pet surface, else nil (the caller renders the
+    /// honest unavailable state — fail closed).
+    public func petSeam(for bot: FleetBot) -> (any BotPetManaging)? {
+        seam(for: bot.route.gatewayID) as? (any BotPetManaging)
+    }
+
+    /// Two-stage gallery load for one bot route (#9): stage 1 loads
+    /// installed/generated pets via `pet.gallery {localOnly:true}`
+    /// (best-effort — a failure here falls through to the hydrate phase);
+    /// stage 2 hydrates the full Petdex catalog and merges. Pet-unavailable
+    /// (method-not-found) is sticky; transient failures are retryable.
+    public func loadPetGallery(for bot: FleetBot) async {
+        let route = bot.route
+        guard !petGalleryLoads.contains(route) else { return }
+        petGalleryLoads.insert(route)
+        defer { petGalleryLoads.remove(route) }
+        guard let petSeam = petSeam(for: bot) else {
+            petGalleryPhaseByRoute[route] = .unsupported
+            return
+        }
+        // Stage 1 — local/generated pets render fast; errors fall through
+        // to the hydrate attempt (the local phase is best-effort).
+        petGalleryPhaseByRoute[route] = .loadingLocal
+        var local = HermesPetGallery(pets: [])
+        do {
+            local = try await petSeam.petGallery(
+                profile: route.profileSlug.rawValue, localOnly: true)
+            if petGalleryLoads.contains(route) {
+                petGalleryByRoute[route] = local.pets
+                petGalleryPhaseByRoute[route] = .loaded(.localOnly)
+            }
+        } catch { /* fall through to hydrate */ }
+        guard petGalleryLoads.contains(route) else { return }
+        // Stage 2 — full Petdex hydration merged over the local phase.
+        petGalleryPhaseByRoute[route] = .hydrating
+        do {
+            let full = try await petSeam.petGallery(
+                profile: route.profileSlug.rawValue, localOnly: false)
+            let merged = local.merged(with: full)
+            petGalleryByRoute[route] = merged.pets
+            petGalleryPhaseByRoute[route] = .loaded(.full)
+        } catch let error as BotPetError {
+            if case .petsUnavailable = error {
+                petGalleryByRoute[route] = []
+                petGalleryPhaseByRoute[route] = .unsupported
+            } else if petGalleryByRoute[route]?.isEmpty != false {
+                petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+            } else {
+                // W3 review finding 1: local pets stay visible and the
+                // hydrate failure is honest, transient, and retryable —
+                // never a silent permanent spinner over .hydrating.
+                petGalleryPhaseByRoute[route] =
+                    .loaded(.hydrateFailed(error.localizedDescription))
+            }
+        } catch {
+            if petGalleryByRoute[route]?.isEmpty != false {
+                petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+            } else {
+                petGalleryPhaseByRoute[route] =
+                    .loaded(.hydrateFailed(error.localizedDescription))
+            }
+        }
+    }
+
+    /// Cached-or-fetch PNG thumbnail for one pet cell (W3 review finding
+    /// 3): cached success returns immediately; exactly ONE request per
+    /// route/profile/pet key is in flight and concurrent callers for the
+    /// same key AWAIT the same underlying request; a failed fetch stays
+    /// failed until an EXPLICIT retry (so a LazyVGrid scroll or cell
+    /// re-materialization never auto-hammers the gateway). Zero remote
+    /// writes — `pet.thumb` is read-only.
+    public func petThumbnailData(
+        for bot: FleetBot, pet: HermesPet
+    ) async -> Data? {
+        let key = PetThumbnailCache.Key(
+            gatewayID: bot.route.gatewayID,
+            profileSlug: bot.route.profileSlug,
+            petSlug: pet.slug)
+        if let cached = petThumbnailCache.pngData(for: key) { return cached }
+        // Sticky failure: a previously failed fetch is NOT retried here —
+        // only `retryPetThumbnail` clears the failure and re-fetches.
+        guard !petThumbFailed.contains(key) else { return nil }
+        if let existing = petThumbTasks[key] {
+            // Coalescing: share the single in-flight request for this key.
+            return await existing.value
+        }
+        guard let petSeam = petSeam(for: bot) else { return nil }
+        let profile = bot.route.profileSlug.rawValue
+        let slug = pet.slug
+        let sourceURL = pet.thumbnailSourceURL
+        let task = Task<Data?, Never> { [petSeam] in
+            do {
+                return try await petSeam.petThumbnail(
+                    profile: profile, slug: slug, sourceURL: sourceURL)
+            } catch {
+                return nil
+            }
+        }
+        petThumbTasks[key] = task
+        let bytes = await task.value
+        petThumbTasks[key] = nil
+        if let bytes {
+            petThumbnailCache.set(bytes, for: key)
+            petThumbFailed.remove(key)
+        } else {
+            petThumbFailed.insert(key)
+        }
+        return bytes
+    }
+
+    /// Reset a failed thumbnail fetch so the cell can retry: clears the
+    /// sticky failure FIRST, then performs a fresh fetch through the
+    /// normal coalesced path.
+    public func retryPetThumbnail(for bot: FleetBot, pet: HermesPet) async {
+        let key = PetThumbnailCache.Key(
+            gatewayID: bot.route.gatewayID,
+            profileSlug: bot.route.profileSlug,
+            petSlug: pet.slug)
+        petThumbFailed.remove(key)
+        _ = await petThumbnailData(for: bot, pet: pet)
+    }
+
+    /// Reset a failed gallery load so the sheet can retry (transient).
+    public func retryPetGallery(for bot: FleetBot) async {
+        let route = bot.route
+        petGalleryPhaseByRoute[route] = .idle
+        await loadPetGallery(for: bot)
     }
 
     // MARK: - Duplicate (D11)
@@ -333,5 +620,23 @@ enum GatewayBotModeClientBridge {
     static func decodeDataURLBytes(_ dataURL: String) -> Data? {
         guard let range = dataURL.range(of: "base64,") else { return nil }
         return Data(base64Encoded: String(dataURL[range.upperBound...]))
+    }
+}
+
+/// Staged avatar asset encoding (#9 §6): staged bytes travel to
+/// `profiles.set_asset` unmodified — mime-typed by signature so a Pet
+/// thumbnail stays PNG end-to-end (no JPEG recompression; the gateway
+/// accepts PNG/JPEG/WebP) while normalized photo uploads remain JPEG.
+enum BotAvatarAssetCodec {
+    static func dataURL(forStaged data: Data) -> String {
+        let mime: String
+        if data.count >= 8, data[data.startIndex] == 0x89, data[data.startIndex + 1] == 0x50 {
+            mime = "image/png"
+        } else if data.count >= 2, data[data.startIndex] == 0xFF, data[data.startIndex + 1] == 0xD8 {
+            mime = "image/jpeg"
+        } else {
+            mime = "image/png"
+        }
+        return "data:\(mime);base64," + data.base64EncodedString()
     }
 }

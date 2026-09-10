@@ -37,6 +37,7 @@ UI_CLASSES=(
   FOS2GatewayDetail FOS3FourRootShell FOS4TruthfulHome
   FOS5BotsGroupsChats FOS6ComponentDensity
   FOS8Accessibility
+  BotAvatarAppearance BotPetAvatar
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They
