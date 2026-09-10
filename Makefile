@@ -14,7 +14,7 @@ DD := build/DerivedData
 # the same explicit trust bypass as the canonical CI phase scripts.
 XCODEBUILD_FLAGS := -skipMacroValidation
 
-.PHONY: generate build test test-core validate dev-check ci clean
+.PHONY: generate build test test-core validate dev-check ci release-preflight clean
 
 ## Regenerate the Xcode project from project.yml (single source of truth).
 generate:
@@ -45,6 +45,12 @@ dev-check:
 ## Authoritative broad repository/CI validation gate (wraps scripts/c1_ci_validate.sh).
 ci:
 	bash scripts/c1_ci_validate.sh
+
+## Deterministic SHA-pinned Release/archive preflight; signing is required by default.
+## Usage: make release-preflight SHA=$$(git rev-parse HEAD)
+release-preflight:
+	@test -n "$(SHA)" || (echo "usage: make release-preflight SHA=$$(git rev-parse HEAD)" >&2; exit 2)
+	bash scripts/release_preflight.sh --sha "$(SHA)"
 
 clean:
 	rm -rf build $(PROJECT).xcodeproj Packages/*/.build
