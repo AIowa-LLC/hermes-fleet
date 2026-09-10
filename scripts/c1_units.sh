@@ -20,8 +20,12 @@ SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | se
 echo "  using simulator: $SIM_NAME"
 DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
 DD="$REPO/build/C1Ci"
+# SwiftStreamingMarkdown v0.7.0 transitively uses the reviewed Equatable
+# macro. Headless CI has no Xcode UI step to approve that pinned macro, so
+# explicitly bypass fingerprint validation; this does not bypass macro
+# execution or package resolution.
 XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD")
+    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation)
 
 printf '\n=== xcodebuild UNIT tests (HermesFleetAppTests) ===\n'
 if xcodebuild "${XC[@]}" -only-testing:HermesFleetAppTests \

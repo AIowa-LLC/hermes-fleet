@@ -9,6 +9,10 @@
 PROJECT := HermesFleetApp
 DEST := platform=iOS Simulator,name=iPhone 17 Pro,OS=latest
 DD := build/DerivedData
+# SwiftStreamingMarkdown v0.7.0 brings the reviewed Equatable macro through
+# its package graph. Headless/local xcodebuild has no approval dialog, so use
+# the same explicit trust bypass as the canonical CI phase scripts.
+XCODEBUILD_FLAGS := -skipMacroValidation
 
 .PHONY: generate build test test-core validate ci clean
 
@@ -18,11 +22,11 @@ generate:
 
 ## Build the app for the iOS Simulator.
 build:
-	xcodebuild -project $(PROJECT).xcodeproj -scheme $(PROJECT) -destination '$(DEST)' -derivedDataPath $(DD) build
+	xcodebuild -project $(PROJECT).xcodeproj -scheme $(PROJECT) -destination '$(DEST)' -derivedDataPath $(DD) $(XCODEBUILD_FLAGS) build
 
 ## Run the hosted unit tests on the iOS Simulator.
 test:
-	xcodebuild -project $(PROJECT).xcodeproj -scheme $(PROJECT) -destination '$(DEST)' -derivedDataPath $(DD) test
+	xcodebuild -project $(PROJECT).xcodeproj -scheme $(PROJECT) -destination '$(DEST)' -derivedDataPath $(DD) $(XCODEBUILD_FLAGS) test
 
 ## Run FleetCore's own package tests on the host (fast, pure-domain).
 test-core:

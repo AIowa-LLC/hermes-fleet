@@ -337,6 +337,24 @@ public final class RoomChatViewModel {
     }
 }
 
+private struct RoomTranscriptAccessibilityModifier: ViewModifier {
+    let rendersRichText: Bool
+    let speaker: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if rendersRichText {
+            content
+                // Keep the bot/member speaker context while allowing the
+                // renderer's links and code actions to be VoiceOver targets.
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Assistant response from \(speaker)")
+        } else {
+            content.accessibilityElement(children: .combine)
+        }
+    }
+}
+
 // MARK: - Screen
 
 /// One room, generation-agnostic: hosted rooms render interactive (per
@@ -703,33 +721,50 @@ public struct RoomChatView: View {
     @ViewBuilder
     private var transcriptRows: some View {
         ForEach(viewModel.transcript) { entry in
-            // FOS-6: transcript/tool block — no card per message (SPEC §18).
-            FleetListRow(showsSeparator: false) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(entry.speaker)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(entry.flavor == .message(isUser: true) ? FleetTheme.accent : FleetTheme.textSecondary)
-                        Text(BotRowView.relativeTime(entry.createdAt))
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
-                    }
-                    switch entry.flavor {
-                    case .message:
+            transcriptEntry(entry)
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptEntry(_ entry: RoomTranscriptEntry) -> some View {
+        let rendersRichText = AssistantRichTextPresentation.shouldRenderRoom(entry.flavor)
+        // FOS-6: transcript/tool block — no card per message (SPEC §18).
+        FleetListRow(showsSeparator: false) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(entry.speaker)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(entry.flavor == .message(isUser: true) ? FleetTheme.accent : FleetTheme.textSecondary)
+                    Text(BotRowView.relativeTime(entry.createdAt))
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(FleetTheme.textSecondary)
+                }
+                switch entry.flavor {
+                case .message(let isUser):
+                    if isUser {
+                        // User-authored room text stays literal, even when it
+                        // contains Markdown-looking characters.
                         Text(entry.text ?? "")
                             .font(.body)
                             .foregroundStyle(FleetTheme.textPrimary)
-                    case .failure:
-                        Label(entry.text ?? "Turn failed", systemImage: "xmark.octagon")
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.statusDestructive)
+                    } else {
+                        AssistantRichTextView(
+                            markdown: entry.text ?? "",
+                            isStreaming: false,
+                            identity: "room-\(entry.id)")
                     }
+                case .failure:
+                    Label(entry.text ?? "Turn failed", systemImage: "xmark.octagon")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(FleetTheme.statusDestructive)
                 }
             }
-            .id(entry.id)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("fleet.room.entry.\(entry.seq)")
         }
+        .id(entry.id)
+        .modifier(RoomTranscriptAccessibilityModifier(
+            rendersRichText: rendersRichText,
+            speaker: entry.speaker))
+        .accessibilityIdentifier("fleet.room.entry.\(entry.seq)")
     }
 
     private var emptyTranscript: some View {

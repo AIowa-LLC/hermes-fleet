@@ -1291,9 +1291,14 @@ private struct ConversationBubbleView: View {
         // user/assistant rows are reactable (tool/status/system rows are
         // not addressable on the wire).
         .contextMenu { reactionMenu }
-        .accessibilityElement(children: row.kind == .tool ? .contain : .combine)
+        // Rich assistant content contains links, code-copy controls, lists,
+        // and tables. Keep those descendants independently reachable while
+        // preserving the existing single-element semantics for user/status/
+        // system/error bubbles. Tool content already used containment.
+        .accessibilityElement(children: row.kind == .tool || (row.kind == .assistant && !row.isFailed) ? .contain : .combine)
         // P2-7: expose speaker + content semantics and live turn state to
-        // assistive tech — the combined bubble text alone hides who spoke.
+        // assistive tech. A contained assistant row supplies speaker context
+        // on the parent without hiding its interactive descendants.
         .accessibilityLabel(row.accessibilityLabel)
         .accessibilityValue(row.accessibilityValue)
         .accessibilityIdentifier("fleet.conversation.row.\(row.id)")
@@ -1389,10 +1394,23 @@ private struct ConversationBubbleView: View {
                     // dimmed block — never merged into the assistant text.
                     ReasoningDisclosure(text: detail, isStreaming: row.isStreaming)
                 }
-                Text(row.text.isEmpty ? (row.isStreaming ? "…" : "") : row.text)
-                    .font(.body)
-                    .foregroundStyle(row.isFailed ? FleetTheme.statusDestructive : FleetTheme.textPrimary)
-                    .textSelection(.enabled)
+                if row.isFailed {
+                    // A failed assistant row is an existing error surface;
+                    // keep its visual treatment and literal error copy.
+                    Text(row.text)
+                        .font(.body)
+                        .foregroundStyle(FleetTheme.statusDestructive)
+                        .textSelection(.enabled)
+                } else if row.text.isEmpty, row.isStreaming {
+                    Text("…")
+                        .font(.body)
+                        .foregroundStyle(FleetTheme.textPrimary)
+                } else {
+                    AssistantRichTextView(
+                        markdown: row.text,
+                        isStreaming: row.isStreaming,
+                        identity: row.id)
+                }
                 if row.isStreaming {
                     // P2-7: decorative streaming dots — hidden from assistive
                     // tech (the row's accessibilityValue already announces

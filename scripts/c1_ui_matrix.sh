@@ -33,7 +33,7 @@ UI_CLASSES=(
   F3Onboarding C2SetupPrompt KanbanBoard R9ApprovalBanner
   R9ConversationTooling R9ManagementPanes R9MemoryGraph R10AttachmentTray
   R10MessageReactions R10ProjectsBrowser R10Voice R10MemoryGraphEdit
-  Issue4SlashSkill
+  Issue4SlashSkill Issue5StreamingRichText
   FleetSettingsAccent BotRoutines RoomChat RoomLinkMentions
   FOS2GatewayDetail FOS3FourRootShell FOS4TruthfulHome
   FOS5BotsGroupsChats FOS6ComponentDensity
@@ -128,8 +128,12 @@ SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | se
 echo "  using simulator: $SIM_NAME"
 DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
 DD="$REPO/build/C1Ui"
+# SwiftStreamingMarkdown v0.7.0 transitively uses the reviewed Equatable
+# macro. Headless CI has no Xcode UI step to approve that pinned macro, so
+# explicitly bypass fingerprint validation; this does not bypass macro
+# execution or package resolution.
 XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD")
+    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation)
 
 # --- run -----------------------------------------------------------------------
 rm -rf /tmp/hermes-c1-results
