@@ -33,6 +33,7 @@ UI_CLASSES=(
   F3Onboarding C2SetupPrompt KanbanBoard R9ApprovalBanner
   R9ConversationTooling R9ManagementPanes R9MemoryGraph R10AttachmentTray
   R10MessageReactions R10ProjectsBrowser R10Voice R10MemoryGraphEdit
+  Issue4SlashSkill
   FleetSettingsAccent BotRoutines RoomChat RoomLinkMentions
   FOS2GatewayDetail FOS3FourRootShell FOS4TruthfulHome
   FOS5BotsGroupsChats FOS6ComponentDensity

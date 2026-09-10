@@ -842,7 +842,7 @@ private extension String {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
@@ -858,10 +858,14 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// R10-T2: scripted reaction seam (records react calls + failure hook so
     /// long-press Tapback is fully walkable in the simulator + UI tests).
     let reactionsBox = ScriptedReactionSeam()
+    /// Issue #4: scripted Hermes skill discovery/completion/dispatch so the
+    /// slash palette is walkable in simulator UI tests without a gateway.
+    let slashCommandsBox: ScriptedSlashCommandBox
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
         self.client = ScriptedConversationClient(gatewayID: gatewayID)
+        self.slashCommandsBox = ScriptedSlashCommandBox(gatewayID: gatewayID)
         // R10-T2: keep the scripted reaction seam's durable-row state in
         // lockstep with the fixture resume projection (the seeded 👀 on
         // row 9101), so a same-emoji re-send retracts exactly like the DB
@@ -923,6 +927,10 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
         reactionsBox
     }
 
+    var slashCommands: any SlashCommandProviding {
+        slashCommandsBox
+    }
+
     /// R9-T1 UI-test hook: push a scripted approval request into the
     /// conversation event stream (drives the banner deterministically).
     func pushApprovalRequest(_ request: ApprovalRequest) {
@@ -935,6 +943,96 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
 
     var history: any SessionHistoryProviding {
         ScriptedHistory(gatewayID: gatewayID)
+    }
+}
+
+/// Issue #4 scripted slash capability. The submitted expanded message still
+/// travels through the regular scripted conversation client, preserving the
+/// same streaming transcript path as a live Hermes gateway.
+///
+/// UI-test-only fixtures (DEBUG simulator builds) are selected by the
+/// existing scripted route/session combinations: workstation/default/s2 has
+/// no skills, workstation/researcher/s1 fails discovery, and render-box
+/// models a stale dispatch.
+private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked Sendable {
+    private enum FixtureMode: Equatable {
+        case normal
+        case noSkills
+        case discoveryFailure
+        case staleDispatch
+    }
+
+    private let catalog: [SlashCommandSuggestion] = [
+        SlashCommandSuggestion(
+            text: "/hermes-change-review",
+            description: "Review a change against its issue",
+            kind: .skill),
+        SlashCommandSuggestion(
+            text: "/hermes-plan",
+            description: "Build an implementation plan",
+            kind: .skill),
+    ]
+
+    private let gatewayID: GatewayID
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+    }
+
+    /// Keep failure fixtures tied to existing scripted session rows so the
+    /// UI tests do not depend on process-launch configuration. The normal
+    /// workstation/default/s1 conversation remains the happy-path fixture.
+    private func mode(for sessionID: String?) -> FixtureMode {
+        if gatewayID.rawValue == "render-box" {
+            return .staleDispatch
+        }
+        switch sessionID {
+        case "workstation.default.s2":
+            return .noSkills
+        case "workstation.researcher.s1":
+            return .discoveryFailure
+        default:
+            return .normal
+        }
+    }
+
+    func skillCatalog(sessionID: String?) async throws -> [SlashCommandSuggestion] {
+        switch mode(for: sessionID) {
+        case .discoveryFailure:
+            throw SlashCommandError.rpcFailed("scripted skill discovery failed")
+        case .noSkills:
+            return []
+        case .normal, .staleDispatch:
+            return catalog
+        }
+    }
+
+    func completeSkills(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
+        switch mode(for: sessionID) {
+        case .discoveryFailure:
+            throw SlashCommandError.rpcFailed("scripted skill discovery failed")
+        case .noSkills:
+            return []
+        case .normal, .staleDispatch:
+            break
+        }
+        let query = text.drop(while: { $0 == "/" }).split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
+        return catalog.filter { $0.text.dropFirst().lowercased().hasPrefix(query.lowercased()) }
+    }
+
+    func dispatchSkill(sessionID: String, name: String, argument: String) async throws -> SkillCommandDispatch {
+        let canonical = name.hasPrefix("/") ? String(name.dropFirst()) : name
+        if mode(for: sessionID) == .staleDispatch {
+            throw SlashCommandError.notSkillCommand(canonical)
+        }
+        guard catalog.contains(where: { $0.text.dropFirst().lowercased() == canonical.lowercased() }) else {
+            throw SlashCommandError.notSkillCommand(canonical)
+        }
+        let display = argument.isEmpty ? "/" + canonical : "/" + canonical + " " + argument
+        return SkillCommandDispatch(
+            name: canonical,
+            message: "[Scripted expanded skill: \(canonical)]\n\(argument)",
+            display: display)
     }
 }
 
@@ -1094,7 +1192,18 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             // XCUITest queries (R10AttachmentTray line-79 timeout). Short
             // plain-text echoes keep the "You said: <text>" contract
             // asserted by HappyPath/P0-7.
-            let echoBase = text
+            // The dispatch expansion is model-facing scaffolding. Keep the
+            // scripted assistant's human-facing echo focused on the user's
+            // argument so the simulator proves that expansion never leaks
+            // into the transcript UI.
+            let visibleEchoSource: String
+            if text.hasPrefix("[Scripted expanded skill:"),
+               let newline = text.firstIndex(of: "\n") {
+                visibleEchoSource = String(text[text.index(after: newline)...])
+            } else {
+                visibleEchoSource = text
+            }
+            let echoBase = visibleEchoSource
                 .split(whereSeparator: \.isWhitespace)
                 .filter { !$0.contains("@file:") && !$0.contains("@folder:") }
                 .joined(separator: " ")
@@ -1586,6 +1695,15 @@ enum ScriptedFleet {
     static func sessions(on route: Route) -> [SessionSummary] {
         switch route.gatewayID.rawValue {
         case "workstation":
+            if route.profileSlug.rawValue == "researcher" {
+                return [
+                    SessionSummary(
+                        id: "workstation.researcher.s1", title: "Research briefing",
+                        preview: "Researcher profile scripted discovery fixture.", startedAt: 1_755_000_000,
+                        messageCount: 8, source: "ios"
+                    ),
+                ]
+            }
             return [
                 ScriptedFleet.session(on: "default"),
                 SessionSummary(
