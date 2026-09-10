@@ -269,7 +269,11 @@ public final class BotManagementController {
             return BotAvatarAppearanceResult(
                 editOutcome: outcome, assetApplied: true, partialFailure: nil)
         case .replacement(let data):
-            let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
+            // #9 §6: a Pet thumbnail PNG must NEVER route through the JPEG
+            // normalization semantics of user-photo uploads — the staged
+            // bytes travel as-is, mime-typed by their actual PNG/JPEG
+            // signature so pixel edges stay crisp through set_asset.
+            let dataURL = BotAvatarAssetCodec.dataURL(forStaged: data)
             do {
                 try await seam.uploadAvatar(bot.route.profileSlug.rawValue, dataURL: dataURL)
             } catch {
@@ -339,6 +343,140 @@ public final class BotManagementController {
         try await seam.clearAvatar(bot.route.profileSlug.rawValue)
         avatarGenerations[bot.route, default: 0] += 1
         avatarDataByRoute[bot.route] = nil
+    }
+
+    // MARK: - Pets (#9: route-scoped gallery + thumbnail loading)
+
+    /// Pet picker load phase (two-stage, issue #9): the local phase
+    /// (localOnly) is a fast best-effort render; the hydrate phase merges
+    /// the full Petdex catalog. State is keyed by full route —
+    /// GatewayID + ProfileSlug — never the profile slug alone.
+    public enum PetGalleryPhase: Hashable, Sendable {
+        case idle
+        case loadingLocal
+        case hydrating
+        case loaded
+        /// Pets are unavailable on this gateway (JSON-RPC
+        /// method-not-found) — a capability fact, not a transient failure.
+        case unsupported
+        /// A load failed; retryable (transient network/RPC failure).
+        case failed(String)
+    }
+
+    public private(set) var petGalleryByRoute: [Route: [HermesPet]] = [:]
+    public private(set) var petGalleryPhaseByRoute: [Route: PetGalleryPhase] = [:]
+    /// Bounded, route-aware thumbnail cache (GatewayID + ProfileSlug +
+    /// PetSlug keys — same-slug pets on different routes never share an
+    /// entry).
+    public let petThumbnailCache = PetThumbnailCache()
+
+    @ObservationIgnored private var petGalleryLoads: Set<Route> = []
+    @ObservationIgnored private var petThumbLoads: Set<PetThumbnailCache.Key> = []
+    @ObservationIgnored private var petThumbFailed: Set<PetThumbnailCache.Key> = []
+
+    /// Pet seam for a route: the Bot's own gateway's profile seam when it
+    /// also speaks the Pet surface, else nil (the caller renders the
+    /// honest unavailable state — fail closed).
+    public func petSeam(for bot: FleetBot) -> (any BotPetManaging)? {
+        seam(for: bot.route.gatewayID) as? (any BotPetManaging)
+    }
+
+    /// Two-stage gallery load for one bot route (#9): stage 1 loads
+    /// installed/generated pets via `pet.gallery {localOnly:true}`
+    /// (best-effort — a failure here falls through to the hydrate phase);
+    /// stage 2 hydrates the full Petdex catalog and merges. Pet-unavailable
+    /// (method-not-found) is sticky; transient failures are retryable.
+    public func loadPetGallery(for bot: FleetBot) async {
+        let route = bot.route
+        guard !petGalleryLoads.contains(route) else { return }
+        petGalleryLoads.insert(route)
+        defer { petGalleryLoads.remove(route) }
+        guard let petSeam = petSeam(for: bot) else {
+            petGalleryPhaseByRoute[route] = .unsupported
+            return
+        }
+        // Stage 1 — local/generated pets render fast; errors fall through
+        // to the hydrate attempt (the local phase is best-effort).
+        petGalleryPhaseByRoute[route] = .loadingLocal
+        var local = HermesPetGallery(pets: [])
+        do {
+            local = try await petSeam.petGallery(
+                profile: route.profileSlug.rawValue, localOnly: true)
+            if petGalleryLoads.contains(route) {
+                petGalleryByRoute[route] = local.pets
+                petGalleryPhaseByRoute[route] = .loaded
+            }
+        } catch { /* fall through to hydrate */ }
+        guard petGalleryLoads.contains(route) else { return }
+        // Stage 2 — full Petdex hydration merged over the local phase.
+        petGalleryPhaseByRoute[route] = .hydrating
+        do {
+            let full = try await petSeam.petGallery(
+                profile: route.profileSlug.rawValue, localOnly: false)
+            let merged = local.merged(with: full)
+            petGalleryByRoute[route] = merged.pets
+            petGalleryPhaseByRoute[route] = .loaded
+        } catch let error as BotPetError {
+            if case .petsUnavailable = error {
+                petGalleryByRoute[route] = []
+                petGalleryPhaseByRoute[route] = .unsupported
+            } else if petGalleryByRoute[route]?.isEmpty != false {
+                petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+            }
+            // else: keep the local-phase pets visible; the hydrate failure
+            // is surfaced by the retry affordance in the sheet.
+        } catch {
+            if petGalleryByRoute[route]?.isEmpty != false {
+                petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Cached-or-fetch PNG thumbnail for one pet cell. Coalesces
+    /// in-flight requests per key; a failed fetch stays failed until the
+    /// caller retries (so a LazyVGrid scroll does not re-hammer the
+    /// gateway). Zero remote writes — `pet.thumb` is read-only.
+    public func petThumbnailData(
+        for bot: FleetBot, pet: HermesPet
+    ) async -> Data? {
+        let key = PetThumbnailCache.Key(
+            gatewayID: bot.route.gatewayID,
+            profileSlug: bot.route.profileSlug,
+            petSlug: pet.slug)
+        if let cached = petThumbnailCache.pngData(for: key) { return cached }
+        guard !petThumbLoads.contains(key) else { return nil }
+        guard let petSeam = petSeam(for: bot) else { return nil }
+        petThumbLoads.insert(key)
+        defer { petThumbLoads.remove(key) }
+        do {
+            let bytes = try await petSeam.petThumbnail(
+                profile: bot.route.profileSlug.rawValue,
+                slug: pet.slug,
+                sourceURL: pet.thumbnailSourceURL)
+            petThumbnailCache.set(bytes, for: key)
+            petThumbFailed.remove(key)
+            return bytes
+        } catch {
+            petThumbFailed.insert(key)
+            return nil
+        }
+    }
+
+    /// Reset a failed thumbnail fetch so the cell can retry.
+    public func retryPetThumbnail(for bot: FleetBot, pet: HermesPet) async {
+        let key = PetThumbnailCache.Key(
+            gatewayID: bot.route.gatewayID,
+            profileSlug: bot.route.profileSlug,
+            petSlug: pet.slug)
+        petThumbFailed.remove(key)
+        _ = await petThumbnailData(for: bot, pet: pet)
+    }
+
+    /// Reset a failed gallery load so the sheet can retry (transient).
+    public func retryPetGallery(for bot: FleetBot) async {
+        let route = bot.route
+        petGalleryPhaseByRoute[route] = .idle
+        await loadPetGallery(for: bot)
     }
 
     // MARK: - Duplicate (D11)
@@ -426,5 +564,23 @@ enum GatewayBotModeClientBridge {
     static func decodeDataURLBytes(_ dataURL: String) -> Data? {
         guard let range = dataURL.range(of: "base64,") else { return nil }
         return Data(base64Encoded: String(dataURL[range.upperBound...]))
+    }
+}
+
+/// Staged avatar asset encoding (#9 §6): staged bytes travel to
+/// `profiles.set_asset` unmodified — mime-typed by signature so a Pet
+/// thumbnail stays PNG end-to-end (no JPEG recompression; the gateway
+/// accepts PNG/JPEG/WebP) while normalized photo uploads remain JPEG.
+enum BotAvatarAssetCodec {
+    static func dataURL(forStaged data: Data) -> String {
+        let mime: String
+        if data.count >= 8, data[data.startIndex] == 0x89, data[data.startIndex + 1] == 0x50 {
+            mime = "image/png"
+        } else if data.count >= 2, data[data.startIndex] == 0xFF, data[data.startIndex + 1] == 0xD8 {
+            mime = "image/jpeg"
+        } else {
+            mime = "image/png"
+        }
+        return "data:\(mime);base64," + data.base64EncodedString()
     }
 }

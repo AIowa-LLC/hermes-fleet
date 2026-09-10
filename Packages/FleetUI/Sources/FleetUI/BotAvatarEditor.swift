@@ -16,6 +16,8 @@ struct BotAvatarEditor: View {
 
     @State private var supportsAssets = false
     @State private var supportsGeneration = false
+    @State private var supportsPets = false
+    @State private var petPickerShown = false
     @State private var photo: PhotosPickerItem?
     @State private var importing = false
     @State private var generating = false
@@ -49,6 +51,14 @@ struct BotAvatarEditor: View {
                 .font(.caption)
                 .accessibilityIdentifier("fleet.bot.avatar.unsupported")
         }
+        // #9: Pets are an independent gateway capability (pet.gallery /
+        // pet.thumb), NOT gated on the profiles.set_asset probe — the
+        // picker renders its own honest states either way.
+        if supportsPets {
+            Button("Choose Hermes Pet") { petPickerShown = true }
+                .accessibilityIdentifier("fleet.bot.avatar.pet")
+                .disabled(working)
+        }
         if working { ProgressView("Preparing avatar…") }
         if let status {
             Text(status).font(.caption).accessibilityIdentifier("fleet.bot.avatar.status")
@@ -72,6 +82,20 @@ struct BotAvatarEditor: View {
                 guard let seam = environment.botManagement.seam(for: bot.route.gatewayID) else { return }
                 supportsAssets = await seam.supportsAvatarUpload(bot.profileSlug.rawValue)
                 if supportsAssets { supportsGeneration = await seam.supportsPortraitGeneration() }
+                // #9: Pets render alongside the other sources when the
+                // Bot's own gateway speaks the pet surface. The picker
+                // itself distinguishes unsupported gateways at load time.
+                supportsPets = environment.botManagement.petSeam(for: bot) != nil
+            }
+            .sheet(isPresented: $petPickerShown) {
+                BotPetPickerSheet(environment: environment, bot: bot) { pet, pngBytes in
+                    // #7's unified draft: the pet's idle frame is just
+                    // another image source — staged replacement bytes
+                    // (custom=true, imageKind="photo" semantics inside),
+                    // zero remote writes until Save.
+                    draft.stageReplacement(data: pngBytes)
+                    status = "Pet “\(pet.displayName)” staged as the new avatar. Save to apply."
+                }
             }
             .onChange(of: photo) { _, item in
                 guard let item else { return }

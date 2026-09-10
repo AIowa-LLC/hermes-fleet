@@ -1491,6 +1491,16 @@ private struct ScriptedHistory: SessionHistoryProviding {
 /// healthy, one unreachable) each with a couple of bots (profiles) and
 /// sessions, so every navigation destination and the partial-outage roster
 /// state have content.
+/// Deterministic 8x8 PNG fixtures for the scripted pet surface (#9) —
+/// tiny valid PNGs (magenta / solid green) standing in for pet.thumb
+/// idle frames. Distinct per gateway to prove route-scoped caching.
+enum ScriptedPetPNG {
+    static let magenta = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGP4z7DoP8MoQS4BAPMYqAH2vyKxAAAAAElFTkSuQmCC")!
+    static let green = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGNgOFHxn2GUIJcAAIjXj8EqoCrvAAAAAElFTkSuQmCC")!
+}
+
 enum ScriptedFleet {
     static let registrations: [GatewayRegistration] = [
         GatewayRegistration(
@@ -1773,7 +1783,7 @@ final class ScriptedBotProfileSeamStore: @unchecked Sendable {
 /// simulator only) — in-memory metadata/section/avatar state with the same
 /// semantics as the real client (CAS conflict on stale revision, model
 /// confirmation knob, partial-success outcomes). Presentation data only.
-final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, @unchecked Sendable {
+final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting, BotPetManaging, @unchecked Sendable {
     private let lock = NSLock()
     private let gatewayID: GatewayID
     private var metadataByProfile: [String: BotModeMetadata] = [:]
@@ -1875,6 +1885,61 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
 
     func avatarData(_ profile: String) async throws -> Data? {
         currentAvatarBytes(profile)
+    }
+
+    // MARK: #9 — scripted pet surface (pet.gallery / pet.thumb)
+
+    /// Scripted Petdex rows per gateway. The SAME slug deliberately maps
+    /// to different thumbnails per gateway (route-provenance proof: the
+    /// cache and every request key on GatewayID + ProfileSlug + PetSlug).
+    private static let petThumbnails: [String: [String: Data]] = [
+        "workstation": [
+            "spark-fox": ScriptedPetPNG.magenta,
+            "pixel-owl": ScriptedPetPNG.green,
+            "null-cat": ScriptedPetPNG.magenta,
+        ],
+        "render-box": [
+            // Same three slugs, DIFFERENT images on this gateway.
+            "spark-fox": ScriptedPetPNG.green,
+            "pixel-owl": ScriptedPetPNG.magenta,
+            "null-cat": ScriptedPetPNG.green,
+        ],
+    ]
+
+    private func scriptedPets(for gatewayID: GatewayID, localOnly: Bool) -> [HermesPet] {
+        let thumbs = Self.petThumbnails[gatewayID.rawValue] ?? [:]
+        let rows: [HermesPet] = [
+            HermesPet(slug: "spark-fox", displayName: "Spark Fox", installed: true,
+                      curated: false, generated: false, spritesheetURL: nil),
+            HermesPet(slug: "pixel-owl", displayName: "Pixel Owl", installed: false,
+                      curated: true, generated: false,
+                      spritesheetURL: "https://petdex.dev/sheets/pixel-owl.png"),
+            HermesPet(slug: "null-cat", displayName: "Null Cat", installed: true,
+                      curated: false, generated: true, spritesheetURL: nil),
+        ]
+        // Two-stage: localOnly returns installed/generated pets only.
+        return localOnly ? rows.filter { thumbs[$0.slug] != nil && $0.installed } : rows
+    }
+
+    func petGallery(profile: String, localOnly: Bool) async throws -> HermesPetGallery {
+        // petsUnsupported gate for the unavailable-state UI journey.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_PETS_UNSUPPORTED"] == "1" {
+            throw BotPetError.petsUnavailable("Hermes Pets are not available on this gateway.")
+        }
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_PETS_FAIL"] == "1" {
+            throw BotModeProfileError.rpcFailed("transient fixture failure")
+        }
+        return HermesPetGallery(
+            pets: scriptedPets(for: gatewayID, localOnly: localOnly),
+            displayEnabled: true,
+            activeSlug: "spark-fox")
+    }
+
+    func petThumbnail(profile: String, slug: String, sourceURL: String?) async throws -> Data {
+        guard let bytes = Self.petThumbnails[gatewayID.rawValue]?[slug] else {
+            throw BotPetError.thumbnailUnavailable(slug: slug)
+        }
+        return bytes
     }
 
     /// Scripted roster support: whether an avatar asset exists for this
