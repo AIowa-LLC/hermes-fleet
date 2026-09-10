@@ -2047,6 +2047,31 @@ final class ScriptedBotProfileSeam: BotProfileManaging, BotSectionRegistryLoadin
         currentAvatarBytes(profile)
     }
 
+    // MARK: i7-gapfill R1 — avatar upload / portrait generation surface
+
+    /// The scripted fleet is asset-capable (mirrors a real gateway that
+    /// speaks profiles.set_asset), so the Photos / Files / Clear controls
+    /// render on the deterministic DEBUG fleet and are UI-testable.
+    /// Env knob `HERMES_FLEET_AVATAR_UNSUPPORTED=1` scripts the honest
+    /// unsupported state (the editor hides the upload controls).
+    func supportsAvatarUpload(_ profile: String) async -> Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_AVATAR_UNSUPPORTED"] != "1"
+    }
+
+    /// Portrait generation is available on the scripted fleet; the
+    /// preview/confirm staging journey is deterministic.
+    func supportsPortraitGeneration() async -> Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_AVATAR_UNSUPPORTED"] != "1"
+    }
+
+    /// Deterministic generated-portrait fixture: a valid decodable PNG
+    /// (the editor normalizes + stages it through the SAME path a real
+    /// gateway portrait takes — never a local avatar authority).
+    func generatePortrait(prompt: String) async throws -> Data {
+        guard await supportsPortraitGeneration() else { throw BotPortraitError.unavailable }
+        return ScriptedPetPNG.magenta
+    }
+
     // MARK: #9 — scripted pet surface (pet.gallery / pet.thumb)
 
     /// Scripted Petdex rows per gateway. The SAME slug deliberately maps
