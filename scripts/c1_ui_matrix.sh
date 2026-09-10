@@ -26,7 +26,7 @@ REPO="$(pwd)"
 # at invocation). Order is historical; do not reorder without resharding.
 UI_CLASSES=(
   HermesFleetHappyPath HermesFleetReconnect P0_7SessionStateMachine
-  S3CleartextWarning RT2RemovalAndEndpointSanitization H1AppLock
+  S3CleartextWarning RT2RemovalAndEndpointSanitization
   RT4RosterEmptyState RT4FormSaveFailure RT4VoiceOver Splash
   P2GatewayFormDraft F2QRPairing U3TabNavigation SecondGeneration
   U4Dashboard U5BotDetail U6ConversationSkin U7GatewayQrLockSettings
@@ -45,6 +45,15 @@ ENVIRONMENTAL_CLASSES=(
   B1LiveBoardPicker BotChatTap BotRosterSlice2 F1TwoGatewayFleetLive
   H2HealthDashboard L1FixLiveGateway L1LiveGateway P0_7LiveTailnet
   P3FixLANGateway P3FixLoopbackGateway T2FixTailnetGateway
+  # H1AppLock: QUARANTINED from CI 2026-09-10 (PR #3). 5 fails / 1 pass on
+  # GitHub runners (runs 34405682516, 34411504021 a1+a2, 34418740262 a1+a2,
+  # 34426824450) — roster never renders after scripted biometric unlock;
+  # 60s waits did not help (100s failure = not latency). Passes in every
+  # local configuration (clean sim, churned sim, exact shard-order replay).
+  # ScriptedLockAuth is deterministic in code, so the cause is environmental
+  # on runner simulators — needs on-runner xcresult evidence to root-cause.
+  # Follow-up card: H1AppLock runner root-cause (re-add to CI when fixed).
+  H1AppLock
 )
 
 die() { printf 'UI-MATRIX FAIL: %s\n' "$1" >&2; exit 1; }
