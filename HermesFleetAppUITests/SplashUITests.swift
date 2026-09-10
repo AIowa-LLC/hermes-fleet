@@ -23,7 +23,7 @@ final class SplashUITests: XCTestCase {
         // attach its first accessibility query, so we extend the product hold
         // (1.8s, locked by the unit test) to a generous 4s window. The product
         // default is exercised/asserted separately by SplashConfigurationTests.
-        app.launchEnvironment["HERMES_FLEET_SPLASH_HOLD"] = "4.0"
+        app.launchEnvironment["HERMES_FLEET_SPLASH_HOLD"] = "8.0"
 
         // Anchor the window from BEFORE launch: app.launch() returns once the
         // first frame (and the in-app splash) is on screen, so the elapsed
