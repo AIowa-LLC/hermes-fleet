@@ -135,6 +135,18 @@ public struct BotAvatarAppearanceDraft: Hashable, Sendable, Codable {
         return false
     }
 
+    // MARK: - Post-partial-failure reseed (t_3ce28479)
+
+    /// Advance the baseline to the metadata that was just APPLIED by a
+    /// coordinated save whose asset mutation subsequently failed (partial
+    /// failure). After this, `metadataAfterSave == baseline` — a retry
+    /// Save carries NO metadata section (so no stale CAS revision can be
+    /// re-sent against the already-bumped gateway revision) and re-sends
+    /// only the still-staged asset mutation (clear/upload).
+    public mutating func noteMetadataApplied() {
+        baseline = metadataAfterSave
+    }
+
     // MARK: - Derived save payload
 
     /// Whether the draft requests any remote appearance mutation at all.

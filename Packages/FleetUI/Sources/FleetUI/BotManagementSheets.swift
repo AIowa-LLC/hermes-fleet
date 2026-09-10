@@ -169,18 +169,47 @@ public struct EditBotSheet: View {
     @State private var provider = ""
     @State private var hidden = false
     @State private var pinned = false
-    @State private var avatarDraft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+    @State var avatarDraft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
     @State private var draftDescription: BotProfileDescription?
     @State private var baselineMetadata = BotModeMetadata()
     @State private var metadataRevision: Int?
     @State private var sectionID: String?
     @State private var loadedDescription: BotProfileDescription?
     @State private var isSubmitting = false
-    @State private var errorMessage: String?
+    /// Module-internal for hosted retry-path tests (t_3ce28479).
+    @State var errorMessage: String?
     @State private var outcome: BotProfileEditOutcome?
     @State private var pendingModelEdit: BotProfileEdit?
     @State private var confirmMessage: String?
-    @State private var avatarStatus: String?
+    @State var avatarStatus: String?
+
+    /// t_3ce28479: state reseed after a partial avatar-save failure
+    /// (metadata applied via applyAvatarAppearance, asset clear/upload
+    /// failed). The retry must re-send ONLY the still-failing asset
+    /// mutation — the metadata section already applied and the gateway
+    /// bumped hermes-bots, so re-sending it with the PRE-write revision
+    /// CAS-throws on every retry until the sheet is reopened. The draft's
+    /// baseline advances to the applied metadata; the CAS revision reseeds
+    /// from the outcome's `newMetadataRevisions`, falling back to the
+    /// refreshed roster's revision when the outcome carries none.
+    static func partialFailureReseed(
+        draft: BotAvatarAppearanceDraft,
+        metadataRevision: Int?,
+        outcome: BotProfileEditOutcome,
+        rosterRevision: Int?
+    ) -> (draft: BotAvatarAppearanceDraft, revision: Int?) {
+        var reseededDraft = draft
+        reseededDraft.noteMetadataApplied()
+        var revision = metadataRevision
+        if outcome.appliedSections.contains(.metadata) {
+            if let fromOutcome = outcome.newMetadataRevisions[BotModeContract.botsMetaKey] {
+                revision = fromOutcome
+            } else if let rosterRevision, rosterRevision != revision {
+                revision = rosterRevision
+            }
+        }
+        return (reseededDraft, revision)
+    }
 
     public init(environment: AppEnvironment, bot: FleetBot) {
         self.environment = environment
@@ -372,7 +401,7 @@ public struct EditBotSheet: View {
         .accessibilityIdentifier("fleet.bot.edit.partial")
     }
 
-    private func load() async {
+    func load() async {
         let meta = bot.botModeMetadata
         title = meta?.title ?? ""
         descriptionText = meta?.descriptionText ?? bot.profileDescription ?? ""
@@ -404,7 +433,7 @@ public struct EditBotSheet: View {
         }
     }
 
-    private func save() async {
+    func save() async {
         isSubmitting = true
         defer { isSubmitting = false }
         errorMessage = nil
@@ -426,7 +455,7 @@ public struct EditBotSheet: View {
         let modelChanged = model != (loadedDescription?.defaultModel ?? "") || provider != (loadedDescription?.provider ?? "")
         let appearanceDirty = avatarDraft.isDirty
         let edit = BotProfileEdit(
-            metadata: (metadata == baselineMetadata && !appearanceDirty) ? nil : metadata,
+            metadata: (metadata == baselineMetadata) ? nil : metadata,
             metadataExpectedRevision: metadataRevision,
             previousMetadataRaw: bot.uiMeta?[BotModeContract.botsMetaKey],
             soul: soul == (loadedDescription?.soul ?? "") ? nil : soul,
@@ -449,7 +478,17 @@ public struct EditBotSheet: View {
                 result = appearance.editOutcome
                 if let partial = appearance.partialFailure {
                     avatarStatus = partial
+                    // t_3ce28479: reseed the CAS state so an in-sheet retry
+                    // re-sends ONLY the still-failing asset mutation.
                     await environment.refreshRoster()
+                    let reseeded = Self.partialFailureReseed(
+                        draft: avatarDraft,
+                        metadataRevision: metadataRevision,
+                        outcome: appearance.editOutcome,
+                        rosterRevision: environment.bot(for: bot.route)?
+                            .uiMetaRevisions?[BotModeContract.botsMetaKey])
+                    avatarDraft = reseeded.draft
+                    metadataRevision = reseeded.revision
                     return
                 }
             } else {

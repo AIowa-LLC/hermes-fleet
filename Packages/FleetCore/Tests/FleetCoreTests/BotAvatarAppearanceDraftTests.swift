@@ -211,4 +211,52 @@ final class BotAvatarAppearanceDraftTests: XCTestCase {
         let draft = BotAvatarAppearanceDraft.seeded(from: meta, hasAvatar: false)
         XCTAssertFalse(draft.isDirty, "a seeded, untouched draft requests no writes")
     }
+
+    // MARK: - Post-partial-failure reseed (t_3ce28479)
+
+    /// After a partial failure (metadata applied, asset mutation failed),
+    /// the draft must advance its baseline to the applied metadata so a
+    /// retry saves ONLY the still-failing asset mutation — never a stale
+    /// metadata write that would CAS-conflict.
+    func testNoteMetadataAppliedAdvancesBaselineKeepingStagedAsset() {
+        var meta = BotModeMetadata()
+        meta.title = "Original"
+        var draft = BotAvatarAppearanceDraft.seeded(from: meta, hasAvatar: true)
+        draft.selectShape("cloud") // stages .remove over the remote image
+        XCTAssertTrue(draft.isDirty)
+
+        draft.noteMetadataApplied()
+
+        XCTAssertEqual(draft.metadataAfterSave.title, "Original",
+                       "applied metadata is the new baseline")
+        XCTAssertEqual(draft.metadataAfterSave.shape, "cloud",
+                       "the applied shape stays in the baseline")
+        XCTAssertEqual(draft.metadataAfterSave.imageKind, "shape",
+                       "imageKind semantics stay in the baseline")
+        XCTAssertEqual(draft.image, .remove,
+                       "the still-failing staged asset mutation is preserved")
+        XCTAssertTrue(draft.hasRemoteImage,
+                      "the remote image is still authoritative — the clear failed")
+        XCTAssertEqual(draft.metadataAfterSave, draft.baseline,
+                       "after reseed the metadata section must NOT be dirty")
+        XCTAssertTrue(draft.isDirty,
+                      "the draft stays dirty via the staged asset mutation — the retry re-sends it")
+    }
+
+    /// The reseed must also cover the replacement path (image upload
+    /// failed after metadata applied): the retry re-sends only the
+    /// staged replacement bytes.
+    func testNoteMetadataAppliedPreservesStagedReplacement() {
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+        let bytes = Data(repeating: 9, count: 32)
+        draft.stageReplacement(data: bytes)
+
+        draft.noteMetadataApplied()
+
+        XCTAssertEqual(draft.image, .replacement(bytes),
+                       "the staged replacement stays staged for the retry")
+        XCTAssertEqual(draft.metadataAfterSave.imageKind, "photo")
+        XCTAssertFalse(draft.metadataAfterSave != draft.baseline,
+                       "metadata is no longer dirty after the reseed")
+    }
 }
