@@ -15,10 +15,21 @@ final class BotManagementTests: XCTestCase {
     // MARK: scripted seams
 
     /// Actor-based scripted profile seam (async-safe by construction).
+    /// #7: records avatar asset mutations + every carried configure so the
+    /// coordinated appearance save can be asserted at the controller level.
     actor ScriptedProfileSeam: BotProfileManaging, BotSectionRegistryLoading, BotSectionRegistryWriting {
         private var sections: [BotSection] = []
         private var sectionsRevision = 0
         private var revisions: [String: Int] = [:]
+        private(set) var avatarAssets: [String: Data] = [:]
+        private(set) var configureCalls: [BotProfileEdit] = []
+        private(set) var clearAvatarCalls: [String] = []
+        private(set) var uploadAvatarCalls: [String] = []
+        private var clearAvatarError: Error?
+        private var uploadAvatarError: Error?
+
+        func injectClearAvatarError(_ error: Error?) { clearAvatarError = error }
+        func injectUploadAvatarError(_ error: Error?) { uploadAvatarError = error }
 
         func describeProfile(_ profile: String) async throws -> BotProfileDescription {
             BotProfileDescription(name: profile, soul: "soul text", defaultModel: "m1", provider: "nous")
@@ -32,6 +43,7 @@ final class BotManagementTests: XCTestCase {
             _ profile: String, edit: BotProfileEdit, confirmExpensiveModel: Bool
         ) async throws -> BotProfileEditOutcome {
             var applied: [String: Bool] = [:]
+            configureCalls.append(edit)
             if let metadata = edit.metadata {
                 let current = revisions[profile] ?? 0
                 if let expected = edit.metadataExpectedRevision, expected != current {
@@ -48,9 +60,22 @@ final class BotManagementTests: XCTestCase {
 
         func createProfile(_ spec: BotCreateSpec) async throws -> String { spec.name }
 
-        func uploadAvatar(_ profile: String, dataURL: String) async throws {}
-        func clearAvatar(_ profile: String) async throws {}
-        func avatarData(_ profile: String) async throws -> Data? { nil }
+        func uploadAvatar(_ profile: String, dataURL: String) async throws {
+            if let uploadAvatarError { throw uploadAvatarError }
+            uploadAvatarCalls.append(profile)
+            if let range = dataURL.range(of: "base64,"),
+               let data = Data(base64Encoded: String(dataURL[range.upperBound...])) {
+                avatarAssets[profile] = data
+            }
+        }
+
+        func clearAvatar(_ profile: String) async throws {
+            if let clearAvatarError { throw clearAvatarError }
+            clearAvatarCalls.append(profile)
+            avatarAssets[profile] = nil
+        }
+
+        func avatarData(_ profile: String) async throws -> Data? { avatarAssets[profile] }
 
         func loadSectionRegistry() async throws -> (sections: [BotSection], revision: Int?) {
             (sections, sectionsRevision)
@@ -291,6 +316,167 @@ final class BotManagementTests: XCTestCase {
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 7_200, now: now), "2h")
         XCTAssertEqual(BotRowView.relativeTime(1_000_000 - 172_800, now: now), "2d")
     }
+    // MARK: - #7 unified avatar appearance save
+
+    /// Controller-level: seeding the draft, staging a shape over an
+    /// existing image, saving — metadata applies FIRST, then the asset
+    /// clear, and the result succeeds with explicit ordering.
+    func testApplyAvatarAppearanceShapeSupersedesImage() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        XCTAssertEqual(draft.image, .remove, "shape selection stages image removal")
+
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.assetApplied, true)
+        let cleared = await seam.clearAvatarCalls
+        XCTAssertEqual(cleared, ["default"], "the staged removal must clear the asset on save")
+        let configs = await seam.configureCalls
+        XCTAssertEqual(configs.count, 1)
+        XCTAssertEqual(configs.first?.metadata?.shape, "cloud")
+        XCTAssertEqual(configs.first?.metadata?.custom, true)
+        XCTAssertEqual(configs.first?.metadata?.imageKind, "shape")
+    }
+
+    /// Controller-level: a staged image replacement uploads on save with
+    /// imageKind "photo", superseding any existing asset.
+    func testApplyAvatarAppearanceImageReplacement() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "researcher")),
+            displayName: "Researcher")
+        bot.hasAvatar = false
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+        let bytes = Data(repeating: 7, count: 64)
+        draft.stageReplacement(data: bytes)
+
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(result.assetApplied, true)
+        let uploads = await seam.uploadAvatarCalls
+        XCTAssertEqual(uploads, ["researcher"])
+        let assets = await seam.avatarAssets
+        XCTAssertEqual(assets["researcher"], bytes)
+        let configs = await seam.configureCalls
+        XCTAssertEqual(configs.first?.metadata?.imageKind, "photo")
+        XCTAssertEqual(configs.first?.metadata?.custom, true)
+    }
+
+    /// Controller-level partial failure: metadata applies but the asset
+    /// clear fails — the result must NOT succeed and must carry an
+    /// explicit explanation (never generic success).
+    func testApplyAvatarAppearancePartialFailureSurfacesExplicitly() async throws {
+        let seam = ScriptedProfileSeam()
+        await seam.injectClearAvatarError(BotSectionSyncError.conflict("asset clear failed"))
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertFalse(result.succeeded, "partial application must never read as success")
+        XCTAssertEqual(result.assetApplied, false)
+        XCTAssertNotNil(result.partialFailure)
+        XCTAssertTrue(result.partialFailure?.contains("could not be removed") ?? false,
+                      "the partial failure names the image-still-active state")
+        // Metadata DID apply — the failure message must reflect reality.
+        let configs = await seam.configureCalls
+        XCTAssertEqual(configs.count, 1)
+    }
+
+    /// Controller-level: a CAS conflict on the metadata write must throw
+    /// BEFORE any asset mutation (the previous image is never cleared).
+    func testApplyAvatarAppearanceCASConflictNeverClearsImage() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = true
+        // The roster reported revision 0, but the gateway is at 5 — a
+        // stale local view (another client wrote).
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+        // Seed the seam's revision to 5 by writing once through it.
+        _ = try await seam.configureProfile("default", edit: BotProfileEdit(
+            metadata: BotModeMetadata(title: "someone else"), metadataExpectedRevision: nil))
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        let edit = BotProfileEdit(
+            metadata: draft.metadataAfterSave,
+            metadataExpectedRevision: 0)
+        do {
+            _ = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+            XCTFail("expected a CAS conflict")
+        } catch {
+            // expected: stale revision
+        }
+        let cleared = await seam.clearAvatarCalls
+        XCTAssertTrue(cleared.isEmpty, "a conflicted metadata write must never clear the image")
+    }
+
+    /// Draft lifecycle: an untouched draft performs ZERO remote writes
+    /// (Cancel semantics — save would send nothing).
+    func testUntouchedAvatarDraftPerformsNoWrites() async throws {
+        let seam = ScriptedProfileSeam()
+        let gateway = FleetGateway(id: GatewayID(rawValue: "gw"), displayName: "GW", endpoint: nil)
+        let (env, _, _) = await makeEnvironment(gateways: [gateway], profileSeam: seam)
+        var bot = FleetBot(
+            route: Route(gatewayID: gateway.id, profileSlug: ProfileSlug(rawValue: "default")),
+            displayName: "Default")
+        bot.hasAvatar = false
+        bot.uiMetaRevisions = MetadataRevisions(revisions: [BotModeContract.botsMetaKey: 0])
+
+        var meta = BotModeMetadata()
+        meta.shape = "cloud"
+        meta.custom = true
+        meta.imageKind = "shape"
+        let draft = BotAvatarAppearanceDraft.seeded(from: meta, hasAvatar: false)
+        XCTAssertFalse(draft.isDirty)
+
+        // The sheet's save() would not carry a metadata section for an
+        // untouched draft; the coordinator is never invoked with one.
+        let edit = BotProfileEdit(metadata: nil, metadataExpectedRevision: 0)
+        let result = try await env.botManagement.applyAvatarAppearance(draft, edit: edit, to: bot)
+        XCTAssertTrue(result.succeeded)
+        let cleared = await seam.clearAvatarCalls
+        let uploads = await seam.uploadAvatarCalls
+        XCTAssertTrue(cleared.isEmpty && uploads.isEmpty,
+                      "an untouched draft must cause zero avatar asset writes")
+        let configs = await seam.configureCalls
+        XCTAssertTrue(configs.allSatisfy { $0.metadata == nil && $0.isEmpty },
+                      "an untouched draft carries no writable sections")
+    }
+
     // MARK: - D2 (FOS-DF dogfood): slug keyboard traits
 
     /// D2 regression: the Create Bot "Name (profile slug)" field must disable

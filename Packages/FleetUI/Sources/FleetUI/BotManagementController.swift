@@ -197,7 +197,100 @@ public final class BotManagementController {
         return outcome
     }
 
-    // MARK: - Avatar (D08)
+    // MARK: - Avatar (D08, #7 unified appearance save)
+
+    /// Avatar appearance save outcome (#7): the coordinated metadata +
+    /// asset transaction reconciled against the refreshed roster. A
+    /// partial application is NEVER reported as plain success.
+    public struct BotAvatarAppearanceResult: Hashable, Sendable {
+        /// The profiles.configure outcome (metadata + carried sections).
+        public var editOutcome: BotProfileEditOutcome
+        /// The asset mutation (replacement/clear) applied when one was staged.
+        public var assetApplied: Bool?
+        /// Partial-failure explanation when the intended visible appearance
+        /// is NOT authoritative after the transaction.
+        public var partialFailure: String?
+
+        /// True only when everything the draft requested is now
+        /// authoritative (and nothing failed).
+        public var succeeded: Bool { partialFailure == nil && editOutcome.succeeded }
+    }
+
+    /// Coordinated avatar appearance Save (#7): the full form edit (metadata
+    /// section carries the draft's appearance + custom/imageKind semantics)
+    /// FIRST with the existing per-key CAS protection, then the staged asset
+    /// mutation, then cache reconciliation for the roster refresh.
+    ///
+    /// Ordering rationale (issue #7 §5): writing shape metadata first
+    /// leaves the current image masking it until the clear succeeds —
+    /// less visually destructive than clearing first and failing the
+    /// metadata write, which would expose the old/default shape.
+    ///
+    /// Partial failure semantics: a metadata success + asset failure
+    /// surfaces an explicit "shape saved but image still active" message
+    /// and the caller must keep the editor open — never generic success.
+    /// A metadata CAS conflict throws BEFORE any asset mutation (the old
+    /// image is never cleared on a conflicted write).
+    public func applyAvatarAppearance(
+        _ draft: BotAvatarAppearanceDraft,
+        edit: BotProfileEdit,
+        to bot: FleetBot
+    ) async throws -> BotAvatarAppearanceResult {
+        guard let seam = seam(for: bot.route.gatewayID) else {
+            throw BotSectionSyncError.unavailable("Profile management is unavailable on this gateway")
+        }
+        // 1. The configure write (metadata + any other carried sections)
+        //    with existing CAS discipline — throws typed conflicts on a
+        //    stale revision BEFORE any asset mutation.
+        let outcome = try await seam.configureProfile(
+            bot.route.profileSlug.rawValue, edit: edit)
+        if edit.metadata != nil {
+            guard outcome.appliedSections.contains(.metadata) else {
+                throw BotSectionSyncError.conflict("The gateway did not apply the appearance metadata")
+            }
+        }
+        editOutcomes[bot.route] = outcome
+        editErrors[bot.route] = nil
+        // 2. Asset mutation — only after the metadata section applied.
+        switch draft.image {
+        case .unchanged:
+            return BotAvatarAppearanceResult(
+                editOutcome: outcome, assetApplied: nil, partialFailure: nil)
+        case .remove:
+            do {
+                try await seam.clearAvatar(bot.route.profileSlug.rawValue)
+            } catch {
+                await refreshAvatarCaches(for: bot)
+                return BotAvatarAppearanceResult(
+                    editOutcome: outcome, assetApplied: false,
+                    partialFailure: "Shape saved, but the previous image could not be removed. The image is still active. Retry removing it.")
+            }
+            await refreshAvatarCaches(for: bot)
+            return BotAvatarAppearanceResult(
+                editOutcome: outcome, assetApplied: true, partialFailure: nil)
+        case .replacement(let data):
+            let dataURL = "data:image/jpeg;base64," + data.base64EncodedString()
+            do {
+                try await seam.uploadAvatar(bot.route.profileSlug.rawValue, dataURL: dataURL)
+            } catch {
+                await refreshAvatarCaches(for: bot)
+                return BotAvatarAppearanceResult(
+                    editOutcome: outcome, assetApplied: false,
+                    partialFailure: "Metadata saved, but the new image could not be uploaded. Your previous avatar remains active. Retry saving it.")
+            }
+            await refreshAvatarCaches(for: bot)
+            return BotAvatarAppearanceResult(
+                editOutcome: outcome, assetApplied: true, partialFailure: nil)
+        }
+    }
+
+    /// Post-save reconciliation: drop stale avatar caches so the refreshed
+    /// roster's hasAvatar is the visible truth, and reseed fetch stamps.
+    private func refreshAvatarCaches(for bot: FleetBot) async {
+        avatarFetchedAt[bot.route] = nil
+        avatarGenerations[bot.route, default: 0] += 1
+        avatarDataByRoute[bot.route] = nil
+    }
 
     /// Fetch avatar bytes for a bot (display cache; authoritative flag is
     /// roster hasAvatar). Uses the profiles.get_asset surface.

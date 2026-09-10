@@ -413,6 +413,158 @@ final class BotProfileNetworkingTests: XCTestCase {
         XCTAssertNil(params["data"])
     }
 
+    // MARK: - #7 avatar appearance metadata semantics
+
+    /// #7: an explicit shape choice rides profiles.configure hermes-bots
+    /// with custom=true, imageKind="shape", the CAS revision, and unknown
+    /// metadata keys intact.
+    func testConfigureAppearanceEncodesCustomAndImageKindShape() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "profiles.configure" {
+                    return [Self.responseFrame(id: id, resultObject: #"""
+                    {"ok":true,"applied":{"ui_meta":true,"ui_meta_revisions":{"hermes-bots":9}}}
+                    """#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(gatewayID: GatewayID(rawValue: "g1"), transport: transport)
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        let meta = draft.metadataAfterSave
+        let edit = BotProfileEdit(
+            metadata: meta,
+            metadataExpectedRevision: 8,
+            previousMetadataRaw: .object(["futureField": .string("keep")]))
+        let outcome = try await client.configureProfile("default", edit: edit)
+        XCTAssertTrue(outcome.succeeded)
+
+        let params = try XCTUnwrap(log.params(of: "profiles.configure").first)
+        let uiMeta = try XCTUnwrap(params["ui_meta"] as? [String: Any])
+        let botsMeta = try XCTUnwrap(uiMeta["hermes-bots"] as? [String: Any])
+        XCTAssertEqual(botsMeta["shape"] as? String, "cloud")
+        XCTAssertEqual(botsMeta["custom"] as? Bool, true)
+        XCTAssertEqual(botsMeta["imageKind"] as? String, "shape")
+        XCTAssertEqual(botsMeta["futureField"] as? String, "keep",
+                       "unknown hermes-bots keys must round-trip")
+        let expected = try XCTUnwrap(params["ui_meta_expected_revisions"] as? [String: Any])
+        XCTAssertEqual(expected["hermes-bots"] as? Int, 8)
+    }
+
+    /// #7: a staged image replacement rides profiles.set_asset with
+    /// asset:"avatar" and the data URL, while configure carries
+    /// custom=true / imageKind="photo".
+    func testConfigureAppearanceEncodesImageKindPhotoAndAssetUpload() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                switch method {
+                case "profiles.configure":
+                    return [Self.responseFrame(id: id, resultObject: #"""
+                    {"ok":true,"applied":{"ui_meta":true,"ui_meta_revisions":{"hermes-bots":3}}}
+                    """#)]
+                case "profiles.set_asset":
+                    return [Self.responseFrame(id: id, resultObject: #"""
+                    {"ok":true,"asset":"avatar","size":4096}
+                    """#)]
+                default:
+                    return []
+                }
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(gatewayID: GatewayID(rawValue: "g1"), transport: transport)
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
+        draft.stageReplacement(data: Data(repeating: 0xAB, count: 32))
+        XCTAssertEqual(draft.metadataAfterSave.imageKind, "photo")
+
+        let edit = BotProfileEdit(metadata: draft.metadataAfterSave, metadataExpectedRevision: 2)
+        let outcome = try await client.configureProfile("researcher", edit: edit)
+        XCTAssertTrue(outcome.succeeded)
+        let dataURL = "data:image/jpeg;base64," + Data(repeating: 0xAB, count: 32).base64EncodedString()
+        try await client.uploadAvatar("researcher", dataURL: dataURL)
+
+        let configureParams = try XCTUnwrap(log.params(of: "profiles.configure").first)
+        let botsMeta = try XCTUnwrap(
+            (configureParams["ui_meta"] as? [String: Any])?["hermes-bots"] as? [String: Any])
+        XCTAssertEqual(botsMeta["custom"] as? Bool, true)
+        XCTAssertEqual(botsMeta["imageKind"] as? String, "photo")
+
+        let assetParams = try XCTUnwrap(log.params(of: "profiles.set_asset").first)
+        XCTAssertEqual(assetParams["name"] as? String, "researcher")
+        XCTAssertEqual(assetParams["asset"] as? String, "avatar")
+        let sent = try XCTUnwrap(assetParams["data"] as? String)
+        XCTAssertTrue(sent.hasPrefix("data:image/jpeg;base64,"),
+                      "asset bytes ride a data URL, never ui_meta")
+        XCTAssertNil(assetParams["clear"])
+    }
+
+    /// #7: a CAS conflict on the metadata write must surface typed and
+    /// never fall through to an asset mutation.
+    func testAppearanceCASConflictIsTypedBeforeAssetMutation() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "profiles.configure" {
+                    return [Self.responseFrame(id: id, resultObject: #"""
+                    {"ok":false,"applied":{"ui_meta":false,"ui_meta_conflicts":{"hermes-bots":{"expected":2,"actual":5}},"ui_meta_revisions":{"hermes-bots":5}}}
+                    """#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayBotModeClient(gatewayID: GatewayID(rawValue: "g1"), transport: transport)
+
+        var draft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: true)
+        draft.selectShape("cloud")
+        XCTAssertEqual(draft.image, .remove)
+        let edit = BotProfileEdit(metadata: draft.metadataAfterSave, metadataExpectedRevision: 2)
+        do {
+            _ = try await client.configureProfile("default", edit: edit)
+            XCTFail("expected metadataConflict")
+        } catch let error as BotModeProfileError {
+            guard case .metadataConflict(let revisions, let conflicts) = error else {
+                return XCTFail("expected metadataConflict, got \(error)")
+            }
+            XCTAssertEqual(revisions["hermes-bots"], 5)
+            XCTAssertEqual(conflicts["hermes-bots"]?.actual, 5)
+        }
+        // The coordinator orders metadata first — the conflict path must
+        // never reach profiles.set_asset.
+        XCTAssertTrue(log.params(of: "profiles.set_asset").isEmpty,
+                      "a CAS conflict must not clear the previous image")
+    }
+
     // MARK: - generic ui_meta key write (sections registry)
 
     func testWriteUIMetaKeySendsOnlyThatKeyWithCAS() async throws {

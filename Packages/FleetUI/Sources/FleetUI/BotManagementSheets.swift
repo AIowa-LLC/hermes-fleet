@@ -169,8 +169,7 @@ public struct EditBotSheet: View {
     @State private var provider = ""
     @State private var hidden = false
     @State private var pinned = false
-    @State private var avatarShape = ""
-    @State private var avatarColor = ""
+    @State private var avatarDraft = BotAvatarAppearanceDraft.seeded(from: nil, hasAvatar: false)
     @State private var draftDescription: BotProfileDescription?
     @State private var baselineMetadata = BotModeMetadata()
     @State private var metadataRevision: Int?
@@ -181,6 +180,7 @@ public struct EditBotSheet: View {
     @State private var outcome: BotProfileEditOutcome?
     @State private var pendingModelEdit: BotProfileEdit?
     @State private var confirmMessage: String?
+    @State private var avatarStatus: String?
 
     public init(environment: AppEnvironment, bot: FleetBot) {
         self.environment = environment
@@ -192,17 +192,27 @@ public struct EditBotSheet: View {
             Form {
                 metadataSection
                 Section("Avatar") {
-                    BotAvatarEditor(environment: environment, bot: bot)
-                    Picker("Shape", selection: $avatarShape) {
+                    BotAvatarEditor(environment: environment, bot: bot, draft: $avatarDraft)
+                    Picker("Shape", selection: Binding(
+                        get: { avatarDraft.shape ?? "" },
+                        set: { avatarDraft.selectShape($0) })) {
                         Text("Deterministic default").tag("")
-                        ForEach(Array(Set(BotAvatarIdentity.pickerShapes + [avatarShape, "blobatar"]).subtracting([""])).sorted(), id: \.self) {
+                        ForEach(Array(Set(BotAvatarIdentity.pickerShapes + [avatarDraft.shape ?? "", "blobatar"]).subtracting([""])).sorted(), id: \.self) {
                             Text($0.capitalized).tag($0)
                         }
                     }.accessibilityIdentifier("fleet.bot.avatar.shape")
-                    TextField("Color (#RRGGBB)", text: $avatarColor)
+                    TextField("Color (#RRGGBB)", text: Binding(
+                        get: { avatarDraft.color ?? "" },
+                        set: { avatarDraft.selectColor($0.isEmpty ? nil : $0) }))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("fleet.bot.avatar.color")
+                    if let avatarStatus {
+                        Text(avatarStatus)
+                            .font(.caption)
+                            .foregroundStyle(FleetTheme.statusDestructive)
+                            .accessibilityIdentifier("fleet.bot.avatar.partial")
+                    }
                 }
                 soulSection
                 modelSection
@@ -368,8 +378,13 @@ public struct EditBotSheet: View {
         descriptionText = meta?.descriptionText ?? bot.profileDescription ?? ""
         hidden = meta?.hidden ?? false
         pinned = meta?.pinned ?? false
-        avatarShape = meta?.shape ?? ""
-        avatarColor = meta?.color ?? ""
+        // Seed the unified appearance draft from authoritative roster state
+        // (metadata + hasAvatar + cached bytes) — the preview renders it,
+        // and every picker interaction mutates only the draft.
+        avatarDraft = BotAvatarAppearanceDraft.seeded(
+            from: meta,
+            hasAvatar: bot.hasAvatar,
+            avatarBytes: environment.botManagement.avatarDataByRoute[bot.route])
         baselineMetadata = meta ?? BotModeMetadata()
         metadataRevision = bot.uiMetaRevisions?[BotModeContract.botsMetaKey]
         sectionID = meta?.sectionID
@@ -393,9 +408,14 @@ public struct EditBotSheet: View {
         isSubmitting = true
         defer { isSubmitting = false }
         errorMessage = nil
+        avatarStatus = nil
         var metadata = baselineMetadata
-        metadata.shape = avatarShape.isEmpty ? nil : avatarShape
-        metadata.color = avatarColor.isEmpty ? nil : avatarColor
+        // The unified appearance draft owns shape/color/custom/imageKind —
+        // one source of truth shared with the live preview.
+        metadata.shape = avatarDraft.metadataAfterSave.shape
+        metadata.color = avatarDraft.metadataAfterSave.color
+        metadata.custom = avatarDraft.metadataAfterSave.custom
+        metadata.imageKind = avatarDraft.metadataAfterSave.imageKind
         metadata.title = title.isEmpty ? nil : title
         if descriptionText != initialDescriptionText {
             metadata.descriptionText = descriptionText.isEmpty ? nil : descriptionText
@@ -404,8 +424,9 @@ public struct EditBotSheet: View {
         metadata.pinned = pinned == (baselineMetadata.pinned ?? false) ? baselineMetadata.pinned : pinned
         metadata.sectionID = sectionID
         let modelChanged = model != (loadedDescription?.defaultModel ?? "") || provider != (loadedDescription?.provider ?? "")
+        let appearanceDirty = avatarDraft.isDirty
         let edit = BotProfileEdit(
-            metadata: metadata == baselineMetadata ? nil : metadata,
+            metadata: (metadata == baselineMetadata && !appearanceDirty) ? nil : metadata,
             metadataExpectedRevision: metadataRevision,
             previousMetadataRaw: bot.uiMeta?[BotModeContract.botsMetaKey],
             soul: soul == (loadedDescription?.soul ?? "") ? nil : soul,
@@ -417,7 +438,23 @@ public struct EditBotSheet: View {
             enabledMCPServers: draftDescription?.mcpServers == loadedDescription?.mcpServers ? nil : draftDescription?.enabledMCPServerNames
         )
         do {
-            let result = try await environment.botManagement.applyEdit(edit, to: bot)
+            // #7: appearance changes ride the coordinated transaction
+            // (metadata CAS first, then the staged asset mutation) so a
+            // partial application is surfaced explicitly; everything else
+            // keeps the plain applyEdit path.
+            let result: BotProfileEditOutcome
+            if appearanceDirty || avatarDraft.image != .unchanged {
+                let appearance = try await environment.botManagement.applyAvatarAppearance(
+                    avatarDraft, edit: edit, to: bot)
+                result = appearance.editOutcome
+                if let partial = appearance.partialFailure {
+                    avatarStatus = partial
+                    await environment.refreshRoster()
+                    return
+                }
+            } else {
+                result = try await environment.botManagement.applyEdit(edit, to: bot)
+            }
             record(result, edit: edit)
             if result.confirmRequired {
                 pendingModelEdit = edit
