@@ -110,6 +110,10 @@ suites, module-boundary enforcement, the public-safety residue guard, and
 gitleaks. Run `make ci` (or the script directly) before opening a pull
 request.
 
+On GitHub, the same validation runs as parallel jobs (static guards, package
+tests, unit tests, UI-matrix shards) summarized by a single `CI Gate`
+check; locally `make ci` runs the identical phases in sequence.
+
 For the repository safety gates:
 
 ```sh

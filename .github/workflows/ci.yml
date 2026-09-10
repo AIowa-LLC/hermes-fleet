@@ -1,7 +1,10 @@
 name: CI
 
 # Paths-filtered to conserve free macOS runner minutes: CI only runs when
-# source/project/CI files change, not on docs/README-only edits.
+# source/project/CI files change, not on docs/README-only edits. This is the
+# docs-only optimization: ambiguous or unmatched paths fail CLOSED (no CI run
+# at all is created, so the ci-gate required check reports nothing to merge
+# against) — workflow/project/source changes always trigger real CI.
 on:
   push:
     branches: [main]
@@ -31,18 +34,87 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    name: Build & Test (macOS)
+  static-guards:
+    name: Static guards (xcodegen drift, boundaries, safety, gitleaks)
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 1
       - name: Install tools (xcodegen, gitleaks)
-        run: |
-          brew install xcodegen gitleaks
+        run: brew install xcodegen gitleaks
+      - name: Static phase
+        run: bash scripts/c1_static.sh
 
-      - name: Full CI validation
+  packages:
+    name: Package tests (FleetCore, Networking, Persistence, Security)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Package phase
+        run: bash scripts/c1_packages.sh
+
+  units:
+    name: Hosted unit tests (HermesFleetAppTests)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Unit phase
+        run: bash scripts/c1_units.sh
+
+  ui-shard:
+    name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
+    runs-on: macos-latest
+    # Observed runner pace (run 34405682516): ~10 min initial build + first
+    # boot, then ~3.5-11 min per suite. 10 suites/shard measured 54-61 min
+    # and brushed the old 60-min ceiling; 5 shards x 8 suites lands ~45 min.
+    # 75 min leaves stabilization headroom for slow runners.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+        shards: [5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run UI shard
+        run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
+
+      - name: Upload xcresults (failure diagnostics)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresults-shard-${{ matrix.shard }}
+          path: /tmp/hermes-c1-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  ci-gate:
+    name: CI Gate
+    needs: [static-guards, packages, units, ui-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every validation job to have succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          bash scripts/c1_ci_validate.sh
+          echo "CI Gate: a required validation job failed or was cancelled:"
+          echo "${{ toJSON(needs.*.result) }}"
+          exit 1
+      - name: Gate passed
+        run: |
+          echo "CI Gate: all required validation jobs succeeded."
