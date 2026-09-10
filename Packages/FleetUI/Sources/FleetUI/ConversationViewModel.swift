@@ -188,9 +188,13 @@ public final class ConversationViewModel {
     /// Non-secret discovery/dispatch compatibility or stale-command error.
     /// The composer keeps the text editable while this is shown.
     public private(set) var skillSuggestionError: String?
-    /// Whether the slash palette has content worth rendering above the input.
+    /// Whether the composer is currently editing slash-prefixed input. This
+    /// remains true for an empty catalog so the palette can honestly render
+    /// its "No skills available" state.
+    public private(set) var isSlashInputActive = false
+    /// Whether the slash palette should render above the input.
     public var isSlashPaletteVisible: Bool {
-        isLoadingSkillSuggestions || !skillSuggestions.isEmpty || skillSuggestionError != nil
+        isSlashInputActive || isLoadingSkillSuggestions || !skillSuggestions.isEmpty || skillSuggestionError != nil
     }
     /// R9-T1 — the approval banner state (pending request + YOLO readback).
     /// Lazily built once the session opens; nil when the concrete session
@@ -719,13 +723,16 @@ public final class ConversationViewModel {
         slashSuggestionGeneration += 1
         let generation = slashSuggestionGeneration
         guard let slashText = Self.normalizedSlashInput(text) else {
+            isSlashInputActive = false
             skillSuggestions = []
             skillSuggestionError = nil
             isLoadingSkillSuggestions = false
             return
         }
+        isSlashInputActive = true
         guard let sessionID = openedSessionID else {
             skillSuggestions = []
+            skillSuggestionError = nil
             isLoadingSkillSuggestions = false
             return
         }
@@ -778,6 +785,7 @@ public final class ConversationViewModel {
         skillSuggestions = []
         skillSuggestionError = nil
         isLoadingSkillSuggestions = false
+        isSlashInputActive = false
     }
 
     private struct SlashInvocation {

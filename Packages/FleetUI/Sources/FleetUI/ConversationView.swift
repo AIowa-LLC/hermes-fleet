@@ -810,6 +810,8 @@ public struct ConversationView: View {
                     .foregroundStyle(FleetTheme.statusDegraded)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, FleetTheme.spacingSm)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(error)
                     .accessibilityIdentifier("fleet.conversation.skill.error")
             } else if model.skillSuggestions.isEmpty && !model.isLoadingSkillSuggestions {
                 Text("No skills available in this Hermes profile")
@@ -817,6 +819,8 @@ public struct ConversationView: View {
                     .foregroundStyle(FleetTheme.textSecondary)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, FleetTheme.spacingSm)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("No skills available in this Hermes profile")
                     .accessibilityIdentifier("fleet.conversation.skill.empty")
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -857,6 +861,7 @@ public struct ConversationView: View {
                 .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
                 .frame(height: 1)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.conversation.skill.palette")
     }
 
