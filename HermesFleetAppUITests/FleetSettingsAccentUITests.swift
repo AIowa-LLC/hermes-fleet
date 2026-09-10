@@ -1,64 +1,105 @@
 import XCTest
 
-/// FOS-7 (SPEC §14) — the accent picker is RETIRED. These tests pin the
-/// fixed-token behavior that replaces the V7.5 chooser:
-///   1. Settings ▸ Appearance renders the System/Light/Dark preference and
-///      the "one consistent interface accent" note — and NO accent rows.
-///   2. Launching with a legacy persisted pick still renders the fixed
-///      screen (rollback value persistence itself is pinned in unit tests).
+/// Issue #6 — deterministic coverage for the V1 custom theme editor.
+///
+/// The class name remains in the existing FOS-7 inventory so the canonical UI
+/// matrix keeps running this settings lane. The old accent-picker assertions
+/// were retired because the product now exposes one applied three-color
+/// palette instead of the five-value accent enum.
 final class FleetSettingsAccentUITests: XCTestCase {
 
-    /// No accent picker: the old per-accent buttons are gone, the footer
-    /// explains the fixed accent, and the appearance picker still works.
-    func testAppearanceSectionHasNoAccentPickerAndExplainsFixedAccent() throws {
-        let app = XCUIApplication()
-        app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
-        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+    func testThemeEditorIsReachableAndOffersNativeColorPickers() throws {
+        let app = launchApp()
         UITabNavigation.openSettings(app)
+        openThemeEditor(app)
 
-        // The appearance preference remains.
-        let appearance = app.descendants(matching: .any)["fleet.settings.appearance"]
-        XCTAssertTrue(appearance.waitForExistence(timeout: 5),
-                      "System/Light/Dark appearance picker must remain in Settings ▸ Appearance")
-
-        // The fixed-accent note is present.
-        let note = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "one consistent interface accent")
-        ).firstMatch
-        XCTAssertTrue(note.waitForExistence(timeout: 5),
-                      "Appearance footer must explain the fixed Fleet accent")
-
-        // The retired accent rows must NOT render.
-        for raw in ["blue", "gold", "amber", "indigo", "green", "teal"] {
-            XCTAssertFalse(app.buttons["fleet.settings.accent.\(raw)"].exists,
-                           "accent row \(raw) must be gone (picker retired)")
+        for identifier in [
+            "fleet.theme.highlight",
+            "fleet.theme.text",
+            "fleet.theme.background"
+        ] {
+            let picker = app.descendants(matching: .any)[identifier]
+            XCTAssertTrue(picker.waitForExistence(timeout: 5),
+                          "native ColorPicker (identifier) should render")
         }
+
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.theme.preview"]
+            .waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["fleet.theme.contrast.text"]
+            .waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["fleet.theme.apply"]
+            .waitForExistence(timeout: 5))
+
+        // Reset and Apply are explicit, user-visible actions in the editor.
+        scrollToEditorAction(app, identifier: "fleet.theme.reset")
+        app.buttons["fleet.theme.reset"].tap()
+        app.buttons["fleet.theme.apply"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
     }
 
-    /// Rollback safety: a persisted V7.5 pick survives a relaunch (stored
-    /// value untouched) while the interface ignores it.
-    func testRetiredAccentPickPersistsButDoesNotApply() throws {
-        let app = XCUIApplication()
+    func testThemeEditorShowsLowContrastWarningAndCanReset() throws {
+        let app = launchApp(arguments: ["-issue6-low-contrast"])
+        UITabNavigation.openSettings(app)
+        openThemeEditor(app)
+
+        let warning = app.descendants(matching: .any)["fleet.theme.contrast.warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5),
+                      "the deterministic low-contrast fixture should warn")
+
+        scrollToEditorAction(app, identifier: "fleet.theme.reset")
+        app.buttons["fleet.theme.reset"].tap()
+        XCTAssertTrue(warning.waitForNonExistence(timeout: 5),
+                      "Reset should remove the low-contrast warning")
+        app.buttons["fleet.theme.apply"].tap()
+    }
+
+    func testArbitraryPaletteAppliesAndPersistsAfterRelaunch() throws {
+        let app = launchApp(arguments: ["-issue6-arbitrary-theme"])
+        UITabNavigation.openSettings(app)
+        openThemeEditor(app)
+
+        let highlight = app.descendants(matching: .any)["fleet.theme.highlight"]
+        XCTAssertTrue(highlight.waitForExistence(timeout: 5))
+        XCTAssertEqual(highlight.value as? String, "#1F74C9")
+        app.buttons["fleet.theme.apply"].tap()
+
+        app.terminate()
+        app.launchArguments = []
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openSettings(app)
+        openThemeEditor(app)
 
-        // No picker to tap — the stored value neither renders nor applies.
-        XCTAssertFalse(app.buttons["fleet.settings.accent.gold"].exists,
-                       "the retired pick renders no UI")
+        let persistedHighlight = app.descendants(matching: .any)["fleet.theme.highlight"]
+        XCTAssertTrue(persistedHighlight.waitForExistence(timeout: 5))
+        XCTAssertEqual(persistedHighlight.value as? String, "#1F74C9",
+                       "Apply must persist the arbitrary highlight palette value")
+    }
 
-        // The stored rollback value is still in UserDefaults (read through
-        // the app's own defaults domain via the settings screen state is not
-        // observable; the unit test testRetiredAccentControllerStillRoundTripsStoredValue
-        // pins persistence. Here we pin that relaunch with a legacy pick
-        // still renders the fixed-accent note — the pick did not resurrect
-        // the picker or crash the screen).
-        let note = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "one consistent interface accent")
-        ).firstMatch
-        XCTAssertTrue(note.waitForExistence(timeout: 5),
-                      "legacy stored pick must not resurrect the picker")
+    private func launchApp(arguments: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = arguments
+        app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        return app
+    }
+
+    private func openThemeEditor(_ app: XCUIApplication) {
+        let entry = app.buttons["fleet.settings.theme"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5),
+                      "Settings should expose the V1 theme editor")
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["Theme"].waitForExistence(timeout: 5))
+    }
+
+    private func scrollToEditorAction(_ app: XCUIApplication, identifier: String) {
+        let action = app.buttons[identifier]
+        for _ in 0..<6 where !action.exists {
+            app.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(action.waitForExistence(timeout: 5),
+                      "Theme editor action (identifier) should be reachable")
     }
 }

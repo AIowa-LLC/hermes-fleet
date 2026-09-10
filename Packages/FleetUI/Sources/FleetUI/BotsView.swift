@@ -13,6 +13,7 @@ import FleetCore
 /// surfaces with the avatar component, name, model/provider subtitle, and a
 /// `StatusPill` from the bot's real activity. Presentation-layer only.
 public struct BotsView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
 
@@ -43,7 +44,7 @@ public struct BotsView: View {
                 }
             }
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.bots")
     }
 
@@ -72,7 +73,7 @@ public struct BotsView: View {
             .padding(.vertical, FleetTheme.spacingSm)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(FleetTheme.background)
+        .background(theme.background)
     }
 
     /// U5 row spec: avatar + name + model/provider subtitle + status pill.
@@ -107,7 +108,7 @@ public struct BotsView: View {
                 Text("No Bots")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         } description: {
             Text("No profiles reported for this gateway. Connect and refresh the roster.")

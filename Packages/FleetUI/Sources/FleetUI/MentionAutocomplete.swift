@@ -15,6 +15,7 @@ import FleetCore
 /// The UI never presents the mention as proof a bot was pinged (binding
 /// mission rule).
 struct MentionAutocomplete: View {
+    @Environment(\.fleetTheme) private var theme
     /// Full composer draft.
     @Binding var draft: String
     /// Live fleet candidates.
@@ -36,21 +37,21 @@ struct MentionAutocomplete: View {
                                 HStack(spacing: FleetTheme.spacingSm) {
                                     Image(systemName: "at")
                                         .font(.caption.weight(.bold))
-                                        .foregroundStyle(FleetTheme.accent)
+                                        .foregroundStyle(theme.highlight)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(suggestion.displayTitle)
                                             .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(FleetTheme.textPrimary)
+                                            .foregroundStyle(theme.textPrimary)
                                         if let qualifier = suggestion.qualifier {
                                             Text(qualifier)
                                                 .font(FleetTheme.monoCaptionFont)
-                                                .foregroundStyle(FleetTheme.textSecondary)
+                                                .foregroundStyle(theme.textSecondary)
                                         }
                                     }
                                     Spacer()
                                     Text("@" + suggestion.insertText)
                                         .font(FleetTheme.monoCaptionFont)
-                                        .foregroundStyle(FleetTheme.textSecondary)
+                                        .foregroundStyle(theme.textSecondary)
                                 }
                                 .padding(.horizontal, FleetTheme.spacingMd)
                                 .padding(.vertical, 8)
@@ -63,7 +64,7 @@ struct MentionAutocomplete: View {
                     }
                 }
                 .frame(maxHeight: 180)
-                .background(FleetTheme.surfaceElevated)
+                .background(theme.surfaceElevated)
             }
         }
         .onAppear { track() }

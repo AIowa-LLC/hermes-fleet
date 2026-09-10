@@ -21,6 +21,7 @@ import FleetCore
 /// `session.list` and issues no mutating RPC; `session.create` runs only on
 /// the explicit New Conversation action inside the conversation canvas.
 public struct BotDetailView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let route: Route
 
@@ -68,7 +69,7 @@ public struct BotDetailView: View {
             // error — the CACHED sessions remain readable below it.
             await environment.loadSessions(for: route)
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.bot-detail")
     }
 
@@ -89,7 +90,7 @@ public struct BotDetailView: View {
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.vertical, FleetTheme.spacingMd)
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
     }
 
     // MARK: Compact identity header (FOS-5) — portrait, title, gateway,
@@ -106,14 +107,14 @@ public struct BotDetailView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(bot.displayName)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .lineLimit(2)
                         // Gateway disclosure: friendly name; the full route
                         // stays in Configuration (§9: avoid routine
                         // gatewayID#profileSlug strings in headers).
                         Text(gatewayName)
                             .font(.footnote)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                     Spacer()
@@ -130,16 +131,16 @@ public struct BotDetailView: View {
                     Text(activityText(bot.activity))
                 }
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 if let model = bot.model, let provider = bot.provider {
                     Text("\(model) · \(provider)")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 } else if let model = bot.model {
                     Text(model)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
                 if bot.gatewayRunning {
@@ -150,7 +151,7 @@ public struct BotDetailView: View {
                     // readable. Writes need the owning gateway online.
                     Label("Last known — offline from this phone", systemImage: "wifi.slash")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.bot-detail.ghost")
                 }
 
@@ -207,7 +208,7 @@ public struct BotDetailView: View {
         NavigationLink(value: FleetScreen.conversation(route, sessionID: nil)) {
             Label("New Session", systemImage: "plus.circle.fill")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, FleetTheme.spacingSm)
         }
@@ -228,7 +229,7 @@ public struct BotDetailView: View {
             } else {
                 Text("No cached sessions on this phone.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("fleet.bot-detail.sessions.empty")
             }
         } else if isLoading {
@@ -237,7 +238,7 @@ public struct BotDetailView: View {
                     .controlSize(.small)
                 Text("Loading sessions…")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("fleet.bot-detail.sessions.loading")
@@ -246,15 +247,15 @@ public struct BotDetailView: View {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                     Label("Could not load sessions", systemImage: "exclamationmark.triangle")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text(readError)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Button("Retry") {
                         Task { await environment.loadSessions(for: route) }
                     }
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                 }
             }
             .accessibilityElement(children: .contain)
@@ -262,7 +263,7 @@ public struct BotDetailView: View {
         } else if let sessions, sessions.isEmpty {
             Text("No sessions yet.")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityIdentifier("fleet.bot-detail.sessions.empty")
         } else {
             VStack(spacing: FleetTheme.spacingSm) {
@@ -336,7 +337,7 @@ public struct BotDetailView: View {
                     systemImage: "wifi.slash"
                 )
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityIdentifier("fleet.bot-detail.writes-offline")
             } else {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
@@ -376,7 +377,7 @@ public struct BotDetailView: View {
 
             Text("Conversations refresh when you open this agent. Your chats stay connected to their original gateway.")
                 .font(.caption2)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .padding(.top, FleetTheme.spacingXs)
         }
     }
@@ -402,7 +403,7 @@ public struct BotDetailView: View {
                 Text("Bot Unavailable")
             } icon: {
                 Image(systemName: "questionmark.circle")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         } description: {
             Text("This bot is not in the current roster. Refresh the fleet.")
@@ -436,6 +437,7 @@ public struct BotDetailView: View {
 
 /// A `session.list` row: title + preview + message count + start time.
 private struct SessionRowView: View {
+    @Environment(\.fleetTheme) private var theme
     let session: SessionSummary
 
     var body: some View {
@@ -444,12 +446,12 @@ private struct SessionRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title.isEmpty ? "Untitled session" : session.title)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(2)
                 if !session.preview.isEmpty {
                     Text(session.preview)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(2)
                 }
                 HStack(spacing: FleetTheme.spacingSm) {
@@ -466,7 +468,7 @@ private struct SessionRowView: View {
                 // V3: session metadata (count · source · date) is telemetry —
                 // mono caption, the terminal voice.
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
             }
         }

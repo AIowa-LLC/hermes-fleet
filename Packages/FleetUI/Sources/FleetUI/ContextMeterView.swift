@@ -7,6 +7,7 @@ import FleetCore
 /// data renders NOTHING (never a fabricated 0%); a snapshot with no gauge
 /// (`hasContextGauge == false`) renders an honest "ctx —" pill.
 public struct ContextMeterView: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ConversationToolingViewModel
     /// Called when the meter is tapped (the host presents the breakdown).
     let onTap: () -> Void
@@ -20,7 +21,7 @@ public struct ContextMeterView: View {
         switch model.meterLevel {
         case .alert: return FleetTheme.statusDestructive
         case .warn: return FleetTheme.statusNeedsIntervention
-        case .normal, nil: return FleetTheme.accent
+        case .normal, nil: return theme.highlight
         }
     }
 
@@ -35,7 +36,7 @@ public struct ContextMeterView: View {
                 if let usage = model.usage, usage.hasContextGauge {
                     // Thin capsule: 44pt wide track, filled by percent.
                     Capsule()
-                        .fill(FleetTheme.surfaceElevated)
+                        .fill(theme.surfaceElevated)
                         .frame(width: 44, height: 4)
                         .overlay(alignment: .leading) {
                             GeometryReader { geo in
@@ -57,20 +58,20 @@ public struct ContextMeterView: View {
                     // occupancy (server.py:7542) — "ctx" with an em dash.
                     Image(systemName: "gauge.with.dots.needle.0percent")
                         .font(.caption2)
-                        .foregroundStyle(FleetTheme.textMuted)
+                        .foregroundStyle(theme.textMuted)
                     Text("ctx —")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textMuted)
+                        .foregroundStyle(theme.textMuted)
                 } else {
                     Image(systemName: "gauge.with.dots.needle.0percent")
                         .font(.caption2)
-                        .foregroundStyle(FleetTheme.textMuted)
+                        .foregroundStyle(theme.textMuted)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(FleetTheme.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(FleetTheme.border, lineWidth: 1))
+            .background(theme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
         }
         .buttonStyle(.fleetPressable)
         .accessibilityLabel(accessibilityLabel)
@@ -96,6 +97,7 @@ public struct ContextMeterView: View {
 /// R9-T3 — context breakdown sheet: per-category token rows (UPPERCASE-KEY
 /// mono, the Health dashboard pattern) + the usage summary.
 public struct ContextBreakdownSheet: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ConversationToolingViewModel
 
     @Environment(\.dismiss) private var dismiss
@@ -110,7 +112,7 @@ public struct ContextBreakdownSheet: View {
                 if model.isLoadingBreakdown && model.breakdown == nil {
                     ProgressView("Computing breakdown…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } else if let error = model.contextError, model.breakdown == nil {
                     ContentUnavailableView {
                         Label("Breakdown Unavailable", systemImage: "chart.bar")
@@ -129,11 +131,11 @@ public struct ContextBreakdownSheet: View {
             }
             .navigationTitle("Context")
             .navigationBarTitleDisplayMode(.inline)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                         .accessibilityIdentifier("context.breakdown.done")
                 }
             }
@@ -162,7 +164,7 @@ public struct ContextBreakdownSheet: View {
                         }
                     }
                     .padding(FleetTheme.spacingSm)
-                    .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusCard))
+                    .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusCard))
                 }
                 if let usage = model.usage, usage.calls > 0 {
                     usageFooter(usage)
@@ -176,7 +178,7 @@ public struct ContextBreakdownSheet: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
             Text("Context")
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingSm) {
                 Text("\(breakdown.contextPercent)%")
                     .font(FleetTheme.statFont)
@@ -184,12 +186,12 @@ public struct ContextBreakdownSheet: View {
                     .contentTransition(.numericText())
                 Text("\(Self.compact(breakdown.contextUsed)) / \(Self.compact(breakdown.contextMax)) tokens")
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             if !breakdown.model.isEmpty {
                 Text(breakdown.model)
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(FleetTheme.textMuted)
+                    .foregroundStyle(theme.textMuted)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -203,16 +205,16 @@ public struct ContextBreakdownSheet: View {
         HStack(spacing: FleetTheme.spacingMd) {
             Text(category.label)
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
             Spacer()
             Text(Self.compact(category.tokens))
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .monospacedDigit()
             Text("\(max(0, min(100, category.tokens * 100 / total)))%")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textMuted)
+                .foregroundStyle(theme.textMuted)
                 .monospacedDigit()
                 .frame(width: 44, alignment: .trailing)
         }
@@ -227,7 +229,7 @@ public struct ContextBreakdownSheet: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
             Text("Session usage")
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             HStack(spacing: FleetTheme.spacingXl) {
                 stat("CALLS", "\(usage.calls)")
                 stat("IN", Self.compact(usage.input))
@@ -244,10 +246,10 @@ public struct ContextBreakdownSheet: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(key)
                 .font(FleetTheme.microLabelFont)
-                .foregroundStyle(FleetTheme.textMuted)
+                .foregroundStyle(theme.textMuted)
             Text(value)
                 .font(FleetTheme.monoFont)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .monospacedDigit()
         }
     }
@@ -256,7 +258,7 @@ public struct ContextBreakdownSheet: View {
         switch ContextMeterLevel.level(forPercent: percent) {
         case .alert: return FleetTheme.statusDestructive
         case .warn: return FleetTheme.statusNeedsIntervention
-        case .normal: return FleetTheme.accent
+        case .normal: return theme.highlight
         }
     }
 

@@ -11,6 +11,7 @@ import FleetCore
 /// require explicit selection, and nothing ever silently falls back to the
 /// first profile or `default`.
 struct GatewayResourceView: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let gatewayID: GatewayID
     let screen: FleetScreen
@@ -115,7 +116,7 @@ struct GatewayResourceView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(environment.gateway(for: gatewayID)?.displayName ?? gatewayID.rawValue)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text("Profile: \(selected.rawValue)")
                     .font(.footnote.weight(.semibold))
                     .accessibilityIdentifier("fleet.scope.profileName.\(gatewayID.rawValue)")
@@ -158,7 +159,7 @@ struct GatewayResourceView: View {
                             Text(candidate.botName)
                             Text("Profile: \(candidate.profileSlug.rawValue)")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                     }
                     .accessibilityIdentifier("fleet.scope.option.\(gatewayID.rawValue)#\(candidate.profileSlug.rawValue)")

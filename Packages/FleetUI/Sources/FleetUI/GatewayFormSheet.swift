@@ -23,6 +23,7 @@ import UIKit
 /// text ONLY while the sheet is open; it is cleared on Cancel and on
 /// successful Save.
 struct GatewayFormSheet: View {
+    @Environment(\.fleetTheme) private var theme
     private let title: String
     private let saveButton: String
     /// Non-nil when editing an existing gateway (prefill / registration id).
@@ -59,7 +60,7 @@ struct GatewayFormSheet: View {
             Form {
                 Section {
                     TextField("Display Name", text: $draftStore.displayName)
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .accessibilityIdentifier("fleet.gateways.form.name")
                     // P0-2: paste button next to the URL field.
                     HStack(spacing: 8) {
@@ -72,7 +73,7 @@ struct GatewayFormSheet: View {
                     }
                 } header: {
                     Text("Gateway")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
 
                 // C1 IA re-order (design): manual entry / URL is the tier-1
@@ -84,16 +85,16 @@ struct GatewayFormSheet: View {
                         isShowingScanner = true
                     } label: {
                         Label("Scan Pairing Code", systemImage: "qrcode.viewfinder")
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.scan")
                 } header: {
                     Text("Pairing Code (Optional)")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } footer: {
                     Text("Requires gateway pairing support. Enter the address and credentials above instead.")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.gateways.form.scan.support-note")
                 }
 
@@ -157,7 +158,7 @@ struct GatewayFormSheet: View {
                     }
                 } header: {
                     Text("Authentication")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
 
                 // P2-6: inline, non-secret save-failure message. The sheet stays
@@ -182,7 +183,7 @@ struct GatewayFormSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -198,12 +199,12 @@ struct GatewayFormSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(saveButton) { save() }
                         .disabled(!isValid || isSaving)
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                         .accessibilityIdentifier("fleet.gateways.form.save")
                 }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(theme.highlight)
         // F2: camera pairing scanner — successful scan fills the draft and
         // returns here for Save.
         .sheet(isPresented: $isShowingScanner) {

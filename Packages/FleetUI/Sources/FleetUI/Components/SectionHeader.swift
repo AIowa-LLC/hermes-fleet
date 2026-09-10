@@ -10,6 +10,7 @@ import SwiftUI
 /// concrete route type — erasing to `AnyHashable` breaks the tab shell's
 /// `navigationDestination(for:)` type matching (U4 lesson).
 public struct SectionHeader<D: Hashable>: View {
+    @Environment(\.fleetTheme) private var theme
     private let title: String
     private let actionTitle: String
     private let action: (() -> Void)?
@@ -52,20 +53,20 @@ public struct SectionHeader<D: Hashable>: View {
         HStack {
             Text(title)
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Spacer()
             if let linkDestination {
                 NavigationLink(value: linkDestination) {
                     Text(actionTitle)
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                 }
                 .accessibilityLabel("\(actionTitle) \(title)")
             } else if let action {
                 Button(action: action) {
                     Text(actionTitle)
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                 }
                 .accessibilityLabel("\(actionTitle) \(title)")
             }

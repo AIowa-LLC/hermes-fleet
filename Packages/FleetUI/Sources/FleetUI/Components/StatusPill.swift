@@ -8,6 +8,7 @@ import SwiftUI
 /// Motion (SPEC §15): one 150–200 ms crossfade when the status changes;
 /// Reduce Motion replaces it with an instant label swap.
 public struct StatusPill: View {
+    @Environment(\.fleetTheme) private var theme
     private let status: FleetStatus
 
     public init(status: FleetStatus) {
@@ -15,20 +16,21 @@ public struct StatusPill: View {
     }
 
     public var body: some View {
+        let semanticColor = theme.semanticStatusColor(for: status)
         HStack(spacing: FleetTheme.spacingXs) {
             Image(systemName: status.symbolName)
                 .font(.system(size: Self.symbolFontSize, weight: .semibold))
-                .foregroundStyle(status.color)
+                .foregroundStyle(semanticColor)
                 .accessibilityHidden(true)
             Text(status.label)
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(status.labelColor)
+                .foregroundStyle(theme.textPrimary)
         }
         .padding(.horizontal, FleetTheme.spacingSm)
         .padding(.vertical, FleetTheme.spacingXs)
-        .background(Capsule().fill(FleetTheme.statusPillTint(status.color)))
+        .background(Capsule().fill(FleetTheme.statusPillTint(semanticColor)))
         .overlay(
-            Capsule().strokeBorder(status.color.opacity(Self.strokeOpacity), lineWidth: 1)
+            Capsule().strokeBorder(semanticColor.opacity(Self.strokeOpacity), lineWidth: 1)
         )
         // SPEC §15: one 150–200 ms status crossfade; instant under Reduce Motion.
         .animation(reduceMotion ? nil : .easeInOut(duration: Self.crossfadeDuration), value: status)

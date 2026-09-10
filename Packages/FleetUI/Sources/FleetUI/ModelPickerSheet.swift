@@ -7,6 +7,7 @@ import FleetCore
 /// provider}` only — never `config.set`, never the profile default (the
 /// desktop rule; methods_session.py:50-53).
 public struct ModelPickerSheet: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Bindable var model: ConversationToolingViewModel
     /// Called with the picked choice (or nil = follow profile default).
@@ -30,7 +31,7 @@ public struct ModelPickerSheet: View {
                     ProgressView("Loading models…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } else if let error = model.modelLoadError, model.modelChoices == nil {
                     ContentUnavailableView {
                         Label("Models Unavailable", systemImage: "cpu")
@@ -53,12 +54,12 @@ public struct ModelPickerSheet: View {
             }
             .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .searchable(text: $searchText, prompt: "Search models")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                         .accessibilityIdentifier("model.picker.close")
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -67,7 +68,7 @@ public struct ModelPickerSheet: View {
                         model.select(nil)
                         onPick(nil)
                     }
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .disabled(model.selectedModel == nil)
                     .accessibilityLabel("Reset to profile default model")
                     .accessibilityIdentifier("model.picker.reset")
@@ -109,15 +110,15 @@ public struct ModelPickerSheet: View {
                         HStack(spacing: FleetTheme.spacingSm) {
                             Text(group.name.isEmpty ? group.slug : group.name)
                                 .font(FleetTheme.sectionHeaderFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                             Spacer()
                             Text(group.slug)
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textMuted)
+                                .foregroundStyle(theme.textMuted)
                         }
                         .padding(.horizontal, FleetTheme.spacingLg)
                         .padding(.vertical, FleetTheme.spacingSm)
-                        .background(FleetTheme.surface)
+                        .background(theme.surface)
                         .accessibilityElement(children: .combine)
                     }
                 }
@@ -137,14 +138,14 @@ public struct ModelPickerSheet: View {
         HStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: "pin.fill")
                 .font(.caption)
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Sticky pick — new chats on this device")
                     .font(FleetTheme.microLabelFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text(selected.model)
                     .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -154,12 +155,12 @@ public struct ModelPickerSheet: View {
                 onPick(nil)
             }
             .font(FleetTheme.secondaryFont)
-            .foregroundStyle(FleetTheme.accent)
+            .foregroundStyle(theme.highlight)
             .accessibilityIdentifier("model.picker.clear")
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, FleetTheme.spacingSm)
-        .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.top, FleetTheme.spacingSm)
         .accessibilityElement(children: .combine)
@@ -175,18 +176,18 @@ public struct ModelPickerSheet: View {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: choice.isCurrent ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(choice.isCurrent ? FleetTheme.accent : FleetTheme.textMuted)
+                    .foregroundStyle(choice.isCurrent ? theme.highlight : theme.textMuted)
                     .accessibilityHidden(true)
                 Text(choice.model)
                     .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 if choice.isCurrent {
                     Text("Current")
                         .font(FleetTheme.microLabelFont)
-                        .foregroundStyle(FleetTheme.textMuted)
+                        .foregroundStyle(theme.textMuted)
                 }
             }
             .padding(.horizontal, FleetTheme.spacingLg)

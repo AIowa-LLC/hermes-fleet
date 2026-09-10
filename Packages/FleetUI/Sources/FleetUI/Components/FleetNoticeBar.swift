@@ -10,18 +10,11 @@ import SwiftUI
 /// present (repo lesson: a container identifier/combine overrides child
 /// ids). Without an action the bar is one combined VoiceOver stop.
 public struct FleetNoticeBar: View {
+    @Environment(\.fleetTheme) private var theme
     public enum Tone {
         case info
         case warning
         case error
-
-        var symbolColor: Color {
-            switch self {
-            case .info: FleetTheme.textSecondary
-            case .warning: FleetTheme.statusNeedsIntervention
-            case .error: FleetTheme.statusDestructive
-            }
-        }
     }
 
     private let text: String
@@ -71,11 +64,11 @@ public struct FleetNoticeBar: View {
         HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingMd) {
             Image(systemName: systemImage)
                 .font(.footnote)
-                .foregroundStyle(tone.symbolColor)
+                .foregroundStyle(symbolColor)
                 .accessibilityHidden(true)
             Text(text)
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(tone == .info ? FleetTheme.textSecondary
+                .foregroundStyle(tone == .info ? theme.textSecondary
                     : (tone == .warning ? FleetTheme.statusNeedsIntervention : FleetTheme.statusDestructive))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -84,7 +77,7 @@ public struct FleetNoticeBar: View {
                     Text(actionTitle)
                         .font(.footnote.weight(.semibold))
                 }
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier(actionID ?? "\(id).action")
             }
@@ -92,6 +85,14 @@ public struct FleetNoticeBar: View {
         .padding(.vertical, 2)
         .accessibilityElement(children: action == nil ? .combine : .contain)
         .accessibilityIdentifier(id)
+    }
+
+    private var symbolColor: Color {
+        switch tone {
+        case .info: theme.textSecondary
+        case .warning: FleetTheme.statusNeedsIntervention
+        case .error: FleetTheme.statusDestructive
+        }
     }
 }
 

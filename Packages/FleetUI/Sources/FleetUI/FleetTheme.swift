@@ -186,6 +186,11 @@ public enum FleetTheme {
     public static let statusDestructive: Color = adaptive(
         dark: FleetColors.destructiveDark, light: FleetColors.destructiveLight)
 
+    /// Neutral status reinforcement for waiting, offline, and unknown. This
+    /// remains a platform semantic label rather than inheriting a user's
+    /// custom primary/secondary text choice.
+    public static let statusNeutral: Color = Color(uiColor: .secondaryLabel)
+
     /// Waiting, offline, and unknown never take an alarm tint — they render
     /// as secondary label (SPEC §14 waiting/offline/unknown rows).
 

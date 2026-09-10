@@ -11,6 +11,7 @@ import FleetCore
 /// (pull-to-refresh), honest empty state, thin offline banner when a
 /// snapshot survives a live failure.
 public struct ProjectsView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let profile: ProfileSlug
@@ -36,7 +37,7 @@ public struct ProjectsView: View {
                 unavailableContent
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle("Projects")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: profileScope) {
@@ -72,7 +73,7 @@ public struct ProjectsView: View {
             } else if model.isLoading && model.tree == nil {
                 ProgressView("Mapping projects…")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let tree = model.tree, tree.projects.isEmpty {
                 emptyContent
@@ -145,22 +146,22 @@ public struct ProjectsView: View {
         }
         return HStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: "scope")
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(projectLabel.map { "From transcript — in \($0)" } ?? "From transcript")
                     .font(FleetTheme.monoCaptionFont.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                 Text(path)
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(2)
             }
             Spacer()
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(FleetTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .background(theme.highlight.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
         // Explicit combined label: the visually-truncated path text is
         // not reliably folded into the element's accessibility label.
         .accessibilityLabel(
@@ -176,41 +177,41 @@ public struct ProjectsView: View {
         HStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: project.isNoProject
                   ? "tray" : (project.isAuto ? "folder.badge.gearshape" : "folder"))
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(project.label)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     if isFocusedProject {
                         // R10-T3 round 2 — tap-through target badge: the
                         // containing project of the referenced file.
                         Text("referenced")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(theme.highlight)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(FleetTheme.accent.opacity(0.15), in: Capsule())
+                            .background(theme.highlight.opacity(0.15), in: Capsule())
                     }
                     if isActiveProject {
                         Text("active")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(theme.highlight)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(FleetTheme.accent.opacity(0.15), in: Capsule())
+                            .background(theme.highlight.opacity(0.15), in: Capsule())
                     }
                 }
                 Text(projectSubtitle(project))
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
             Spacer()
             Text("\(project.sessionCount)")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityLabel("\(project.sessionCount) sessions")
         }
         .padding(.vertical, 2)
@@ -232,16 +233,16 @@ public struct ProjectsView: View {
         Section {
             HStack(spacing: FleetTheme.spacingSm) {
                 Image(systemName: "wifi.slash")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(text)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     if let capturedAt {
                         Text("Snapshot \(capturedAt, style: .relative) ago")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
                 Spacer()
@@ -252,7 +253,7 @@ public struct ProjectsView: View {
                 .accessibilityIdentifier("fleet.projects.retry")
             }
         }
-        .listRowBackground(FleetTheme.surfaceElevated)
+        .listRowBackground(theme.surfaceElevated)
         .accessibilityIdentifier("fleet.projects.offline-banner")
     }
 
@@ -269,10 +270,10 @@ public struct ProjectsView: View {
         VStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.largeTitle)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Text(text)
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
             Button("Retry") {
                 Task { await model.reload(profile: profileScope) }
@@ -288,13 +289,13 @@ public struct ProjectsView: View {
         VStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: "externaldrive.badge.xmark")
                 .font(.largeTitle)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Text("Projects unavailable")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text("This gateway has no projects surface configured.")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(FleetTheme.spacingLg)
@@ -312,6 +313,7 @@ public enum ProjectDrillRoute: Hashable, Sendable {
 /// rows (`projects.project_sessions`). Tapping a session opens the
 /// conversation via the existing `FleetScreen.conversation` route.
 public struct ProjectDrillView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let projectID: String
@@ -345,11 +347,11 @@ public struct ProjectDrillView: View {
             } else {
                 ProgressView("Loading project…")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle(detail?.label ?? "Project")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: projectID) {
@@ -385,7 +387,7 @@ public struct ProjectDrillView: View {
                         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                             Text(repo.label)
                                 .font(FleetTheme.monoCaptionFont.weight(.semibold))
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .padding(.top, FleetTheme.spacingSm)
                             ForEach(repo.groups) { lane in
                                 laneRows(lane)
@@ -409,15 +411,15 @@ public struct ProjectDrillView: View {
                   ? "square.grid.3x3"
                   : (lane.isMain ? "arrow.trunk.branch" : "arrow.triangle.branch"))
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityHidden(true)
             Text(lane.label)
                 .font(FleetTheme.monoCaptionFont.weight(.semibold))
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Spacer()
             Text("\(lane.sessions.count)")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .accessibilityIdentifier("fleet.projects.lane.\(lane.label)")
         ForEach(lane.sessions) { session in
@@ -437,7 +439,7 @@ public struct ProjectDrillView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title.isEmpty ? session.id : session.title)
                     .font(.body)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     if !session.gitBranch.isEmpty {
@@ -448,7 +450,7 @@ public struct ProjectDrillView: View {
                     }
                 }
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
             }
             .padding(.vertical, 2)

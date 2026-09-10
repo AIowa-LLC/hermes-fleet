@@ -11,6 +11,7 @@ import SwiftUI
 /// Hidden when false (the multiplexer steady state — no visual noise for the
 /// common case); a caption-size token-style chip when true.
 public struct GatewayRunningBadge: View {
+    @Environment(\.fleetTheme) private var theme
     private let isRunning: Bool
 
     public init(isRunning: Bool) {
@@ -25,11 +26,11 @@ public struct GatewayRunningBadge: View {
                 Text("Own gateway")
                     .font(.caption2.weight(.semibold))
             }
-            .foregroundStyle(FleetTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .background(
-                Capsule().fill(FleetTheme.textSecondary.opacity(0.12))
+                Capsule().fill(theme.textSecondary.opacity(0.12))
             )
             .accessibilityLabel("Runs its own gateway process")
             .accessibilityIdentifier("fleet.bot.own-gateway-badge")

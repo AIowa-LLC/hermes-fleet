@@ -1,7 +1,7 @@
 #!/bin/bash
 # C1 static phase — repository guards that need no simulator.
 #   xcodegen generate -> drift gate -> FleetUI module boundary ->
-#   public-safety residue guard -> gitleaks (tip commit, CI semantics)
+#   theme call-site audit -> public-safety residue guard -> gitleaks
 # Used standalone by CI (job: static-guards) and by c1_ci_validate.sh.
 set -u
 cd "$(dirname "$0")/.."
@@ -36,6 +36,14 @@ if [ -z "$HITS" ]; then
   ok "FleetUI has 0 'import FleetNetworking' (M0 hard guard preserved)"
 else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
+fi
+
+# --- theme call-site audit ----------------------------------------------------
+note "Theme call-site audit"
+if bash scripts/theme_callsite_audit.sh >/tmp/c1_theme.log 2>&1; then
+  ok "theme call-site audit: runtime product colors use FleetThemeValues"
+else
+  bad "theme call-site audit FAILED"; cat /tmp/c1_theme.log
 fi
 
 # --- public-safety residue guard ----------------------------------------------

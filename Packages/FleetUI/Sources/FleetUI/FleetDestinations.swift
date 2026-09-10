@@ -12,6 +12,7 @@ struct FleetChatEntry: Identifiable {
 /// bot carries its owning gateway; picking one + explicit Create opens an
 /// ordinary session on THAT bot's route. Never a silent first gateway.
 struct ComposeBotPickerSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -42,10 +43,10 @@ struct ComposeBotPickerSheet: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(candidate.bot.displayName)
                                 .font(.body.weight(.semibold))
-                                .foregroundStyle(FleetTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                             Text("\(candidate.bot.route.profileSlug.rawValue) · \(candidate.gatewayName)")
                                 .font(.caption)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                     }
                 }
@@ -60,13 +61,14 @@ struct ComposeBotPickerSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .scrollContentBackground(.hidden).background(FleetTheme.background)
+            .scrollContentBackground(.hidden).background(theme.background)
         }
         .accessibilityIdentifier("fleet.chats.compose")
     }
 }
 
 struct FleetChatsView: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
@@ -111,7 +113,7 @@ struct FleetChatsView: View {
                     showingCompose = true
                 } label: {
                     Label("Start a conversation", systemImage: "square.and.pencil")
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                 }.accessibilityIdentifier("fleet.chats.new")
                 Picker("Gateway", selection: $gatewayID) {
                     Text("All gateways").tag(Optional<GatewayID>.none)
@@ -127,7 +129,7 @@ struct FleetChatsView: View {
             if !environment.sessionReadErrors.isEmpty {
                 Section {
                     Label("Some conversations could not refresh. Previously loaded chats may be out of date.", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                        .font(.footnote).foregroundStyle(FleetTheme.textSecondary)
+                        .font(.footnote).foregroundStyle(theme.textSecondary)
                     Button("Retry") { Task { await refresh() } }
                 }
             }
@@ -140,16 +142,16 @@ struct FleetChatsView: View {
                     NavigationLink(value: FleetScreen.conversation(entry.route, sessionID: entry.session.id)) {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)
-                                .font(.headline).foregroundStyle(FleetTheme.textPrimary).lineLimit(2)
+                                .font(.headline).foregroundStyle(theme.textPrimary).lineLimit(2)
                             if !entry.session.preview.isEmpty {
                                 Text(entry.session.preview).font(.subheadline)
-                                    .foregroundStyle(FleetTheme.textSecondary).lineLimit(2)
+                                    .foregroundStyle(theme.textSecondary).lineLimit(2)
                             }
                             Text("\(botDisplayName(entry.route)) · \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? entry.route.gatewayID.rawValue)")
-                                .font(.caption).foregroundStyle(FleetTheme.accent)
+                                .font(.caption).foregroundStyle(theme.highlight)
                             if isRetainedDuringOutage(entry) {
                                 Label("Last synced — bot offline from this phone", systemImage: "wifi.slash")
-                                    .font(.caption2).foregroundStyle(FleetTheme.textSecondary)
+                                    .font(.caption2).foregroundStyle(theme.textSecondary)
                                     .accessibilityIdentifier("fleet.chats.retained.\(entry.id)")
                             }
                         }.padding(.vertical, 6)
@@ -162,14 +164,14 @@ struct FleetChatsView: View {
             if !query.isEmpty {
                 Section {
                     Text("Search loaded conversations")
-                        .font(.caption).foregroundStyle(FleetTheme.textSecondary)
+                        .font(.caption).foregroundStyle(theme.textSecondary)
                 }
             }
         }
         .sheet(isPresented: $showingCompose) {
             ComposeBotPickerSheet(environment: environment)
         }
-        .scrollContentBackground(.hidden).background(FleetTheme.background)
+        .scrollContentBackground(.hidden).background(theme.background)
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")
         .refreshable { await refresh() }.task { await refresh() }
         .accessibilityIdentifier("fleet.chats")
@@ -299,6 +301,7 @@ struct FleetCommandCenterResults {
 }
 
 struct FleetCommandCenter: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let navigate: (FleetScreen) -> Void
     let selectTab: (FleetTab) -> Void
@@ -353,7 +356,7 @@ struct FleetCommandCenter: View {
             .searchable(text: $query, prompt: "Find a bot, conversation, or destination")
             .navigationTitle("Command Center").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .scrollContentBackground(.hidden).background(FleetTheme.background)
+            .scrollContentBackground(.hidden).background(theme.background)
         }
         .accessibilityIdentifier("fleet.command-center")
     }
@@ -377,13 +380,13 @@ struct FleetCommandCenter: View {
                     Button { open(item.screen) } label: {
                         HStack(spacing: 8) {
                             Image(systemName: icon)
-                                .foregroundStyle(FleetTheme.accent)
+                                .foregroundStyle(theme.highlight)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.title)
                                 Text(item.subtitle)
                                     .font(.caption)
-                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .foregroundStyle(theme.textSecondary)
                             }
                         }
                     }
@@ -392,7 +395,7 @@ struct FleetCommandCenter: View {
                 if items.count > 10 {
                     Text("Show more — \(items.count - 10) more")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             } header: {
                 Text("\(title) — \(items.count)")

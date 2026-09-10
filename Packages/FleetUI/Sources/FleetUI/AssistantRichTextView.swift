@@ -24,6 +24,7 @@ public struct AssistantRichTextView: View {
     @StateObject private var model: AssistantRichTextModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.fleetTheme) private var theme
 
     public init(markdown: String, isStreaming: Bool, identity: String) {
         self.markdown = markdown
@@ -40,6 +41,7 @@ public struct AssistantRichTextView: View {
         StreamedMarkdownView(
             source: model.source,
             config: FleetMarkdownRenderConfiguration.make(
+                theme: theme,
                 reduceMotion: reduceMotion,
                 dynamicTypeSize: dynamicTypeSize))
         // A row identity is stable for a message. If SwiftUI ever reuses this
@@ -404,6 +406,7 @@ private final class AssistantRichTextModel: ObservableObject {
 // public rendering surface.
 enum FleetMarkdownRenderConfiguration {
     static func make(
+        theme: FleetThemeValues = .default,
         reduceMotion: Bool,
         dynamicTypeSize: DynamicTypeSize
     ) -> MarkdownRenderConfig {
@@ -423,7 +426,7 @@ enum FleetMarkdownRenderConfiguration {
             // No token/reveal animation is used, even when Reduce Motion is
             // off; this is both calmer for chat and avoids per-delta flicker.
             shouldAnimateText: false && !reduceMotion,
-            blockQuoteStyle: .init(textFonts: body, textColor: FleetTheme.textSecondary),
+            blockQuoteStyle: .init(textFonts: body, textColor: theme.textSecondary),
             headingStyle: .init(
                 h1Font: heading1,
                 h2Font: heading2,
@@ -431,38 +434,38 @@ enum FleetMarkdownRenderConfiguration {
                 h4Font: heading3,
                 h5Font: small,
                 h6Font: small,
-                textColor: FleetTheme.textPrimary),
-            orderedListStyle: .init(textFonts: body, textColor: FleetTheme.textPrimary),
-            paragraphStyle: .init(textFonts: body, textColor: FleetTheme.textPrimary),
+                textColor: theme.textPrimary),
+            orderedListStyle: .init(textFonts: body, textColor: theme.textPrimary),
+            paragraphStyle: .init(textFonts: body, textColor: theme.textPrimary),
             tableStyle: .init(
                 textFonts: small,
-                headerTextColor: FleetTheme.textPrimary,
-                regularTextColor: FleetTheme.textPrimary,
-                headerBackgroundColor: FleetTheme.surfaceElevated,
-                borderColor: FleetTheme.border,
-                actionButtonColor: FleetTheme.accent),
+                headerTextColor: theme.textPrimary,
+                regularTextColor: theme.textPrimary,
+                headerBackgroundColor: theme.surfaceElevated,
+                borderColor: theme.border,
+                actionButtonColor: theme.highlight),
             inlineStyle: .init(
-                boldTextColor: FleetTheme.textPrimary,
+                boldTextColor: theme.textPrimary,
                 linkTextFont: body.normal,
-                linkTextColor: FleetTheme.accent,
+                linkTextColor: theme.highlight,
                 linkUnderlineStyle: .single,
                 codeTextFont: code.normal,
-                codeTextColor: FleetTheme.textPrimary,
-                codeBackgroundColor: FleetTheme.surfaceElevated,
-                codeUnderlineColor: FleetTheme.accent),
+                codeTextColor: theme.textPrimary,
+                codeBackgroundColor: theme.surfaceElevated,
+                codeUnderlineColor: theme.highlight),
             citationConfig: .init(
                 isEnabled: false,
                 font: small.normal,
-                textColor: FleetTheme.textSecondary,
-                backgroundColor: FleetTheme.surfaceElevated),
+                textColor: theme.textSecondary,
+                backgroundColor: theme.surfaceElevated),
             codeBlockConfig: .init(
                 theme: .xcode,
-                backgroundColor: FleetTheme.surfaceElevated,
-                foregroundColor: FleetTheme.textSecondary,
+                backgroundColor: theme.surfaceElevated,
+                foregroundColor: theme.textSecondary,
                 codeTextFonts: code,
                 chromeTextFonts: small),
             blockSpacing: FleetTheme.spacingMd,
-            thematicBreakColor: FleetTheme.border,
+            thematicBreakColor: theme.border,
             // Hard V1 privacy gate: no arbitrary Markdown image requests.
             imageConfig: .disabled)
     }

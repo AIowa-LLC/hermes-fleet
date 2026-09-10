@@ -375,6 +375,7 @@ public final class RoomLinkViewModel {
 /// promotion confirmation. Fleet visual language (cards, bold headers, mono
 /// metadata); no grouped Forms.
 public struct RoomLinkView: View {
+    @Environment(\.fleetTheme) private var theme
     @State private var viewModel: RoomLinkViewModel
     private let environment: AppEnvironment
     @State private var showingPromotionConfirm = false
@@ -406,7 +407,7 @@ public struct RoomLinkView: View {
                 if let notice = viewModel.notice {
                     Text(notice)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("fleet.roomlink.notice")
                 }
@@ -414,7 +415,7 @@ public struct RoomLinkView: View {
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.vertical, FleetTheme.spacingMd)
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .navigationTitle("RoomLink")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.start() }
@@ -443,13 +444,14 @@ public struct RoomLinkView: View {
     /// VoiceOver as a standalone stop (the section content carries the
     /// semantics; the header text rides inside each section's first read).
     private struct InspectorSectionHeader: View {
+    @Environment(\.fleetTheme) private var theme
         let title: String
         let symbol: String
 
         var body: some View {
             Label(title, systemImage: symbol)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityAddTraits(.isHeader)
         }
@@ -465,7 +467,7 @@ public struct RoomLinkView: View {
                 if viewModel.isLoading && viewModel.negotiation == nil {
                     Text("Checking this gateway…")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } else if let explanation = viewModel.unsupportedExplanation {
                     Label(explanation, systemImage: "xmark.shield")
                         .font(FleetTheme.secondaryFont)
@@ -474,15 +476,15 @@ public struct RoomLinkView: View {
                 } else if let negotiation = viewModel.negotiation {
                     Text(negotiation.transportSummary)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .accessibilityIdentifier("fleet.roomlink.summary")
                     Text("Authority \(negotiation.authorityGatewayID) · protocol v\(negotiation.protocolVersions.map(String.init).joined(separator: "/"))")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     if !negotiation.attachmentsSupported {
                         Text("Text only — this gateway can't carry attachments across machines yet.")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
             }
@@ -509,12 +511,12 @@ public struct RoomLinkView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 Label("Access grant", systemImage: "key")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 if let grant = viewModel.activeGrant {
                     HStack {
                         Text(grant.displayToken)
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         Spacer()
                         if grant.isNearExpiry() {
                             Label("expires \(RoomLinkViewModel.shortRemaining(grant))", systemImage: "clock.badge.exclamationmark")
@@ -523,7 +525,7 @@ public struct RoomLinkView: View {
                         } else {
                             Text("expires \(RoomLinkViewModel.shortRemaining(grant))")
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                     }
                     HStack(spacing: FleetTheme.spacingSm) {
@@ -570,11 +572,11 @@ public struct RoomLinkView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                 Label("Linked peers", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 if viewModel.routes.isEmpty {
                     Text("No peers linked to this room yet.")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } else {
                     ForEach(viewModel.routes) { route in
                         HStack {
@@ -583,14 +585,14 @@ public struct RoomLinkView: View {
                                 .foregroundStyle(route.status == .ready ? FleetTheme.statusOnline : FleetTheme.statusDestructive)
                             Text(route.memberID)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(FleetTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                             Text(route.status.rawValue)
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                             Spacer()
                             Text(route.transportSecurity)
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("fleet.roomlink.route.\(route.memberID)")
@@ -616,11 +618,11 @@ public struct RoomLinkView: View {
                 HStack {
                     Text("Replay \(replica.isCaughtUp ? "complete" : "in progress")")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Spacer()
                     Text("event \(replica.lastSeq)/\(replica.latestSeq)")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.roomlink.replica-progress")
                 }
                 ProgressView(value: replica.progress)
@@ -631,10 +633,10 @@ public struct RoomLinkView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Observed authority")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Text("\(replica.authorityGatewayID) · epoch \(replica.authorityEpoch)")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .textSelection(.enabled)
                 }
                 .accessibilityElement(children: .ignore)
@@ -669,7 +671,7 @@ public struct RoomLinkView: View {
                 if !viewModel.promotionReadiness.isReady {
                     Text(viewModel.promotionReadiness.confirmationMessage)
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("fleet.roomlink.promotion-blocked")
                 }
@@ -684,10 +686,10 @@ public struct RoomLinkView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Last takeover")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         Text("\(receipt.authorityGatewayID) · epoch \(receipt.authorityEpoch) · previous \(receipt.previousGatewayID) (epoch \(receipt.previousEpoch))")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .textSelection(.enabled)
                     }
                     .accessibilityElement(children: .ignore)
@@ -701,10 +703,10 @@ public struct RoomLinkView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Readback after last recovery step")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         Text("authority \(readback.authorityGatewayID) · epoch \(readback.authorityEpoch) · event \(readback.lastSeq)/\(readback.latestSeq)")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .textSelection(.enabled)
                     }
                     .accessibilityElement(children: .ignore)
@@ -726,7 +728,7 @@ public struct RoomLinkView: View {
             } else {
                 Text("No replay copy on this gateway yet.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
     }
@@ -746,7 +748,7 @@ public struct RoomLinkView: View {
                         .font(FleetTheme.secondaryFont)
                     Text("Fleet can't verify that the old writer stopped. A timeout, disconnect, or Stop action is not enough — confirm it can no longer commit before taking over.")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             .toggleStyle(.switch)

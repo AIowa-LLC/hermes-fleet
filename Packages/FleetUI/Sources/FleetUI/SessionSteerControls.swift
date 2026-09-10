@@ -11,6 +11,7 @@ import FleetCore
 /// - FORK (`session.branch`): copies the visible history into a new session
 ///   and routes to it (the host navigates on success).
 public struct SessionSteerControls: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ConversationToolingViewModel
     /// Whether a turn is currently streaming (gates steer).
     let isStreaming: Bool
@@ -64,7 +65,7 @@ public struct SessionSteerControls: View {
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .buttonStyle(.fleetPressable)
         .accessibilityLabel("Session actions")
@@ -91,20 +92,20 @@ public struct SessionSteerControls: View {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
                 Text("Steering text lands on the model's next step — the current turn keeps running, nothing is interrupted.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 TextField("e.g. keep it short, skip the web search", text: $steerText, axis: .vertical)
                     .lineLimit(3...6)
                     .font(.body)
-                    .foregroundStyle(FleetTheme.textPrimary)
-                    .tint(FleetTheme.accent)
+                    .foregroundStyle(theme.textPrimary)
+                    .tint(theme.highlight)
                     .padding(FleetTheme.spacingMd)
-                    .background(FleetTheme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+                    .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
                     .focused($steerFieldFocused)
                     .accessibilityIdentifier("session.steer.field")
                 if let notice = model.steerNotice {
                     Text(notice)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                         .accessibilityIdentifier("session.steer.notice")
                 }
                 Spacer()
@@ -112,11 +113,11 @@ public struct SessionSteerControls: View {
             .padding(FleetTheme.spacingLg)
             .navigationTitle("Steer Turn")
             .navigationBarTitleDisplayMode(.inline)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { showingSteerSheet = false }
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Steer") {
@@ -129,7 +130,7 @@ public struct SessionSteerControls: View {
                             showingSteerSheet = false
                         }
                     }
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .disabled(steerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("session.steer.send")
                 }
@@ -153,6 +154,7 @@ public struct SessionSteerControls: View {
 /// R9-T4 — transient error/notice banner for tooling actions (fork failure,
 /// rename failure). Renders nothing when clear.
 public struct ToolingNoticeBanner: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ConversationToolingViewModel
 
     public init(model: ConversationToolingViewModel) {
@@ -176,13 +178,13 @@ public struct ToolingNoticeBanner: View {
                 .foregroundStyle(tint)
             Text(text)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(FleetTheme.surface)
+        .background(theme.surface)
         .accessibilityElement(children: .combine)
     }
 }

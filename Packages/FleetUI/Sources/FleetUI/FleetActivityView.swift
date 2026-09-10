@@ -18,6 +18,7 @@ import FleetPersistence
 /// empty fleet renders the empty state. When a persistent fleet-wide event
 /// log lands, this view is the mount point (U4+).
 public struct FleetActivityView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
 
     public init(environment: AppEnvironment) {
@@ -44,7 +45,7 @@ public struct FleetActivityView: View {
                 .accessibilityIdentifier("fleet.activity.health")
             }
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.activity")
         .task {
             // Copy the latest accumulated stats into the observable state on
@@ -60,7 +61,7 @@ public struct FleetActivityView: View {
                 Text("No Gateways")
             } icon: {
                 Image(systemName: "clock.arrow.circlepath")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
         } description: {
             Text("Add a gateway to see its connection activity.")
@@ -77,13 +78,14 @@ public struct FleetActivityView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(FleetTheme.background)
+        .background(theme.background)
         .accessibilityIdentifier("fleet.activity.list")
     }
 }
 
 /// One gateway's real activity summary (nothing fabricated).
 private struct ActivityRowView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gateway: FleetGateway
     @State private var now = Date()
@@ -102,7 +104,7 @@ private struct ActivityRowView: View {
             HStack(spacing: FleetTheme.spacingMd) {
                 Text(gateway.displayName)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 Spacer()
                 StatusPill(status: liveStatus)
             }
@@ -112,7 +114,7 @@ private struct ActivityRowView: View {
             } else {
                 Text("No connection activity recorded yet.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
         .padding(.vertical, FleetTheme.spacingXs)
@@ -179,12 +181,12 @@ private struct ActivityRowView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: icon)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityHidden(true)
             // V3: reconnect/ping lines are telemetry — mono, terminal voice.
             Text(text)
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
     }
 

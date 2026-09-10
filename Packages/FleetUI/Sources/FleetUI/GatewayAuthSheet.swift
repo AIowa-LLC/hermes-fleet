@@ -11,6 +11,7 @@ import FleetCore
 ///   `clearCredential` — Keychain only, never held or echoed by the view
 ///   layer (spec §16/§29).
 struct GatewayAuthSheet: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
 
@@ -49,14 +50,14 @@ struct GatewayAuthSheet: View {
 
                     LabeledContent("Credential stored") {
                         Text(credentialStored ? "Yes" : "No")
-                            .foregroundStyle(credentialStored ? FleetTheme.textPrimary : FleetTheme.textSecondary)
+                            .foregroundStyle(credentialStored ? theme.textPrimary : theme.textSecondary)
                     }
                 } header: {
                     Text("Strategy")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } footer: {
                     Text("The credential itself lives in Keychain only and is never shown.")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
 
                 Section("Credential") {
@@ -100,7 +101,7 @@ struct GatewayAuthSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle("Authentication")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -112,7 +113,7 @@ struct GatewayAuthSheet: View {
                 Task { await saveStrategy(newValue) }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(theme.highlight)
         .interactiveDismissDisabled(isBusy)
     }
 

@@ -4,6 +4,7 @@ import SwiftUI
 /// NOT a bordered tile (SPEC §18: "no four bordered tiles"). VoiceOver
 /// reads it as one element, "label: value".
 public struct FleetGlanceFact: View {
+    @Environment(\.fleetTheme) private var theme
     let value: String
     let label: String
     let id: String
@@ -18,11 +19,11 @@ public struct FleetGlanceFact: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
                 .font(FleetTheme.statFont)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             Text(label)
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .ignore)
@@ -49,6 +50,7 @@ public struct FleetGlanceFact: View {
 /// `accessibilityElement(children: .ignore)` keeps each fact a single
 /// VoiceOver stop with a stable id.
 public struct FleetGlanceStrip: View {
+    @Environment(\.fleetTheme) private var theme
     /// leading-top, trailing-top, leading-bottom, trailing-bottom.
     let a: FleetGlanceFact
     let b: FleetGlanceFact

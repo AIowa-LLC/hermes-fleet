@@ -26,6 +26,7 @@ private let fleetListRowHairline: CGFloat = 0.5
 /// inner controls keep their own ids. System press feedback comes from the
 /// caller's `.buttonStyle(.fleetPressable)` / native List row.
 public struct FleetListRow<Content: View>: View {
+    @Environment(\.fleetTheme) private var theme
     private let showsSeparator: Bool
     private let content: Content
 
@@ -50,7 +51,7 @@ public struct FleetListRow<Content: View>: View {
                 .contentShape(Rectangle())
             if showsSeparator {
                 Rectangle()
-                    .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                    .fill(theme.border)
                     .frame(height: fleetListRowHairline)
             }
         }
