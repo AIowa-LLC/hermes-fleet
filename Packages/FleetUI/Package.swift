@@ -13,11 +13,20 @@ let package = Package(
     dependencies: [
         .package(path: "../FleetCore"),
         .package(path: "../FleetSecurity"),
-        .package(path: "../FleetPersistence")
+        .package(path: "../FleetPersistence"),
+        // Issue #5: keep the streaming Markdown implementation private to
+        // FleetUI. This is the immutable commit for the v0.7.0 tag. SwiftPM
+        // rejects the upstream exact-version requirement because that tag's
+        // manifest also depends on HighlightSwift by an unversioned revision;
+        // the tag commit is the reproducible v0.7.0 equivalent pin. The
+        // Fleet-owned wrapper is the only API surface used by the rest of
+        // the app.
+        .package(url: "https://github.com/microsoft/SwiftStreamingMarkdown.git", revision: "5f7c04e0558df6146f90d482edb62cb456986bda")
     ],
     targets: [
         .target(name: "FleetUI", dependencies: [
             "FleetCore",
+            .product(name: "SwiftStreamingMarkdown", package: "SwiftStreamingMarkdown"),
             // FleetSecurity and FleetPersistence are declared now to pin the
             // intended dependency direction; M0 does not yet consume them.
             //

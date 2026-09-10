@@ -1038,6 +1038,29 @@ private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked S
 
 /// Scripted `ConversationProviding` that streams a canned turn after submit.
 private final class ScriptedConversationClient: ConversationProviding, @unchecked Sendable {
+    /// Issue #5 UI fixture: deliberately crosses incomplete bold, list, table,
+    /// and fenced-code boundaries while keeping the wire shape as ordinary
+    /// message.delta text. It is enabled only by an explicit UI-test launch
+    /// argument; the default simulator response remains unchanged for all
+    /// existing slash, attachment, reaction, and conversation tests.
+    private static let issue5RichMarkdownChunks: [String] = [
+        "# Streaming rich text\n\n",
+        "Assistant content arrives as **half-finished bold",
+        "** and *italic* with ~~strike~~ and `inline code`.\n\n",
+        "## Structure\n\n- first list item\n- [",
+        "] partial task\n1. ordered item\n2. second",
+        " ordered item\n\n> blockquote\n\n---\n\n",
+        "### Code\n\n```",
+        "swift\nlet answer = \"streaming\"\n",
+        "```\n\n### Table\n\n| Feature | State |\n| --- |",
+        " --- |\n| Markdown | active |\n\n",
+        "[Safe link](https://github.com/AIowa-LLC/hermes-fleet/issues/5)\n\n",
+        "![pixel](https://example.invalid/tracker.png)\n",
+        "[unsafe](javascript:alert(1))\n\n",
+        "<script>alert(\"inert\")</script>\n\n",
+        "Malformed **bold and [link"
+    ]
+
     private let gatewayID: GatewayID
     private let streamBox = ScriptedEventStreamBox()
 
@@ -1180,6 +1203,25 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 )
             ))
             streamBox.yield(.messageStart(sessionID: sessionID))
+            if ProcessInfo.processInfo.arguments.contains("-issue5-markdown-fixture") {
+                // Keep the initial empty assistant row on screen long enough
+                // for the UI fixture to verify that the preceding user row
+                // remains literal before the rich answer grows past it.
+                try? await Task.sleep(for: .milliseconds(1_500))
+                var fullMarkdown = ""
+                for chunk in Self.issue5RichMarkdownChunks {
+                    fullMarkdown += chunk
+                    streamBox.yield(.messageDelta(sessionID: sessionID, text: chunk, rendered: nil))
+                }
+                streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+                streamBox.yield(.messageComplete(
+                    sessionID: sessionID,
+                    text: fullMarkdown,
+                    status: nil,
+                    error: nil
+                ))
+                return
+            }
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "Hello from the scripted fleet. ", rendered: nil))
             // D-2 fix (t_9ce36690): echo the PROMPT TEXT only — drop the
             // appended @file:/@folder: ref TOKENS from the echoed text (the
