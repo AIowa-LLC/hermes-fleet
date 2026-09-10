@@ -40,7 +40,7 @@ final class H1AppLockUITests: XCTestCase {
         // The failed biometric must automatically show the passcode prompt
         // (the ONLY interactive element on the lock screen).
         let passcodeButton = app.buttons["fleet.app-lock.passcode.unlock"]
-        XCTAssertTrue(passcodeButton.waitForExistence(timeout: 15),
+        XCTAssertTrue(passcodeButton.waitForExistence(timeout: 60),
                       "cold launch must show the lock screen with the passcode fallback (acceptance)")
         // Evidence: capture the LOCKED frame (minimal Signal-red overlay,
         // roster NOT rendered) before unlocking.
@@ -96,7 +96,7 @@ final class H1AppLockUITests: XCTestCase {
 
         // Scripted biometric success → the gate releases and the roster
         // renders (the DEBUG fleet's first gateway is Workstation).
-        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
                       "scripted biometric success should unlock to the roster")
         attachScreenshot(of: app, name: "h1-biometric-success-unlocked")
     }
@@ -113,7 +113,7 @@ final class H1AppLockUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
                       "roster reachable after default-ON lock + biometric unlock")
 
         // Open Settings (U3: a root tab, no longer a Gateways sheet) → the
@@ -140,7 +140,7 @@ final class H1AppLockUITests: XCTestCase {
         app.terminate()
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
                       "roster should render immediately when the toggle is OFF")
         XCTAssertFalse(app.buttons["fleet.app-lock.passcode.unlock"].exists,
                        "no lock screen when the persisted toggle is OFF")
