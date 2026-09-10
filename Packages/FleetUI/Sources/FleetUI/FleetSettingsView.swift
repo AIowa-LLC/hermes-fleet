@@ -143,6 +143,8 @@ public struct FleetSettingsView: View {
 public struct FleetThemeEditorView: View {
     private let controller: FleetThemeController
     @State private var draft: FleetThemePalette
+    @State private var colorConversionFailed = false
+    @State private var applyFailed = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
@@ -181,6 +183,14 @@ public struct FleetThemeEditorView: View {
                 Text("Fleet stores one opaque sRGB palette. Any color is allowed; contrast warnings are advisory in normal appearance.")
             }
 
+            if colorConversionFailed {
+                Label(
+                    "That color could not be stored as an opaque sRGB value. Try another color.",
+                    systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .accessibilityIdentifier("fleet.theme.color-conversion-error")
+            }
+
             Section("Preview") {
                 preview
                     .accessibilityIdentifier("fleet.theme.preview")
@@ -192,10 +202,22 @@ public struct FleetThemeEditorView: View {
 
             Section {
                 Button("Reset to Fleet Default") {
-                    controller.reset()
-                    draft = controller.activePalette
+                    // Reset is a draft change like any other editor change;
+                    // the app and persisted value remain untouched until the
+                    // explicit Apply action.
+                    draft = controller.defaultPalette
+                    colorConversionFailed = false
+                    applyFailed = false
                 }
                 .accessibilityIdentifier("fleet.theme.reset")
+            }
+
+            if applyFailed {
+                Label(
+                    "The theme could not be applied. Your current theme is unchanged.",
+                    systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(FleetTheme.statusDestructive)
+                    .accessibilityIdentifier("fleet.theme.apply-error")
             }
         }
         .navigationTitle("Theme")
@@ -206,8 +228,12 @@ public struct FleetThemeEditorView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Apply") {
-                    controller.apply(draft)
-                    dismiss()
+                    if controller.apply(draft) {
+                        applyFailed = false
+                        dismiss()
+                    } else {
+                        applyFailed = true
+                    }
                 }
                 .accessibilityIdentifier("fleet.theme.apply")
             }
@@ -284,19 +310,45 @@ public struct FleetThemeEditorView: View {
     private var highlightBinding: Binding<Color> {
         Binding(
             get: { draft.highlight.swiftUIColor },
-            set: { if let color = FleetStoredColor(color: $0) { draft.highlight = color } })
+            set: {
+                guard let color = FleetStoredColor(color: $0) else {
+                    colorConversionFailed = true
+                    return
+                }
+                colorConversionFailed = false
+                draft.highlight = color
+                if draft.appearance == .adaptiveFleetDefault {
+                    draft.appearance = .adaptiveCustomHighlight
+                }
+            })
     }
 
     private var textBinding: Binding<Color> {
         Binding(
             get: { draft.text.swiftUIColor },
-            set: { if let color = FleetStoredColor(color: $0) { draft.text = color } })
+            set: {
+                guard let color = FleetStoredColor(color: $0) else {
+                    colorConversionFailed = true
+                    return
+                }
+                colorConversionFailed = false
+                draft.text = color
+                draft.appearance = .fixed
+            })
     }
 
     private var backgroundBinding: Binding<Color> {
         Binding(
             get: { draft.background.swiftUIColor },
-            set: { if let color = FleetStoredColor(color: $0) { draft.background = color } })
+            set: {
+                guard let color = FleetStoredColor(color: $0) else {
+                    colorConversionFailed = true
+                    return
+                }
+                colorConversionFailed = false
+                draft.background = color
+                draft.appearance = .fixed
+            })
     }
 }
 

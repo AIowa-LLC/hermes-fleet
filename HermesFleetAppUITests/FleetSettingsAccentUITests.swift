@@ -75,6 +75,57 @@ final class FleetSettingsAccentUITests: XCTestCase {
         XCTAssertTrue(persistedHighlight.waitForExistence(timeout: 5))
         XCTAssertEqual(persistedHighlight.value as? String, "#1F74C9",
                        "Apply must persist the arbitrary highlight palette value")
+
+        // Leave the simulator preference clean for the next deterministic UI
+        // case after proving relaunch persistence.
+        scrollToEditorAction(app, identifier: "fleet.theme.reset")
+        app.buttons["fleet.theme.reset"].tap()
+        app.buttons["fleet.theme.apply"].tap()
+    }
+
+    func testDraftCancelLeavesAppThemeUntouchedAndApplyReachesRichMarkdownAndStatuses() throws {
+        let app = launchApp(arguments: ["-issue6-arbitrary-theme", "-issue6-theme-proof"])
+        let appliedHighlight = app.staticTexts["fleet.theme.proof.applied-highlight"]
+        XCTAssertTrue(appliedHighlight.waitForExistence(timeout: 10))
+        let before = appliedHighlight.label
+
+        UITabNavigation.openSettings(app)
+        openThemeEditor(app)
+        XCTAssertEqual(app.descendants(matching: .any)["fleet.theme.highlight"].value as? String, "#1F74C9")
+        XCTAssertEqual(appliedHighlight.label, before,
+                       "draft edits must not mutate the app-wide applied theme")
+
+        app.buttons["fleet.theme.cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        XCTAssertEqual(appliedHighlight.label, before,
+                       "Cancel must leave applied theme and persistence untouched")
+
+        openThemeEditor(app)
+        app.buttons["fleet.theme.apply"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.buttons["fleet.settings.done"].tap()
+
+        XCTAssertTrue(appliedHighlight.waitForExistence(timeout: 10))
+        XCTAssertTrue(appliedHighlight.label.contains("#1F74C9"),
+                      "Apply must update the environment-backed app surface")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.theme.proof.rich-markdown"]
+            .waitForExistence(timeout: 10),
+                      "the applied palette must reach the rich Markdown renderer")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.theme.proof.semantic-statuses"]
+            .waitForExistence(timeout: 10))
+        for label in [
+            "Online", "Working", "Thinking", "Using tool", "Waiting", "Needs you",
+            "Sign in required", "Degraded", "Offline", "Unknown"
+        ] {
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
+                .waitForExistence(timeout: 5), "semantic status remains visible: \(label)")
+        }
+
+        UITabNavigation.openSettings(app)
+        openThemeEditor(app)
+        scrollToEditorAction(app, identifier: "fleet.theme.reset")
+        app.buttons["fleet.theme.reset"].tap()
+        app.buttons["fleet.theme.apply"].tap()
     }
 
     private func launchApp(arguments: [String] = []) -> XCUIApplication {

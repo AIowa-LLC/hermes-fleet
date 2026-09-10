@@ -38,6 +38,13 @@ struct HermesFleetApp: App {
                     if SplashOverlayView.isEnabled {
                         SplashOverlayView()
                     }
+
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("-issue6-theme-proof") {
+                        FleetThemeProofView()
+                            .allowsHitTesting(false)
+                    }
+                    #endif
                 }
             }
             // FOS-3: apply the persisted appearance override app-wide.

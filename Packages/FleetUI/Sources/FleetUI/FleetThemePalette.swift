@@ -64,19 +64,39 @@ public struct FleetStoredColor: Codable, Equatable, Sendable {
     /// Converts an opaque UIKit color into sRGB for persistence.
     public init?(uiColor: UIColor) {
         let resolved = uiColor.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        if let sRGB = CGColorSpace(name: CGColorSpace.sRGB),
+           let converted = resolved.cgColor.converted(to: sRGB, intent: .defaultIntent, options: nil),
+           let components = converted.components,
+           components.count >= 4 {
+            guard let red = Self.normalized(component: components[0]),
+                  let green = Self.normalized(component: components[1]),
+                  let blue = Self.normalized(component: components[2]),
+                  Self.isOpaque(converted.alpha) else { return nil }
+            self.init(uncheckedRed: red, green: green, blue: blue)
+            return
+        }
+
+        // `getRed`/`getWhite` is a compatibility fallback for UIKit colors
+        // whose CGColor cannot be converted directly. The same finite,
+        // bounded sRGB contract is applied before storage.
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
         if resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
-            guard alpha >= 0.999999 else { return nil }
-            self.init(uncheckedRed: Double(red), green: Double(green), blue: Double(blue))
+            guard let red = Self.normalized(component: red),
+                  let green = Self.normalized(component: green),
+                  let blue = Self.normalized(component: blue),
+                  Self.isOpaque(alpha) else { return nil }
+            self.init(uncheckedRed: red, green: green, blue: blue)
             return
         }
 
         var white: CGFloat = 0
-        guard resolved.getWhite(&white, alpha: &alpha), alpha >= 0.999999 else { return nil }
-        self.init(uncheckedRed: Double(white), green: Double(white), blue: Double(white))
+        guard resolved.getWhite(&white, alpha: &alpha),
+              let white = Self.normalized(component: white),
+              Self.isOpaque(alpha) else { return nil }
+        self.init(uncheckedRed: white, green: white, blue: white)
     }
 
     public init?(color: Color) {
@@ -91,10 +111,10 @@ public struct FleetStoredColor: Codable, Equatable, Sendable {
         guard let converted = nsColor.usingColorSpace(.sRGB), converted.alphaComponent >= 0.999999 else {
             return nil
         }
-        self.init(
-            red: converted.redComponent,
-            green: converted.greenComponent,
-            blue: converted.blueComponent)
+        guard let red = Self.normalized(component: converted.redComponent),
+              let green = Self.normalized(component: converted.greenComponent),
+              let blue = Self.normalized(component: converted.blueComponent) else { return nil }
+        self.init(uncheckedRed: red, green: green, blue: blue)
     }
 
     public init?(color: Color) {
@@ -103,6 +123,19 @@ public struct FleetStoredColor: Codable, Equatable, Sendable {
 
     public var nsColor: NSColor {
         NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
+    }
+    #endif
+
+    private static func normalized(component: CGFloat) -> Double? {
+        let value = Double(component)
+        guard value.isFinite else { return nil }
+        return min(max(value, 0), 1)
+    }
+
+    #if canImport(UIKit)
+    private static func isOpaque(_ alpha: CGFloat) -> Bool {
+        let value = Double(alpha)
+        return value.isFinite && value >= 0.999999 && value <= 1.000001
     }
     #endif
 
@@ -136,6 +169,14 @@ public struct FleetStoredColor: Codable, Equatable, Sendable {
     }
 }
 
+/// Controls whether a persisted palette resolves to Fleet's adaptive default
+/// appearance variants or remains exactly the user's selected colors.
+public enum FleetThemePaletteAppearance: String, Codable, Equatable, Sendable {
+    case adaptiveFleetDefault
+    case adaptiveCustomHighlight
+    case fixed
+}
+
 /// Versioned persisted user palette. V1 intentionally stores exactly one
 /// opaque sRGB value for each user-controlled token.
 public struct FleetThemePalette: Codable, Equatable, Sendable {
@@ -145,32 +186,37 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
     public var text: FleetStoredColor
     public var background: FleetStoredColor
     public var version: Int
+    public var appearance: FleetThemePaletteAppearance
 
     public init(
         highlight: FleetStoredColor,
         text: FleetStoredColor,
         background: FleetStoredColor,
-        version: Int = FleetThemePalette.currentVersion
+        version: Int = FleetThemePalette.currentVersion,
+        appearance: FleetThemePaletteAppearance = .fixed
     ) {
         self.highlight = highlight
         self.text = text
         self.background = background
         self.version = version
+        self.appearance = appearance
     }
 
     /// The persisted Fleet default is the light appearance representation.
-    /// Resolution supplies the existing dark Fleet default when this exact
-    /// default palette is active, preserving the established appearance while
-    /// custom palettes remain the user's chosen colors in both appearances.
+    /// Its explicit resolution mode supplies the existing dark Fleet default,
+    /// while a migrated/custom highlight has its own adaptive mode that keeps
+    /// that highlight and only adopts Fleet's dark text/background tokens.
     public static let fleetDefault = FleetThemePalette(
         highlight: FleetStoredColor(hex: 0x5B35D5),
         text: FleetStoredColor(hex: 0x1C1C1E),
-        background: FleetStoredColor(hex: 0xF8F9FC))
+        background: FleetStoredColor(hex: 0xF8F9FC),
+        appearance: .adaptiveFleetDefault)
 
     public static let fleetDefaultDark = FleetThemePalette(
         highlight: FleetStoredColor(hex: 0xBDA7FF),
         text: FleetStoredColor(hex: 0xF5F5F7),
-        background: FleetStoredColor(hex: 0x101216))
+        background: FleetStoredColor(hex: 0x101216),
+        appearance: .fixed)
 
     #if DEBUG
     public static let lowContrastFixture = FleetThemePalette(
@@ -189,8 +235,21 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
     }
 
     public func palette(forDarkAppearance isDark: Bool) -> FleetThemePalette {
-        guard self == Self.fleetDefault else { return self }
-        return isDark ? Self.fleetDefaultDark : self
+        guard isDark else { return self }
+        switch appearance {
+        case .adaptiveFleetDefault:
+            return Self.fleetDefaultDark
+        case .adaptiveCustomHighlight:
+            let dark = Self.fleetDefaultDark
+            return FleetThemePalette(
+                highlight: highlight,
+                text: dark.text,
+                background: dark.background,
+                version: version,
+                appearance: .fixed)
+        case .fixed:
+            return self
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -198,6 +257,7 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
         case text
         case background
         case version
+        case appearance
     }
 
     public init(from decoder: Decoder) throws {
@@ -215,7 +275,23 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
                 in: container,
                 debugDescription: "unsupported or invalid Fleet theme palette version")
         }
-        self.init(highlight: highlight, text: text, background: background, version: version)
+        // Older V1 payloads predate the explicit resolution mode. Preserve
+        // their exact custom colors, while recognizing the old serialized
+        // Fleet default so a relaunch does not lose its adaptive Dark variant.
+        let appearance = try container.decodeIfPresent(
+            FleetThemePaletteAppearance.self,
+            forKey: .appearance)
+            ?? (highlight == Self.fleetDefault.highlight
+                && text == Self.fleetDefault.text
+                && background == Self.fleetDefault.background
+                ? .adaptiveFleetDefault
+                : .fixed)
+        self.init(
+            highlight: highlight,
+            text: text,
+            background: background,
+            version: version,
+            appearance: appearance)
     }
 }
 
@@ -483,11 +559,13 @@ public final class FleetThemeController: @unchecked Sendable {
 
     public var defaultPalette: FleetThemePalette { .fleetDefault }
 
-    public func apply(_ palette: FleetThemePalette) {
+    @discardableResult
+    public func apply(_ palette: FleetThemePalette) -> Bool {
         guard palette.isCurrent,
-              let data = try? JSONEncoder().encode(palette) else { return }
+              let data = try? JSONEncoder().encode(palette) else { return false }
         defaults.set(data, forKey: Self.persistKey)
         activePalette = palette
+        return true
     }
 
     public func reset() {
@@ -502,9 +580,15 @@ public final class FleetThemeController: @unchecked Sendable {
     }
 
     private static func load(from defaults: UserDefaults) -> FleetThemePalette {
-        if let data = defaults.data(forKey: persistKey),
-           let decoded = try? JSONDecoder().decode(FleetThemePalette.self, from: data),
-           decoded.isCurrent {
+        // A present V1 key has precedence over the retired accent key even
+        // when its value is malformed. This keeps corrupt state fail-safe and
+        // prevents stale legacy preferences from being resurrected.
+        if defaults.object(forKey: persistKey) != nil {
+            guard let data = defaults.data(forKey: persistKey),
+                  let decoded = try? JSONDecoder().decode(FleetThemePalette.self, from: data),
+                  decoded.isCurrent else {
+                return .fleetDefault
+            }
             return decoded
         }
 
@@ -518,6 +602,7 @@ public final class FleetThemeController: @unchecked Sendable {
         return FleetThemePalette(
             highlight: legacy.legacyHighlight,
             text: FleetThemePalette.fleetDefault.text,
-            background: FleetThemePalette.fleetDefault.background)
+            background: FleetThemePalette.fleetDefault.background,
+            appearance: .adaptiveCustomHighlight)
     }
 }

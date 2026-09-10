@@ -298,10 +298,22 @@ final class FleetThemeTests: XCTestCase {
     func testV1DefaultPaletteHasOpaqueFleetValues() {
         let palette = FleetThemePalette.fleetDefault
         XCTAssertEqual(palette.version, FleetThemePalette.currentVersion)
+        XCTAssertEqual(palette.appearance, .adaptiveFleetDefault)
         XCTAssertEqual(palette.highlight, FleetStoredColor(hex: 0x5B35D5))
         XCTAssertEqual(palette.text, FleetStoredColor(hex: 0x1C1C1E))
         XCTAssertEqual(palette.background, FleetStoredColor(hex: 0xF8F9FC))
         XCTAssertTrue(palette.highlight.isValid && palette.text.isValid && palette.background.isValid)
+    }
+
+    func testExplicitCustomPaletteStaysExactlyTheSameInLightAndDark() {
+        let custom = FleetThemePalette(
+            highlight: FleetStoredColor(hex: 0xE95D90),
+            text: FleetStoredColor(hex: 0xF1E8D8),
+            background: FleetStoredColor(hex: 0x17202A))
+
+        XCTAssertEqual(custom.appearance, .fixed)
+        XCTAssertEqual(custom.palette(forDarkAppearance: false), custom)
+        XCTAssertEqual(custom.palette(forDarkAppearance: true), custom)
     }
 
     func testV1PaletteCodableRoundTripPreservesArbitraryRGB() throws {
@@ -359,6 +371,21 @@ final class FleetThemeTests: XCTestCase {
                        "fallback must not destroy recoverable corrupt state")
     }
 
+    func testCorruptV1StateDoesNotResurrectLegacyAccent() {
+        let defaults = UserDefaults(suiteName: "testFleetThemeCorruptPrecedence")!
+        defaults.removePersistentDomain(forName: "testFleetThemeCorruptPrecedence")
+        let corrupt = Data("{not-a-palette".utf8)
+        defaults.set(corrupt, forKey: FleetThemeController.persistKey)
+        defaults.set(FleetAccent.green.rawValue, forKey: FleetAccentController.persistKey)
+
+        let controller = FleetThemeController(defaults: defaults)
+
+        XCTAssertEqual(controller.activePalette, .fleetDefault,
+                       "a present but corrupt V1 key must win over stale legacy state")
+        XCTAssertEqual(defaults.data(forKey: FleetThemeController.persistKey), corrupt)
+        XCTAssertEqual(defaults.string(forKey: FleetAccentController.persistKey), "green")
+    }
+
     func testOutOfRangeChannelsClampAtConstructionButStrictDecodeRejectsThem() throws {
         let clamped = FleetStoredColor(red: -0.5, green: 1.5, blue: .infinity)
         XCTAssertEqual(clamped.red, 0)
@@ -379,9 +406,67 @@ final class FleetThemeTests: XCTestCase {
         let controller = FleetThemeController(defaults: defaults)
 
         XCTAssertEqual(controller.activePalette.highlight, FleetAccent.green.legacyHighlight)
+        XCTAssertEqual(controller.activePalette.appearance, .adaptiveCustomHighlight)
         XCTAssertEqual(defaults.string(forKey: FleetAccentController.persistKey), "green")
         XCTAssertNil(defaults.data(forKey: FleetThemeController.persistKey),
                      "migration writes the V1 schema only through explicit Apply")
+    }
+
+    func testLegacyAccentMigrationKeepsDefaultTextAndBackgroundAdaptive() {
+        let defaults = UserDefaults(suiteName: "testFleetThemeMigrationAppearance")!
+        defaults.removePersistentDomain(forName: "testFleetThemeMigrationAppearance")
+        defaults.set(FleetAccent.gold.rawValue, forKey: FleetAccentController.persistKey)
+
+        let controller = FleetThemeController(defaults: defaults)
+        let light = controller.resolvedTheme(isDarkAppearance: false, isIncreasedContrast: false)
+        let dark = controller.resolvedTheme(isDarkAppearance: true, isIncreasedContrast: false)
+
+        XCTAssertEqual(light.resolvedPalette.highlight, FleetAccent.gold.legacyHighlight)
+        XCTAssertEqual(light.resolvedPalette.text, FleetThemePalette.fleetDefault.text)
+        XCTAssertEqual(light.resolvedPalette.background, FleetThemePalette.fleetDefault.background)
+        XCTAssertEqual(dark.resolvedPalette.highlight, FleetAccent.gold.legacyHighlight)
+        XCTAssertEqual(dark.resolvedPalette.text, FleetThemePalette.fleetDefaultDark.text)
+        XCTAssertEqual(dark.resolvedPalette.background, FleetThemePalette.fleetDefaultDark.background)
+    }
+
+    func testColorPickerColorsNormalizeToFiniteBoundedOpaqueSRGB() throws {
+        let p3 = UIColor(displayP3Red: 1.0, green: 0.2, blue: 0.1, alpha: 1)
+        let first = try XCTUnwrap(FleetStoredColor(uiColor: p3))
+        let second = try XCTUnwrap(FleetStoredColor(uiColor: p3))
+
+        XCTAssertEqual(first, second, "P3 conversion must be deterministic")
+        for channel in [first.red, first.green, first.blue] {
+            XCTAssertTrue(channel.isFinite)
+            XCTAssertTrue((0...1).contains(channel))
+        }
+        XCTAssertTrue(first.isValid)
+
+        let extended = UIColor(red: 1.25, green: -0.25, blue: 0.4, alpha: 1)
+        let normalized = try XCTUnwrap(FleetStoredColor(uiColor: extended))
+        XCTAssertEqual(normalized.red, 1, accuracy: 0.000_001)
+        XCTAssertEqual(normalized.green, 0, accuracy: 0.000_001)
+        XCTAssertEqual(normalized.blue, 0.4, accuracy: 0.000_001)
+        XCTAssertNil(FleetStoredColor(uiColor: UIColor(red: 0, green: 0, blue: 0, alpha: 0.5)),
+                     "opacity remains prohibited")
+    }
+
+    func testOldV1DefaultPayloadRetainsAdaptiveDarkResolution() throws {
+        let defaults = UserDefaults(suiteName: "testFleetThemeOldDefaultPayload")!
+        defaults.removePersistentDomain(forName: "testFleetThemeOldDefaultPayload")
+        let oldPayload = try JSONEncoder().encode(FleetThemePalette(
+            highlight: .init(hex: 0x5B35D5),
+            text: .init(hex: 0x1C1C1E),
+            background: .init(hex: 0xF8F9FC)))
+        // Simulate the pre-remediation V1 encoding, which had no appearance
+        // field but represented the Fleet default palette.
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: oldPayload) as? [String: Any])
+        object.removeValue(forKey: "appearance")
+        defaults.set(try JSONSerialization.data(withJSONObject: object), forKey: FleetThemeController.persistKey)
+
+        let controller = FleetThemeController(defaults: defaults)
+        XCTAssertEqual(
+            controller.resolvedTheme(isDarkAppearance: true, isIncreasedContrast: false).resolvedPalette,
+            FleetThemePalette.fleetDefaultDark)
     }
 
     func testContrastMathAndEditorWarningAreDeterministic() {

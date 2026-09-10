@@ -85,7 +85,12 @@ public struct FleetTabView: View {
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
                 FleetSettingsView(controller: lockController)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingSettings = false } } }
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingSettings = false }
+                                .accessibilityIdentifier("fleet.settings.done")
+                        }
+                    }
             }
         }
         .onChange(of: navigation) { _, state in
