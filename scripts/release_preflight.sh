@@ -195,6 +195,7 @@ if xcodebuild -project HermesFleetApp.xcodeproj \
     -configuration Release \
     -destination 'generic/platform=iOS' \
     -derivedDataPath "$BUILD_DERIVED" \
+    -skipMacroValidation \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
     $PROVISIONING_FLAG \
     build >"$BUILD_LOG" 2>&1; then
@@ -214,6 +215,7 @@ if [[ "$STRUCTURE_ONLY" -eq 1 ]]; then
       -destination 'generic/platform=iOS' \
       -archivePath "$ARCHIVE_PATH" \
       -derivedDataPath "$ARCHIVE_DERIVED" \
+      -skipMacroValidation \
       DEVELOPMENT_TEAM=3JS22HX92T CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
       $PROVISIONING_FLAG \
       archive >"$ARCHIVE_LOG" 2>&1; then
@@ -231,6 +233,7 @@ else
       -destination 'generic/platform=iOS' \
       -archivePath "$ARCHIVE_PATH" \
       -derivedDataPath "$ARCHIVE_DERIVED" \
+      -skipMacroValidation \
       DEVELOPMENT_TEAM=3JS22HX92T \
       $PROVISIONING_FLAG \
       archive >"$ARCHIVE_LOG" 2>&1; then
