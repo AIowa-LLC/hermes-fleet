@@ -288,20 +288,25 @@ bash scripts/privacy_manifest_validate.sh --built-app "$APP"
 
 echo "=== Signing and provisioning inspection ==="
 SIGNING_LOG="$OUTPUT_ROOT/codesign-display.log"
-codesign -dvv "$APP" >"$SIGNING_LOG" 2>&1 || {
-  echo "ERROR: codesign metadata inspection failed" >&2
+if codesign -dvv "$APP" >"$SIGNING_LOG" 2>&1; then
+  codesign --verify --deep --strict "$APP"
+  SIGNING_IDENTITY="$(awk -F= '/^Authority=/ { print $2; exit }' "$SIGNING_LOG")"
+  TEAM_IDENTIFIER="$(awk -F= '/^TeamIdentifier=/ { print $2; exit }' "$SIGNING_LOG")"
+  echo "Code-sign verification: PASS"
+  echo "  authority: $SIGNING_IDENTITY"
+  echo "  team identifier: $TEAM_IDENTIFIER"
+  if [[ "$STRUCTURE_ONLY" -eq 0 && ( -z "$SIGNING_IDENTITY" || "$SIGNING_IDENTITY" == "adhoc" ) ]]; then
+    echo "ERROR: signed archive did not expose a distribution signing authority" >&2
+    exit 1
+  fi
+else
+  if [[ "$STRUCTURE_ONLY" -eq 0 ]]; then
+    echo "ERROR: codesign metadata inspection failed" >&2
+    cat "$SIGNING_LOG" >&2
+    exit 1
+  fi
+  echo "Code-sign verification: NOT PRESENT (expected in structure-only mode)"
   cat "$SIGNING_LOG" >&2
-  exit 1
-}
-codesign --verify --deep --strict "$APP"
-SIGNING_IDENTITY="$(awk -F= '/^Authority=/ { print $2; exit }' "$SIGNING_LOG")"
-TEAM_IDENTIFIER="$(awk -F= '/^TeamIdentifier=/ { print $2; exit }' "$SIGNING_LOG")"
-echo "Code-sign verification: PASS"
-echo "  authority: $SIGNING_IDENTITY"
-echo "  team identifier: $TEAM_IDENTIFIER"
-if [[ "$STRUCTURE_ONLY" -eq 0 && ( -z "$SIGNING_IDENTITY" || "$SIGNING_IDENTITY" == "adhoc" ) ]]; then
-  echo "ERROR: signed archive did not expose a distribution signing authority" >&2
-  exit 1
 fi
 
 PROFILE="$APP/embedded.mobileprovision"
