@@ -52,3 +52,7 @@ Public documentation should:
 - keep visual direction separate from protocol and architecture truth
 
 When behavior changes, update the relevant current document and ADR in the same change when practical.
+
+## Release readiness
+
+The versioned physical-device/live-Hermes gate is [`release/RC-ACCEPTANCE-v1.md`](release/RC-ACCEPTANCE-v1.md); begin with `bash scripts/rc_preflight.sh`. Record public-safe results using [`release/RC-EVIDENCE-TEMPLATE.md`](release/RC-EVIDENCE-TEMPLATE.md). These documents do not authorize distribution.
