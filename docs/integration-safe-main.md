@@ -19,18 +19,26 @@ Every pull request targeting `main` follows this sequence:
    `success`. A failed, cancelled, or skipped UI shard therefore blocks the
    queue.
 6. GitHub merges the candidate through the queue after the required checks and
-   review requirements are satisfied.
+   configured thread-resolution requirements are satisfied. This solo-
+   maintainer policy does not require a second approving review or approval
+   from the last pusher.
 
 The workflow is intentionally not path-filtered. A required aggregate check
 must not disappear for a docs-only change or any other unmatched path. The
 policy guard in `scripts/ci_gate_policy_check.sh` fails if the trigger or gate
-contract is weakened.
+contract is weakened. Its concurrency policy may supersede ordinary PR
+refreshes, but never cancels a `merge_group` run. The serial queue's
+`check_response_timeout_minutes` is 240: the five UI jobs each have a
+75-minute ceiling, leaving explicit margin for macOS runner capacity while a
+candidate waits for its checks.
 
 ## Main and release eligibility
 
 The active `protect-main` ruleset retains deletion and non-fast-forward
 protections and requires the `CI Gate` check, strict up-to-date enforcement,
-and the native merge queue. It has no bypass actors. Direct pushes and merges
+and the native merge queue. It has no bypass actors, requires zero approving
+reviews, and does not require last-push approval; resolved review threads and
+the other configured protections remain in force. Direct pushes and merges
 outside the queue are not the normal integration path.
 
 If `main` is ever red after a merge, it is immediately non-releasable. The
@@ -50,5 +58,13 @@ gh api repos/AIowa-LLC/hermes-fleet/rulesets/22489588
 Verify that the returned active ruleset targets `refs/heads/main`, includes
 `required_status_checks` for `CI Gate` with
 `strict_required_status_checks_policy: true`, includes a `merge_queue` rule,
-and retains `deletion` and `non_fast_forward`. Verify that `bypass_actors` is
-empty before changing release policy.
+and retains `deletion` and `non_fast_forward`. Verify that the pull-request
+rule has `required_approving_review_count: 0` and
+`require_last_push_approval: false`, that the queue response timeout is 240
+minutes, and that `bypass_actors` is empty before changing release policy.
+
+The merge-group proof for this remediation uses a disposable PR with a
+deterministic failure enabled only for `merge_group`; it is queued only long
+enough to observe the merge-group workflow and fail-closed `CI Gate`, then is
+removed/closed without merging and the temporary branch is deleted. Main's
+SHA is checked before and after the exercise.

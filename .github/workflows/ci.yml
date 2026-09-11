@@ -9,8 +9,11 @@ on:
     types: [checks_requested]
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Refreshes to one PR or main may supersede one another, but a queued
+  # merge-group candidate must never have its required checks cancelled by a
+  # later event.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   static-guards:

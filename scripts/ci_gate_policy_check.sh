@@ -21,12 +21,18 @@ require "  merge_group:" "CI must run for merge-group candidates"
 require "    types: [checks_requested]" "CI must respond to merge-group check requests"
 require "  pull_request:" "CI must run for pull requests"
 require "  push:" "CI must run after main advances"
+require '  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' "CI concurrency must distinguish PR/main runs"
+require "  cancel-in-progress: \${{ github.event_name != 'merge_group' }}" "merge-group checks must never be cancelled by concurrency"
 
 # A required workflow must not disappear for docs-only or otherwise unmatched
 # changes. Merge-group events also have their own trigger semantics, so do not
 # reintroduce path filtering on this full gate.
 if grep -Eq '^    paths:' "$WORKFLOW"; then
   echo "FAIL: the full CI Gate must not use trigger path filters" >&2
+  exit 1
+fi
+if grep -Eq '^  cancel-in-progress: true$' "$WORKFLOW"; then
+  echo "FAIL: merge-group validation must not use unconditional cancellation" >&2
   exit 1
 fi
 
