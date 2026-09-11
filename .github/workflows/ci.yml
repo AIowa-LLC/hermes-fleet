@@ -1,37 +1,19 @@
 name: CI
 
-# Paths-filtered to conserve free macOS runner minutes: CI only runs when
-# source/project/CI files change, not on docs/README-only edits. This is the
-# docs-only optimization: ambiguous or unmatched paths fail CLOSED (no CI run
-# at all is created, so the ci-gate required check reports nothing to merge
-# against) — workflow/project/source changes always trigger real CI.
 on:
   push:
     branches: [main]
-    paths:
-      - 'Packages/**'
-      - 'HermesFleetApp/**'
-      - 'HermesFleetAppTests/**'
-      - 'HermesFleetAppUITests/**'
-      - 'project.yml'
-      - 'Makefile'
-      - 'scripts/**'
-      - '.github/workflows/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'Packages/**'
-      - 'HermesFleetApp/**'
-      - 'HermesFleetAppTests/**'
-      - 'HermesFleetAppUITests/**'
-      - 'project.yml'
-      - 'Makefile'
-      - 'scripts/**'
-      - '.github/workflows/**'
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Refreshes to one PR or main may supersede one another, but a queued
+  # merge-group candidate must never have its required checks cancelled by a
+  # later event.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   static-guards:
@@ -47,6 +29,8 @@ jobs:
         run: brew install xcodegen gitleaks
       - name: Static phase
         run: bash scripts/c1_static.sh
+      - name: CI gate policy guard
+        run: bash scripts/ci_gate_policy_check.sh
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)
@@ -110,11 +94,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Require every validation job to have succeeded
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          echo "CI Gate: a required validation job failed or was cancelled:"
+          echo "CI Gate dependency results:"
           echo "${{ toJSON(needs.*.result) }}"
-          exit 1
-      - name: Gate passed
-        run: |
+          test "${{ needs.static-guards.result }}" = "success"
+          test "${{ needs.packages.result }}" = "success"
+          test "${{ needs.units.result }}" = "success"
+          test "${{ needs.ui-shard.result }}" = "success"
           echo "CI Gate: all required validation jobs succeeded."
