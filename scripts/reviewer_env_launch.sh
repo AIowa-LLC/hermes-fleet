@@ -97,6 +97,22 @@ setup_network() {
   fi
   SUBNET="$(docker network inspect "$NET_NAME" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}')"
   [ -n "$SUBNET" ] || die "cannot read subnet of $NET_NAME"
+  # FAIL CLOSED on IPv6: the egress pinning below is iptables (IPv4) only. The
+  # network is created IPv4-only, so there is no IPv6 address or route in the
+  # container; if that ever changes the pinning would silently not apply.
+  # (Independent QA finding, 2026-09-10.)
+  if [ "$(docker network inspect "$NET_NAME" --format '{{.EnableIPv6}}')" != "false" ]; then
+    die "network $NET_NAME has IPv6 enabled — the egress pinning is IPv4-only; refusing to launch (recreate the network without IPv6)"
+  fi
+  # Docker's internal resolver address. When the host's /etc/resolv.conf is a
+  # loopback stub (systemd-resolved at 127.0.0.53), dockerd cannot use it from
+  # a container netns and points containers at its own resolver proxy on the
+  # default bridge gateway (visible as `# ExtServers: [<addr>]` in a
+  # container's /etc/resolv.conf). That single docker-owned address is the
+  # ONLY port-53 destination this environment allows — never a LAN router, a
+  # public resolver, or a tailnet address.
+  RESOLVER_ADDR="$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || true)"
+  [ -n "$RESOLVER_ADDR" ] || die "cannot determine docker's internal resolver address (default bridge gateway)"
   if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     SUDO=sudo
   else
@@ -112,7 +128,14 @@ setup_network() {
   $SUDO iptables -C DOCKER-USER -s "$SUBNET" -j "RV_$NET_NAME" 2>/dev/null \
     || $SUDO iptables -I DOCKER-USER -s "$SUBNET" -j "RV_$NET_NAME"
   $SUDO iptables -A "RV_$NET_NAME" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  $SUDO iptables -A "RV_$NET_NAME" -p udp --dport 53 -j RETURN          # DNS (docker embedded resolver answers before egress)
+  # DNS: docker's OWN resolver address only (see RESOLVER_ADDR above). An
+  # earlier revision allowed udp/53 to ANY destination before the
+  # private-range DROPs, which an independent QA challenge (2026-09-10)
+  # falsified live — the container reached the LAN router's resolver and
+  # 1.1.1.1 over UDP/53 (a DNS-tunnel exfil channel). Blanket DNS is gone;
+  # every port-53 destination other than docker's resolver stays dropped.
+  $SUDO iptables -A "RV_$NET_NAME" -p udp -d "$RESOLVER_ADDR"/32 --dport 53 -j RETURN
+  $SUDO iptables -A "RV_$NET_NAME" -p tcp -d "$RESOLVER_ADDR"/32 --dport 53 -j RETURN
   $SUDO iptables -A "RV_$NET_NAME" -p tcp -d 10.0.0.0/8 -j DROP
   $SUDO iptables -A "RV_$NET_NAME" -p tcp -d 172.16.0.0/12 -j DROP
   $SUDO iptables -A "RV_$NET_NAME" -p tcp -d 192.168.0.0/16 -j DROP
@@ -133,14 +156,14 @@ setup_network() {
   $SUDO iptables -D INPUT -s "$SUBNET" -j "RV_HOST_$NET_NAME" 2>/dev/null || true
   $SUDO iptables -N "RV_HOST_$NET_NAME" 2>/dev/null || true
   $SUDO iptables -F "RV_HOST_$NET_NAME" 2>/dev/null || true
-  # DNS to the host resolver only (docker's embedded 127.0.0.11 resolver
-  # forwards queries to the host; without this the container cannot resolve
-  # provider API hostnames and the demo chat path breaks). Port 53 only.
-  $SUDO iptables -A "RV_HOST_$NET_NAME" -p udp --dport 53 -j ACCEPT
-  $SUDO iptables -A "RV_HOST_$NET_NAME" -p tcp --dport 53 -j ACCEPT
+  # The container's DNS query to docker's resolver arrives on the host INPUT
+  # path: accept port 53 to that ONE docker-owned address (again, never a LAN
+  # router, public resolver, or tailnet address), then drop everything else.
+  $SUDO iptables -A "RV_HOST_$NET_NAME" -p udp -d "$RESOLVER_ADDR"/32 --dport 53 -j ACCEPT
+  $SUDO iptables -A "RV_HOST_$NET_NAME" -p tcp -d "$RESOLVER_ADDR"/32 --dport 53 -j ACCEPT
   $SUDO iptables -A "RV_HOST_$NET_NAME" -j DROP      # fail closed: nothing else on the host reachable
   $SUDO iptables -I INPUT 2 -s "$SUBNET" -j "RV_HOST_$NET_NAME"
-  info "egress pinned on $SUBNET: DNS + established + public tcp/443 only; host INPUT from subnet fully blocked"
+  info "egress pinned on $SUBNET: established + public tcp/443 + DNS to docker's resolver ($RESOLVER_ADDR) only; host INPUT from subnet otherwise blocked"
 }
 
 teardown_network() {
@@ -201,21 +224,15 @@ do_start() {
   case "$REVIEWER_PUBLIC_URL" in
     http://127.0.0.1*|http://localhost*) die "v2 runs the real architecture (container + auth gate) — use a NON-loopback rehearsal hostname with REVIEWER_CONNECT_TO, or the real tunnel URL" ;;
   esac
-  resolve_credentials
-  setup_network
 
-  # ALWAYS fresh state: destroy any prior volume so nothing is inherited.
-  docker rm -f "$CONT_NAME" >/dev/null 2>&1 || true
-  docker volume rm "$VOL_NAME" >/dev/null 2>&1 || true
-  docker volume create "$VOL_NAME" >/dev/null || die "cannot create volume"
-  seed_home
-
-  # provider env: strict allowlist, keys only; values injected as -e at run.
+  # provider env FIRST: a rejected file must have NO side effects at all — no
+  # network, no iptables rules, no volume, no seeded home, no credentials
+  # (independent QA finding, 2026-09-10: validation used to run after seeding).
   local run_env_args=()
   if [ -n "${REVIEWER_PROVIDER_ENV_FILE:-}" ]; then
     local keys k v
     keys="$(reviewer_provider_env_validate "$REVIEWER_PROVIDER_ENV_FILE")" \
-      || die "REVIEWER_PROVIDER_ENV_FILE rejected by the provider allowlist (see errors above) — refusing to launch"
+      || die "REVIEWER_PROVIDER_ENV_FILE rejected by the provider allowlist (see errors above) — refusing to launch (nothing was created)"
     while IFS= read -r k; do
       [ -n "$k" ] || continue
       v="$(sed -n "s/^$k=//p" "$REVIEWER_PROVIDER_ENV_FILE")"
@@ -225,6 +242,17 @@ do_start() {
   else
     info "no REVIEWER_PROVIDER_ENV_FILE — chat replies lack a model key until one is supplied"
   fi
+
+  # Only now — after the allowlist gate has accepted the provider file — do we
+  # create anything.
+  resolve_credentials
+  setup_network
+
+  # ALWAYS fresh state: destroy any prior volume so nothing is inherited.
+  docker rm -f "$CONT_NAME" >/dev/null 2>&1 || true
+  docker volume rm "$VOL_NAME" >/dev/null 2>&1 || true
+  docker volume create "$VOL_NAME" >/dev/null || die "cannot create volume"
+  seed_home
 
   # scrypt-hash the password INSIDE a throwaway container; write config.yaml
   # into the volume. Secrets never appear on this script's command line
