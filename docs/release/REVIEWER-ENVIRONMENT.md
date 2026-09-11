@@ -78,7 +78,7 @@ Layered boundary, outermost first:
    reviewer subnet cannot reach the host's SSH, other host services, LAN,
    tailnet, or other docker networks. The launcher refuses to run if the
    network has IPv6 enabled (the pinning is IPv4-only). Proven by probes
-   E1–E5 and the auth-gate group G.
+   E1–E9 and the auth-gate group G.
 5. **Disposable state**: the demo home is a named volume created empty at
    every `start` (prior volumes are destroyed first — no inherited state)
    and destroyed by `clean --purge` together with credentials.
@@ -118,19 +118,25 @@ what remains is listed here rather than glossed:
   to any host. This is accepted by design (provider base URLs are
   operator-chosen), and is the reason the only credential in the container is
   a scoped, low-limit demo key. The earlier, wider hole — UDP/53 to arbitrary
-  LAN/internet destinations (a DNS-tunnel channel) — is closed: there is no
-  port-53 exception at all.
+  LAN/internet destinations (a DNS-tunnel channel) — is closed: **the only
+  port-53 destination allowed is docker's own resolver address**
+  (`RESOLVER_ADDR`, the default-bridge gateway), in both chains; a LAN router,
+  a public resolver, or a tailnet address is dropped.
 - **The egress pinning is IPv4-only.** The reviewer network is created
-  IPv4-only and the launcher now refuses to start if IPv6 is enabled on it,
-  so the pinning cannot silently stop applying.
-- **Host service exposure is zero by construction now**: the container→host
-  chain accepts nothing (previously a port-53 exception). Verified live.
+  IPv4-only and the launcher refuses to start if IPv6 is enabled on it (and
+  that refusal now happens before credentials or volumes are created), so the
+  pinning cannot silently stop applying.
+- **Host service exposure is reduced to docker's resolver**: the
+  container→host chain accepts only port 53 to that same docker-owned address
+  and drops everything else — no SSH, no other host listener, no LAN/tailnet
+  address. Verified live.
 - **The reviewer credential file persists between `start`/`clean` runs by
   design** (`reusing generated credentials`); rotation is manual — delete the
   file (or `clean --purge`) to rotate.
 - **A refused launch leaves nothing behind**: the provider-env allowlist is
-  evaluated before any network, iptables rule, volume, seeded home, or
-  credential file is created.
+  evaluated before anything is created, and the IPv6 check runs before
+  credentials are generated, so a refusal leaves no network rules, volume,
+  seeded home, or credential file.
 
 This scope statement is deliberate and must not be softened in review notes.
 
@@ -218,7 +224,22 @@ destinations** (the container got real answers from the LAN router and from
 `1.1.1.1` — a DNS-tunnel exfil channel), and two allowlist gaps existed
 (single-backslash values admitted; duplicate keys splicing a newline into one
 `-e` argument). All of it is fixed here and the whole suite was re-run on the
-fixed head:
+fixed head.
+
+A **second independent `apple-qa` pass re-attacked the fixes** and verified
+every security claim with no new hole found: the port-53 scope (its own
+matrix: `1.1.1.1`, `8.8.8.8`, `9.9.9.9`, the LAN router, the tailnet address
+and other docker networks all denied on UDP and TCP; only docker's resolver
+address answers, and name resolution works), the allowlist gaps (including a
+bypass hunt over space-prefixed, lone-CR and CRLF duplicates/values),
+refused-launch residue (three refusal vectors, zero residue), the IPv6
+fail-closed path, and public safety. Its remaining findings were doc-honesty
+issues (two sentences overstating the DNS and host-chain exceptions, a stale
+`E1–E5` reference) and one ordering nit — the IPv6 refusal ran after
+credential generation. Both are fixed here: the wording now matches the
+chains exactly, and the IPv6 check runs before credentials or volumes exist.
+
+Evidence from the re-run on the fixed head:
 
 - allowlist regression suite: **108/108 PASS** (includes the new
   single-backslash and duplicate-key cases; the challenger's own 25-case
@@ -228,7 +249,7 @@ fixed head:
 - refused launch: a provider file carrying `HOME=` / `HERMES_HOME=` exits
   non-zero **and leaves nothing behind** — no container, no volume, no
   network, no iptables rule, no credentials file (the allowlist gate now runs
-  before anything is created)
+  before anything is created; the IPv6 refusal likewise precedes credentials)
 - container bring-up with full hardening flags: PASS; egress pinned to
   established + public TCP/443 + DNS to docker's own resolver address only
   (`172.17.0.1` — the default-bridge gateway, derived at runtime, never a LAN
@@ -246,10 +267,11 @@ fixed head:
 - teardown (`clean --purge`): container, volume, network, state dir, and every
   iptables rule removed — verified no residue (no listener on the serve port)
 
-The challenge's own findings are preserved verbatim in the lane's QA records,
-including the ones that remain accepted-by-design (TCP/443 openness) — see
-"Residual risk", above. The public review-window endpoint is created by the
-operator at review time; this automation never creates or runs a tunnel.
+The challenges' own findings are preserved verbatim in the lane's QA records
+(reports attached to the board cards), including what remains accepted by
+design — see "Residual risk", above. The public review-window endpoint is
+created by the operator at review time; this automation never creates or runs
+a tunnel.
 
 ## Operations (on the container host, from the repo root)
 
