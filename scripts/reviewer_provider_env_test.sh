@@ -132,11 +132,25 @@ else
   ok "value with embedded quote rejected (docker CLI injection guard)"
 fi
 
-printf 'OPENAI_API_KEY=has\\\\backslash\n' > "$T/bslash.env"; chmod 600 "$T/bslash.env"
-if reviewer_provider_env_validate "$T/bslash.env" >/dev/null 2>&1; then
-  bad "backslash-smuggling value accepted"
+v_bs1='has\onebackslash'; printf 'OPENAI_API_KEY=%s\n' "$v_bs1" > "$T/bslash1.env"; chmod 600 "$T/bslash1.env"
+if reviewer_provider_env_validate "$T/bslash1.env" >/dev/null 2>&1; then
+  bad "SINGLE-backslash value accepted (quoted case pattern matches only doubled backslashes)"
 else
-  ok "value with embedded backslash rejected (docker CLI injection guard)"
+  ok "value with a single embedded backslash rejected (docker CLI injection guard)"
+fi
+
+v_bs2='has\\twobackslashes'; printf 'OPENAI_API_KEY=%s\n' "$v_bs2" > "$T/bslash2.env"; chmod 600 "$T/bslash2.env"
+if reviewer_provider_env_validate "$T/bslash2.env" >/dev/null 2>&1; then
+  bad "doubled-backslash value accepted"
+else
+  ok "value with doubled backslashes rejected"
+fi
+
+printf 'OPENAI_API_KEY=aaaa\nOPENAI_API_KEY=bbbb\n' > "$T/dup.env"; chmod 600 "$T/dup.env"
+if reviewer_provider_env_validate "$T/dup.env" >/dev/null 2>&1; then
+  bad "duplicate-key file accepted (sed re-extraction would splice a newline control char into -e)"
+else
+  ok "duplicate key rejected (no newline control char can reach the container env)"
 fi
 
 printf 'OPENAI_API_KEY=has\ttab\n' > "$T/ctrl.env"; chmod 600 "$T/ctrl.env"

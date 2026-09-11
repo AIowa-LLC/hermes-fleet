@@ -19,26 +19,34 @@
 #     rejected: the file is replayed as docker `-e KEY=value` arguments and
 #     such values would be misparsed by the shell or the docker CLI.
 #
-# Provenance: the UNION of every provider config's api-key env vars and
-# base-URL env var in `hermes_cli.auth.PROVIDER_REGISTRY` at the pinned image
-# version (hermes 0.21.1, 79 providers -> 94 variables), minus three
-# deliberate exclusions (91 entries). Regenerate instead of hand-editing:
-#   python3 -c "from hermes_cli.auth import PROVIDER_REGISTRY as R; \
-#     print('\n'.join(sorted({k for p in R.values() \
-#       for k in (getattr(p,'api_key_env_vars',()) or ())} \
-#       | {p.base_url_env_var for p in R.values() if p.base_url_env_var})))"
+# Provenance: the UNION of (a) every provider config's api-key env vars and
+# base-URL env var in `hermes_cli.auth.PROVIDER_REGISTRY` and (b) every
+# `hermes_cli.config.OPTIONAL_ENV_VARS` entry with category "provider"
+# (openrouter and other aggregators are declared only in (b)). At the pinned
+# image version (hermes 0.21.1) that union is 100 variables; 7 documented
+# exclusions leave the 93 entries below. Regenerate instead of hand-editing:
+#   python3 -c "from hermes_cli.config import OPTIONAL_ENV_VARS as O; \
+#     from hermes_cli.auth import PROVIDER_REGISTRY as R; \
+#     print(sorted({n for n,m in O.items() if m.get('category')=='provider'} \
+#       | {k for p in R.values() for k in (getattr(p,'api_key_env_vars',()) or ())} \
+#       | {p.base_url_env_var for p in R.values() if p.base_url_env_var}))"
 #
-# Deliberately EXCLUDED (each is also rejected explicitly in
-# reviewer_provider_key_is_forbidden even though Hermes's own provider
-# registry declares it — all three are broad-scope personal credentials and
-# the demo needs chat inference only):
+# Deliberately EXCLUDED from the allowlist (each is also rejected explicitly
+# in reviewer_provider_key_is_forbidden, so editing the list cannot silently
+# re-admit it even though Hermes's own tables declare it):
 #   - GH_TOKEN / GITHUB_TOKEN — GitHub Copilot provider keys, but also the
 #     operator's full VCS credential (they are on Hermes's own static child
 #     env blocklist, tools/environments/local_env_policy.py).
 #   - CLAUDE_CODE_OAUTH_TOKEN — belongs to the operator's Claude Code install,
 #     not to Hermes (same policy file).
+#   - AWS_PROFILE / AWS_REGION — cloud credential-chain selection, not a
+#     forwardable demo chat key.
+#   - VERTEX_CREDENTIALS_PATH — a host-side path to a GCP service-account
+#     JSON, not a credential value.
+#   - HERMES_QWEN_BASE_URL — the launcher owns the whole HERMES_* namespace,
+#     so that class wins over a provider-category entry.
 # TTS/STT, messaging, and search-tool credentials are excluded for the same
-# reason.
+# reason: the demo needs chat inference only.
 
 REVIEWER_PROVIDER_ALLOWED_KEYS="
 ACTUAL_API_KEY
@@ -179,7 +187,7 @@ reviewer_provider_key_check() {
 # never the value) to stdout; rejects the whole file (exit 1, list of
 # offenders on stderr) if ANY line is malformed or not allowlisted.
 reviewer_provider_env_validate() {
-  local file="$1" line key value bad=0
+  local file="$1" line key value bad=0 seen=""
   [ -f "$file" ] || { printf 'provider env file not found: %s\n' "$file" >&2; return 1; }
   local mode
   mode="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file" 2>/dev/null || echo 000)"
@@ -191,11 +199,22 @@ reviewer_provider_env_validate() {
       *) printf 'malformed line (no KEY=value): %s\n' "${line:0:40}" >&2; bad=1; continue ;;
     esac
     # reject values that smuggle quotes/backslashes/control chars the shell
-    # or docker CLI could misparse when the file is replayed as -e arguments
+    # or docker CLI could misparse when the file is replayed as -e arguments.
+    # NOTE: the backslash alternative must be UNQUOTED (`*\\*`) — a quoted
+    # `'\\'` is a literal two-character pattern that matches only doubled
+    # backslashes, silently admitting a single one.
     case "$value" in
-      *'"'*|*"'"*|*'\\'*|*$'\n'*|*[[:cntrl:]]*)
+      *'"'*|*"'"*|*\\*|*$'\n'*|*[[:cntrl:]]*)
         printf 'unsafe character in value for %s (quotes/backslash/control)\n' "$key" >&2; bad=1; continue ;;
     esac
+    # reject duplicate keys: the launcher re-extracts values with sed over the
+    # whole file, so a repeated key would splice multiple lines (newline
+    # control character) into one -e argument.
+    case " $seen " in
+      *" $key "*)
+        printf 'duplicate key %s in provider env file — refusing (fail closed)\n' "$key" >&2; bad=1; continue ;;
+    esac
+    seen="$seen $key"
     if reviewer_provider_key_check "$key"; then
       printf '%s\n' "$key"
     else

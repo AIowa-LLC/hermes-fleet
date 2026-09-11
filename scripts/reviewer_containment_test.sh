@@ -17,7 +17,10 @@
 #   C. host environment    — no maintainer env vars present
 #   D. host credentials    — no ssh/git/keychain material anywhere reachable
 #   E. host network        — LAN/tailnet/loopback-host services unreachable;
-#                            ONLY public TCP/443 egress works
+#                            ONLY public TCP/443 egress works; NO UDP/53 to any
+#                            destination except docker's own resolver
+#                            (regression guard); name resolution intact; no
+#                            IPv6 path
 #   F. runtime hardening   — uid 10000, caps dropped, read-only rootfs,
 #                            no-new-privileges, no docker socket
 #   G. auth gate           — gated requests over the public host must be
@@ -26,11 +29,12 @@
 #                            public by design but must leak no credentials;
 #                            the published port must exist on loopback only
 #
-# 29 probes: 21 attack probes that must be DENIED, 8 state assertions that
-# must hold (disposable image, demo home writable, public 443 reachable,
-# public-but-credential-free provider advertisement, cap-drop ALL,
-# no-new-privileges, read-only rootfs, uid 10000). The state assertions are
-# the functionality the reviewers must have; the denials are containment.
+# 33 probes: 23 attack probes that must be DENIED, 10 state assertions that
+# must hold (disposable image, demo home writable, public 443 reachable, name
+# resolution working, no IPv6 path, public-but-credential-free provider
+# advertisement, cap-drop ALL, no-new-privileges, read-only rootfs, uid
+# 10000). The assertions are the functionality the reviewers must have; the
+# denials are containment.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONT_NAME="${REVIEWER_CONTAINMENT_CONTAINER:-fleet-reviewer}"
@@ -51,9 +55,28 @@ printf 'reviewer containment probes against %s\n\n' "$CONT_NAME"
 
 # --- A. filesystem boundary -------------------------------------------------
 # The container sees its own rootfs + /opt/data volume. Host paths must not
-# exist inside. (Names probed are the maintainer host's real layout.)
-if cecho 'test -d /Users/tonysimons' | grep -q .; then bad "A1 host /Users visible"; else ok "A1 host /Users/* not visible"; fi
-if cecho 'test -d /home/tony' | grep -q .; then bad "A2 container-runtime-host /home/tony visible"; else ok "A2 runtime-host /home/* not visible"; fi
+# exist inside. The paths probed are derived at RUNTIME from this host's own
+# user directories — no maintainer path is committed.
+A1_DIRS="$(ls -d /Users/*/ 2>/dev/null | sed 's:/$::' | head -3 || true)"     # macOS-style
+A2_DIRS="$(ls -d /home/*/ 2>/dev/null | sed 's:/$::' | head -3 || true)"      # Linux-style
+leakdirs=""
+for d in $A1_DIRS; do cecho "test -d '$d'" | grep -q . && leakdirs="$leakdirs $d"; done
+if [ -n "$leakdirs" ]; then
+  bad "A1 host user director(ies) visible inside the container:$leakdirs"
+elif [ -z "$A1_DIRS" ]; then
+  ok "A1 this host has no /Users/* directories (nothing to leak)"
+else
+  ok "A1 no host /Users/* directory visible from $(printf '%s ' $A1_DIRS)"
+fi
+leakdirs=""
+for d in $A2_DIRS; do cecho "test -d '$d'" | grep -q . && leakdirs="$leakdirs $d"; done
+if [ -n "$leakdirs" ]; then
+  bad "A2 host user director(ies) visible inside the container:$leakdirs"
+elif [ -z "$A2_DIRS" ]; then
+  ok "A2 this host has no /home/* directories (nothing to leak)"
+else
+  ok "A2 no host /home/* directory visible"
+fi
 mounts="$(docker inspect -f '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' "$CONT_NAME")"
 if printf '%s' "$mounts" | grep -qE '/(home|Users)/'; then
   bad "A3 host directory mounted into container: $mounts"
@@ -101,7 +124,8 @@ if cecho 'curl -fsS -m 8 -o /dev/null -w "%{http_code}" https://pypi.org/simple/
 else
   bad "E1 public HTTPS egress BROKEN — demo chat would fail"
 fi
-lan_ip="$(docker exec "$CONT_NAME" getent hosts archlinux-1 2>/dev/null | awk '{print $1}' || true)"
+lan_ip="$(docker exec "$CONT_NAME" getent hosts "$(hostname)" 2>/dev/null | awk '{print $1}' || true)"
+if [ -z "$lan_ip" ]; then lan_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7}' | head -1)"; fi
 if [ -n "$lan_ip" ] && cecho "(curl -fsS -m 5 telnet://$lan_ip:22 2>/dev/null; timeout 4 bash -c \"</dev/tcp/$lan_ip/22\" 2>/dev/null) && echo open" | grep -q open; then
   bad "E2 runtime-host SSH reachable at $lan_ip"
 else
@@ -113,17 +137,84 @@ if [ -n "$gw" ] && cecho "(curl -fsS -m 4 -o /dev/null http://$gw:9119 2>/dev/nu
 else
   ok "E3 host gateway port :9119 not reachable from container"
 fi
-# tailnet addresses must be unroutable
-if cecho 'curl -fsS -m 5 -o /dev/null -k https://100.108.104.89 2>/dev/null && echo open' | grep -q open; then
-  bad "E4 tailnet address reachable"
+# tailnet addresses must be unroutable (derived at runtime — no address is
+# committed; the probe is skipped-as-pass with a note when the host has no
+# tailnet interface)
+TAILNET_IP="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+[ -n "$TAILNET_IP" ] || TAILNET_IP="$(ip -4 -o addr show 2>/dev/null | awk '$2 ~ /^tailscale/ {print $4}' | cut -d/ -f1 | head -1)"
+if [ -z "$TAILNET_IP" ]; then
+  ok "E4 this host has no tailnet IPv4 address (nothing to leak)"
+elif cecho "curl -fsS -m 5 -o /dev/null -k https://$TAILNET_IP 2>/dev/null && echo open" | grep -q open; then
+  bad "E4 tailnet address reachable from the container"
 else
-  ok "E4 tailnet addresses unreachable"
+  ok "E4 tailnet address unreachable from the container"
 fi
 # non-443 public egress blocked (FTP control port as the canary)
 if cecho 'curl -fsS -m 5 -o /dev/null telnet://example.com:21 2>/dev/null && echo open' | grep -q open; then
   bad "E5 non-443 public egress allowed"
 else
   ok "E5 non-443 public egress blocked"
+fi
+
+# E6/E7: UDP/53 must be DENIED to every destination. An independent QA
+# challenge (2026-09-10) falsified an earlier revision here — a
+# destination-unrestricted `-p udp --dport 53 -j RETURN` let the container
+# reach the LAN router's resolver and 1.1.1.1 (DNS-tunnel exfil channel).
+# These two probes are the permanent regression guard.
+UDP_PROBE="$(mktemp)"
+cat > "$UDP_PROBE" <<'PYEOF'
+import socket, sys
+target, port = sys.argv[1], int(sys.argv[2])
+q = bytes.fromhex("aabb01000001000000000000076578616d706c6503636f6d0000010001")
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(4)
+try:
+    s.sendto(q, (target, port))
+    d, _ = s.recvfrom(512)
+    print(f"REPLY {len(d)} {target}:{port}")
+except Exception as e:
+    print(f"DENIED {type(e).__name__} {target}:{port}")
+PYEOF
+docker cp "$UDP_PROBE" "$CONT_NAME:/tmp/udp53probe.py" >/dev/null 2>&1 || true
+rm -f "$UDP_PROBE"
+
+if cecho 'python3 /tmp/udp53probe.py 1.1.1.1 53' | grep -q REPLY; then
+  bad "E6 UDP/53 to a public resolver answered — DNS-tunnel egress channel re-opened"
+else
+  ok "E6 UDP/53 to a public resolver denied (no port-53 exception)"
+fi
+
+DGW="$(docker network inspect "$NET_NAME" --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || true)"
+LANROUTER="$(ip -4 route show default 2>/dev/null | awk '{print $3}' | head -1)"
+OTHERNET="$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || true)"
+leak53=""
+for tgt in "$DGW" "$LANROUTER" "$OTHERNET"; do
+  [ -n "$tgt" ] || continue
+  if cecho "python3 /tmp/udp53probe.py $tgt 53" | grep -q REPLY; then leak53="$leak53 $tgt"; fi
+done
+if [ -n "$leak53" ]; then
+  bad "E7 UDP/53 reached a host/LAN/docker destination other than the scoped resolver:$leak53"
+else
+  ok "E7 UDP/53 denied to the reviewer gateway${LANROUTER:+, the LAN router ($LANROUTER)}${OTHERNET:+ and other docker networks}"
+fi
+
+# E8: no IPv6 path off the network (the pinning is IPv4-only, so the network
+# must be IPv4-only and there must be no IPv6 route out of the container).
+V6NET="$(docker network inspect "$NET_NAME" --format '{{.EnableIPv6}}' 2>/dev/null || echo unknown)"
+V6ROUTE="$(cecho 'ip -6 route show default 2>/dev/null' || true)"
+if [ "$V6NET" = "false" ] && [ -z "$V6ROUTE" ]; then
+  ok "E8 network is IPv4-only and the container has no IPv6 default route"
+else
+  bad "E8 IPv6 egress path not eliminated (network EnableIPv6=${V6NET:-?}, container default route: ${V6ROUTE:-none})"
+fi
+
+# E9: name resolution must still work. Removing the port-53 exception is only
+# correct while docker's own resolver path answers; this assertion is what
+# catches an over-tightened rule set (the demo is useless without DNS).
+if cecho 'getent hosts api.openai.com >/dev/null 2>&1 && echo RESOLVED' | grep -q RESOLVED; then
+  ok "E9 name resolution works (docker's resolver path intact)"
+else
+  bad "E9 name resolution BROKEN — provider APIs unreachable, demo would fail"
 fi
 
 # --- F. runtime hardening --------------------------------------------------------

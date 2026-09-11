@@ -40,10 +40,14 @@ iPhone (reviewer)            public internet
                 │    no-new-privileges  --user 10000:10000      │
                 │  --read-only rootfs  --tmpfs /tmp             │
                 │  --memory 2g --pids-limit 256                 │
-                │  network: dedicated bridge                    │
-                │    egress = DNS + public tcp/443 ONLY         │
-                │    (model provider APIs); everything else     │
-                │    DROP — host, LAN, tailnet, docker nets     │
+                │  network: dedicated bridge (IPv4-only)        │
+                │    egress = public tcp/443 ONLY               │
+                │    (model provider APIs + the upstream DNS    │
+                │     the host's own resolver already serves);  │
+                │    everything else DROP — host, LAN,          │
+                │    tailnet, docker nets, and any port-53      │
+                │    destination other than docker's embedded   │
+                │    resolver (127.0.0.11)                      │
                 │  HERMES_HOME = named volume (disposable)      │
                 │  hermes serve --host 0.0.0.0 (in-container)   │
                 │  auth gate: basic-auth provider (scrypt hash  │
@@ -64,11 +68,17 @@ Layered boundary, outermost first:
    inside the container above — non-root UID 10000, all Linux capabilities
    dropped, no-new-privileges, read-only rootfs, no host mounts of any
    kind, no docker socket, no host-management tools in the image.
-4. **Network containment**: a dedicated docker bridge whose egress is
-   pinned (iptables, DOCKER-USER for forwarded traffic + INPUT rules for
-   container→host traffic) to DNS and public TCP/443 only. The reviewer
-   subnet cannot reach the host's SSH, other host services, LAN, tailnet,
-   or other docker networks. Proven by probes F1–F4.
+4. **Network containment**: a dedicated IPv4-only docker bridge whose egress
+   is pinned (iptables, DOCKER-USER for forwarded traffic + INPUT rules for
+   container→host traffic) to established traffic and public TCP/443 only.
+   The only port-53 destination allowed is **docker's own resolver address**
+   (the default-bridge gateway docker points containers at when the host
+   resolver is a loopback stub — `RESOLVER_ADDR` in the launcher); a LAN
+   router, a public resolver, or a tailnet address is dropped. The
+   reviewer subnet cannot reach the host's SSH, other host services, LAN,
+   tailnet, or other docker networks. The launcher refuses to run if the
+   network has IPv6 enabled (the pinning is IPv4-only). Proven by probes
+   E1–E5 and the auth-gate group G.
 5. **Disposable state**: the demo home is a named volume created empty at
    every `start` (prior volumes are destroyed first — no inherited state)
    and destroyed by `clean --purge` together with credentials.
@@ -90,11 +100,37 @@ and isolates at the runtime layer instead:
 
 - the *process* reachable by the reviewer is confined to the hardened
   container; its tools act on the disposable volume, not on any host;
-- the container's own network egress is 443-only, so even a malicious
-  tool call cannot reach maintainer LAN/tailnet services;
+- the container's own network egress is public TCP/443 plus DNS to docker's
+  own resolver only, so even a malicious tool call cannot reach maintainer
+  LAN/tailnet services;
 - the model key is the only credential in the environment, a scoped
   low-limit demo key forwarded through a strict allowlist (below);
 - credentials are generated per provisioning run and destroyed at teardown.
+
+### Residual risk, stated plainly (independent-challenge findings)
+
+An independent `apple-qa` challenge (2026-09-10) attacked this model on the
+head that preceded this revision; its findings are fixed and re-verified, and
+what remains is listed here rather than glossed:
+
+- **Outbound TCP/443 is open to the entire internet**, not to a provider
+  allowlist. A compromised agent process can therefore exfiltrate over HTTPS
+  to any host. This is accepted by design (provider base URLs are
+  operator-chosen), and is the reason the only credential in the container is
+  a scoped, low-limit demo key. The earlier, wider hole — UDP/53 to arbitrary
+  LAN/internet destinations (a DNS-tunnel channel) — is closed: there is no
+  port-53 exception at all.
+- **The egress pinning is IPv4-only.** The reviewer network is created
+  IPv4-only and the launcher now refuses to start if IPv6 is enabled on it,
+  so the pinning cannot silently stop applying.
+- **Host service exposure is zero by construction now**: the container→host
+  chain accepts nothing (previously a port-53 exception). Verified live.
+- **The reviewer credential file persists between `start`/`clean` runs by
+  design** (`reusing generated credentials`); rotation is manual — delete the
+  file (or `clean --purge`) to rotate.
+- **A refused launch leaves nothing behind**: the provider-env allowlist is
+  evaluated before any network, iptables rule, volume, seeded home, or
+  credential file is created.
 
 This scope statement is deliberate and must not be softened in review notes.
 
@@ -134,13 +170,19 @@ Rejected categories include:
 - unknown keys — including near-misses of real names (`OPENAI_API_KE`),
   vendor keys Hermes 0.21.1 does not read (`GROQ_API_KEY`,
   `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `PERPLEXITY_API_KEY`),
+- duplicate keys (the launcher re-extracts values with `sed` over the whole
+  file, so a repeated key would splice an embedded newline into one `-e`
+  argument),
 - malformed lines, mis-permissioned files (must be 0600), and values
-  containing quotes/backslashes/control characters (docker `-e` injection
-  guard).
+  containing quotes, backslashes, or control characters (docker `-e`
+  injection guard — the backslash case is matched by an *unquoted* `*\\*`
+  pattern; a quoted `'\\'` matches only doubled backslashes and silently
+  admits a single one).
 
 `scripts/reviewer_provider_env_test.sh` is the executable regression suite
-(106 assertions: every protected key rejected, legitimate provider keys
-accepted, near-miss names rejected by exact matching, and
+(108 assertions: every protected key rejected, legitimate provider keys
+accepted, near-miss names rejected by exact matching, single- and
+doubled-backslash values rejected, duplicate keys rejected, and
 malicious/mixed/mis-permissioned/injection-bearing files refused). Run it
 anywhere; it is part of QA.
 
@@ -161,40 +203,53 @@ rest) by **merging** into the existing config so the plugin state survives.
 | File | Purpose |
 |---|---|
 | `scripts/reviewer_env_launch.sh` | v2 launcher: builds nothing, runs ON the container host. Fresh volume + demo seeding, plugin enable, scrypt auth config, hardened container start, egress pinning, `status`/`stop`/`clean [--purge]` |
-| `scripts/reviewer_containment_test.sh` | executable containment evidence: 29 probes (filesystem, shell, environment, credentials, network egress, runtime hardening, auth gate) run against the LIVE container — 21 attack probes that must be DENIED, 8 state assertions that must hold (disposable image, demo home writable, public 443 reachable, public-but-credential-free provider advertisement, cap-drop ALL, no-new-privileges, read-only rootfs, uid 10000) |
+| `scripts/reviewer_containment_test.sh` | executable containment evidence: 33 probes (filesystem, shell, environment, credentials, network egress incl. UDP/53-scope and IPv6 regression guards, runtime hardening, auth gate) run against the LIVE container — 23 attack probes that must be DENIED, 10 state assertions that must hold (disposable image, demo home writable, public 443 reachable, name resolution working, no IPv6 path, public-but-credential-free provider advertisement, cap-drop ALL, no-new-privileges, read-only rootfs, uid 10000) |
 | `scripts/reviewer_provider_env_lib.sh` | the one allowlist definition (fail closed) |
-| `scripts/reviewer_provider_env_test.sh` | allowlist regression suite (106 assertions) |
+| `scripts/reviewer_provider_env_test.sh` | allowlist regression suite (108 assertions) |
 | `scripts/reviewer_env_check.sh` | off-network pre-submission reachability check (health → providers → login → ws-ticket → unauthenticated-negative) following Fleet's exact wire sequence |
 | `scripts/reviewer_env_assets/` | synthetic demo SOUL/SKILL content (demo material only — NOT a security control) |
 
-### Executed QA evidence (re-verified 2026-09-10 20:13 CDT / 2026-09-11 01:13 UTC, dedicated container host, image `hermes-agent:0.21.1-reviewer` @ `sha256:55d51bf97414…`)
+### Executed QA evidence (re-verified post-fix 2026-09-10 20:58 CDT = 2026-09-11 01:58 UTC, dedicated container host, image `hermes-agent:0.21.1-reviewer` @ `sha256:55d51bf97414…`)
 
-- allowlist regression suite: **106/106 PASS** (host-side; no docker needed)
-- launcher fail-closed: a provider env file containing `HOME=…` and
-  `HERMES_HOME=…` was **refused before any container was created**; a file with
-  `OPENAI_API_KEY` + `OPENAI_BASE_URL` was forwarded as exactly those two
-  variables and no others
-- container bring-up with full hardening flags: PASS (scrypt auth config
-  written by merge; serve published to host loopback only)
-- containment suite: **29/29 PASS** (read/write outside the demo home denied;
-  host-management tools and docker socket absent; env limited to image +
-  launcher variables; no credential material; only the synthetic demo
-  profiles; SSH to gateway/LAN/tailnet denied; **public 443 WORKS**;
-  unauthenticated ws-ticket / wrong-password login / fabricated cookie all
-  denied HTTP 401; provider advertisement reachable by design and
-  credential-free; port bound to `127.0.0.1` only)
-- Fleet wire sequence over the rehearsal host header with the gate **ENGAGED**:
-  **0 failures** — health 200, provider discovery `basic`, password login +
-  session cookie, ws-ticket 200 with cookie, unauthenticated ws-ticket → 401
+An **independent `apple-qa` challenge** attacked the previous head and
+returned `CONTAINMENT CHALLENGE: FALSIFIED`: the runtime containment, auth
+gate, allowlist core and teardown all held, but **UDP/53 reached arbitrary
+destinations** (the container got real answers from the LAN router and from
+`1.1.1.1` — a DNS-tunnel exfil channel), and two allowlist gaps existed
+(single-backslash values admitted; duplicate keys splicing a newline into one
+`-e` argument). All of it is fixed here and the whole suite was re-run on the
+fixed head:
+
+- allowlist regression suite: **108/108 PASS** (includes the new
+  single-backslash and duplicate-key cases; the challenger's own 25-case
+  adversarial harness now reports every protected key rejected — its only
+  "mismatch" is the duplicate-key case, which its harness recorded as
+  `accept` for the pre-fix behaviour)
+- refused launch: a provider file carrying `HOME=` / `HERMES_HOME=` exits
+  non-zero **and leaves nothing behind** — no container, no volume, no
+  network, no iptables rule, no credentials file (the allowlist gate now runs
+  before anything is created)
+- container bring-up with full hardening flags: PASS; egress pinned to
+  established + public TCP/443 + DNS to docker's own resolver address only
+  (`172.17.0.1` — the default-bridge gateway, derived at runtime, never a LAN
+  router, public resolver or tailnet address)
+- containment suite: **33/33 PASS**, including the new regression guards:
+  UDP/53 to a public resolver **denied**, UDP/53 to the reviewer gateway / LAN
+  router / other docker networks **denied**, network IPv4-only with no IPv6
+  route out of the container, and name resolution **working** (E1 + E9).
+  The challenger's own attack scripts re-run against this head: external
+  UDP/53 timed out, LAN `:53` queries got no reply, tailnet `:53` no reply,
+  other docker-network TCP closed.
+- Fleet wire sequence with the gate **ENGAGED**: **0 failures** — health 200,
+  provider discovery `basic`, password login + session cookie, ws-ticket 200
+  with cookie, unauthenticated ws-ticket → 401
 - teardown (`clean --purge`): container, volume, network, state dir, and every
   iptables rule removed — verified no residue (no listener on the serve port)
 
-An earlier revision of this lane was additionally verified through the real
-Cloudflare edge (quick tunnel → host loopback) with the same 0-failure result;
-the auth/wire code path is unchanged since, and the current revision was
-re-verified over the local rehearsal transport. The public review-window
-endpoint is created by the operator at review time — this automation never
-creates or runs a tunnel.
+The challenge's own findings are preserved verbatim in the lane's QA records,
+including the ones that remain accepted-by-design (TCP/443 openness) — see
+"Residual risk", above. The public review-window endpoint is created by the
+operator at review time; this automation never creates or runs a tunnel.
 
 ## Operations (on the container host, from the repo root)
 
