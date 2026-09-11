@@ -90,19 +90,24 @@ resolve_credentials() {
 # internal resolver is not on this subnet), allow NEW outbound tcp/443 to
 # NON-private destinations, drop everything else.
 setup_network() {
-  if ! docker network inspect "$NET_NAME" >/dev/null 2>&1; then
+  if docker network inspect "$NET_NAME" >/dev/null 2>&1; then
+    # FAIL CLOSED on IPv6 for a PRE-EXISTING network (the egress pinning below
+    # is iptables/IPv4-only). Checked before this function or its caller
+    # creates anything at all: no chains, no rules, no credentials, no volume.
+    if [ "$(docker network inspect "$NET_NAME" --format '{{.EnableIPv6}}')" != "false" ]; then
+      die "network $NET_NAME has IPv6 enabled — the egress pinning is IPv4-only; refusing to launch (nothing was created or modified)"
+    fi
+  else
     docker network create --driver bridge --internal=false "$NET_NAME" >/dev/null \
       || die "cannot create docker network $NET_NAME"
     info "created dedicated bridge network $NET_NAME"
   fi
   SUBNET="$(docker network inspect "$NET_NAME" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}')"
   [ -n "$SUBNET" ] || die "cannot read subnet of $NET_NAME"
-  # FAIL CLOSED on IPv6: the egress pinning below is iptables (IPv4) only. The
-  # network is created IPv4-only, so there is no IPv6 address or route in the
-  # container; if that ever changes the pinning would silently not apply.
-  # (Independent QA finding, 2026-09-10.)
+  # Assert the invariant for the network we are about to pin (a network created
+  # just above is IPv4-only by construction).
   if [ "$(docker network inspect "$NET_NAME" --format '{{.EnableIPv6}}')" != "false" ]; then
-    die "network $NET_NAME has IPv6 enabled — the egress pinning is IPv4-only; refusing to launch (recreate the network without IPv6)"
+    die "network $NET_NAME has IPv6 enabled — the egress pinning is IPv4-only; refusing to launch"
   fi
   # Docker's internal resolver address. When the host's /etc/resolv.conf is a
   # loopback stub (systemd-resolved at 127.0.0.53), dockerd cannot use it from
@@ -244,9 +249,10 @@ do_start() {
   fi
 
   # Only now — after the allowlist gate has accepted the provider file — do we
-  # create anything.
-  resolve_credentials
+  # create anything. The network step comes before credentials so that a
+  # refusal there (IPv6-enabled pre-existing network) also leaves nothing.
   setup_network
+  resolve_credentials
 
   # ALWAYS fresh state: destroy any prior volume so nothing is inherited.
   docker rm -f "$CONT_NAME" >/dev/null 2>&1 || true
