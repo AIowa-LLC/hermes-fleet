@@ -71,7 +71,7 @@ PASSWORD="${REVIEWER_PASSWORD:-}"
 if { [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; } && [ -n "$CRED_FILE" ]; then
   if [ ! -f "$CRED_FILE" ]; then
     fail "credential file '$CRED_FILE' not found"
-  elif [ "$(stat -f '%Lp' "$CRED_FILE" 2>/dev/null || echo 000)" != "600" ]; then
+  elif [ "$(stat -c '%a' "$CRED_FILE" 2>/dev/null || stat -f '%Lp' "$CRED_FILE" 2>/dev/null || echo 000)" != "600" ]; then
     fail "credential file must be chmod 600"
   else
     USERNAME="$(sed -n 's/^username=//p' "$CRED_FILE")"

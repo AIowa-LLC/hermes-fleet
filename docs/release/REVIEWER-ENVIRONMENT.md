@@ -1,318 +1,258 @@
-# Reviewer Hermes environment — provisioning design
+# Reviewer Hermes environment — v2 container architecture
 
-This document specifies the disposable Hermes gateway environment that Hermes
-Fleet's external TestFlight reviewers connect to, and the automation skeleton
-this repository ships for it. It pairs with the reviewer-facing walkthrough in
-[`REVIEWER-PACKAGE.md`](REVIEWER-PACKAGE.md) and the App Store Connect draft in
-[`BETA-METADATA.md`](BETA-METADATA.md). Those two documents land via the
-sibling reviewer-package lane (branch `hermes/i18-reviewer-package`); if the
-links 404 on this branch alone, that is why — they exist once the lanes merge.
-Those documents tell Apple what to do; this one defines the environment
-they do it against and how the operator runs it.
+This document specifies the disposable, **container-isolated** Hermes gateway
+environment that Hermes Fleet's external TestFlight reviewers connect to
+(issue #18), and the checked-in automation that provisions it. It pairs with
+the reviewer-facing walkthrough in
+[`REVIEWER-PACKAGE.md`](REVIEWER-PACKAGE.md) and the App Store Connect draft
+in [`BETA-METADATA.md`](BETA-METADATA.md).
 
-Nothing in this file or the scripts it describes commits an endpoint,
-credential, QR payload, or any secret. Every secret is resolved at runtime from
-the environment, a `0600` file outside the repository, or the macOS Keychain.
+**v2 supersedes the v1 design** (a disposable `HERMES_HOME` on the
+maintainer's Mac). v1 was rejected in security review for a correct reason:
+a synthetic Hermes home is not a security boundary. A serve process running
+as the maintainer's OS user retains all host permissions outside that
+directory — home filesystem, SSH material, git credentials, Keychain,
+browser profiles, messaging integrations. Prompts and a "safe SOUL.md" are
+demo content, not containment. v2 puts the reviewer gateway inside a
+hardened disposable container on a **dedicated container host**, where the
+intended blast radius is the container and its disposable volume — and
+proves it with executable probes (see `scripts/reviewer_containment_test.sh`).
 
-## Requirements recap (issue #18)
+Nothing in this file or the scripts commits an endpoint, credential, QR
+payload, or secret. Every secret is resolved at runtime into 0600 storage
+outside any repository.
 
-- reachable from outside the maintainer network over an encrypted, supported path
-- authenticated; isolated from personal/business Hermes data
-- disposable or narrowly scoped; stable for the whole review window
-- demonstrates: gateway connection, roster/profile visibility, chat session
-  creation, streamed prompt/response, basic model/session state, one safe demo
-  skill, bot/profile inspection
-- pre-submission reachability check using the same endpoint Apple receives
-- revocable credentials; no production fleet, no maintainer secrets
-
-## Architecture (chosen design)
+## Architecture (v2)
 
 ```
-iPhone (reviewer)                 public internet
-    │  Hermes Fleet                      │  TLS (terminated at tunnel edge)
-    │  Add Gateway → URL + user/pass     ▼
-    │                       ┌──────────────────────────┐
-    └──────────────────────►│  cloudflared tunnel      │
-                            │  https://<reviewer host> │
-                            └────────────┬─────────────┘
-                                         │ plaintext, loopback only
-                                         ▼
-                            ┌──────────────────────────┐
-                            │ hermes serve             │
-                            │ --host 127.0.0.1         │
-                            │ --port <REVIEWER_SERVE_PORT>
-                            │ auth gate ON via         │
-                            │   HERMES_DASHBOARD_      │
-                            │   PUBLIC_URL             │
-                            │ basic-auth provider via  │
-                            │   HERMES_DASHBOARD_      │
-                            │   BASIC_AUTH_* env       │
-                            └────────────┬─────────────┘
-                                         │
-                            HERMES_HOME = disposable dir
-                            (fresh profile home: synthetic roster,
-                             one demo skill, scoped demo model key)
+iPhone (reviewer)            public internet
+    │  Hermes Fleet               │ TLS (terminated at Cloudflare edge)
+    │  Add Gateway → URL+user/pass ▼
+    │                    ┌────────────────────────┐
+    └───────────────────►│ cloudflared named tunnel│  (operator-run, on the
+                         │ https://<reviewer host> │   container host)
+                         └───────────┬────────────┘
+                                     │ loopback HTTP only (127.0.0.1:<port>)
+                                     ▼
+                ┌──────────────────────────────────────────────┐
+                │ Docker container — hermes-agent image         │
+                │  --cap-drop ALL  --security-opt               │
+                │    no-new-privileges  --user 10000:10000      │
+                │  --read-only rootfs  --tmpfs /tmp             │
+                │  --memory 2g --pids-limit 256                 │
+                │  network: dedicated bridge                    │
+                │    egress = DNS + public tcp/443 ONLY         │
+                │    (model provider APIs); everything else     │
+                │    DROP — host, LAN, tailnet, docker nets     │
+                │  HERMES_HOME = named volume (disposable)      │
+                │  hermes serve --host 0.0.0.0 (in-container)   │
+                │  auth gate: basic-auth provider (scrypt hash  │
+                │    in config.yaml; plugin ENABLED in home)    │
+                └──────────────────────────────────────────────┘
 ```
 
-Ground truth for every mechanism cited below was verified against the
-installed Hermes server source and CLI (`hermes serve --help`,
-`hermes_cli/web_server.py`, `plugins/dashboard_auth/basic/__init__.py`) and
-against this repository's existing hermetic-launch script
-(`scripts/p08_launch_gateways_hermetic.sh`):
+Layered boundary, outermost first:
 
-1. `hermes serve` never opens a browser UI and binds `127.0.0.1` by default.
-   The `--insecure` flag is a documented no-op: a non-loopback bind ALWAYS
-   requires an auth provider. The supported remote-access deployment is
-   "bind loopback + tunnel", which is what this design does.
-2. Setting `dashboard.public_url` (or the `HERMES_DASHBOARD_PUBLIC_URL` env
-   var) engages the dashboard auth gate on an otherwise-loopback bind
-   whenever the public URL's host is non-loopback — it is the operator's
-   declaration of "this backend is reached through a public URL", and it
-   registers the public host as the trusted Host/Origin for WebSocket
-   upgrade validation behind a reverse proxy. A LOOPBACK public URL (e.g.
-   `http://127.0.0.1:<port>`, pure transport rehearsal) does NOT engage the
-   gate: `should_require_dashboard_auth()` only engages for a non-loopback
-   bind or a non-loopback public-URL host. The launcher therefore reports
-   gate engagement honestly and always sets the variable to the real tunnel
-   URL for the review window.
-3. The bundled basic-auth provider activates from
-   `dashboard.basic_auth.{username,password,secret}` in `config.yaml` OR the
-   `HERMES_DASHBOARD_BASIC_AUTH_{USERNAME,PASSWORD,SECRET}` env vars, with env
-   winning when non-empty. Passwords are scrypt-hashed; sessions are
-   HMAC-signed stateless tokens. Login is `POST /auth/password-login`
-   (JSON username/password → session cookie), then
-   `POST /api/auth/ws-ticket` (single-use WebSocket ticket) — the exact
-   sequence Hermes Fleet's `GatewayAuthenticator` performs, so a successful
-   reachability check exercises the same wire path Apple will.
+1. **Transport**: TLS terminates at the Cloudflare edge; the container host
+   publishes the serve port to **host loopback only** — nothing listens on
+   the host's LAN/tailnet interfaces.
+2. **Authentication**: the Hermes dashboard auth gate is engaged
+   (non-loopback `HERMES_DASHBOARD_PUBLIC_URL`); unauthenticated
+   `/api/auth/ws-ticket` is refused (verified by probe H of the
+   containment suite).
+3. **Runtime containment** (the boundary v1 lacked): the serve process runs
+   inside the container above — non-root UID 10000, all Linux capabilities
+   dropped, no-new-privileges, read-only rootfs, no host mounts of any
+   kind, no docker socket, no host-management tools in the image.
+4. **Network containment**: a dedicated docker bridge whose egress is
+   pinned (iptables, DOCKER-USER for forwarded traffic + INPUT rules for
+   container→host traffic) to DNS and public TCP/443 only. The reviewer
+   subnet cannot reach the host's SSH, other host services, LAN, tailnet,
+   or other docker networks. Proven by probes F1–F4.
+5. **Disposable state**: the demo home is a named volume created empty at
+   every `start` (prior volumes are destroyed first — no inherited state)
+   and destroyed by `clean --purge` together with credentials.
 
-## Public-path mechanism options
+### Why the container host is not the maintainer Mac
 
-| # | Mechanism | Setup | Stability | Exposes | Verdict |
-|---|-----------|-------|-----------|---------|---------|
-| A | **cloudflared quick tunnel** (`cloudflared tunnel --url http://127.0.0.1:<port>`) | none — no Cloudflare account, no DNS; prints a random `https://<token>.trycloudflare.com` URL | URL rotates on every restart; best-effort availability | full gateway surface, TLS at edge, behind Hermes auth | **dry-runs and internal validation only** — never the review window |
-| B | **cloudflared named tunnel** (`cloudflared tunnel create` + DNS CNAME) | Cloudflare account + DNS zone — Tony-only | stable hostname across restarts; can run as a service (`cloudflared service install`); optional Cloudflare Access in front | same as A with a fixed URL | **recommended for the review window** |
-| C | cloudflared on a public host (e.g. the Arch fleet box) forwarding to this Mac over the tailnet | Tony-only: tunnel + DNS + tailnet routing to the Mac's disposable port | stable; keeps the Mac out of public DNS | gateway surface via one tailnet-forwarded port; the production tailnet carries reviewer transit to exactly one port | acceptable Tony-owned alternative if the Mac must not run the tunnel itself |
-| D | Tailscale Funnel | tailnet admin + HTTPS certs — Tony-only | stable `*.ts.net` URL | same gateway surface; public tailnet hostname | viable but couples the review URL to the private tailnet name; prefer B |
-| E | direct LAN/port-forward, tailnet IP, or maintainer hostname | — | — | exposes the home network / private infra; violates issue #18 | **rejected** |
+The container host must not hold the maintainer's personal session. The
+fleet's dedicated Linux container host runs the reviewer container; the
+maintainer Mac never runs reviewer-facing processes. Even full container
+escape yields: the disposable volume, the container's own network (443-only
+egress), and nothing else — no mountable path leads to maintainer data.
 
-Chosen: **B for the review window, A for rehearsals.** The launcher script
-never creates a tunnel itself (this lane is forbidden from creating real
-tunnels); it prints the exact commands for the operator after the backend is
-up, and the reachability check works against whichever URL the operator
-supplies.
+## What is remotely reachable (honest scope)
 
-### What a tunnel actually exposes — honest scope
+The Hermes gateway API is not per-route scoped: a client holding valid
+reviewer credentials can reach the full JSON-RPC/WebSocket surface the
+dashboard serves. There is no partial-API credentials mode. v2 accepts this
+and isolates at the runtime layer instead:
 
-The Hermes dashboard/gateway API is not per-route scoped: a client holding
-valid reviewer credentials can reach the full JSON-RPC/WebSocket surface the
-dashboard serves, including administrative routes. There is no partial-API
-credentials mode. The isolation therefore comes from the environment, not
-from credential scoping:
+- the *process* reachable by the reviewer is confined to the hardened
+  container; its tools act on the disposable volume, not on any host;
+- the container's own network egress is 443-only, so even a malicious
+  tool call cannot reach maintainer LAN/tailnet services;
+- the model key is the only credential in the environment, a scoped
+  low-limit demo key forwarded through a strict allowlist (below);
+- credentials are generated per provisioning run and destroyed at teardown.
 
-- the `HERMES_HOME` is a throwaway directory containing only synthetic
-  content and a scoped demo model key — worst case, an abusive reviewer
-  spends the demo key's budget or trashes a disposable home;
-- credentials are generated fresh per provisioning run and revoked by
-  teardown;
-- the model key is a low-limit scoped key (Tony-provisioned), never a
-  maintainer key;
-- approvals stay in `smart` mode with the documented unattended/cron
-  `deny` defaults, so dangerous commands surfaced through unattended surfaces
-  are blocked rather than prompted.
+This scope statement is deliberate and must not be softened in review notes.
 
-This limitation is stated here deliberately and should not be softened in
-review notes: reviewers get a real, full-capability Hermes gateway against a
-synthetic, disposable home.
+## Provider env allowlist (BLOCKER 1 remediation)
 
-## Isolation properties
+`REVIEWER_PROVIDER_ENV_FILE` (0600, outside the repo) is the operator's
+`.env` for the demo model key. The launcher does **not** forward it
+verbatim: `scripts/reviewer_provider_env_lib.sh` defines the single
+allowlist of model-provider credential variables and **fails closed** on
+everything else.
 
-- **Separate Hermes home.** The launcher refuses to run against the default
-  `~/.hermes` (it fails fast if `HERMES_HOME` would resolve there). All
-  state — config, sessions, skills, state DB, logs — lives under
-  `$REVIEWER_ENV_DIR/home` which is created empty and destroyed only by
-  `clean --purge` (plain `clean` stops the serve and keeps state).
-- **Hermetic process environment.** The serve process is launched with
-  `env -i` and an explicit minimal environment (the pattern already proven in
-  `scripts/p08_launch_gateways_hermetic.sh`), so no agent-session, kanban, or
-  profile variables from the maintainer's machine leak into the reviewer
-  gateway. The only inherited values are explicitly forwarded: `PATH`,
-  `HOME`, `HERMES_HOME`, the public-URL variable, the three basic-auth
-  variables, timezone, and variables from the operator's provider env file.
-- **No messaging platforms.** The fresh home has no platform tokens, so
-  Telegram/Discord/etc. inbound surfaces never come up.
-- **No personal data.** Nothing is cloned from any existing profile. The
-  roster is created synthetic (below).
+The allowlist is **derived, not hand-picked**: it is the union of every
+api-key env var and base-URL env var in `hermes_cli.auth.PROVIDER_REGISTRY`
+and every `hermes_cli.config.OPTIONAL_ENV_VARS` entry with category
+`provider` at the pinned image version (hermes 0.21.1: 79 providers → 100
+variables), minus seven documented exclusions (93 entries). The seven are
+`GH_TOKEN`, `GITHUB_TOKEN` (Copilot provider keys, but also the operator's
+full VCS credential — Hermes's own child-env blocklist strips them too),
+`CLAUDE_CODE_OAUTH_TOKEN` (belongs to the operator's Claude Code install),
+`AWS_PROFILE`/`AWS_REGION` (cloud credential-chain selection, not a chat key),
+`VERTEX_CREDENTIALS_PATH` (a host-side path to a service-account JSON), and
+`HERMES_QWEN_BASE_URL` (the launcher owns the whole `HERMES_*` namespace, so
+that class wins). Each excluded name is also rejected explicitly, so editing
+the allowlist cannot silently re-admit it.
 
-## Demo-content seeding plan
+Rejected categories include:
 
-All steps are performed by `scripts/reviewer_env_launch.sh start` inside the
-disposable home — no secrets involved:
+- any `HERMES_*` variable — the launcher owns the Hermes security
+  configuration (`HERMES_HOME`, `HERMES_DASHBOARD_PUBLIC_URL`,
+  `HERMES_DASHBOARD_BASIC_AUTH_*`, …); a reused .env must never override it;
+- `HOME`, `PATH`, identity/locale/shell-runtime manipulation
+  (`ENV`, `BASH_ENV`, `LD_*`, `DYLD_*`, `PYTHON*`, `NODE_*`, …);
+- reviewer/auth/tunnel control (`REVIEWER_*`, `CLOUDFLARED_*`, `TUNNEL_*`,
+  `CF_*`);
+- host control / host credential material (`GITHUB_TOKEN`, `GH_TOKEN`,
+  `AWS_*`, `SSH_AUTH_SOCK`, `DOCKER_HOST`, `KUBECONFIG`, `HEROKU_API_KEY`);
+- unknown keys — including near-misses of real names (`OPENAI_API_KE`),
+  vendor keys Hermes 0.21.1 does not read (`GROQ_API_KEY`,
+  `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `PERPLEXITY_API_KEY`),
+- malformed lines, mis-permissioned files (must be 0600), and values
+  containing quotes/backslashes/control characters (docker `-e` injection
+  guard).
 
-1. **Initialize the home** by creating two demo bot profiles with the
-   supported CLI, e.g.
-   `HERMES_HOME=<dir> hermes profile create reviewer-demo-oracle --description "..."`.
-   In Hermes, a Bot IS a profile, so the gateway's roster immediately shows
-   synthetic entries with names/descriptions Fleet can render. Profile names
-   are prefixed `reviewer-demo-`; note `profile create` also installs
-   command aliases at `~/.local/bin/<name>`, which the launcher's `clean
-   --purge` removes.
-2. **Demo personas**: a short synthetic `SOUL.md` is written into each demo
-   profile (friendly demo assistant, states it is a disposable review bot).
-3. **Safe demo skill**: the launcher copies the checked-in skill
-   `scripts/reviewer_env_assets/reviewer-demo/SKILL.md` into
-   `<home>/skills/reviewer-demo/`. It is intentionally read-only static
-   knowledge (describes the demo environment and what is safe to try); it
-   requires no tools, no network, no shell. This is the skill the
-   REVIEWER-PACKAGE walkthrough's step 7 refers to.
-4. **Model key**: the ONLY secret in the environment. The operator provides a
-   scoped, low-limit provider key at runtime via `REVIEWER_PROVIDER_ENV_FILE`
-   (a `0600` file outside the repo, e.g. `KEY=value` lines). The launcher
-   forwards those variables into the serve process only; they are never
-   written inside the repository, printed, or logged. Chat replies will not
-   work until this is supplied — rehearsal without a key can still validate
-   connect/auth/roster/skills.
+`scripts/reviewer_provider_env_test.sh` is the executable regression suite
+(106 assertions: every protected key rejected, legitimate provider keys
+accepted, near-miss names rejected by exact matching, and
+malicious/mixed/mis-permissioned/injection-bearing files refused). Run it
+anywhere; it is part of QA.
 
-## Credentials and access artifact
+## Auth-gate activation — corrected for hermes 0.21.x
 
-- Username/password/session-secret are resolved at launch in this order:
-  explicit `REVIEWER_USERNAME`/`REVIEWER_PASSWORD`/`REVIEWER_SECRET` env →
-  one Keychain generic-password item named by `REVIEWER_KEYCHAIN_ITEM`
-  (service = the item name; the reviewer USERNAME is the item's `acct`
-  account attribute; the reviewer PASSWORD is the item's password field,
-  read via `security find-generic-password -w`, never echoed) → freshly
-  generated with `openssl rand` and stored `0600` in
-  `$REVIEWER_ENV_DIR/credentials`.
-- The pairing QR for Apple is generated AFTER the tunnel exists, with the
-  existing checked-in generator, into the (untracked) env dir:
-  `bash scripts/f2_generate_pairing_qr.sh "$REVIEWER_PUBLIC_URL" "$REVIEWER_USERNAME" "$REVIEWER_PASSWORD"`
-  — output PNG lives under `$REVIEWER_ENV_DIR/` and is handed to Apple only
-  through App Store Connect's private review-access fields, per
-  [`REVIEWER-PACKAGE.md`](REVIEWER-PACKAGE.md) and
-  [`docs/gateway-pairing.md`](../gateway-pairing.md).
+Verified in-container against the shipped source: setting
+`HERMES_DASHBOARD_BASIC_AUTH_{USERNAME,PASSWORD,SECRET}` **alone does not
+register the provider** at serve time — the bundled `basic` dashboard-auth
+plugin must also be enabled in the home (`hermes plugins enable basic`,
+recorded in the home's `config.yaml` under `plugins.enabled`). v1 of this
+document claimed env vars alone engage the provider; that was wrong. The
+v2 launcher's seeding step enables the plugin in the disposable home and
+the auth-config step writes the scrypt `password_hash` (never plaintext at
+rest) by **merging** into the existing config so the plugin state survives.
 
-## Operations
+## Automation (all checked in, all secret-free)
+
+| File | Purpose |
+|---|---|
+| `scripts/reviewer_env_launch.sh` | v2 launcher: builds nothing, runs ON the container host. Fresh volume + demo seeding, plugin enable, scrypt auth config, hardened container start, egress pinning, `status`/`stop`/`clean [--purge]` |
+| `scripts/reviewer_containment_test.sh` | executable containment evidence: 29 probes (filesystem, shell, environment, credentials, network egress, runtime hardening, auth gate) run against the LIVE container — 21 attack probes that must be DENIED, 8 state assertions that must hold (disposable image, demo home writable, public 443 reachable, public-but-credential-free provider advertisement, cap-drop ALL, no-new-privileges, read-only rootfs, uid 10000) |
+| `scripts/reviewer_provider_env_lib.sh` | the one allowlist definition (fail closed) |
+| `scripts/reviewer_provider_env_test.sh` | allowlist regression suite (106 assertions) |
+| `scripts/reviewer_env_check.sh` | off-network pre-submission reachability check (health → providers → login → ws-ticket → unauthenticated-negative) following Fleet's exact wire sequence |
+| `scripts/reviewer_env_assets/` | synthetic demo SOUL/SKILL content (demo material only — NOT a security control) |
+
+### Executed QA evidence (re-verified 2026-09-10 20:13 CDT / 2026-09-11 01:13 UTC, dedicated container host, image `hermes-agent:0.21.1-reviewer` @ `sha256:55d51bf97414…`)
+
+- allowlist regression suite: **106/106 PASS** (host-side; no docker needed)
+- launcher fail-closed: a provider env file containing `HOME=…` and
+  `HERMES_HOME=…` was **refused before any container was created**; a file with
+  `OPENAI_API_KEY` + `OPENAI_BASE_URL` was forwarded as exactly those two
+  variables and no others
+- container bring-up with full hardening flags: PASS (scrypt auth config
+  written by merge; serve published to host loopback only)
+- containment suite: **29/29 PASS** (read/write outside the demo home denied;
+  host-management tools and docker socket absent; env limited to image +
+  launcher variables; no credential material; only the synthetic demo
+  profiles; SSH to gateway/LAN/tailnet denied; **public 443 WORKS**;
+  unauthenticated ws-ticket / wrong-password login / fabricated cookie all
+  denied HTTP 401; provider advertisement reachable by design and
+  credential-free; port bound to `127.0.0.1` only)
+- Fleet wire sequence over the rehearsal host header with the gate **ENGAGED**:
+  **0 failures** — health 200, provider discovery `basic`, password login +
+  session cookie, ws-ticket 200 with cookie, unauthenticated ws-ticket → 401
+- teardown (`clean --purge`): container, volume, network, state dir, and every
+  iptables rule removed — verified no residue (no listener on the serve port)
+
+An earlier revision of this lane was additionally verified through the real
+Cloudflare edge (quick tunnel → host loopback) with the same 0-failure result;
+the auth/wire code path is unchanged since, and the current revision was
+re-verified over the local rehearsal transport. The public review-window
+endpoint is created by the operator at review time — this automation never
+creates or runs a tunnel.
+
+## Operations (on the container host, from the repo root)
 
 ```sh
-# FULL REHEARSAL (primary quick-start — all 5 checks, auth gate genuinely
-# engaged; verified working end-to-end). Use a NON-loopback rehearsal
-# hostname (any name you control locally is fine; nothing resolves it —
-# REVIEWER_CONNECT_TO routes it to the loopback serve without DNS changes):
-REVIEWER_ENV_DIR=${TMPDIR:-/tmp}/hermes-fleet-reviewer
-REVIEWER_PUBLIC_URL=http://fleet-reviewer.example.com:9318 \
-  bash scripts/reviewer_env_launch.sh start
-REVIEWER_BASE_URL=http://fleet-reviewer.example.com:9318 \
+# rehearsal (non-loopback host header, no tunnel needed):
+REVIEWER_PUBLIC_URL=http://rehearsal.invalid:9318 bash scripts/reviewer_env_launch.sh start
+REVIEWER_BASE_URL=http://rehearsal.invalid:9318 \
 REVIEWER_ALLOW_INSECURE_HTTP=1 \
-REVIEWER_CONNECT_TO='fleet-reviewer.example.com:9318:127.0.0.1:9318' \
-REVIEWER_CRED_FILE=$REVIEWER_ENV_DIR/credentials \
+REVIEWER_CONNECT_TO='rehearsal.invalid:9318:127.0.0.1:9318' \
+REVIEWER_CRED_FILE="$REVIEWER_ENV_DIR/credentials" \
   bash scripts/reviewer_env_check.sh
-#   -> expect 6/6 OK, exit 0 (transport policy, health, providers, login,
-#      ws-ticket, negative probe)
-#   (CONNECT_TO maps the URL's host AND port to the loopback serve.)
+bash scripts/reviewer_containment_test.sh   # auth-gate probes carry the rehearsal host by default
 
-# TRANSPORT SMOKE ONLY (loopback URL — gate NOT engaged by design, checks
-# 2-5 auto-skipped; proves serve-up/health only, never a pre-submission
-# result):
-REVIEWER_PUBLIC_URL=http://127.0.0.1:9318 bash scripts/reviewer_env_launch.sh start
-bash scripts/reviewer_env_check.sh   # auto-targets the loopback instance
-
-# review-window bring-up (operator, after Tony creates the named tunnel):
+# review window (operator, after Tony creates the named tunnel):
 REVIEWER_PUBLIC_URL=https://<reviewer-host> \
 REVIEWER_PROVIDER_ENV_FILE=~/.config/fleet-review/provider.env \
-REVIEWER_ENV_DIR=</persistent/path> \
+REVIEWER_ENV_DIR=</persistent/path/outside/repo> \
   bash scripts/reviewer_env_launch.sh start
-REVIEWER_BASE_URL=https://<reviewer-host> \
-REVIEWER_CRED_FILE=</persistent/path>/credentials \
-  bash scripts/reviewer_env_check.sh   # from an OFF-network vantage point
+REVIEWER_BASE_URL=https://<reviewer-host> REVIEWER_CRED_FILE=… \
+  bash scripts/reviewer_env_check.sh        # from an OFF-network vantage
+# and the same containment proof pointed at the real public host:
+REVIEWER_CONTAINMENT_PUBLIC_HOST=<reviewer-host> REVIEWER_SERVE_PORT=9318 \
+REVIEWER_CRED_FILE=… bash scripts/reviewer_containment_test.sh
 
 bash scripts/reviewer_env_launch.sh status
 bash scripts/reviewer_env_launch.sh stop
-bash scripts/reviewer_env_launch.sh clean           # stops serve, KEEPS state
-bash scripts/reviewer_env_launch.sh clean --purge   # destroys home + aliases
+bash scripts/reviewer_env_launch.sh clean --purge   # destroys everything
 ```
 
-`start` prints the exact quick-tunnel and named-tunnel `cloudflared` commands
-but never executes them. For the review window the operator should keep the
-Mac awake (`caffeinate -dimsu`) and prefer a persistent `REVIEWER_ENV_DIR`
-(note `${TMPDIR:-/tmp}` is purged on reboot) plus a service-managed tunnel.
+The launcher never creates or runs tunnels; it prints the exact cloudflared
+commands for the operator. A named tunnel (stable hostname, TLS at edge)
+is the review-window transport; quick tunnels are rehearsals only.
 
-### Pre-submission reachability check
+## What needs Tony (explicitly out of this lane)
 
-`scripts/reviewer_env_check.sh` is the operator-side check the package doc
-requires. Given only a base URL and credentials (env or `0600` cred file,
-never argv), it performs, following the exact wire sequence the Fleet app
-performs (`PasswordLogin` → `GatewayAuthenticator`), without printing
-secrets:
-
-1. `GET /api/health` — public liveness probe, must answer 200 `{"ok":true}`;
-2. `GET /api/auth/providers` — must advertise a password-capable provider
-   (the bundled `basic` provider);
-3. `POST /auth/password-login` with `{provider, username, password}` — must
-   return `200` and set a session cookie (429 = rate-limited, reported as a
-   failure with a do-not-hammer hint);
-4. `POST /api/auth/ws-ticket` with that cookie — must return `200` and a
-   single-use ticket;
-5. **negative probe**: `POST /api/auth/ws-ticket` WITHOUT credentials must
-   NOT return `200` — proving the auth gate is genuinely engaged, so an
-   accidentally unauthenticated tunnel cannot pass the check.
-
-It refuses non-HTTPS URLs except an explicit loopback smoke (gate off by
-design; auth checks 2–5 are skipped with a printed note — a healthy ungated
-loopback serve 401s `/api/auth/providers` because it is not in the loopback
-public path set, so a loopback smoke proves transport only, never
-readiness) and a rehearsal-only `REVIEWER_ALLOW_INSECURE_HTTP=1` escape
-hatch for exercising the gate locally via `REVIEWER_CONNECT_TO` (routes the
-public hostname to the loopback serve without DNS changes — this is the
-PRIMARY documented rehearsal above, verified working against a live
-auth-gated serve). Credentials are never accepted as command-line
-arguments, and the cookie jar is a `0600` temp dir removed on exit. Run it
-from an off-network vantage (phone hotspot, or the public host via SSH)
-before every submission, matching issue #18's validation section.
-
-## Stability across the review window
-
-- named tunnel (option B) keeps one URL across restarts of both tunnel and
-  backend;
-- the launcher's `status`/`stop` make restarts mechanical; the state that
-  matters (roster, sessions) lives under `REVIEWER_ENV_DIR`;
-- credential rotation = re-run `start` with new credentials + re-run the
-  check + update Apple's private review fields (package doc's incident
-  procedure). No repository artifact changes.
-
-## What exists vs. what needs Tony
-
-Exists after this change (all secret-free, checked in):
-
-- this design doc;
-- `scripts/reviewer_env_launch.sh` — disposable-home provisioning, demo
-  seeding, hermetic authenticated `hermes serve`, status/stop/clean;
-- `scripts/reviewer_env_check.sh` — off-network pre-submission reachability
-  check incl. negative auth probe;
-- `scripts/reviewer_env_assets/reviewer-demo/SKILL.md` — safe demo skill;
-- tunnel *commands* printed by the launcher (not executed).
-
-Requires Tony (explicitly out of this lane's authority):
-
-1. **Scoped demo model key** with a hard spend limit (provider console) —
-   supplied at runtime via `REVIEWER_PROVIDER_ENV_FILE`; never committed.
-2. **Named cloudflared tunnel + DNS record** for the review-window URL
-   (Cloudflare account), or a decision to host the tunnel on the Arch fleet
-   box (option C) — either way, tunnel creation is a Tony step; this Mac's
-   scripts never create tunnels.
-3. **App Store Connect**: entering demo endpoint/credentials/QR privately,
-   resolving every `[TONY: ...]` placeholder in `BETA-METADATA.md`, and the
-   human export-compliance confirmation (package lane owns the draft).
-4. **Review-window operations**: keeping the Mac awake and reachable,
-   on-call for the window, teardown (`clean --purge`), key revocation, and
-   Cloudflare tunnel deletion after review.
-5. Optional: Tailscale Funnel (option D) if preferred over Cloudflare —
-   tailnet admin decision.
+1. **Container host designation**: the dedicated Linux container host
+   running Docker (the fleet box), with the image built from the local
+   hermes-agent source (`docker build -t hermes-agent:0.21.1-reviewer .`).
+   The maintainer Mac never runs the reviewer environment.
+2. **Scoped demo model key** (hard spend limit) supplied via
+   `REVIEWER_PROVIDER_ENV_FILE`; never committed.
+3. **Named cloudflared tunnel + DNS record** for the review-window URL.
+4. **App Store Connect**: private entry of endpoint/credentials/QR and
+   every `[TONY: …]` placeholder in BETA-METADATA.md; human
+   export-compliance confirmation.
+5. **Review-window operations**: on-call, teardown (`clean --purge`),
+   credential/key revocation, tunnel deletion after review.
 
 ## Do-not list (enforced by scripts)
 
-- the launcher refuses `HERMES_HOME` = the maintainer default;
-- the launcher never executes `cloudflared`;
-- neither script accepts a secret as a command-line argument;
-- no secret, endpoint, or QR artifact is ever written inside the repository
-  worktree — the env dir is expected to live outside it, and `clean` refuses
-  to purge a directory that is the repository root or the default Hermes
-  home.
+- the launcher refuses to run without `REVIEWER_PUBLIC_URL` (auth gate must
+  engage) and refuses loopback public URLs (v2 always runs the real
+  architecture);
+- the launcher destroys and recreates the demo volume on every `start` —
+  no inherited state is possible;
+- the provider env file is allowlist-gated; a file containing any protected
+  or unknown key aborts the launch;
+- neither script accepts a secret as a command-line argument; credentials
+  are generated 0600 outside the repo or read from env/Keychain;
+- `clean` refuses to purge a directory inside the repository;
+- the launcher never executes `cloudflared`.
