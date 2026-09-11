@@ -161,17 +161,6 @@ if [[ "$XCODE_MAJOR" != "26" ]]; then
   exit 1
 fi
 
-XCODE_AUTH_ARGS=()
-if [[ -n "$ASC_API_KEY_PATH" && -n "$ASC_API_KEY_ID" && -n "$ASC_API_ISSUER_ID" ]]; then
-  XCODE_AUTH_ARGS+=("-authenticationKeyPath" "$ASC_API_KEY_PATH")
-  XCODE_AUTH_ARGS+=("-authenticationKeyID" "$ASC_API_KEY_ID")
-  XCODE_AUTH_ARGS+=("-authenticationKeyIssuerID" "$ASC_API_ISSUER_ID")
-fi
-PROVISIONING_ARGS=()
-if [[ "$ALLOW_PROVISIONING_UPDATES" -eq 1 ]]; then
-  PROVISIONING_ARGS+=("-allowProvisioningUpdates")
-fi
-
 echo "=== Release build settings ==="
 xcodebuild -project HermesFleetApp.xcodeproj \
   -scheme HermesFleetApp \
@@ -225,8 +214,14 @@ BUILD_ARGS=(
   CODE_SIGNING_ALLOWED=NO
   CODE_SIGNING_REQUIRED=NO
 )
-BUILD_ARGS+=("${PROVISIONING_ARGS[@]}")
-BUILD_ARGS+=("${XCODE_AUTH_ARGS[@]}")
+if [[ "$ALLOW_PROVISIONING_UPDATES" -eq 1 ]]; then
+  BUILD_ARGS+=("-allowProvisioningUpdates")
+fi
+if [[ -n "$ASC_API_KEY_PATH" && -n "$ASC_API_KEY_ID" && -n "$ASC_API_ISSUER_ID" ]]; then
+  BUILD_ARGS+=("-authenticationKeyPath" "$ASC_API_KEY_PATH")
+  BUILD_ARGS+=("-authenticationKeyID" "$ASC_API_KEY_ID")
+  BUILD_ARGS+=("-authenticationKeyIssuerID" "$ASC_API_ISSUER_ID")
+fi
 if "${BUILD_ARGS[@]}" build >"$BUILD_LOG" 2>&1; then
   echo "Release build: PASS"
 else
@@ -263,8 +258,14 @@ else
     DEVELOPMENT_TEAM=3JS22HX92T
   )
 fi
-ARCHIVE_ARGS+=("${PROVISIONING_ARGS[@]}")
-ARCHIVE_ARGS+=("${XCODE_AUTH_ARGS[@]}")
+if [[ "$ALLOW_PROVISIONING_UPDATES" -eq 1 ]]; then
+  ARCHIVE_ARGS+=("-allowProvisioningUpdates")
+fi
+if [[ -n "$ASC_API_KEY_PATH" && -n "$ASC_API_KEY_ID" && -n "$ASC_API_ISSUER_ID" ]]; then
+  ARCHIVE_ARGS+=("-authenticationKeyPath" "$ASC_API_KEY_PATH")
+  ARCHIVE_ARGS+=("-authenticationKeyID" "$ASC_API_KEY_ID")
+  ARCHIVE_ARGS+=("-authenticationKeyIssuerID" "$ASC_API_ISSUER_ID")
+fi
 if "${ARCHIVE_ARGS[@]}" archive >"$ARCHIVE_LOG" 2>&1; then
   echo "Archive: PASS"
 else
@@ -363,8 +364,14 @@ EXPORT_ARGS=(
   -exportPath "$EXPORT_PATH"
   -exportOptionsPlist "$EXPORT_OPTIONS"
 )
-EXPORT_ARGS+=("${PROVISIONING_ARGS[@]}")
-EXPORT_ARGS+=("${XCODE_AUTH_ARGS[@]}")
+if [[ "$ALLOW_PROVISIONING_UPDATES" -eq 1 ]]; then
+  EXPORT_ARGS+=("-allowProvisioningUpdates")
+fi
+if [[ -n "$ASC_API_KEY_PATH" && -n "$ASC_API_KEY_ID" && -n "$ASC_API_ISSUER_ID" ]]; then
+  EXPORT_ARGS+=("-authenticationKeyPath" "$ASC_API_KEY_PATH")
+  EXPORT_ARGS+=("-authenticationKeyID" "$ASC_API_KEY_ID")
+  EXPORT_ARGS+=("-authenticationKeyIssuerID" "$ASC_API_ISSUER_ID")
+fi
 if "${EXPORT_ARGS[@]}" >"$OUTPUT_ROOT/export.log" 2>&1; then
   echo "Distribution export: PASS"
 else
