@@ -8,6 +8,14 @@ cd "$(dirname "$0")/.."
 WORKFLOW=".github/workflows/ci.yml"
 [[ -f "$WORKFLOW" ]] || { echo "FAIL: missing $WORKFLOW" >&2; exit 1; }
 
+# Disposable merge-group enforcement probe only. Ordinary pull-request CI
+# remains green; if GitHub actually constructs a merge_group candidate, this
+# deterministic failure makes the candidate impossible to merge.
+if [[ "${GITHUB_EVENT_NAME:-}" == "merge_group" ]]; then
+  echo "DISPOSABLE MERGE-GROUP PROBE: intentional failure; candidate must not merge." >&2
+  exit 97
+fi
+
 require() {
   local needle="$1"
   local explanation="$2"
