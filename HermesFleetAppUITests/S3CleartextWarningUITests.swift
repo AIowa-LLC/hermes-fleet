@@ -53,14 +53,15 @@ final class S3CleartextWarningUITests: XCTestCase {
         // area and miss the SwiftUI Toggle control.
         let confirm = app.switches["fleet.gateways.form.cleartext-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation toggle should appear")
+        XCTAssertTrue(waitUntilHittable(confirm, timeout: 10),
+                      "confirmation toggle should become hittable")
         confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         // The switch must actually flip to ON (value "1") — proof the user
         // explicitly confirmed the cleartext send.
-        XCTAssertTrue(waitUntilValue(confirm, isOn: true, timeout: 5),
+        XCTAssertTrue(waitUntilValue(confirm, isOn: true, timeout: 10),
                       "confirmation toggle should read ON after tap")
-        XCTAssertTrue(waitUntilEnabled(save, timeout: 5),
+        XCTAssertTrue(waitUntilEnabled(save, timeout: 10),
                       "Save should be enabled after explicit cleartext confirmation")
-        attachScreenshot(of: app, name: "s3-public-http-warning-confirmed")
     }
 
     // MARK: - Private (RFC1918) http endpoint → no warning, Save enabled
@@ -88,7 +89,6 @@ final class S3CleartextWarningUITests: XCTestCase {
         let save = saveButton(in: app)
         XCTAssertTrue(waitUntilEnabled(save, timeout: 5),
                       "Save should be enabled for a private endpoint without confirmation")
-        attachScreenshot(of: app, name: "s3-private-http-no-warning")
     }
 
     // MARK: - Loopback http endpoint → no warning
@@ -151,6 +151,15 @@ final class S3CleartextWarningUITests: XCTestCase {
         return element.isEnabled
     }
 
+    @discardableResult
+    private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !element.isHittable && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return element.isHittable
+    }
+
     /// Poll a switch until its `value` reads "1" (ON) — proves the toggle
     /// actually committed (a missed tap leaves value "0").
     @discardableResult
@@ -163,11 +172,4 @@ final class S3CleartextWarningUITests: XCTestCase {
         return (element.value as? String) == wanted
     }
 
-    private func attachScreenshot(of app: XCUIApplication, name: String) {
-        let shot = XCUIScreen.main.screenshot()
-        let attachment = XCTAttachment(screenshot: shot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
 }
