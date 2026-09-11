@@ -36,6 +36,8 @@ fi
 SHA="$(git rev-parse HEAD)"
 assert_fails bash scripts/release_preflight.sh --sha "$SHA" --structure-only --validate --output-root "$TMP_ROOT/invalid-mode"
 assert_fails bash scripts/release_preflight.sh --sha "0000000000000000000000000000000000000000" --structure-only --output-root "$TMP_ROOT/wrong-sha"
+assert_fails env -u ASC_API_KEY_ID -u ASC_API_ISSUER_ID -u ASC_API_KEY_PATH \
+  bash scripts/release_preflight.sh --sha "$SHA" --validate --output-root "$TMP_ROOT/missing-credentials"
 
 BAD_IPA="$TMP_ROOT/malformed.ipa"
 python3 - "$BAD_IPA" <<'PY'
