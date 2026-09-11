@@ -376,6 +376,9 @@ public struct RoomChatView: View {
     @State private var followingLatest = true
     /// True while the viewport sits at (or near) the transcript bottom.
     @State private var isAtBottomLatest = true
+    /// Tracks the user's active drag so geometry updates can close the race
+    /// between the interaction phase callback and the first offset callback.
+    @State private var isUserInteractingWithScroll = false
     /// Suppresses unfollow while a programmatic follow-scroll settles.
     @State private var isProgrammaticFollow = false
     @FocusState private var composing: Bool
@@ -476,6 +479,13 @@ public struct RoomChatView: View {
                 isAtBottomLatest = atBottom
                 if atBottom {
                     isProgrammaticFollow = false
+                } else if isUserInteractingWithScroll && !isProgrammaticFollow {
+                    // The phase callback can run before geometry has updated
+                    // isAtBottomLatest. Treat the first non-bottom geometry
+                    // update during a real drag as the user's explicit
+                    // history escape; otherwise Latest can stay hidden after
+                    // a successful scroll.
+                    followingLatest = false
                 }
             }
             .onScrollPhaseChange { _, phase in
@@ -484,6 +494,7 @@ public struct RoomChatView: View {
                 // programmatic scrolls, lazy height corrections, and last
                 // rows taller than the viewport all shift geometry while
                 // still "following latest".
+                isUserInteractingWithScroll = phase == .interacting
                 if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow {
                     followingLatest = false
                 }
