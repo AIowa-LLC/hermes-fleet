@@ -1,10 +1,10 @@
 #!/bin/bash
 # Deterministic repository-side release preflight for Issue #14.
 #
-# The signed path is the default. --structure-only is an explicit local
-# fallback for a machine without distribution signing/provisioning; it proves
-# the archive contents but is never reported as a signed release. This script
-# never uploads to App Store Connect.
+# Archive inspection and distribution export are intentionally separate
+# stages. An archive may be unsigned or Apple-Development-signed; Xcode's
+# export step is where App Store distribution signing and provisioning are
+# selected. This script never uploads to App Store Connect.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -15,7 +15,7 @@ OUTPUT_ROOT=""
 ARCHIVE_PATH=""
 STRUCTURE_ONLY=0
 APPLE_VALIDATE=0
-PROVISIONING_FLAG=""
+ALLOW_PROVISIONING_UPDATES=0
 
 usage() {
   cat <<'EOF'
@@ -29,15 +29,17 @@ Options:
   --expected-version VERSION        Require MARKETING_VERSION to be VERSION.
   --output-root PATH                Build/report root (default: build/release-preflight/SHA).
   --archive-path PATH               Archive path (default: OUTPUT_ROOT/HermesFleetApp.xcarchive).
-  --structure-only                  Skip distribution signing; inspect an unsigned archive.
+  --structure-only                  Inspect an unsigned archive; do not export.
   --validate                        Export an IPA and run credentialed Apple validation.
-  --allow-provisioning-updates      Allow xcodebuild to contact Apple during archive/export.
+  --allow-provisioning-updates      Let xcodebuild contact Apple during archive/export.
   -h, --help                        Show this help.
 
-Credentialed validation requires ASC_API_KEY_ID, ASC_API_ISSUER_ID, and
-ASC_API_KEY_PATH. The private key must already be installed in the App Store
-Connect toolchain's secure key location; no password or private-key material
-is accepted on the command line or written by this script.
+--validate requires ASC_API_KEY_ID, ASC_API_ISSUER_ID, and ASC_API_KEY_PATH.
+The key path is passed directly to both xcodebuild authentication and
+xcrun altool --p8-file-path; no private-key material is echoed or copied.
+Without --validate, export still runs and inspects the actual IPA, but Apple
+validation is reported as not run. --structure-only stops after archive
+structure/provenance inspection and is never TestFlight-ready evidence.
 EOF
 }
 
@@ -77,7 +79,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --allow-provisioning-updates)
-      PROVISIONING_FLAG="-allowProvisioningUpdates"
+      ALLOW_PROVISIONING_UPDATES=1
       shift
       ;;
     -h|--help)
@@ -101,7 +103,7 @@ if [[ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
   exit 1
 fi
 if [[ "$APPLE_VALIDATE" -eq 1 && "$STRUCTURE_ONLY" -eq 1 ]]; then
-  echo "ERROR: --validate requires a signed archive; remove --structure-only" >&2
+  echo "ERROR: --validate cannot be combined with --structure-only" >&2
   exit 2
 fi
 
@@ -138,6 +140,18 @@ ARCHIVE_LOG="$OUTPUT_ROOT/archive.log"
 ARCHIVE_DERIVED="$OUTPUT_ROOT/archive-derived"
 BUILD_DERIVED="$OUTPUT_ROOT/build-derived"
 
+ASC_API_KEY_ID="${ASC_API_KEY_ID:-}"
+ASC_API_ISSUER_ID="${ASC_API_ISSUER_ID:-}"
+ASC_API_KEY_PATH="${ASC_API_KEY_PATH:-}"
+if [[ "$APPLE_VALIDATE" -eq 1 || "$ALLOW_PROVISIONING_UPDATES" -eq 1 ]]; then
+  [[ -n "$ASC_API_KEY_ID" ]] || { echo "ERROR: ASC_API_KEY_ID is required for credentialed xcodebuild/validation" >&2; exit 1; }
+  [[ -n "$ASC_API_ISSUER_ID" ]] || { echo "ERROR: ASC_API_ISSUER_ID is required for credentialed xcodebuild/validation" >&2; exit 1; }
+  [[ -f "$ASC_API_KEY_PATH" ]] || { echo "ERROR: ASC_API_KEY_PATH must name an existing private key file" >&2; exit 1; }
+fi
+if [[ "$APPLE_VALIDATE" -eq 1 ]]; then
+  [[ -r "$ASC_API_KEY_PATH" ]] || { echo "ERROR: ASC_API_KEY_PATH is not readable" >&2; exit 1; }
+fi
+
 XCODE_VERSION="$(xcodebuild -version)"
 echo "=== Xcode ==="
 echo "$XCODE_VERSION"
@@ -145,6 +159,17 @@ XCODE_MAJOR="$(awk '/^Xcode / { split($2, v, "."); print v[1]; exit }' <<<"$XCOD
 if [[ "$XCODE_MAJOR" != "26" ]]; then
   echo "ERROR: this repository release policy expects Xcode 26.x (found Xcode $XCODE_MAJOR)" >&2
   exit 1
+fi
+
+XCODE_AUTH_ARGS=()
+if [[ -n "$ASC_API_KEY_PATH" && -n "$ASC_API_KEY_ID" && -n "$ASC_API_ISSUER_ID" ]]; then
+  XCODE_AUTH_ARGS+=("-authenticationKeyPath" "$ASC_API_KEY_PATH")
+  XCODE_AUTH_ARGS+=("-authenticationKeyID" "$ASC_API_KEY_ID")
+  XCODE_AUTH_ARGS+=("-authenticationKeyIssuerID" "$ASC_API_ISSUER_ID")
+fi
+PROVISIONING_ARGS=()
+if [[ "$ALLOW_PROVISIONING_UPDATES" -eq 1 ]]; then
+  PROVISIONING_ARGS+=("-allowProvisioningUpdates")
 fi
 
 echo "=== Release build settings ==="
@@ -190,15 +215,19 @@ if [[ -n "$EXPECTED_VERSION" && "$MARKETING_VERSION" != "$EXPECTED_VERSION" ]]; 
 fi
 
 echo "=== Release build ==="
-if xcodebuild -project HermesFleetApp.xcodeproj \
-    -scheme HermesFleetApp \
-    -configuration Release \
-    -destination 'generic/platform=iOS' \
-    -derivedDataPath "$BUILD_DERIVED" \
-    -skipMacroValidation \
-    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-    $PROVISIONING_FLAG \
-    build >"$BUILD_LOG" 2>&1; then
+BUILD_ARGS=(
+  xcodebuild -project HermesFleetApp.xcodeproj
+  -scheme HermesFleetApp
+  -configuration Release
+  -destination 'generic/platform=iOS'
+  -derivedDataPath "$BUILD_DERIVED"
+  -skipMacroValidation
+  CODE_SIGNING_ALLOWED=NO
+  CODE_SIGNING_REQUIRED=NO
+)
+BUILD_ARGS+=("${PROVISIONING_ARGS[@]}")
+BUILD_ARGS+=("${XCODE_AUTH_ARGS[@]}")
+if "${BUILD_ARGS[@]}" build >"$BUILD_LOG" 2>&1; then
   echo "Release build: PASS"
 else
   echo "Release build: FAIL" >&2
@@ -209,130 +238,173 @@ fi
 echo "=== Archive ==="
 if [[ "$STRUCTURE_ONLY" -eq 1 ]]; then
   echo "Archive mode: structure-only (unsigned fallback; not release-ready)"
-  if xcodebuild -project HermesFleetApp.xcodeproj \
-      -scheme HermesFleetApp \
-      -configuration Release \
-      -destination 'generic/platform=iOS' \
-      -archivePath "$ARCHIVE_PATH" \
-      -derivedDataPath "$ARCHIVE_DERIVED" \
-      -skipMacroValidation \
-      DEVELOPMENT_TEAM=3JS22HX92T CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-      $PROVISIONING_FLAG \
-      archive >"$ARCHIVE_LOG" 2>&1; then
-    echo "Archive: PASS"
-  else
-    echo "Archive: FAIL" >&2
-    tail -60 "$ARCHIVE_LOG" >&2
-    exit 1
-  fi
+  ARCHIVE_ARGS=(
+    xcodebuild -project HermesFleetApp.xcodeproj
+    -scheme HermesFleetApp
+    -configuration Release
+    -destination 'generic/platform=iOS'
+    -archivePath "$ARCHIVE_PATH"
+    -derivedDataPath "$ARCHIVE_DERIVED"
+    -skipMacroValidation
+    DEVELOPMENT_TEAM=3JS22HX92T
+    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_REQUIRED=NO
+  )
 else
-  echo "Archive mode: signed-by-default"
-  if xcodebuild -project HermesFleetApp.xcodeproj \
-      -scheme HermesFleetApp \
-      -configuration Release \
-      -destination 'generic/platform=iOS' \
-      -archivePath "$ARCHIVE_PATH" \
-      -derivedDataPath "$ARCHIVE_DERIVED" \
-      -skipMacroValidation \
-      DEVELOPMENT_TEAM=3JS22HX92T \
-      $PROVISIONING_FLAG \
-      archive >"$ARCHIVE_LOG" 2>&1; then
-    echo "Archive: PASS"
-  else
-    echo "Archive: FAIL" >&2
-    tail -60 "$ARCHIVE_LOG" >&2
-    echo "If this machine lacks distribution signing/provisioning, rerun explicitly with --structure-only for structural evidence; do not call that release-ready." >&2
-    exit 1
+  echo "Archive mode: normal archive; archive signing is recorded, not used as the distribution verdict"
+  ARCHIVE_ARGS=(
+    xcodebuild -project HermesFleetApp.xcodeproj
+    -scheme HermesFleetApp
+    -configuration Release
+    -destination 'generic/platform=iOS'
+    -archivePath "$ARCHIVE_PATH"
+    -derivedDataPath "$ARCHIVE_DERIVED"
+    -skipMacroValidation
+    DEVELOPMENT_TEAM=3JS22HX92T
+  )
+fi
+ARCHIVE_ARGS+=("${PROVISIONING_ARGS[@]}")
+ARCHIVE_ARGS+=("${XCODE_AUTH_ARGS[@]}")
+if "${ARCHIVE_ARGS[@]}" archive >"$ARCHIVE_LOG" 2>&1; then
+  echo "Archive: PASS"
+else
+  echo "Archive: FAIL" >&2
+  tail -60 "$ARCHIVE_LOG" >&2
+  if [[ "$STRUCTURE_ONLY" -eq 0 ]]; then
+    echo "The archive stage failed before distribution export; no archive-stage Distribution identity was required by this preflight." >&2
   fi
+  exit 1
 fi
 
 APP="$ARCHIVE_PATH/Products/Applications/HermesFleetApp.app"
 [[ -d "$APP" ]] || { echo "ERROR: archive has no HermesFleetApp.app" >&2; exit 1; }
 INFO="$APP/Info.plist"
 [[ -f "$INFO" ]] || { echo "ERROR: archived app has no Info.plist" >&2; exit 1; }
+ARCHIVE_INFO="$ARCHIVE_PATH/Info.plist"
+[[ -f "$ARCHIVE_INFO" ]] || { echo "ERROR: archive has no root Info.plist" >&2; exit 1; }
 
-echo "=== Archive inspection ==="
-python3 - "$INFO" "$BUNDLE_ID" "$MARKETING_VERSION" "$BUILD_NUMBER" "$TARGETED_DEVICE_FAMILY" "$DEPLOYMENT_TARGET" <<'PY'
+echo "=== Archive provenance/content inspection ==="
+python3 - "$ARCHIVE_INFO" "$INFO" "$BUNDLE_ID" "$MARKETING_VERSION" "$BUILD_NUMBER" <<'PY'
 from pathlib import Path
 import plistlib
 import sys
 
-path = Path(sys.argv[1])
+archive_path = Path(sys.argv[1])
+app_path = Path(sys.argv[2])
 expected = {
-    "CFBundleIdentifier": sys.argv[2],
-    "CFBundleShortVersionString": sys.argv[3],
-    "CFBundleVersion": sys.argv[4],
-    "MinimumOSVersion": sys.argv[6],
+    "CFBundleIdentifier": sys.argv[3],
+    "CFBundleShortVersionString": sys.argv[4],
+    "CFBundleVersion": sys.argv[5],
+    "MinimumOSVersion": "26.0",
 }
-with path.open("rb") as stream:
+with archive_path.open("rb") as stream:
+    archive = plistlib.load(stream)
+with app_path.open("rb") as stream:
     info = plistlib.load(stream)
+if not isinstance(archive.get("ApplicationProperties"), dict):
+    raise SystemExit("archive has no ApplicationProperties provenance dictionary")
 for key, value in expected.items():
     if str(info.get(key)) != value:
-        raise SystemExit(f"archive {key}={info.get(key)!r}, expected {value!r}")
+        raise SystemExit(f"archive app {key}={info.get(key)!r}, expected {value!r}")
+app_properties = archive["ApplicationProperties"]
+for key in ("CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion"):
+    if str(app_properties.get(key)) != str(info.get(key)):
+        raise SystemExit(f"archive provenance {key} does not match the archived app")
 if info.get("CFBundleSupportedPlatforms") != ["iPhoneOS"]:
     raise SystemExit(f"archive platform metadata is {info.get('CFBundleSupportedPlatforms')!r}")
-families = info.get("UIDeviceFamily")
-if families != [1, 2]:
-    raise SystemExit(f"archive UIDeviceFamily={families!r}, expected [1, 2]")
+if info.get("UIDeviceFamily") != [1, 2]:
+    raise SystemExit(f"archive UIDeviceFamily={info.get('UIDeviceFamily')!r}, expected [1, 2]")
 if not info.get("DTXcode") or not info.get("DTXcodeBuild"):
     raise SystemExit("archive is missing DTXcode/DTXcodeBuild metadata")
 if info.get("DTPlatformName") != "iphoneos":
     raise SystemExit(f"archive DTPlatformName={info.get('DTPlatformName')!r}")
 if info.get("ITSAppUsesNonExemptEncryption") is not False:
     raise SystemExit("ITSAppUsesNonExemptEncryption must be false for this app")
-print("Bundle identifier/version/build/platform/device-family/Xcode/export-compliance: PASS")
+print("Archive bundle/version/build/platform/device-family/Xcode/export-compliance: PASS")
 print(f"  DTXcode={info['DTXcode']} DTXcodeBuild={info['DTXcodeBuild']}")
+print(f"  archive signing identity (informational): {app_properties.get('SigningIdentity', '<none>')}")
+print(f"  archive team (informational): {app_properties.get('Team', '<none>')}")
 PY
 
 bash scripts/privacy_manifest_validate.sh --built-app "$APP"
 
-echo "=== Signing and provisioning inspection ==="
-SIGNING_LOG="$OUTPUT_ROOT/codesign-display.log"
-if codesign -dvv "$APP" >"$SIGNING_LOG" 2>&1; then
-  codesign --verify --deep --strict "$APP"
-  SIGNING_IDENTITY="$(awk -F= '/^Authority=/ { print $2; exit }' "$SIGNING_LOG")"
-  TEAM_IDENTIFIER="$(awk -F= '/^TeamIdentifier=/ { print $2; exit }' "$SIGNING_LOG")"
-  DISTRIBUTION_AUTHORITY="$(awk -F= '/^Authority=(Apple Distribution|iPhone Distribution):/ { print $2; exit }' "$SIGNING_LOG")"
-  echo "Code-sign verification: PASS"
-  echo "  authority: $SIGNING_IDENTITY"
-  echo "  team identifier: $TEAM_IDENTIFIER"
-  if [[ "$STRUCTURE_ONLY" -eq 0 && -z "$DISTRIBUTION_AUTHORITY" ]]; then
-    echo "ERROR: signed archive did not expose an Apple Distribution signing authority" >&2
-    echo "  found: ${SIGNING_IDENTITY:-none}" >&2
-    exit 1
-  fi
-else
-  if [[ "$STRUCTURE_ONLY" -eq 0 ]]; then
-    echo "ERROR: codesign metadata inspection failed" >&2
-    cat "$SIGNING_LOG" >&2
-    exit 1
-  fi
-  echo "Code-sign verification: NOT PRESENT (expected in structure-only mode)"
-  cat "$SIGNING_LOG" >&2
+if [[ "$STRUCTURE_ONLY" -eq 1 ]]; then
+  cat >"$REPORT" <<EOF
+Hermes Fleet release preflight
+source_sha=$EXPECTED_SHA
+commit=$(git show -s --format='%s' HEAD)
+xcode=$XCODE_VERSION
+bundle_id=$BUNDLE_ID
+marketing_version=$MARKETING_VERSION
+build_number=$BUILD_NUMBER
+targeted_device_family=$TARGETED_DEVICE_FAMILY
+archive=$ARCHIVE_PATH
+structure_only=1
+archive_content=pass
+distribution_export=not_run
+exported_artifact=not_run
+apple_validation=not_run
+EOF
+  echo "=== Release preflight complete ==="
+  cat "$REPORT"
+  echo "RESULT: repository/archive structure verified; distribution signing, Apple validation, and upload remain external."
+  exit 0
 fi
 
-PROFILE="$APP/embedded.mobileprovision"
-if [[ -f "$PROFILE" ]]; then
-  PROFILE_PLIST="$OUTPUT_ROOT/embedded-profile.plist"
-  security cms -D -i "$PROFILE" >"$PROFILE_PLIST"
-  PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST" 2>/dev/null || true)"
-  PROFILE_EXPIRY="$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$PROFILE_PLIST" 2>/dev/null || true)"
-  PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST" 2>/dev/null || true)"
-  PROFILE_DEVICES="$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" 2>/dev/null || true)"
-  echo "Provisioning profile: PASS"
-  echo "  name: $PROFILE_NAME"
-  echo "  expiration: $PROFILE_EXPIRY"
-  echo "  application identifier: $PROFILE_APP_ID"
-  if [[ "$STRUCTURE_ONLY" -eq 0 && -n "$PROFILE_DEVICES" ]]; then
-    echo "ERROR: signed archive embeds a device-limited profile; TestFlight requires an App Store profile" >&2
+EXPORT_PATH="$OUTPUT_ROOT/export"
+EXPORT_OPTIONS="scripts/release_export_options.plist"
+[[ -f "$EXPORT_OPTIONS" ]] || { echo "ERROR: missing $EXPORT_OPTIONS" >&2; exit 1; }
+mkdir -p "$EXPORT_PATH"
+echo "=== Distribution export ==="
+echo "Export method: app-store-connect (Xcode 26 current value)"
+EXPORT_ARGS=(
+  xcodebuild -exportArchive
+  -archivePath "$ARCHIVE_PATH"
+  -exportPath "$EXPORT_PATH"
+  -exportOptionsPlist "$EXPORT_OPTIONS"
+)
+EXPORT_ARGS+=("${PROVISIONING_ARGS[@]}")
+EXPORT_ARGS+=("${XCODE_AUTH_ARGS[@]}")
+if "${EXPORT_ARGS[@]}" >"$OUTPUT_ROOT/export.log" 2>&1; then
+  echo "Distribution export: PASS"
+else
+  echo "Distribution export: BLOCKED (xcodebuild could not produce a distributable artifact)" >&2
+  tail -80 "$OUTPUT_ROOT/export.log" >&2
+  echo "Archive inspection passed; this is a distribution certificate/profile/account gate, not an archive-stage signing verdict." >&2
+  exit 3
+fi
+
+IPA_COUNT="$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print | wc -l | tr -d ' ')"
+[[ "$IPA_COUNT" == "1" ]] || { echo "ERROR: expected exactly one exported IPA, found $IPA_COUNT" >&2; exit 1; }
+IPA="$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+
+python3 scripts/release_artifact_inspect.py \
+  --ipa "$IPA" \
+  --expected-bundle-id "$BUNDLE_ID" \
+  --expected-version "$MARKETING_VERSION" \
+  --expected-build "$BUILD_NUMBER" \
+  --expected-team "$TEAM" \
+  --inspection-root "$OUTPUT_ROOT/exported-artifact"
+bash scripts/privacy_manifest_validate.sh --built-app "$OUTPUT_ROOT/exported-artifact/Payload/HermesFleetApp.app"
+
+APPLE_VALIDATION="not_run"
+if [[ "$APPLE_VALIDATE" -eq 1 ]]; then
+  echo "=== Apple validation ==="
+  echo "Credentialed validation requested; secrets are not echoed."
+  if xcrun altool --validate-app "$IPA" \
+      --api-key "$ASC_API_KEY_ID" \
+      --api-issuer "$ASC_API_ISSUER_ID" \
+      --p8-file-path "$ASC_API_KEY_PATH" \
+      >"$OUTPUT_ROOT/apple-validation.log" 2>&1; then
+    echo "Apple validation: PASS"
+    APPLE_VALIDATION="pass"
+  else
+    echo "Apple validation: FAIL" >&2
+    tail -80 "$OUTPUT_ROOT/apple-validation.log" >&2
     exit 1
   fi
 else
-  if [[ "$STRUCTURE_ONLY" -eq 0 ]]; then
-    echo "ERROR: signed archive has no embedded provisioning profile" >&2
-    exit 1
-  fi
-  echo "Provisioning profile: NOT PRESENT (expected in structure-only mode)"
+  echo "Apple validation: NOT RUN (use --validate with ASC credentials; no upload attempted)"
 fi
 
 cat >"$REPORT" <<EOF
@@ -345,44 +417,19 @@ marketing_version=$MARKETING_VERSION
 build_number=$BUILD_NUMBER
 targeted_device_family=$TARGETED_DEVICE_FAMILY
 archive=$ARCHIVE_PATH
-structure_only=$STRUCTURE_ONLY
-apple_validation=not_run
+structure_only=0
+archive_content=pass
+distribution_export=pass
+exported_ipa=$IPA
+exported_artifact=pass
+apple_validation=$APPLE_VALIDATION
+upload=not_run
 EOF
-
-if [[ "$APPLE_VALIDATE" -eq 1 ]]; then
-  ASC_API_KEY_ID="$(printenv ASC_API_KEY_ID || true)"
-  ASC_API_ISSUER_ID="$(printenv ASC_API_ISSUER_ID || true)"
-  ASC_API_KEY_PATH="$(printenv ASC_API_KEY_PATH || true)"
-  [[ -n "$ASC_API_KEY_ID" ]] || { echo "ERROR: ASC_API_KEY_ID is required for --validate" >&2; exit 1; }
-  [[ -n "$ASC_API_ISSUER_ID" ]] || { echo "ERROR: ASC_API_ISSUER_ID is required for --validate" >&2; exit 1; }
-  [[ -f "$ASC_API_KEY_PATH" ]] || { echo "ERROR: ASC_API_KEY_PATH does not exist" >&2; exit 1; }
-  EXPORT_PATH="$OUTPUT_ROOT/export"
-  EXPORT_OPTIONS="scripts/release_export_options.plist"
-  [[ -f "$EXPORT_OPTIONS" ]] || { echo "ERROR: missing $EXPORT_OPTIONS" >&2; exit 1; }
-  mkdir -p "$EXPORT_PATH"
-  echo "=== Export for Apple validation ==="
-  xcodebuild -exportArchive \
-    -archivePath "$ARCHIVE_PATH" \
-    -exportPath "$EXPORT_PATH" \
-    -exportOptionsPlist "$EXPORT_OPTIONS" \
-    $PROVISIONING_FLAG \
-    >"$OUTPUT_ROOT/export.log" 2>&1
-  IPA="$(find "$EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
-  [[ -n "$IPA" ]] || { echo "ERROR: export produced no IPA" >&2; exit 1; }
-  echo "=== Apple validation ==="
-  echo "Credentialed validation requested; secrets are not echoed."
-  xcrun altool --validate-app -f "$IPA" -t ios \
-    --apiKey "$ASC_API_KEY_ID" --apiIssuer "$ASC_API_ISSUER_ID"
-  echo "Apple validation: PASS"
-  sed -i '' 's/^apple_validation=.*/apple_validation=pass/' "$REPORT"
-else
-  echo "Apple validation: NOT RUN (credential-gated; no upload attempted)"
-fi
 
 echo "=== Release preflight complete ==="
 cat "$REPORT"
-if [[ "$STRUCTURE_ONLY" -eq 1 ]]; then
-  echo "RESULT: repository/archive structure verified; signed release acceptance remains external."
+if [[ "$APPLE_VALIDATE" -eq 1 ]]; then
+  echo "RESULT: distribution artifact and Apple validation verified; App Store Connect upload/processing remain explicit external steps."
 else
-  echo "RESULT: signed archive preflight verified; Apple validation/upload remain explicit credentialed steps."
+  echo "RESULT: distribution artifact verified; Apple validation and App Store Connect upload/processing remain explicit credentialed external steps."
 fi

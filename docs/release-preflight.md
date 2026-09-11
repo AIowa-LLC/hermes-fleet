@@ -5,9 +5,23 @@ construction: a run must start from a clean checkout whose `HEAD` equals the
 explicit full SHA supplied to the script, and every report/archive is written
 under a SHA-specific disposable `build/` directory.
 
-## Signed preflight
+## Archive and distribution stages
 
-Run from a clean checkout after reviewing the exact commit to release:
+The preflight keeps the Xcode archive and the final distributable artifact
+separate:
+
+1. Build and archive the exact reviewed source.
+2. Inspect archive provenance and application content. Archive signing, when
+   present, is informational at this stage; an Apple-Development or unsigned
+   archive is not rejected merely for that reason.
+3. Run `xcodebuild -exportArchive`. With the Xcode 26 toolchain, the export
+   options use `method=app-store-connect`; distribution signing and App Store
+   provisioning are selected during this export step.
+4. Inspect the IPA that export actually produced.
+5. Optionally run Apple's credentialed validation. Upload and processing are
+   never performed by this script.
+
+The default path performs steps 1–4 and reports Apple validation as not run:
 
 ```bash
 SHA="$(git rev-parse HEAD)"
@@ -17,41 +31,34 @@ bash scripts/release_preflight.sh \
   --expected-build 32
 ```
 
-The script verifies XcodeGen/project drift, records the Xcode 26.x version,
-checks Release build settings, runs a Release build, creates a generic iOS
-archive, and inspects the archive for:
+Archive inspection verifies the bundle identifier, marketing version, build
+number, iPhone/iPad device family, iOS deployment target, iPhoneOS platform,
+`DTXcode`/`DTXcodeBuild` provenance, export-compliance metadata, and the
+embedded privacy manifest. The exported IPA inspector additionally verifies
+the actual IPA's bundle metadata, distribution signing authority and team,
+application identifier, signed entitlements, App Store provisioning posture,
+absence of device-limited or `get-task-allow` state, and embedded privacy
+manifest.
 
-- `com.aiowa.hermesfleet`, marketing version, and monotonically selected build number;
-- iPhone + iPad device family (`UIDeviceFamily` 1 and 2), iOS deployment target, and iPhoneOS platform;
-- `DTXcode`/`DTXcodeBuild` archive provenance;
-- `ITSAppUsesNonExemptEncryption=false` export-compliance metadata;
-- the exact `PrivacyInfo.xcprivacy` copy in the archived app;
-- code-signing authority, team identifier, and the embedded provisioning profile.
+## Machines without distribution export credentials
 
-The report and logs are under
-`build/release-preflight/<full-sha>/`. The signed path fails unless the archive
-has an Apple Distribution authority and an embedded App Store provisioning
-profile. Development- or ad-hoc-signed archives are release blockers, not
-successful TestFlight preflights.
-
-## Machines without distribution signing
-
-To prove the Release archive structure while clearly retaining the signing
-blocker, use the explicit fallback:
+To prove the Release archive structure while explicitly stopping before
+distribution export, use:
 
 ```bash
 bash scripts/release_preflight.sh --sha "$SHA" --structure-only
 ```
 
-This mode still checks the bundle, versions, device family, Xcode metadata,
-export compliance, and bundled privacy manifest, but its result is not a
-TestFlight-ready artifact. It must not be represented as Apple acceptance.
+This mode is structural evidence only. It does not claim distribution signing,
+Apple validation, TestFlight readiness, or App Store acceptance. A normal
+preflight that reaches export but cannot produce a distributable IPA exits with
+a blocked distribution-stage result; that is an unavailable certificate,
+profile, or account gate, not an archive-stage signing verdict.
 
 ## Apple validation and upload
 
-The script never uploads. When the signed archive is ready, a release owner
-may opt into local IPA export and validation with credentials already installed
-in the App Store Connect toolchain:
+When a signed export is ready, a release owner may opt into local IPA
+validation with an App Store Connect API key:
 
 ```bash
 export ASC_API_KEY_ID="..."
@@ -65,12 +72,14 @@ bash scripts/release_preflight.sh \
   --allow-provisioning-updates
 ```
 
-The private key must be outside the repository, have owner-only permissions,
-and never appear in shell history, logs, CI output, or a committed file. The
-validation path passes only after `xcodebuild -exportArchive` produces an IPA
-and `xcrun altool --validate-app` accepts it. Organizer or an equivalent
-credentialed App Store Connect upload remains a deliberate external release
-action and is not claimed by this repository preflight.
+`ASC_API_KEY_PATH` is a real input: it is passed to `xcodebuild` through its
+supported `-authenticationKeyPath`/ID/issuer options and to Xcode 26's
+`xcrun altool --validate-app` through `--p8-file-path`. The private key must be
+outside the repository, have owner-only permissions, and never appear in
+shell history, logs, CI output, or a committed file. The script never prints
+key material and never uploads. Organizer or an equivalent credentialed
+App Store Connect upload and subsequent processing acceptance remain deliberate
+external release actions.
 
 ## Build-number retry policy
 
