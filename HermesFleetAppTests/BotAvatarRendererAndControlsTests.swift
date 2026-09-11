@@ -88,11 +88,12 @@ final class BotAvatarRendererAndControlsTests: XCTestCase {
     /// vocabulary (#7 §2). Spot-check that tint resolution never crashes
     /// on invalid metadata colors and falls back to the accent.
     func testSharedTintResolutionNeverCrashesOnInvalidColors() {
-        _ = BotAvatarAppearanceTint.color(hex: "not-a-color")
-        _ = BotAvatarAppearanceTint.color(hex: "#12345")
-        _ = BotAvatarAppearanceTint.color(hex: "#GGGGGG")
-        _ = BotAvatarAppearanceTint.color(hex: nil)
-        _ = BotAvatarAppearanceTint.color(hex: "#00AAFF")
+        let fallback = FleetTheme.accent
+        _ = BotAvatarAppearanceTint.color(hex: "not-a-color", fallback: fallback)
+        _ = BotAvatarAppearanceTint.color(hex: "#12345", fallback: fallback)
+        _ = BotAvatarAppearanceTint.color(hex: "#GGGGGG", fallback: fallback)
+        _ = BotAvatarAppearanceTint.color(hex: nil, fallback: fallback)
+        _ = BotAvatarAppearanceTint.color(hex: "#00AAFF", fallback: fallback)
     }
 
     // MARK: - R1: normalization caps
