@@ -11,6 +11,7 @@ import FleetCore
 /// the VM fails with the typed unsupported explanation (update-gateway
 /// copy), never a semantic fallback.
 public struct CreateRoomSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let gateway: FleetGateway
     let onCreated: (FleetRoom) -> Void
@@ -61,13 +62,13 @@ public struct CreateRoomSheet: View {
                             // stays the internal identity term.
                             Label("New Group", systemImage: "person.3")
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(FleetTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                             TextField("Group name", text: $draft.name)
                                 .textFieldStyle(.roundedBorder)
                                 .accessibilityIdentifier("fleet.room.create.name")
                             Text("Hosted by \(gateway.displayName) — 2 to 6 members, frozen roster.")
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                     }
 
@@ -76,7 +77,7 @@ public struct CreateRoomSheet: View {
                             Label("Members (\(draft.members.count)/\(RoomCreateDraft.maxMembers))",
                                   systemImage: "person.2")
                                 .font(.subheadline.weight(.bold))
-                                .foregroundStyle(FleetTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                                 .accessibilityIdentifier("fleet.room.create.member-count")
                             if !draft.members.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
@@ -95,7 +96,7 @@ public struct CreateRoomSheet: View {
                                             }
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 4)
-                                            .background(Capsule().fill(FleetTheme.surfaceElevated))
+                                            .background(Capsule().fill(theme.surfaceElevated))
                                         }
                                     }
                                 }
@@ -108,11 +109,11 @@ public struct CreateRoomSheet: View {
                         if compatibleGateways.isEmpty {
                             Text("Bots on \(gateway.displayName). Remote gateways appear once direct RoomLink support is confirmed.")
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         } else {
                             Text("Bots on \(gateway.displayName) and \(compatibleGateways.count) linked gateway\(compatibleGateways.count == 1 ? "" : "s"). Each remote member is re-validated before creation.")
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .accessibilityIdentifier("fleet.room.create.linked-note")
                         }
                         ForEach(visibleCandidates) { candidate in
@@ -121,13 +122,13 @@ public struct CreateRoomSheet: View {
                         if visibleCandidates.isEmpty {
                             Text("No bots on this gateway yet.")
                                 .font(FleetTheme.secondaryFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                     }
                 }
                 .padding(FleetTheme.spacingLg)
             }
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .searchable(text: $searchText, prompt: "Bots on \(gateway.displayName)")
             .task { compatibleGateways = await environment.compatibleRoomGateways(homeID: gateway.id) }
             .navigationTitle("Create Group")
@@ -169,15 +170,15 @@ public struct CreateRoomSheet: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(candidate.displayName)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                         let ownerGateway = environment.gateway(for: candidate.route.gatewayID)?.displayName ?? candidate.route.gatewayID.rawValue
                         Text("\(candidate.route.profileSlug.rawValue) · \(ownerGateway)")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(selected ? FleetTheme.accent : FleetTheme.textSecondary)
+                        .foregroundStyle(selected ? theme.highlight : theme.textSecondary)
                 }
             }
         }

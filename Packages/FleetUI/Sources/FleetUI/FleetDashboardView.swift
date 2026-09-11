@@ -29,6 +29,7 @@ import FleetPersistence
 /// (`refreshSummaryIfDue`), zero `session.list` per bot and zero
 /// `groups.state` per room issue from Home.
 public struct FleetDashboardView: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
     private let environment: AppEnvironment
@@ -111,7 +112,7 @@ public struct FleetDashboardView: View {
             .frame(maxWidth: 1200)
             .frame(maxWidth: .infinity)
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .navigationTitle("Fleet")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("fleet.dashboard")
@@ -187,7 +188,7 @@ public struct FleetDashboardView: View {
     private var coverageLine: some View {
         Text(coverageText)
             .font(FleetTheme.secondaryFont)
-            .foregroundStyle(FleetTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.coverage")
     }
 
@@ -227,12 +228,12 @@ public struct FleetDashboardView: View {
                 if attentionItems.count > 3 {
                     Text("+ \(attentionItems.count - 3) more")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 if !attentionCoverageComplete {
                     Text("\(attentionItems.count) known item\(attentionItems.count == 1 ? "" : "s") — more may be pending elsewhere")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.dashboard.needsYou.caveat")
                 }
             }
@@ -242,7 +243,7 @@ public struct FleetDashboardView: View {
     private var needsYouHeader: some View {
         Text("Needs You")
             .font(FleetTheme.sectionHeaderFont)
-            .foregroundStyle(FleetTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.needsYou.header")
     }
 
@@ -250,26 +251,26 @@ public struct FleetDashboardView: View {
         NavigationLink(value: destination(for: item)) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: attentionIcon(item.kind))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     if let detail = item.detail, !detail.isEmpty {
                         Text(detail)
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                 }
                 Spacer()
                 Text("Review")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
             }
         }
@@ -301,7 +302,7 @@ public struct FleetDashboardView: View {
     private var activeHeader: some View {
         Text("Active Now")
             .font(FleetTheme.sectionHeaderFont)
-            .foregroundStyle(FleetTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.active.header")
     }
 
@@ -316,7 +317,7 @@ public struct FleetDashboardView: View {
                 if executingBots.count > 2 {
                     Text("+ \(executingBots.count - 2) more")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             } else if !recentWorkerBots.isEmpty {
                 // A heartbeat proves recency, not execution (SPEC §7).
@@ -326,7 +327,7 @@ public struct FleetDashboardView: View {
             } else {
                 Text("Live Bot activity is not available from these gateways.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("fleet.dashboard.active.unavailable")
             }
         }
@@ -339,16 +340,16 @@ public struct FleetDashboardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bot.displayName)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text(activeSubtitle(bot))
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
             }
         }
@@ -380,10 +381,10 @@ public struct FleetDashboardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bot.displayName)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text("Recent worker activity · \(environment.gateway(for: bot.route.gatewayID)?.displayName ?? bot.route.gatewayID.rawValue)")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -398,7 +399,7 @@ public struct FleetDashboardView: View {
     private var continueHeader: some View {
         Text("Continue")
             .font(FleetTheme.sectionHeaderFont)
-            .foregroundStyle(FleetTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.continue.header")
     }
 
@@ -410,7 +411,7 @@ public struct FleetDashboardView: View {
             if entries.isEmpty {
                 Text("No recent conversations on this iPhone")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("fleet.dashboard.continue.empty")
                 // New conversation entry only when a usable target exists
                 // (a roster bot). It picks an exact bot, never a name match.
@@ -418,7 +419,7 @@ public struct FleetDashboardView: View {
                     NavigationLink(value: FleetScreen.botDetail(anyBot.route)) {
                         Label("New conversation", systemImage: "square.and.pencil")
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(theme.highlight)
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityIdentifier("fleet.dashboard.continue.new")
@@ -460,16 +461,16 @@ public struct FleetDashboardView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.title)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                         Text("\(entry.subtitle) · \(FleetDashboardFormatting.relativeTime(from: entry.openedAt, since: now))")
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityHidden(true)
                 }
             }
@@ -518,19 +519,19 @@ public struct FleetDashboardView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(gateway.displayName)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text(gatewaySubtitle(gateway))
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
                 Text(gatewayStateLabel(gateway))
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
             }
         }
@@ -598,7 +599,7 @@ public struct FleetDashboardView: View {
             if entries.isEmpty {
                 Text("No connection activity recorded yet.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("fleet.dashboard.activity.empty")
             } else {
                 VStack(spacing: FleetTheme.spacingSm) {
@@ -614,17 +615,17 @@ public struct FleetDashboardView: View {
         HStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: entry.icon)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityHidden(true)
             Text(entry.text)
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
             Spacer()
             if let at = entry.at {
                 Text(FleetDashboardFormatting.relativeTime(from: at, since: now))
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -638,11 +639,11 @@ public struct FleetDashboardView: View {
             FleetGlanceFact(value: "No gateways", label: "Connected", id: "fleet.dashboard.glance.connected")
             Text("Set up with your agent to see your fleet here.")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             NavigationLink(value: FleetScreen.gateways) {
                 Label("Add Gateway", systemImage: "plus")
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
             .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("fleet.dashboard.empty.add")

@@ -1,23 +1,28 @@
+import Foundation
 import SwiftUI
 
 /// FOS-3 (SPEC §12) — Settings is an app-level SHEET reached from the Fleet
 /// root's leading gearshape and Command Center. First item is useful
 /// configuration, not a brand block. No invented preferences: Security
 /// (App Lock), Appearance (System/Light/Dark — FOS-3), and the always-
-/// reachable Agent Setup Prompt (C2) plus app version. FOS-7 (SPEC §14):
-/// the accent picker is retired — Fleet uses one consistent interface
-/// accent (fixed Fleet violet); the stored pick is preserved for rollback.
+/// reachable Agent Setup Prompt (C2) plus app version. Appearance owns both
+/// the System/Light/Dark choice and the V1 environment-backed theme editor.
 public struct FleetSettingsView: View {
     private let controller: AppLockController
     private let appearanceController: FleetAppearanceController
+    private let themeController: FleetThemeController
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
+    @State private var showingThemeEditor = false
+    @Environment(\.fleetTheme) private var theme
 
     public init(controller: AppLockController,
-                appearanceController: FleetAppearanceController = FleetAppearanceController.shared) {
+                appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
+                themeController: FleetThemeController = FleetThemeController.shared) {
         self.controller = controller
         self.appearanceController = appearanceController
+        self.themeController = themeController
     }
 
     public var body: some View {
@@ -28,24 +33,20 @@ public struct FleetSettingsView: View {
                     set: { controller.setEnabled($0) }
                 )) {
                     Label("App Lock", systemImage: "faceid")
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                 }
                 .accessibilityIdentifier("fleet.settings.app-lock.toggle")
             } header: {
                 Text("Security")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             } footer: {
                 Text("Require Face ID (or your device passcode) to unlock "
                      + "Hermes Fleet when the app opens. Stored gateway "
                      + "credentials stay protected by the Keychain.")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
 
             // FOS-3 (§12 Appearance): System / Light / Dark, default System.
-            // FOS-7 (SPEC §14): the accent picker is RETIRED — the section is
-            // the appearance preference plus a short note that Fleet uses one
-            // consistent interface accent. The stored pick is preserved
-            // untouched (rollback-safe; do not delete migration-unsafe state).
             Section {
                 Picker("Appearance", selection: Binding(
                     get: { appearanceController.selection },
@@ -59,10 +60,27 @@ public struct FleetSettingsView: View {
                 .accessibilityIdentifier("fleet.settings.appearance")
             } header: {
                 Text("Appearance")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             } footer: {
-                Text("Choose Light or Dark, or follow your device's system setting. Fleet uses one consistent interface accent, so buttons and links share the same color everywhere.")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                Text("Choose Light or Dark, or follow your device's system setting. Theme colors are edited separately and applied across Fleet together.")
+                    .foregroundStyle(theme.textSecondary)
+            }
+
+            Section {
+                Button {
+                    showingThemeEditor = true
+                } label: {
+                    Label("Theme", systemImage: "paintpalette")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("fleet.settings.theme")
+            } header: {
+                Text("Theme")
+                    .foregroundStyle(theme.textSecondary)
+            } footer: {
+                Text("Choose an opaque Highlight, Text, and Background color. Changes stay in a preview until you apply them.")
+                    .foregroundStyle(theme.textSecondary)
             }
 
             // C2: the ALWAYS-REACHABLE door to the agent setup prompt. The
@@ -73,16 +91,16 @@ public struct FleetSettingsView: View {
                     showingSetupPrompt = true
                 } label: {
                     Label("Agent Setup Prompt", systemImage: "text.badge.star")
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("fleet.settings.setup-prompt")
             } header: {
                 Text("Agent")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             } footer: {
                 Text("Copy or share the versioned setup prompt for your Hermes agent.")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
 
             Section {
@@ -90,15 +108,20 @@ public struct FleetSettingsView: View {
                     .accessibilityIdentifier("fleet.settings.version")
             } footer: {
                 Text("Hermes Fleet — a pocket operations console for your agents.")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
         .scrollContentBackground(.hidden)
-        .background(FleetTheme.background.ignoresSafeArea())
-        .tint(FleetTheme.accent)
+        .background(theme.background.ignoresSafeArea())
+        .tint(theme.highlight)
         // C2: the setup-prompt door — standard sheet presentation.
         .sheet(isPresented: $showingSetupPrompt) {
             SetupPromptSheet()
+        }
+        .sheet(isPresented: $showingThemeEditor) {
+            NavigationStack {
+                FleetThemeEditorView(controller: themeController)
+            }
         }
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
@@ -111,6 +134,221 @@ public struct FleetSettingsView: View {
         if let short, let build { return "\(short) (\(build))" }
         if let short { return short }
         return "Unknown"
+    }
+}
+
+/// Local-draft editor for the applied V1 palette. ColorPicker changes only
+/// `draft`; the rest of the app observes `FleetThemeController.activePalette`
+/// and therefore does not change until Apply (or the explicit Reset action).
+public struct FleetThemeEditorView: View {
+    private let controller: FleetThemeController
+    @State private var draft: FleetThemePalette
+    @State private var colorConversionFailed = false
+    @State private var applyFailed = false
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    public init(controller: FleetThemeController = FleetThemeController.shared) {
+        self.controller = controller
+        #if DEBUG
+        let debugPalette: FleetThemePalette? = if ProcessInfo.processInfo.arguments.contains("-issue6-low-contrast") {
+            .lowContrastFixture
+        } else if ProcessInfo.processInfo.arguments.contains("-issue6-arbitrary-theme") {
+            .arbitraryFixture
+        } else {
+            nil
+        }
+        _draft = State(initialValue: debugPalette ?? controller.activePalette)
+        #else
+        _draft = State(initialValue: controller.activePalette)
+        #endif
+    }
+
+    public var body: some View {
+        Form {
+            Section {
+                ColorPicker("Highlight", selection: highlightBinding, supportsOpacity: false)
+                    .accessibilityValue(draft.highlight.hexString)
+                    .accessibilityIdentifier("fleet.theme.highlight")
+                ColorPicker("Text", selection: textBinding, supportsOpacity: false)
+                    .accessibilityValue(draft.text.hexString)
+                    .accessibilityIdentifier("fleet.theme.text")
+                ColorPicker("Background", selection: backgroundBinding, supportsOpacity: false)
+                    .accessibilityValue(draft.background.hexString)
+                    .accessibilityIdentifier("fleet.theme.background")
+            } header: {
+                Text("Palette")
+            } footer: {
+                Text("Fleet stores one opaque sRGB palette. Any color is allowed; contrast warnings are advisory in normal appearance.")
+            }
+
+            if colorConversionFailed {
+                Label(
+                    "That color could not be stored as an opaque sRGB value. Try another color.",
+                    systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .accessibilityIdentifier("fleet.theme.color-conversion-error")
+            }
+
+            Section("Preview") {
+                preview
+                    .accessibilityIdentifier("fleet.theme.preview")
+            }
+
+            Section("Contrast") {
+                contrastSummary
+            }
+
+            Section {
+                Button("Reset to Fleet Default") {
+                    // Reset is a draft change like any other editor change;
+                    // the app and persisted value remain untouched until the
+                    // explicit Apply action.
+                    draft = controller.defaultPalette
+                    colorConversionFailed = false
+                    applyFailed = false
+                }
+                .accessibilityIdentifier("fleet.theme.reset")
+            }
+
+            if applyFailed {
+                Label(
+                    "The theme could not be applied. Your current theme is unchanged.",
+                    systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(FleetTheme.statusDestructive)
+                    .accessibilityIdentifier("fleet.theme.apply-error")
+            }
+        }
+        .navigationTitle("Theme")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+                    .accessibilityIdentifier("fleet.theme.cancel")
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Apply") {
+                    if controller.apply(draft) {
+                        applyFailed = false
+                        dismiss()
+                    } else {
+                        applyFailed = true
+                    }
+                }
+                .accessibilityIdentifier("fleet.theme.apply")
+            }
+        }
+        .tint(previewTheme.highlight)
+    }
+
+    private var previewTheme: FleetThemeValues {
+        FleetThemeValues(
+            palette: draft,
+            isDarkAppearance: colorScheme == .dark,
+            isIncreasedContrast: colorSchemeContrast == .increased)
+    }
+
+    private var report: FleetThemeContrastReport {
+        FleetThemeContrastReport(palette: draft, isDark: colorScheme == .dark)
+    }
+
+    private var preview: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Text("Assistant response")
+                .font(FleetTheme.sectionHeaderFont)
+                .foregroundStyle(previewTheme.textPrimary)
+            Text("The same palette styles prose, links, code, and controls throughout Fleet.")
+                .font(.body)
+                .foregroundStyle(previewTheme.textPrimary)
+            Link("Open documentation", destination: URL(string: "https://example.com")!)
+                .foregroundStyle(previewTheme.highlight)
+            Text("inline code")
+                .font(FleetTheme.monoFont)
+                .foregroundStyle(previewTheme.textPrimary)
+                .padding(.horizontal, FleetTheme.spacingSm)
+                .padding(.vertical, FleetTheme.spacingXs)
+                .background(previewTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+            Button("Primary action") {}
+                .buttonStyle(.borderedProminent)
+                .tint(previewTheme.highlight)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(FleetTheme.spacingMd)
+        .background(previewTheme.background)
+        .overlay {
+            RoundedRectangle(cornerRadius: FleetTheme.radiusCard)
+                .stroke(previewTheme.border, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusCard))
+    }
+
+    @ViewBuilder
+    private var contrastSummary: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            Text("Text contrast: \(formatted(report.textToBackground))")
+                .accessibilityIdentifier("fleet.theme.contrast.text")
+            Text("Highlight contrast: \(formatted(report.highlightToBackground))")
+                .accessibilityIdentifier("fleet.theme.contrast.highlight")
+            Text("Highlight control text: \(formatted(report.highlightControlText))")
+                .accessibilityIdentifier("fleet.theme.contrast.control")
+            if report.hasWarning {
+                Label("Low contrast — this combination may be difficult to read.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .accessibilityIdentifier("fleet.theme.contrast.warning")
+            } else {
+                Label("Contrast meets the Fleet preview thresholds.", systemImage: "checkmark.circle")
+                    .foregroundStyle(FleetTheme.statusOnline)
+            }
+        }
+        .font(FleetTheme.secondaryFont)
+    }
+
+    private func formatted(_ value: Double) -> String {
+        String(format: "%.1f:1", value)
+    }
+
+    private var highlightBinding: Binding<Color> {
+        Binding(
+            get: { draft.highlight.swiftUIColor },
+            set: {
+                guard let color = FleetStoredColor(color: $0) else {
+                    colorConversionFailed = true
+                    return
+                }
+                colorConversionFailed = false
+                draft.highlight = color
+                if draft.appearance == .adaptiveFleetDefault {
+                    draft.appearance = .adaptiveCustomHighlight
+                }
+            })
+    }
+
+    private var textBinding: Binding<Color> {
+        Binding(
+            get: { draft.text.swiftUIColor },
+            set: {
+                guard let color = FleetStoredColor(color: $0) else {
+                    colorConversionFailed = true
+                    return
+                }
+                colorConversionFailed = false
+                draft.text = color
+                draft.appearance = .fixed
+            })
+    }
+
+    private var backgroundBinding: Binding<Color> {
+        Binding(
+            get: { draft.background.swiftUIColor },
+            set: {
+                guard let color = FleetStoredColor(color: $0) else {
+                    colorConversionFailed = true
+                    return
+                }
+                colorConversionFailed = false
+                draft.background = color
+                draft.appearance = .fixed
+            })
     }
 }
 

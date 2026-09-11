@@ -21,6 +21,7 @@ import UIKit
 /// surface is the existing Add-Gateway form; the onboarding step text names
 /// the fields but stores nothing.
 public struct GatewayOnboardingView: View {
+    @Environment(\.fleetTheme) private var theme
 
     /// What the agent's reply asks the user to do next, per mission leg.
     private enum Step: Int, CaseIterable, Identifiable {
@@ -97,7 +98,7 @@ public struct GatewayOnboardingView: View {
                 .padding(FleetTheme.spacingXl)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle("Welcome")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -107,7 +108,7 @@ public struct GatewayOnboardingView: View {
                 }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(theme.highlight)
         .preferredColorScheme(.dark)
     }
 
@@ -117,15 +118,15 @@ public struct GatewayOnboardingView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Image(systemName: "circle.hexagongrid.fill")
                 .font(.system(size: 40))
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             Text("Hermes Fleet")
                 .font(FleetTheme.titleFont)
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityIdentifier("fleet.onboarding.title")
             Text("No gateways yet. Your own Hermes agent can set everything up — the app, the network path, and a scoped gateway credential — and hand you three values to type in.")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
@@ -153,7 +154,7 @@ public struct GatewayOnboardingView: View {
                 if copyConfirmed {
                     Text("Copied to your clipboard. The confirmation clears in a few seconds.")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .transition(.opacity)
                         .accessibilityIdentifier("fleet.onboarding.copy.confirmation")
                 }
@@ -168,7 +169,7 @@ public struct GatewayOnboardingView: View {
                     .font(.subheadline)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityIdentifier("fleet.onboarding.toggle-prompt")
             }
         }
@@ -179,7 +180,7 @@ public struct GatewayOnboardingView: View {
             VStack(alignment: .leading, spacing: FleetTheme.spacingLg) {
                 Text("How it works")
                     .font(FleetTheme.sectionHeaderFont)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .accessibilityAddTraits(.isHeader)
 
                 VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
@@ -187,16 +188,16 @@ public struct GatewayOnboardingView: View {
                         HStack(alignment: .top, spacing: FleetTheme.spacingMd) {
                             Image(systemName: step.symbol)
                                 .font(.body)
-                                .foregroundStyle(FleetTheme.accent)
+                                .foregroundStyle(theme.highlight)
                                 .frame(width: 24)
                                 .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(index + 1). \(step.title)")
                                     .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(FleetTheme.textPrimary)
+                                    .foregroundStyle(theme.textPrimary)
                                 Text(step.detail)
                                     .font(FleetTheme.secondaryFont)
-                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .foregroundStyle(theme.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
@@ -227,17 +228,17 @@ public struct GatewayOnboardingView: View {
                     VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
                         Text("The prompt you'll send")
                             .font(FleetTheme.sectionHeaderFont)
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .accessibilityAddTraits(.isHeader)
                         Text(OnboardingPrompt.text)
                             .font(.callout.monospaced())
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("fleet.onboarding.prompt-text")
                         Text("v\(OnboardingPrompt.version) — no secrets inside; your agent fills in the real values.")
                             .font(.caption)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -254,7 +255,7 @@ public struct GatewayOnboardingView: View {
                     .font(.subheadline)
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(FleetTheme.accent)
+            .foregroundStyle(theme.highlight)
             .accessibilityIdentifier("fleet.onboarding.docs")
             .frame(maxWidth: .infinity, alignment: .center)
         }

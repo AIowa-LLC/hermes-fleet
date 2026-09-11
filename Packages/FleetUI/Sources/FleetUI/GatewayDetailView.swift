@@ -5,6 +5,7 @@ import FleetCore
 /// machine-owned Needs You item, current work, and dense resource rows —
 /// all sharing one explicit gateway.
 struct GatewayDetailView: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let gatewayID: GatewayID
     @State private var authGatewayID: GatewayID?
@@ -91,16 +92,16 @@ struct GatewayDetailView: View {
             HStack(spacing: 12) {
                 Image(systemName: "server.rack")
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(gateway.displayName).font(.headline)
                     Text(GatewayConnectionCopy.label(connectionState))
                         .font(.subheadline)
-                        .foregroundStyle(connectionState == .connected ? FleetTheme.statusOnline : FleetTheme.textSecondary)
+                        .foregroundStyle(connectionState == .connected ? FleetTheme.statusOnline : theme.textSecondary)
                     Text(gateway.endpoint.map(Redaction.redactedURL) ?? "Endpoint not configured")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             .accessibilityIdentifier("fleet.gateway-detail.identity.\(gatewayID.rawValue)")
@@ -110,12 +111,12 @@ struct GatewayDetailView: View {
                 default:
                     Text(bots.isEmpty ? "Unknown" : "\(bots.count) · last known")
                         .font(.body.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             LabeledContent("Active") {
                 if observed == 0 {
-                    Text("Unknown").foregroundStyle(.secondary)
+                    Text("Unknown").foregroundStyle(theme.textSecondary)
                 } else {
                     Text("\(working.count) active · \(observed) of \(bots.count) observed").font(.footnote)
                 }
@@ -123,7 +124,7 @@ struct GatewayDetailView: View {
             .accessibilityIdentifier("fleet.gateway-detail.activity-coverage")
             Text("Attention coverage is limited to observed Bots and Groups on this gateway.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -144,7 +145,7 @@ struct GatewayDetailView: View {
             .accessibilityIdentifier("fleet.gateway-detail.connect.\(gatewayID.rawValue)")
         case .connecting:
             Label("Connecting…", systemImage: "hourglass")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.textSecondary)
         case .connected:
             NavigationLink(value: FleetScreen.gatewayConnection(gatewayID)) {
                 Label("Connection", systemImage: "network")
@@ -182,14 +183,14 @@ struct GatewayDetailView: View {
                 if working.count > 3 {
                     Text("+ \(working.count - 3) more")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
         } else {
             Section {
                 Text("Activity unknown — no current execution observations for this gateway.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
             } header: { Text("Working here") }
         }
     }
@@ -218,13 +219,14 @@ enum GatewayConnectionCopy {
 
 /// §8 child: Groups hosted on (or replicated into view for) one gateway.
 struct GatewayGroupsView: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let gatewayID: GatewayID
     var body: some View {
         List {
             if environment.rooms(for: gatewayID).isEmpty {
                 Text("No Groups observed on this gateway. Refresh Bots to check again.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             ForEach(environment.rooms(for: gatewayID), id: \.id) { room in
                 NavigationLink(value: FleetScreen.room(room.id)) {
@@ -232,7 +234,7 @@ struct GatewayGroupsView: View {
                         Text(room.name)
                         Text(room.id.provenance == .desktopLegacy ? "Managed by Hermes Desktop · read only" : "Hosted Group")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
                 .accessibilityIdentifier("fleet.gateway-groups.row.\(room.id.key)")

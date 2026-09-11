@@ -221,6 +221,7 @@ public final class BotRoutinesViewModel {
 /// hijack or filter the general cron list; this surface shows only
 /// `[bot:<slug>]`-namespaced jobs of THIS bot.
 public struct BotRoutinesView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let route: Route
     /// FOS-5: when embedded as Bot Detail's Routines segment, the view
@@ -243,7 +244,7 @@ public struct BotRoutinesView: View {
                 unavailableContent
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle(embedded ? "" : "Routines")
         .navigationBarTitleDisplayMode(embedded ? .inline : .automatic)
         .task {
@@ -305,7 +306,7 @@ public struct BotRoutinesView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityLabel("New routine")
                 .accessibilityIdentifier("routines.new")
             }
@@ -343,7 +344,7 @@ public struct BotRoutinesView: View {
         FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Circle()
-                    .fill(routine.isEnabled ? FleetTheme.statusOnline : FleetTheme.textMuted)
+                    .fill(routine.isEnabled ? FleetTheme.statusOnline : theme.textMuted)
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -351,18 +352,18 @@ public struct BotRoutinesView: View {
                     // a container identifier would override child ids).
                     Text(routine.routineName)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .accessibilityIdentifier("routines.row.\(routine.jobID)")
                     // Schedule is machine data — mono, the terminal voice.
                     Text(routine.schedule)
                         .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                         .accessibilityIdentifier("routines.row.schedule.\(routine.jobID)")
                     if let preview = routine.promptPreview, !preview.isEmpty {
                         Text(preview)
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                     runStatusLine(routine)
@@ -406,7 +407,7 @@ public struct BotRoutinesView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 // FOS-6 tap-target: pad to the 44pt actionable bar (SPEC
                 // §21 gate 15).
@@ -428,22 +429,22 @@ public struct BotRoutinesView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: "clock")
                 .font(.caption2)
-                .foregroundStyle(FleetTheme.textMuted)
+                .foregroundStyle(theme.textMuted)
                 .accessibilityHidden(true)
             Text(routine.isEnabled ? (routine.nextRunAt ?? "no upcoming run") : "Paused")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(routine.isEnabled ? FleetTheme.textSecondary : FleetTheme.textMuted)
+                .foregroundStyle(routine.isEnabled ? theme.textSecondary : theme.textMuted)
             if let last = routine.lastRunAt {
                 Text("· last \(last)")
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(FleetTheme.textMuted)
+                    .foregroundStyle(theme.textMuted)
             }
             if let status = routine.lastStatus, !status.isEmpty {
                 Text("· \(status)")
                     .font(FleetTheme.monoCaptionFont)
                     .foregroundStyle(
                         ["failed", "error", "failure", "fire_failed"].contains(status.lowercased())
-                            ? FleetTheme.statusDestructive : FleetTheme.textMuted)
+                            ? FleetTheme.statusDestructive : theme.textMuted)
             }
         }
         .accessibilityIdentifier("routines.row.status.\(routine.jobID)")
@@ -490,7 +491,7 @@ public struct BotRoutinesView: View {
             Spacer()
             ProgressView("Loading routines…")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Spacer()
         }
         .listRowBackground(Color.clear)
@@ -512,6 +513,7 @@ public struct BotRoutinesView: View {
 /// namespace and the `bot-chat:<slug>` deliver target are applied by the
 /// view model — the user only names the routine.
 struct BotRoutineFormSheet: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: BotRoutinesViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var label = ""
@@ -581,12 +583,12 @@ struct BotRoutineFormSheet: View {
 
                 } header: {
                     Text("Routine")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } footer: {
                     // The namespace the gateway will store — mono, machine data.
                     Text("Stored as \(BotRoutineNamespace.jobName(owner: model.profileSlug, routine: label.isEmpty ? "…" : label))")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Section {
                     TextField("Prompt", text: $prompt, axis: .vertical)
@@ -594,11 +596,11 @@ struct BotRoutineFormSheet: View {
                         .accessibilityIdentifier("routines.form.prompt")
                 } header: {
                     Text("Prompt")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } footer: {
                     Text("Runs on the gateway's cron and delivers to this bot's Bot Chat. The gateway validates the schedule and scans the prompt before storing it.")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 if let formError = model.formError {
                     Section {
@@ -619,7 +621,7 @@ struct BotRoutineFormSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle("New Routine")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -638,12 +640,12 @@ struct BotRoutineFormSheet: View {
                         }
                     }
                     .disabled(!isValid || isSaving)
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .accessibilityIdentifier("routines.form.save")
                 }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(theme.highlight)
         .presentationDetents([.large])
         .accessibilityIdentifier("routines.form.sheet")
     }

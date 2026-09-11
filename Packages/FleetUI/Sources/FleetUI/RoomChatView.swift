@@ -362,6 +362,7 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
 /// Hermes Desktop" label. Fleet visual language: dark cards, bold headers,
 /// mono metadata — no generic grouped Forms.
 public struct RoomChatView: View {
+    @Environment(\.fleetTheme) private var theme
     @State private var viewModel: RoomChatViewModel
     private let environment: AppEnvironment
     @State private var draft = ""
@@ -375,6 +376,9 @@ public struct RoomChatView: View {
     @State private var followingLatest = true
     /// True while the viewport sits at (or near) the transcript bottom.
     @State private var isAtBottomLatest = true
+    /// Tracks the user's active drag so geometry updates can close the race
+    /// between the interaction phase callback and the first offset callback.
+    @State private var isUserInteractingWithScroll = false
     /// Suppresses unfollow while a programmatic follow-scroll settles.
     @State private var isProgrammaticFollow = false
     @FocusState private var composing: Bool
@@ -411,7 +415,7 @@ public struct RoomChatView: View {
                 .accessibilityIdentifier("fleet.room.chat")
             }
             .overlay(alignment: .bottom) { composer }
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarControls }
@@ -475,6 +479,13 @@ public struct RoomChatView: View {
                 isAtBottomLatest = atBottom
                 if atBottom {
                     isProgrammaticFollow = false
+                } else if isUserInteractingWithScroll && !isProgrammaticFollow {
+                    // The phase callback can run before geometry has updated
+                    // isAtBottomLatest. Treat the first non-bottom geometry
+                    // update during a real drag as the user's explicit
+                    // history escape; otherwise Latest can stay hidden after
+                    // a successful scroll.
+                    followingLatest = false
                 }
             }
             .onScrollPhaseChange { _, phase in
@@ -483,6 +494,7 @@ public struct RoomChatView: View {
                 // programmatic scrolls, lazy height corrections, and last
                 // rows taller than the viewport all shift geometry while
                 // still "following latest".
+                isUserInteractingWithScroll = phase == .interacting
                 if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow {
                     followingLatest = false
                 }
@@ -530,10 +542,10 @@ public struct RoomChatView: View {
             HStack(spacing: 6) {
                 Image(systemName: viewModel.isManagedByDesktop ? "lock.fill" : "bolt.fill")
                     .font(.caption2)
-                    .foregroundStyle(viewModel.isManagedByDesktop ? FleetTheme.textSecondary : FleetTheme.accent)
+                    .foregroundStyle(viewModel.isManagedByDesktop ? theme.textSecondary : theme.highlight)
                 Text(viewModel.roomName)
                     .font(.headline.weight(.bold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 if viewModel.driverWorking {
                     StatusPill(status: .executing(.working))
                 }
@@ -548,11 +560,11 @@ public struct RoomChatView: View {
                                 .font(.caption.weight(.semibold))
                             Text(row.source)
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Capsule().fill(FleetTheme.surfaceElevated))
+                        .background(Capsule().fill(theme.surfaceElevated))
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("fleet.room.member.\(row.member.name)")
                     }
@@ -591,15 +603,15 @@ public struct RoomChatView: View {
                         surface.requiresAttention ? "Needs attention — \(surface.title)" : surface.title,
                         systemImage: surface.requiresAttention ? "exclamationmark.triangle.fill" : "xmark.octagon")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text(failure.message ?? surface.message)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     // D22: the wire spelling rides along (mono badge) —
                     // honest typed identity, never a generic "failed".
                     Text(surface.wireBadge)
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.room.failure.wire-badge")
                     HStack(spacing: FleetTheme.spacingSm) {
                         ForEach(surface.actions) { action in
@@ -631,10 +643,10 @@ public struct RoomChatView: View {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                     Label("Outcome unknown", systemImage: "questionmark.diamond")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text("Task \(taskID) ended without a settled result.")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Button {
                         Task { await viewModel.retry(taskID: taskID) }
                     } label: {
@@ -649,7 +661,7 @@ public struct RoomChatView: View {
                 HStack {
                     Label("Working…", systemImage: "gearshape.2")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Spacer()
                     Button(role: .destructive) {
                         Task { await viewModel.stopWorking() }
@@ -676,7 +688,7 @@ public struct RoomChatView: View {
         if let notice = viewModel.notice {
             Text(notice)
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityIdentifier("fleet.room.notice")
         }
     }
@@ -689,11 +701,11 @@ public struct RoomChatView: View {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                     Label("Needs you", systemImage: "hand.raised.fill")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                     if let prompt = approval.approval["prompt"]?.stringValue ?? approval.approval["summary"]?.stringValue, !prompt.isEmpty {
                         Text(prompt)
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                     }
                     HStack(spacing: FleetTheme.spacingSm) {
                         Button {
@@ -734,10 +746,10 @@ public struct RoomChatView: View {
                 HStack(spacing: 6) {
                     Text(entry.speaker)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(entry.flavor == .message(isUser: true) ? FleetTheme.accent : FleetTheme.textSecondary)
+                        .foregroundStyle(entry.flavor == .message(isUser: true) ? theme.highlight : theme.textSecondary)
                     Text(BotRowView.relativeTime(entry.createdAt))
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 switch entry.flavor {
                 case .message(let isUser):
@@ -746,7 +758,7 @@ public struct RoomChatView: View {
                         // contains Markdown-looking characters.
                         Text(entry.text ?? "")
                             .font(.body)
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                     } else {
                         AssistantRichTextView(
                             markdown: entry.text ?? "",
@@ -770,7 +782,7 @@ public struct RoomChatView: View {
     private var emptyTranscript: some View {
         Text(viewModel.isManagedByDesktop ? "No recent activity synced." : "No messages yet.")
             .font(FleetTheme.secondaryFont)
-            .foregroundStyle(FleetTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, FleetTheme.spacingLg)
             .accessibilityIdentifier("fleet.room.empty")
@@ -794,7 +806,7 @@ public struct RoomChatView: View {
                     })
                 HStack(spacing: FleetTheme.spacingSm) {
                     Image(systemName: "chevron.up.forward")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     TextField(
                         viewModel.capabilities.canSend ? "Message the room (@ to mention)" : "Read only",
                         text: $draft
@@ -821,7 +833,7 @@ public struct RoomChatView: View {
                 }
                 .padding(.horizontal, FleetTheme.spacingMd)
                 .padding(.vertical, 10)
-                .background(FleetTheme.surfaceElevated)
+                .background(theme.surfaceElevated)
                 .clipShape(Capsule())
             }
             .padding(.horizontal, FleetTheme.spacingLg)

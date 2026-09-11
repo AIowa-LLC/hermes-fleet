@@ -16,6 +16,7 @@ import FleetCore
 /// Empty/error states are honest: no gateways → onboarding hint; fetch
 /// failed → the error with a Retry; empty board → says so.
 public struct KanbanBoardView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let initialBoard: String?
@@ -35,7 +36,7 @@ public struct KanbanBoardView: View {
                 boardContent
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle("Kanban")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -106,10 +107,10 @@ public struct KanbanBoardView: View {
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 .font(FleetTheme.secondaryFont.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
             }
             .accessibilityIdentifier("fleet.kanban.board.picker")
         }
@@ -161,14 +162,14 @@ public struct KanbanBoardView: View {
                 Circle().fill(FleetTheme.statusDegraded).frame(width: 7, height: 7)
                 Text("Reconnecting…")
             case .idle:
-                Circle().fill(FleetTheme.textSecondary).frame(width: 7, height: 7)
+                Circle().fill(theme.textSecondary).frame(width: 7, height: 7)
                 Text("Stream idle")
             }
         }
         // FOS-7 (SPEC §14): the stream banner reads as a plain sentence-
         // case status line — semantic status dot, no tracked uppercase.
         .font(FleetTheme.microLabelFont)
-        .foregroundStyle(FleetTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(for: model.streamPhase))
         .accessibilityIdentifier("kanban.board.streamBanner")
@@ -188,10 +189,10 @@ public struct KanbanBoardView: View {
         // FOS-6: contextual status, not a card.
         HStack(spacing: FleetTheme.spacingMd) {
             ProgressView()
-                .tint(FleetTheme.accent)
+                .tint(theme.highlight)
             Text("Loading board…")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("kanban.board.loading")
@@ -221,13 +222,13 @@ public struct KanbanBoardView: View {
         VStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: "rectangle.stack")
                 .font(.system(size: 36, weight: .light))
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Text("No gateways registered.")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text("Add a gateway to see its Kanban board.")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(FleetTheme.spacingXxl)
@@ -240,15 +241,15 @@ public struct KanbanBoardView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text("Recent Activity")
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             ForEach(model.recentEvents.prefix(5)) { event in
                 HStack(spacing: FleetTheme.spacingSm) {
                     Circle()
-                        .fill(FleetTheme.accent)
+                        .fill(theme.highlight)
                         .frame(width: 6, height: 6)
                     Text("\(event.taskID) · \(event.kind)")
                         .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -262,6 +263,7 @@ public struct KanbanBoardView: View {
 
 /// One status column: header (name + count) + horizontal lane of cards.
 struct KanbanColumnSection: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let title: String
     let cards: [KanbanCard]
@@ -274,17 +276,17 @@ struct KanbanColumnSection: View {
             HStack(spacing: FleetTheme.spacingSm) {
                 Text(title.capitalized)
                     .font(FleetTheme.sectionHeaderFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text("\(cards.count)")
                     .font(FleetTheme.monoCaptionFont.monospacedDigit())
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     // V4 motion: live board counts settle instead of swap.
                     .contentTransition(.numericText())
                     .padding(.horizontal, FleetTheme.spacingSm)
                     .padding(.vertical, 2)
-                    .background(FleetTheme.surface)
+                    .background(theme.surface)
                     .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                    .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(title.capitalized), \(cards.count) cards")
@@ -292,13 +294,13 @@ struct KanbanColumnSection: View {
             // transition (fires when the live snapshot re-counts the lane).
             .animation(.easeOut(duration: 0.18), value: cards.count)
             Rectangle()
-                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                .fill(theme.border)
                 .frame(height: 0.5)
 
             if cards.isEmpty {
                 Text("No cards")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textMuted)
+                    .foregroundStyle(theme.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(FleetTheme.spacingSm)
             } else {
@@ -320,6 +322,7 @@ struct KanbanColumnSection: View {
 
 /// One read-only task card — a plain informational surface.
 struct KanbanCardView: View {
+    @Environment(\.fleetTheme) private var theme
     let card: KanbanCard
 
     var body: some View {
@@ -327,18 +330,18 @@ struct KanbanCardView: View {
             VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 Text(card.title)
                     .font(FleetTheme.sectionHeaderFont)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(2)
                 if let assignee = card.assignee {
                     Label(assignee, systemImage: "person.crop.circle")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
                 if let summary = card.latestSummary, !summary.isEmpty {
                     Text(summary)
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(3)
                 }
                 HStack(spacing: FleetTheme.spacingSm) {
@@ -346,13 +349,13 @@ struct KanbanCardView: View {
                         // V3: relative age is telemetry — mono caption.
                         Text(Self.relativeAge(createdAt))
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
                     // V3: the card ID is machine data — mono, muted.
                     Text(card.id)
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textMuted)
+                        .foregroundStyle(theme.textMuted)
                         .lineLimit(1)
                 }
             }

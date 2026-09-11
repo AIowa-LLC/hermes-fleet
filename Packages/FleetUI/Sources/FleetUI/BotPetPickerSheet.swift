@@ -17,6 +17,7 @@ import FleetCore
 ///   zero remote writes; the callback hands the bytes to the editor
 ///   (preview updates immediately; Save persists).
 public struct BotPetPickerSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let bot: FleetBot
     /// Called with the selected pet's idle-frame PNG bytes. The caller
@@ -109,7 +110,7 @@ public struct BotPetPickerSheet: View {
             if filteredPets.isEmpty && phaseShowsFullCatalog {
                 Text(pets.isEmpty ? "No pets are available." : "No pets match your search.")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .padding(.top, 60)
                     .accessibilityIdentifier("fleet.bot.pet.empty")
             } else {
@@ -139,7 +140,7 @@ public struct BotPetPickerSheet: View {
                         ProgressView()
                         Text("Loading the full Petdex catalog…")
                             .font(.caption)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     .accessibilityIdentifier("fleet.bot.pet.hydrating")
                 case .loaded(.hydrateFailed(let message)):
@@ -189,6 +190,7 @@ public struct BotPetPickerSheet: View {
 /// One gallery cell: lazy thumbnail (nearest-neighbor scaling for pixel
 /// art), installed/generated/curated badges, display name + slug.
 struct BotPetCell: View {
+    @Environment(\.fleetTheme) private var theme
     let pet: HermesPet
     let selectionInFlight: Bool
     let loadThumbnail: () async -> Data?
@@ -206,7 +208,7 @@ struct BotPetCell: View {
             VStack(spacing: 6) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(FleetTheme.surfaceElevated)
+                        .fill(theme.surfaceElevated)
                     if let thumbnail, let image = UIImage(data: thumbnail) {
                         Image(uiImage: image)
                             .resizable()
@@ -218,7 +220,7 @@ struct BotPetCell: View {
                             Task { await retryBoth() }
                         } label: {
                             Image(systemName: "arrow.clockwise")
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                         .accessibilityIdentifier("fleet.bot.pet.thumb-retry.\(pet.slug)")
                     } else {
@@ -233,7 +235,7 @@ struct BotPetCell: View {
                         .lineLimit(1)
                     Text(pet.slug)
                         .font(.caption2)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
                 HStack(spacing: 4) {
@@ -275,7 +277,7 @@ struct BotPetCell: View {
             .font(.system(size: 9, weight: .semibold))
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Capsule().fill(FleetTheme.accent.opacity(0.18)))
-            .foregroundStyle(FleetTheme.accent)
+            .background(Capsule().fill(theme.highlight.opacity(0.18)))
+            .foregroundStyle(theme.highlight)
     }
 }

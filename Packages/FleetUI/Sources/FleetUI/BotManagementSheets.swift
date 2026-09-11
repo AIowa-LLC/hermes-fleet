@@ -6,6 +6,7 @@ import FleetCore
 /// gateway NEVER switches), advanced disclosure (seed mode, SOUL,
 /// model/provider, credential inheritance semantics copied from the wire).
 public struct CreateBotSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let onCreated: (String, GatewayID) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -67,7 +68,7 @@ public struct CreateBotSheet: View {
                     .accessibilityIdentifier("fleet.bot.create.gateway")
                     Text("The bot is created on the chosen gateway. Your active gateway doesn't change.")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Section {
                     DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
@@ -157,6 +158,7 @@ public struct CreateBotSheet: View {
 /// bypassed) and per-key partial success (applied vs failed sections —
 /// the P3 residual this slice closes).
 public struct EditBotSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let bot: FleetBot
     @Environment(\.dismiss) private var dismiss
@@ -447,7 +449,7 @@ public struct EditBotSheet: View {
             if description.mcpServers.isEmpty {
                 Text("None configured")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             ForEach(description.mcpServers, id: \.name) { server in
                 Toggle(server.name, isOn: Binding(
@@ -647,6 +649,7 @@ public struct EditBotSheet: View {
 /// per-key CAS; deleting a section NEVER deletes bots (they fall to
 /// unassigned — copy says so).
 public struct SectionsManagementSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let gateway: FleetGateway
     @Environment(\.dismiss) private var dismiss
@@ -672,7 +675,7 @@ public struct SectionsManagementSheet: View {
                         ProgressView("Loading sections…")
                     } else if sections.isEmpty {
                         Text("No sections yet.")
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     ForEach(sections) { section in
                         Button {
@@ -683,7 +686,7 @@ public struct SectionsManagementSheet: View {
                                 Text(section.name)
                                 Spacer()
                                 Image(systemName: "pencil")
-                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .foregroundStyle(theme.textSecondary)
                             }
                         }
                         .accessibilityIdentifier("fleet.sections.row.\(section.id)")
@@ -791,6 +794,7 @@ public struct SectionsManagementSheet: View {
 /// Bot actions menu pieces: Duplicate (D11, confirmation listing inherited
 /// vs never-copied) and Delete (D12, capability-gated with explanation).
 public struct BotActionsMenu: View {
+    @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     let bot: FleetBot
 
@@ -892,6 +896,7 @@ public struct BotActionsMenu: View {
 /// Duplicate confirmation: lists what's inherited and what is never copied
 /// (identity, canonical chat, created date).
 struct DuplicateConfirmSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let bot: FleetBot
     let summary: BotDuplicateSummary
     let onConfirm: () -> Void
@@ -907,13 +912,13 @@ struct DuplicateConfirmSheet: View {
                 Section("Inherited") {
                     ForEach(summary.inherited, id: \.self) { item in
                         Label(item, systemImage: "checkmark")
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                     }
                 }
                 Section("Not copied") {
                     ForEach(summary.notInherited, id: \.self) { item in
                         Label(item, systemImage: "xmark")
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
             }

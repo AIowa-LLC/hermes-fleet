@@ -23,6 +23,7 @@ import FleetCore
 ///   its classified §13 status as an outage section while reachable
 ///   gateways' bots stay visible.
 public struct FleetRosterView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID?
 
@@ -181,7 +182,7 @@ public struct FleetRosterView: View {
                 await environment.refreshRoster()
             }
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.roster")
     }
 
@@ -203,7 +204,7 @@ public struct FleetRosterView: View {
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.vertical, FleetTheme.spacingMd)
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
     }
 
     /// FOS-5 (SPEC §9): All gateways filter + All / Bots / Groups scope.
@@ -265,12 +266,12 @@ public struct FleetRosterView: View {
                                         .frame(width: 8, height: 8)
                                     Text("\(BotRosterPresentation.displayTitle(for: bot)) · \(gatewayLabel(for: bot)) · \(activeStateText(bot))")
                                         .font(.footnote.weight(.semibold))
-                                        .foregroundStyle(FleetTheme.textPrimary)
+                                        .foregroundStyle(theme.textPrimary)
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, FleetTheme.spacingSm)
                                 .padding(.vertical, 6)
-                                .background(Capsule().fill(FleetTheme.surfaceElevated))
+                                .background(Capsule().fill(theme.surfaceElevated))
                                 .overlay(Capsule().strokeBorder(FleetTheme.statusExecuting.opacity(0.4), lineWidth: 1))
                             }
                             .buttonStyle(.fleetPressable)
@@ -314,7 +315,7 @@ public struct FleetRosterView: View {
                 if !ghosts.isEmpty {
                     Text("Last known bots")
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     ForEach(ghosts) { bot in
                         NavigationLink(value: FleetScreen.botDetail(bot.route)) {
                             BotRowView(
@@ -399,7 +400,7 @@ public struct FleetRosterView: View {
                         /// count so a collapsed section never reads as empty.
                         Text(block.rows.isEmpty ? "No bots" : "\(block.rows.count) bot\(block.rows.count == 1 ? "" : "s")")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .padding(.leading, FleetTheme.spacingLg)
                             .accessibilityIdentifier("fleet.roster.section-count.\(block.id ?? "")")
                     } else {
@@ -409,7 +410,7 @@ public struct FleetRosterView: View {
                         if !block.isUnassigned && block.rows.isEmpty {
                             Text("Empty — move bots here from a bot's actions menu.")
                                 .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .padding(.leading, FleetTheme.spacingLg)
                                 .accessibilityIdentifier("fleet.roster.section-empty.\(block.id ?? "")")
                         }
@@ -504,14 +505,14 @@ public struct FleetRosterView: View {
                 .font(.caption)
                 .foregroundStyle(
                     section.outage == nil
-                        ? FleetTheme.textSecondary
+                        ? theme.textSecondary
                         : FleetTheme.statusDegraded
                 )
                 .fixedSize()
                 .accessibilityHidden(true)
             Text(section.gateway.displayName)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if let outage = section.outage {
@@ -557,7 +558,7 @@ public struct FleetRosterView: View {
                 Text("No Gateways")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         } description: {
             Text("Add a gateway to start building your fleet.")
@@ -571,7 +572,7 @@ public struct FleetRosterView: View {
                 Text("No Bots")
             } icon: {
                 Image(systemName: "cpu")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         } description: {
             Text("No profiles reported. Refresh to re-probe every gateway.")
@@ -651,6 +652,7 @@ enum BotRowDim {
 /// status pill. Ghost rows dim the portrait, not the text; hidden-revealed
 /// rows dim the whole row.
 struct BotRowView: View {
+    @Environment(\.fleetTheme) private var theme
     let management: BotManagementController
     let bot: FleetBot
     let presence: BotPresence
@@ -698,14 +700,14 @@ struct BotRowView: View {
                             if let preview = anchor.preview, !preview.isEmpty {
                                 Text(preview)
                                     .font(FleetTheme.secondaryFont)
-                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .foregroundStyle(theme.textSecondary)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                             }
                             if let modelProviderText {
                                 Text(modelProviderText)
                                     .font(FleetTheme.secondaryFont)
-                                    .foregroundStyle(FleetTheme.textSecondary)
+                                    .foregroundStyle(theme.textSecondary)
                                     .lineLimit(1)
                             }
                             if showsGatewayRunningBadge && bot.gatewayRunning {
@@ -742,18 +744,18 @@ struct BotRowView: View {
         HStack(spacing: 4) {
             Text(BotRosterPresentation.displayTitle(for: bot))
                 .font(.body.weight(.semibold))
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             if let duplicateLabel {
                 Text("· \(duplicateLabel)")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
             if bot.botModeMetadata?.hidden == true {
                 Image(systemName: "eye.slash")
                     .font(.caption2)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityLabel("Hidden")
             }
         }
@@ -768,7 +770,7 @@ struct BotRowView: View {
             }
         }
         .font(FleetTheme.monoCaptionFont)
-        .foregroundStyle(FleetTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .lineLimit(1)
         .truncationMode(.middle)
     }
@@ -805,6 +807,7 @@ struct BotRowView: View {
 /// provenance label for legacy rows, read-only badge only from real
 /// capability state.
 struct RoomRowView: View {
+    @Environment(\.fleetTheme) private var theme
     let room: FleetRoom
 
     var body: some View {
@@ -816,32 +819,32 @@ struct RoomRowView: View {
                     HStack(spacing: 4) {
                         Text(room.name)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         if room.isManagedByDesktop {
                             Image(systemName: "lock.fill")
                                 .font(.caption2)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .accessibilityLabel("Managed by Hermes Desktop · read only")
                         }
                     }
                     if let last = room.recentLog.last {
                         Text("\(last.from.name): \(last.text)")
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     } else if !room.members.isEmpty {
                         Text(room.members.map(\.name).joined(separator: ", "))
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                     if room.isManagedByDesktop {
                         // FOS-5 (SPEC §9): legacy rows say exactly this.
                         Text("Managed by Hermes Desktop · Read only")
                             .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -877,17 +880,18 @@ extension FleetRoom {
 
 /// Composite group avatar: up to 4 member initials in a 2×2 grid.
 struct RoomAvatar: View {
+    @Environment(\.fleetTheme) private var theme
     let members: [String]
 
     var body: some View {
         let chips = Array(members.prefix(4))
         ZStack {
             RoundedRectangle(cornerRadius: 15)
-                .fill(FleetTheme.surfaceElevated)
+                .fill(theme.surfaceElevated)
             if chips.isEmpty {
                 Image(systemName: "person.3")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             } else {
                 GeometryReader { geo in
                     let cols = chips.count == 1 ? 1 : 2
@@ -897,7 +901,7 @@ struct RoomAvatar: View {
                     ForEach(Array(chips.enumerated()), id: \.offset) { i, name in
                         Text(FleetDashboardFormatting.avatarInitials(from: name))
                             .font(.system(size: 9, weight: .bold, design: .default))
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(theme.highlight)
                             .frame(width: w, height: h)
                             .position(
                                 x: (CGFloat(i % cols) + 0.5) * w,
@@ -910,7 +914,7 @@ struct RoomAvatar: View {
         .frame(width: 44, height: 44)
         .overlay(
             RoundedRectangle(cornerRadius: 15)
-                .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
+                .strokeBorder(theme.border, lineWidth: 1)
         )
         .accessibilityHidden(true)
     }

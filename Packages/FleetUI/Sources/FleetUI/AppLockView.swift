@@ -3,16 +3,17 @@ import SwiftUI
 /// App-lock overlay (H1 / R4; D-1 V7 lock spec, t_9ce36690).
 ///
 /// Rendered at the root BEFORE any roster/conversation content when the
-/// `AppLockController` is not `.unlocked`. HIG-native lock screen: system
-/// background, the white-wing identity mark in the upper third, the app name
-/// directly under it in system type (.title2 semibold, .label) — NOT gold,
-/// NOT custom font — and the existing unlock control in system styling.
+/// `AppLockController` is not `.unlocked`. HIG-native lock screen: the active
+/// Fleet background, the white-wing identity mark in the upper third, the app
+/// name directly under it in system type (.title2 semibold) — NOT gold, NOT
+/// custom font — and the existing unlock control in system styling.
 /// When biometrics fail or are unavailable the controller transitions to
 /// `.passcodeFallback` and this view shows the passcode prompt.
 ///
 /// The overlay is deliberately minimal: it gates access, it does not host
 /// fleet UI. All elements carry accessibility identifiers for the H1 UI test.
 public struct AppLockView: View {
+    @Environment(\.fleetTheme) private var theme
     let controller: AppLockController
 
     public init(controller: AppLockController) {
@@ -21,7 +22,7 @@ public struct AppLockView: View {
 
     public var body: some View {
         ZStack {
-            Color(uiColor: .systemBackground).ignoresSafeArea()
+            theme.background.ignoresSafeArea()
 
             VStack(spacing: FleetTheme.spacingXl) {
                 // D-1 fix per D5 §3: the white-wing identity mark replaces
@@ -40,7 +41,7 @@ public struct AppLockView: View {
 
                 Text("Hermes Fleet")
                     .font(.system(.title2, design: .default, weight: .semibold))
-                    .foregroundStyle(Color(uiColor: .label))
+                    .foregroundStyle(theme.textPrimary)
                     .accessibilityIdentifier("lock-app-name")
 
                 Spacer(minLength: 0)
@@ -64,7 +65,7 @@ public struct AppLockView: View {
                  ? "Checking…"
                  : "Unlock to access your fleet")
                 .font(.subheadline)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
 
             Button {
                 Task { await controller.authenticate() }
@@ -91,7 +92,7 @@ public struct AppLockView: View {
 
             Text("Use your device passcode to continue.")
                 .font(.subheadline)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
 
             Button {
                 Task { await controller.unlockWithPasscode() }

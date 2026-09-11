@@ -9,6 +9,7 @@ import FleetCore
 /// retryable error and issues NO navigation and NO session creation — a
 /// transient registry failure can never fork a second "Bot Chat".
 public struct BotChatOpenButton: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let bot: FleetBot
     /// FOS-5: an offline ghost cannot authorize a canonical open — the
@@ -42,11 +43,11 @@ public struct BotChatOpenButton: View {
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 .padding(FleetTheme.spacingMd)
                 .frame(maxWidth: .infinity)
-                .background(FleetTheme.accent.opacity(0.12))
+                .background(theme.highlight.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusRow, style: .continuous))
             }
             .buttonStyle(FleetPressableStyle())
@@ -56,7 +57,7 @@ public struct BotChatOpenButton: View {
             if let failureMessage {
                 Text(failureMessage)
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(3)
                     .accessibilityIdentifier("fleet.bot-chat.error")
             }

@@ -24,6 +24,21 @@ public enum FleetAccent: String, CaseIterable, Identifiable, Sendable {
     public static let `default`: FleetAccent = .blue
 }
 
+/// One-way migration input for the retired V7.5 preference. These colors are
+/// not a new persistence contract; they are used only when an install has an
+/// old accent and no V1 palette yet.
+extension FleetAccent {
+    var legacyHighlight: FleetStoredColor {
+        switch self {
+        case .blue: FleetStoredColor(hex: 0x0A84FF)
+        case .gold: FleetStoredColor(hex: 0xD9A441)
+        case .amber: FleetStoredColor(hex: 0xD97706)
+        case .indigo: FleetStoredColor(hex: 0x4F46E5)
+        case .green: FleetStoredColor(hex: 0x16A34A)
+        }
+    }
+}
+
 /// Persistence-only companion for the retired accent pick (see
 /// `FleetAccent`). Reads and writes keep the stored rollback value alive;
 /// nothing in the rendered interface consumes the selection.

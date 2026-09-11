@@ -33,12 +33,12 @@ enum SplashConfiguration {
 struct SplashOverlayView: View {
     @State private var isVisible = true
     @State private var isRemoved = false
+    @Environment(\.fleetTheme) private var theme
 
     var body: some View {
         ZStack {
             if !isRemoved {
-                Color(uiColor: .systemBackground)
-                    .ignoresSafeArea()
+                theme.background.ignoresSafeArea()
                 Image("FleetWingMark")
                     .resizable()
                     .aspectRatio(contentMode: .fit)

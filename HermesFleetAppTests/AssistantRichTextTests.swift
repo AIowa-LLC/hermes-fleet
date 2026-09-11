@@ -110,6 +110,26 @@ final class AssistantRichTextTests: XCTestCase {
         XCTAssertFalse(reduced.shouldAnimateText, "Reduce Motion must remain a hard no-animation path")
     }
 
+    func testRendererConfigurationUsesTheAppliedThemePalette() {
+        let theme = FleetThemeValues(
+            palette: FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0xE95D90),
+                text: FleetStoredColor(hex: 0xF1E8D8),
+                background: FleetStoredColor(hex: 0x17202A)),
+            isDarkAppearance: true,
+            isIncreasedContrast: false)
+        let config = FleetMarkdownRenderConfiguration.make(
+            theme: theme,
+            reduceMotion: false,
+            dynamicTypeSize: .large)
+
+        XCTAssertEqual(config.paragraphStyle.textColor, theme.textPrimary)
+        XCTAssertEqual(config.inlineStyle.linkTextColor, theme.highlight)
+        XCTAssertEqual(config.inlineStyle.codeBackgroundColor, theme.surfaceElevated)
+        XCTAssertEqual(config.codeBlockConfig.backgroundColor, theme.surfaceElevated)
+        XCTAssertEqual(config.thematicBreakColor, theme.border)
+    }
+
     func testStreamingSourceCarriesFullSnapshotsWithoutRecreatingIdentity() async {
         let snapshots = [
             "**bo",

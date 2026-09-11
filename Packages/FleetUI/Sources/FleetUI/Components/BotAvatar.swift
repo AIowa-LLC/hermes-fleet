@@ -3,6 +3,7 @@ import FleetCore
 
 /// One renderer for gateway-owned assets and deterministic Bot identity.
 public struct BotAvatar: View {
+    @Environment(\.fleetTheme) private var theme
     private let displayName: String
     private let bot: FleetBot?
     private let management: BotManagementController?
@@ -24,7 +25,7 @@ public struct BotAvatar: View {
         bot?.botModeMetadata?.shape ?? BotAvatarIdentity.defaultShape(forName: identity)
     }
     private var tint: Color {
-        BotAvatarAppearanceTint.color(hex: bot?.botModeMetadata?.color)
+        BotAvatarAppearanceTint.color(hex: bot?.botModeMetadata?.color, fallback: theme.highlight)
     }
 
     public var body: some View {
@@ -40,7 +41,7 @@ public struct BotAvatar: View {
             }
         }
         .frame(width: Self.side, height: Self.side)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         .accessibilityHidden(true)
         .task(id: "\(bot?.route.id ?? "")/\(bot?.hasAvatar ?? false)/\(String(bot?.uiMetaRevisions?[BotModeContract.botsMetaKey] ?? 0))") {
@@ -57,9 +58,9 @@ public struct BotAvatar: View {
 /// the roster renderer must not diverge).
 enum BotAvatarAppearanceTint {
     /// Resolve a #RRGGBB metadata color to a SwiftUI tint (accent fallback).
-    static func color(hex raw: String?) -> Color {
+    static func color(hex raw: String?, fallback: Color) -> Color {
         guard let raw, raw.hasPrefix("#"), raw.count == 7,
-              let hex = UInt32(raw.dropFirst(), radix: 16) else { return FleetTheme.accent }
+              let hex = UInt32(raw.dropFirst(), radix: 16) else { return fallback }
         return Color(red: Double((hex >> 16) & 255) / 255,
                      green: Double((hex >> 8) & 255) / 255,
                      blue: Double(hex & 255) / 255)
@@ -69,6 +70,7 @@ enum BotAvatarAppearanceTint {
 /// A deterministic bot face: shape geometry + eyes, shared by the roster
 /// avatar and the appearance draft preview.
 public struct BotAvatarFace: View {
+    @Environment(\.fleetTheme) private var theme
     let shape: String
     let seed: String
     let tint: Color
@@ -88,6 +90,7 @@ public struct BotAvatarFace: View {
 /// Save — staged image bytes when active, else the staged shape/color.
 /// Never reads stale roster metadata.
 public struct BotAvatarAppearancePreview: View {
+    @Environment(\.fleetTheme) private var theme
     let draft: BotAvatarAppearanceDraft
     let identityName: String
 
@@ -112,11 +115,11 @@ public struct BotAvatarAppearancePreview: View {
                 BotAvatarFace(
                     shape: shape,
                     seed: identityName,
-                    tint: BotAvatarAppearanceTint.color(hex: draft.color))
+                    tint: BotAvatarAppearanceTint.color(hex: draft.color, fallback: theme.highlight))
             }
         }
         .frame(width: 96, height: 96)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .clipShape(RoundedRectangle(cornerRadius: 32))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Avatar preview: \(description)")

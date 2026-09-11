@@ -8,6 +8,7 @@ import SwiftUI
 /// All screens build surfaces on this component so the card treatment stays
 /// uniform.
 public struct FleetCard<Content: View>: View {
+    @Environment(\.fleetTheme) private var theme
     private let content: Content
 
     public init(@ViewBuilder content: () -> Content) {
@@ -20,10 +21,10 @@ public struct FleetCard<Content: View>: View {
         content
             .padding(FleetTheme.spacingLg)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(colorSchemeContrast == .increased ? FleetTheme.surfaceIncreased : FleetTheme.surface)
+            .background(colorSchemeContrast == .increased ? theme.surfaceIncreased : theme.surface)
             .overlay(
                 RoundedRectangle(cornerRadius: FleetTheme.radiusCard)
-                    .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
+                    .strokeBorder(theme.border, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusCard))
     }

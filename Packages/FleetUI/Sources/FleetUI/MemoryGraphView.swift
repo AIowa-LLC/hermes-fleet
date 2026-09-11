@@ -8,6 +8,7 @@ import FleetCore
 /// and a timeline scrubber that reveals the journey oldest → newest.
 /// Read-only for R9 — no edit/delete affordances.
 public struct MemoryGraphView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let profile: ProfileSlug
@@ -38,7 +39,7 @@ public struct MemoryGraphView: View {
                 unavailableContent
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle("Memory Graph")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: profileScope) {
@@ -74,7 +75,7 @@ public struct MemoryGraphView: View {
             } else if model.isLoading && model.graph == nil {
                 ProgressView("Mapping learning…")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let graph = model.graph, graph.summary.totalCount == 0,
                       graph.buckets.isEmpty {
@@ -183,7 +184,7 @@ public struct MemoryGraphView: View {
                         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                             Text(group.label)
                                 .font(FleetTheme.sectionHeaderFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .accessibilityAddTraits(.isHeader)
                             ForEach(group.nodes) { placed in
                                 Button {
@@ -192,22 +193,22 @@ public struct MemoryGraphView: View {
                                     HStack(spacing: FleetTheme.spacingSm) {
                                         Image(systemName: placed.isMemory ? "diamond" : "circle")
                                             .font(.caption)
-                                            .foregroundStyle(placed.isMemory ? FleetTheme.accent : FleetTheme.textSecondary)
+                                            .foregroundStyle(placed.isMemory ? theme.highlight : theme.textSecondary)
                                             .accessibilityHidden(true)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(placed.node.label)
                                                 .font(.body.weight(.semibold))
-                                                .foregroundStyle(FleetTheme.textPrimary)
+                                                .foregroundStyle(theme.textPrimary)
                                                 .lineLimit(1)
                                             Text(placed.node.meta)
                                                 .font(FleetTheme.monoCaptionFont)
-                                                .foregroundStyle(FleetTheme.textSecondary)
+                                                .foregroundStyle(theme.textSecondary)
                                                 .lineLimit(1)
                                         }
                                         Spacer()
                                         Image(systemName: "chevron.right")
                                             .font(.caption2)
-                                            .foregroundStyle(FleetTheme.textSecondary)
+                                            .foregroundStyle(theme.textSecondary)
                                             .accessibilityHidden(true)
                                     }
                                     .padding(.vertical, FleetTheme.spacingSm)
@@ -223,7 +224,7 @@ public struct MemoryGraphView: View {
                     if layout.orderedNodes.isEmpty {
                         Text("No nodes in this filter.")
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .padding(.vertical, FleetTheme.spacingLg)
                     }
                 }
@@ -243,7 +244,7 @@ public struct MemoryGraphView: View {
             } else if let message = model.mutationMessage {
                 Label(message, systemImage: "checkmark.circle")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .lineLimit(3)
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("memorygraph.mutation-banner")
@@ -257,7 +258,7 @@ public struct MemoryGraphView: View {
                     Spacer()
                     Button("Dismiss") { model.clearMutationFeedback() }
                         .font(FleetTheme.secondaryFont.weight(.semibold))
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                         .buttonStyle(.fleetPressable)
                 }
             }
@@ -271,18 +272,18 @@ public struct MemoryGraphView: View {
             if let layout = model.layout, let cap = layout.capLabel {
                 Text(cap)
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("memorygraph.cap-label")
             }
             ForEach(model.graph?.summary.lines ?? [], id: \.self) { line in
                 Text(line)
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             if model.source == .offlineSnapshot, let captured = model.offlineCapturedAt {
                 Text("offline snapshot · \(captured.formatted(date: .abbreviated, time: .shortened))")
                     .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(FleetTheme.textMuted)
+                    .foregroundStyle(theme.textMuted)
                     .accessibilityIdentifier("memorygraph.offline-stamp")
             }
         }
@@ -300,12 +301,12 @@ public struct MemoryGraphView: View {
                     Text(filter.title)
                         .font(FleetTheme.secondaryFont.weight(.semibold))
                         .foregroundStyle(
-                            model.filter == filter ? FleetTheme.background : FleetTheme.textSecondary)
+                            model.filter == filter ? theme.background : theme.textSecondary)
                         .padding(.horizontal, FleetTheme.spacingMd)
                         .padding(.vertical, 6)
                         .background(
                             Capsule().fill(
-                                model.filter == filter ? FleetTheme.accent : FleetTheme.accent.opacity(0.08)))
+                                model.filter == filter ? theme.highlight : theme.highlight.opacity(0.08)))
                 }
                 .buttonStyle(.fleetPressable)
                 .accessibilityIdentifier("memorygraph.filter.\(filter.rawValue)")
@@ -313,7 +314,7 @@ public struct MemoryGraphView: View {
             Spacer()
             Text("● skills   ◆ memories")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textMuted)
+                .foregroundStyle(theme.textMuted)
                 .accessibilityHidden(true)
         }
     }
@@ -326,13 +327,13 @@ public struct MemoryGraphView: View {
                 Text(model.graph?.summary.end ?? "now")
             }
             .font(FleetTheme.secondaryFont)
-            .foregroundStyle(FleetTheme.textMuted)
+            .foregroundStyle(theme.textMuted)
             .accessibilityHidden(true)
             Slider(value: Binding(
                 get: { model.reveal },
                 set: { model.setReveal($0) }
             ), in: 0...1)
-            .tint(FleetTheme.accent)
+            .tint(theme.highlight)
             .accessibilityLabel("Timeline reveal")
             .accessibilityIdentifier("memorygraph.scrubber")
         }
@@ -353,7 +354,7 @@ public struct MemoryGraphView: View {
                 Task { await model.reload(profile: profileScope) }
             }
             .font(FleetTheme.secondaryFont.weight(.semibold))
-            .foregroundStyle(FleetTheme.accent)
+            .foregroundStyle(theme.highlight)
             .buttonStyle(.fleetPressable)
             .accessibilityIdentifier("memorygraph.retry")
         }
@@ -364,11 +365,11 @@ public struct MemoryGraphView: View {
         VStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: "sparkles")
                 .font(.title2)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .accessibilityHidden(true)
             Text("No learning yet — keep using Hermes and it maps out here.")
                 .font(FleetTheme.secondaryFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
         }
         .padding(FleetTheme.spacingXl)
@@ -409,6 +410,7 @@ public struct MemoryGraphView: View {
 /// ink, matching the desktop palette roles); brightness rides the
 /// age-gradient ink. Taps hit-test in unit space (size-independent).
 struct MemoryGraphCanvas: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let model: MemoryGraphViewModel
@@ -436,12 +438,12 @@ struct MemoryGraphCanvas: View {
                         y: originY + placed.y * side)
                     let alpha = contrast == .increased ? 1.0 : 0.55 + 0.45 * placed.ink
                     let color = placed.isMemory
-                        ? FleetTheme.accent.opacity(alpha)
-                        : FleetTheme.textSecondary.opacity(alpha)
+                        ? theme.highlight.opacity(alpha)
+                        : theme.textSecondary.opacity(alpha)
                     if placed.isMemory && !reduceTransparency && contrast != .increased {
                         let halo = CGRect(x: point.x - 12, y: point.y - 12, width: 24, height: 24)
                         context.fill(Path(ellipseIn: halo), with: .radialGradient(
-                            Gradient(colors: [FleetTheme.accent.opacity(0.2), .clear]),
+                            Gradient(colors: [theme.highlight.opacity(0.2), .clear]),
                             center: point, startRadius: 2, endRadius: 12))
                     }
                     if placed.isMemory {
@@ -549,6 +551,7 @@ struct LearningDetailBox: Identifiable {
 
 /// Read-only node drill-in error (detail fetch failed).
 struct LearningNodeDetailErrorSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let errorText: String
 
     var body: some View {
@@ -564,7 +567,7 @@ struct LearningNodeDetailErrorSheet: View {
             }
             .padding(FleetTheme.spacingXl)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(FleetTheme.background)
+            .background(theme.background)
             .navigationTitle("Node")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -574,6 +577,7 @@ struct LearningNodeDetailErrorSheet: View {
 /// Node drill-in: full SKILL.md or memory chunk (learning.detail) with
 /// R10-T5 edit (learning.edit) and delete (learning.delete) affordances.
 struct LearningNodeDetailSheet: View {
+    @Environment(\.fleetTheme) private var theme
     let detail: LearningNodeDetail
     // @Observable model — plain reference; body tracks reads automatically.
     let model: MemoryGraphViewModel
@@ -593,7 +597,7 @@ struct LearningNodeDetailSheet: View {
                     readContent
                 }
             }
-            .background(FleetTheme.background)
+            .background(theme.background)
             .navigationTitle(isEditing ? "Edit Node" : "Node")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -688,19 +692,19 @@ struct LearningNodeDetailSheet: View {
                 HStack(spacing: FleetTheme.spacingSm) {
                     Image(systemName: detail.kind == "memory" ? "diamond" : "circle")
                         .font(.caption)
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                         .accessibilityHidden(true)
                     Text(detail.kind)
                         .font(FleetTheme.sectionHeaderFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Text(detail.label)
                     .font(.system(.title3, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .accessibilityIdentifier("memorygraph.detail.label")
                 Text(detail.content)
                     .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("memorygraph.detail.content")
@@ -713,7 +717,7 @@ struct LearningNodeDetailSheet: View {
         VStack(spacing: FleetTheme.spacingSm) {
             Text("Content")
                 .font(FleetTheme.sectionHeaderFont)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let refusal = model.mutationError {
                 // Verbatim gateway refusal (names the remedy) — inline in
@@ -735,12 +739,12 @@ struct LearningNodeDetailSheet: View {
             }
             TextEditor(text: $draft)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .scrollContentBackground(.hidden)
-                .background(FleetTheme.background)
+                .background(theme.background)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(FleetTheme.accent.opacity(0.4), lineWidth: 1))
+                        .stroke(theme.highlight.opacity(0.4), lineWidth: 1))
                 .accessibilityIdentifier("memorygraph.detail.edit.field")
         }
         .padding(FleetTheme.spacingLg)

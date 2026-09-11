@@ -17,6 +17,7 @@ private var hairlineHeight: CGFloat {
 /// Terminal-style `KEY:` metadata row with a muted monospaced key, primary
 /// monospaced value, and optional hairline divider.
 public struct FleetMetadataRow: View {
+    @Environment(\.fleetTheme) private var theme
     private let key: String
     private let value: String
     private var showDivider: Bool = true
@@ -38,17 +39,17 @@ public struct FleetMetadataRow: View {
             HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingSm) {
                 Text(key + ":")
                     .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text(value)
                     .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
             }
             if showDivider {
                 Rectangle()
-                    .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                    .fill(theme.border)
                     .frame(height: hairlineHeight)
             }
         }

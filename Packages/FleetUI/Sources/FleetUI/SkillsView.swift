@@ -9,6 +9,7 @@ import FleetCore
 /// `profiles.configure disabled_skills` with replace semantics, verified
 /// by a fresh describe. Install-from-hub is deferred (YAGNI).
 public struct SkillsView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let profile: ProfileSlug
@@ -29,7 +30,7 @@ public struct SkillsView: View {
                 unavailableContent
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle("Skills")
         .searchable(text: $query, prompt: "Find a capability")
         .navigationBarTitleDisplayMode(.inline)
@@ -62,7 +63,7 @@ public struct SkillsView: View {
                 if model.isLoading && model.skillsRows.isEmpty {
                     ProgressView("Loading skills…")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(FleetTheme.spacingXl)
                 } else if let error = model.errorMessage, model.skillsRows.isEmpty {
@@ -78,7 +79,7 @@ public struct SkillsView: View {
                         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                             Text(group.category)
                                 .font(FleetTheme.sectionHeaderFont)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .padding(.top, FleetTheme.spacingSm)
                             ForEach(group.rows) { skill in
                                 skillRow(skill, model: model)
@@ -100,11 +101,11 @@ public struct SkillsView: View {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: "wrench.and.screwdriver")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textMuted)
+                    .foregroundStyle(theme.textMuted)
                     .accessibilityHidden(true)
                 Text(skill.name)
                     .font(.system(.body, design: .monospaced).weight(.regular))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     // Row identity rides the name text (a container-level

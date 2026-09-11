@@ -24,6 +24,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
 
 /// Adaptive system navigation; every tab owns its stack and the lock gate owns all content.
 public struct FleetTabView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let lockController: AppLockController
     @State private var navigation = FleetNavigationState()
@@ -84,7 +85,12 @@ public struct FleetTabView: View {
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
                 FleetSettingsView(controller: lockController)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingSettings = false } } }
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingSettings = false }
+                                .accessibilityIdentifier("fleet.settings.done")
+                        }
+                    }
             }
         }
         .onChange(of: navigation) { _, state in
@@ -93,7 +99,7 @@ public struct FleetTabView: View {
                 UserDefaults.standard.set(data, forKey: FleetNavigationState.storageKey)
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(theme.highlight)
         .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false; showingSettings = false } }
         .onChange(of: environment.pendingBotChatNavigation) { target in
             guard let target else { return }

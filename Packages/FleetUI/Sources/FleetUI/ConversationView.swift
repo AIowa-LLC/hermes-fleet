@@ -17,6 +17,7 @@ import FleetPersistence
 /// FleetUI depends only on FleetCore seams; the transport module is wired by
 /// the app composition root (M0 hard guard).
 public struct ConversationView: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingTimeline = false
@@ -108,7 +109,7 @@ public struct ConversationView: View {
             viewModel?.teardown()
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
     }
 
     // MARK: Canvas
@@ -188,11 +189,11 @@ public struct ConversationView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                     Text(model.sessionTitle ?? route.id)
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -228,22 +229,22 @@ public struct ConversationView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "cpu")
                                 .font(.caption2)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                             Text(model.toolingViewModel?.selectedModel?.shortName
                                  ?? model.sessionModel?.split(separator: "·").first.map(String.init)?.trimmingCharacters(in: .whitespaces)
                                  ?? "model")
                                 .font(FleetTheme.monoCaptionFont)
                                 .foregroundStyle(
                                     model.toolingViewModel?.selectedModel != nil
-                                        ? FleetTheme.accent
-                                        : FleetTheme.textSecondary
+                                        ? theme.highlight
+                                        : theme.textSecondary
                                 )
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(FleetTheme.background, in: Capsule())
+                        .background(theme.background, in: Capsule())
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Model picker")
@@ -261,10 +262,10 @@ public struct ConversationView: View {
                 .padding(.vertical, 6)
             }
         }
-        .background(FleetTheme.surface)
+        .background(theme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                .fill(theme.border)
                 .frame(height: 1)
         }
         .accessibilityElement(children: .combine)
@@ -305,15 +306,15 @@ public struct ConversationView: View {
                 banner(text: integrityNotice, symbol: "checkmark.shield", tint: FleetTheme.statusDestructive)
             }
             if let replayNotice = model.replayNotice, model.phase != .streaming {
-                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: FleetTheme.accent)
+                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: theme.highlight)
             }
             switch model.phase {
             case .idle, .opening:
-                banner(text: "Opening conversation…", symbol: "hourglass", tint: FleetTheme.textSecondary, spinner: true)
+                banner(text: "Opening conversation…", symbol: "hourglass", tint: theme.textSecondary, spinner: true)
             case .connecting:
-                banner(text: "Connecting…", symbol: "bolt.horizontal", tint: FleetTheme.textSecondary, spinner: true)
+                banner(text: "Connecting…", symbol: "bolt.horizontal", tint: theme.textSecondary, spinner: true)
             case .reconnecting:
-                banner(text: "Reconnecting…", symbol: "arrow.clockwise", tint: FleetTheme.textSecondary, spinner: true)
+                banner(text: "Reconnecting…", symbol: "arrow.clockwise", tint: theme.textSecondary, spinner: true)
             case .disconnected:
                 HStack(spacing: 12) {
                     banner(text: "Connection lost — replayed history is shown. Reconnect to continue.",
@@ -333,7 +334,7 @@ public struct ConversationView: View {
                         Task { await model.reauthenticate() }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(FleetTheme.accent)
+                    .tint(theme.highlight)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
                 }
@@ -342,7 +343,7 @@ public struct ConversationView: View {
             case .ready, .streaming:
                 if model.hydratedFromCache {
                     banner(text: "Showing saved history — connecting for live updates.",
-                           symbol: "internaldrive", tint: FleetTheme.textSecondary)
+                           symbol: "internaldrive", tint: theme.textSecondary)
                 } else if let historyError = model.historyLoadError {
                     // H1: the authoritative fetch failed — cached rows (if
                     // any) stay rendered; honest, non-secret notice.
@@ -370,13 +371,13 @@ public struct ConversationView: View {
             }
             Text(text)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(FleetTheme.surface)
+        .background(theme.surface)
         .accessibilityElement(children: .combine)
     }
 
@@ -392,7 +393,7 @@ public struct ConversationView: View {
             ProgressView()
             Text("Loading conversation…")
                 .font(.callout)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.top, 120)
@@ -458,7 +459,7 @@ public struct ConversationView: View {
                     }
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 16).frame(minHeight: 44)
-                    .background(FleetTheme.surface)
+                    .background(theme.surface)
                 }
             }
             .sheet(isPresented: $showingTimeline) {
@@ -473,7 +474,7 @@ public struct ConversationView: View {
                                     else { withAnimation(.snappy) { proxy.scrollTo(row.id, anchor: .top) } }
                                 } label: {
                                     Text(row.text).font(.body).lineLimit(3)
-                                        .foregroundStyle(FleetTheme.textPrimary).padding(.vertical, 4)
+                                        .foregroundStyle(theme.textPrimary).padding(.vertical, 4)
                                 }
                             }
                         }
@@ -532,12 +533,12 @@ public struct ConversationView: View {
     private func chipLabelBody(_ ref: FileRef) -> some View {
         Label(ref.displayPath, systemImage: "doc")
             .font(FleetTheme.monoCaptionFont)
-            .foregroundStyle(FleetTheme.accent)
+            .foregroundStyle(theme.highlight)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(FleetTheme.surfaceElevated, in: Capsule())
+            .background(theme.surfaceElevated, in: Capsule())
             .overlay(
-                Capsule().strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1))
+                Capsule().strokeBorder(theme.highlight.opacity(0.35), lineWidth: 1))
     }
 
     /// One `@file:` / `@folder:` reference found in message text.
@@ -674,10 +675,10 @@ public struct ConversationView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(theme.highlight)
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(FleetTheme.surfaceElevated))
-                            .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                            .background(Circle().fill(theme.surfaceElevated))
+                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Attach")
@@ -694,10 +695,10 @@ public struct ConversationView: View {
                     } label: {
                         Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(FleetTheme.accent))
+                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.highlight))
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(FleetTheme.surfaceElevated))
-                            .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                            .background(Circle().fill(theme.surfaceElevated))
+                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
@@ -708,17 +709,17 @@ public struct ConversationView: View {
                     .lineLimit(1...4)
                     .focused($composerFocused)
                     .font(.body)
-                    .foregroundStyle(FleetTheme.textPrimary)
-                    .tint(FleetTheme.accent)
+                    .foregroundStyle(theme.textPrimary)
+                    .tint(theme.highlight)
                     .padding(.horizontal, FleetTheme.spacingMd)
                     .padding(.vertical, FleetTheme.spacingSm)
                     .background(
                         RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .fill(FleetTheme.background)
+                            .fill(theme.background)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
+                            .strokeBorder(theme.border, lineWidth: 1)
                     )
                     .disabled(model.phase != .ready && model.phase != .streaming)
                     .accessibilityIdentifier("fleet.conversation.composer")
@@ -732,10 +733,10 @@ public struct ConversationView: View {
                     } label: {
                         Image(systemName: "stop.fill")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(FleetTheme.surfaceElevated))
-                            .overlay(Circle().strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                            .background(Circle().fill(theme.surfaceElevated))
+                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Stop")
@@ -748,9 +749,9 @@ public struct ConversationView: View {
                         // glyph — the one accent, no glow, no gradient.
                         Image(systemName: "arrow.up")
                             .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(FleetTheme.background)
+                            .foregroundStyle(theme.background)
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(FleetTheme.accent))
+                            .background(Circle().fill(theme.highlight))
                     }
                     .buttonStyle(.fleetPressable)
                     .disabled(model.phase != .ready || (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
@@ -761,10 +762,10 @@ public struct ConversationView: View {
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.vertical, FleetTheme.spacingSm)
         }
-        .background(FleetTheme.surface)
+        .background(theme.surface)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                .fill(theme.border)
                 .frame(height: 1)
         }
         // R10-T1: pickers.
@@ -791,10 +792,10 @@ public struct ConversationView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: FleetTheme.spacingSm) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                 Text("Skills")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Spacer()
                 if model.isLoadingSkillSuggestions {
                     ProgressView()
@@ -816,7 +817,7 @@ public struct ConversationView: View {
             } else if model.skillSuggestions.isEmpty && !model.isLoadingSkillSuggestions {
                 Text("No skills available in this Hermes profile")
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, FleetTheme.spacingSm)
                     .accessibilityElement(children: .ignore)
@@ -835,11 +836,11 @@ public struct ConversationView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(suggestion.text)
                                         .font(FleetTheme.monoCaptionFont)
-                                        .foregroundStyle(FleetTheme.textPrimary)
+                                        .foregroundStyle(theme.textPrimary)
                                     if !suggestion.description.isEmpty {
                                         Text(suggestion.description)
                                             .font(.caption2)
-                                            .foregroundStyle(FleetTheme.textSecondary)
+                                            .foregroundStyle(theme.textSecondary)
                                             .lineLimit(1)
                                     }
                                 }
@@ -855,10 +856,10 @@ public struct ConversationView: View {
                 .frame(maxHeight: 176)
             }
         }
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast))
+                .fill(theme.border)
                 .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
@@ -877,30 +878,30 @@ public struct ConversationView: View {
                         ProgressView().controlSize(.small)
                         Text("Uploading…")
                             .font(.caption)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .fill(FleetTheme.surfaceElevated))
+                            .fill(theme.surfaceElevated))
                     .accessibilityIdentifier("fleet.conversation.attachment.uploading")
                 }
                 ForEach(model.pendingAttachments) { chip in
                     HStack(spacing: 6) {
                         Image(systemName: "paperclip")
                             .font(.caption2)
-                            .foregroundStyle(FleetTheme.accent)
+                            .foregroundStyle(theme.highlight)
                         Text(chip.caption)
                             .font(.caption)
-                            .foregroundStyle(FleetTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Button {
                             model.removePendingAttachment(chip.id)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.caption)
-                                .foregroundStyle(FleetTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                         .accessibilityLabel("Remove attachment \(chip.displayName)")
                     }
@@ -908,10 +909,10 @@ public struct ConversationView: View {
                     .padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .fill(FleetTheme.surfaceElevated))
+                            .fill(theme.surfaceElevated))
                     .overlay(
                         RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1))
+                            .strokeBorder(theme.border, lineWidth: 1))
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("fleet.conversation.attachment.chip.\(chip.displayName)")
                 }
@@ -928,20 +929,20 @@ public struct ConversationView: View {
                 .foregroundStyle(FleetTheme.statusDestructive)
             Text(message)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(3)
             Spacer(minLength: 0)
             Button {
                 model.clearAttachmentError()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .accessibilityLabel("Dismiss attachment error")
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, 6)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.conversation.attachment.error")
     }
@@ -953,20 +954,20 @@ public struct ConversationView: View {
                 .foregroundStyle(FleetTheme.statusDestructive)
             Text(message)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(3)
             Spacer(minLength: 0)
             Button {
                 model.clearReactionError()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .accessibilityLabel("Dismiss reaction error")
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, 6)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.conversation.reaction.error")
     }
@@ -981,7 +982,7 @@ public struct ConversationView: View {
                 .foregroundStyle(FleetTheme.statusDestructive)
             Text("Voice needs microphone + speech recognition access. Enable them in Settings to transcribe.")
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(3)
             Spacer(minLength: 0)
             Button {
@@ -991,13 +992,13 @@ public struct ConversationView: View {
             } label: {
                 Text("Settings")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
             .accessibilityIdentifier("fleet.conversation.voice.denied.settings")
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, 6)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.conversation.voice.denied")
     }
@@ -1009,20 +1010,20 @@ public struct ConversationView: View {
                 .foregroundStyle(FleetTheme.statusDestructive)
             Text(message)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(3)
             Spacer(minLength: 0)
             Button {
                 model.clearVoiceError()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .accessibilityLabel("Dismiss voice error")
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, 6)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.conversation.voice.error")
     }
@@ -1034,16 +1035,16 @@ public struct ConversationView: View {
     private func transcriptReviewChip(_ model: ConversationViewModel, transcript: VoiceTranscript) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "waveform")
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
             VStack(alignment: .leading, spacing: 2) {
                 Text(transcript.text)
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(3)
                 if !transcript.isFinal {
                     Text("Partial — stopped early. Edit before sending.")
                         .font(.caption2)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             Spacer(minLength: 0)
@@ -1053,7 +1054,7 @@ public struct ConversationView: View {
             } label: {
                 Text("Use")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
             .accessibilityIdentifier("fleet.conversation.voice.transcript.use")
             Button {
@@ -1064,21 +1065,21 @@ public struct ConversationView: View {
             } label: {
                 Text("Send")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
             .accessibilityIdentifier("fleet.conversation.voice.transcript.send")
             Button {
                 model.discardTranscript()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .accessibilityLabel("Discard transcript")
             .accessibilityIdentifier("fleet.conversation.voice.transcript.discard")
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, 6)
-        .background(FleetTheme.surfaceElevated)
+        .background(theme.surfaceElevated)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.conversation.voice.transcript")
     }
@@ -1178,7 +1179,7 @@ public struct ConversationView: View {
                 Text("Conversation Unavailable")
             } icon: {
                 Image(systemName: "text.bubble")
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         } description: {
             Text("This gateway has no conversation session wired.")
@@ -1192,6 +1193,7 @@ public struct ConversationView: View {
 /// expanded while its turn is streaming so live reasoning stays visible, and
 /// collapsed by default for completed turns (it is auxiliary, not the reply).
 private struct ReasoningDisclosure: View {
+    @Environment(\.fleetTheme) private var theme
     let text: String
     let isStreaming: Bool
 
@@ -1210,10 +1212,10 @@ private struct ReasoningDisclosure: View {
                 HStack(spacing: 4) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Text("Reasoning")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             .buttonStyle(.plain)
@@ -1223,14 +1225,14 @@ private struct ReasoningDisclosure: View {
             if expanded {
                 Text(text)
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(FleetTheme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+        .background(theme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .onChange(of: isStreaming) { _, nowStreaming in
             // Keep live reasoning visible while the turn streams; auto-
             // collapse when the turn completes.
@@ -1247,6 +1249,7 @@ private struct ReasoningDisclosure: View {
 /// cards; timestamps render under each bubble (caption2 secondary) whenever
 /// the row carries one.
 private struct ConversationBubbleView: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let row: ConversationRow
     /// R10-T2: reaction handlers from the owning view (the bubble owns no
@@ -1281,7 +1284,7 @@ private struct ConversationBubbleView: View {
                     // V3: timestamps are telemetry — mono caption.
                     Text(timestampText)
                         .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             if row.kind != .user { Spacer(minLength: 60) }
@@ -1338,14 +1341,14 @@ private struct ConversationBubbleView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
-                        FleetTheme.surfaceElevated,
+                        theme.surfaceElevated,
                         in: Capsule()
                     )
                     .overlay(
                         Capsule().strokeBorder(
                             reaction.author == "user"
-                                ? FleetTheme.accent.opacity(0.5)
-                                : FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast),
+                                ? theme.highlight.opacity(0.5)
+                                : theme.border,
                             lineWidth: 1)
                     )
                     .accessibilityLabel(
@@ -1376,16 +1379,16 @@ private struct ConversationBubbleView: View {
             // gradient (accent discipline: one pale-cyan accent).
             Text(row.text)
                 .font(.body)
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
-                    FleetTheme.surfaceElevated,
+                    theme.surfaceElevated,
                     in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
-                        .strokeBorder(FleetTheme.accent.opacity(0.35), lineWidth: 1)
+                        .strokeBorder(theme.highlight.opacity(0.35), lineWidth: 1)
                 )
         case .assistant:
             VStack(alignment: .leading, spacing: 4) {
@@ -1404,7 +1407,7 @@ private struct ConversationBubbleView: View {
                 } else if row.text.isEmpty, row.isStreaming {
                     Text("…")
                         .font(.body)
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                 } else {
                     AssistantRichTextView(
                         markdown: row.text,
@@ -1418,7 +1421,7 @@ private struct ConversationBubbleView: View {
                     HStack(spacing: 4) {
                         ForEach(0..<3, id: \.self) { i in
                             Circle()
-                                .fill(FleetTheme.accent)
+                                .fill(theme.highlight)
                                 .frame(width: 5, height: 5)
                                 .opacity(0.6)
                         }
@@ -1428,17 +1431,17 @@ private struct ConversationBubbleView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(FleetTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble))
+            .background(theme.surfaceElevated, in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble))
             .overlay(
                 RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
-                    .strokeBorder(FleetTheme.borderColor(colorSchemeContrast: colorSchemeContrast), lineWidth: 1)
+                    .strokeBorder(theme.border, lineWidth: 1)
             )
         case .tool:
             FleetToolActivityView(title: row.text, detail: row.detail)
         case .status, .system:
             Text(row.text)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .error:
             Label(row.text, systemImage: "exclamationmark.triangle")

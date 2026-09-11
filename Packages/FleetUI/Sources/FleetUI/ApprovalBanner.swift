@@ -5,6 +5,7 @@ import FleetCore
 /// decision. Denial is one tap; approval is biometric-gated and offers only
 /// the scopes supplied by the gateway.
 public struct ApprovalBanner: View {
+    @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Bindable var model: ApprovalViewModel
     /// Deny tap owned by the parent so the banner remains presentational.
@@ -39,7 +40,7 @@ public struct ApprovalBanner: View {
             // Client-redacted command preview.
             Text(request.command)
                 .font(FleetTheme.monoFont)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(4)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
@@ -47,7 +48,7 @@ public struct ApprovalBanner: View {
                 .padding(.horizontal, FleetTheme.spacingSm)
                 .padding(.vertical, 6)
                 .background(
-                    FleetTheme.background,
+                    theme.background,
                     in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
                 )
                 .overlay(
@@ -59,7 +60,7 @@ public struct ApprovalBanner: View {
             if let detail = request.detail, !detail.isEmpty {
                 Text(detail)
                     .font(.caption)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(2)
             }
 
@@ -94,7 +95,7 @@ public struct ApprovalBanner: View {
         }
         .padding(FleetTheme.spacingMd)
         .background(
-            FleetTheme.surface,
+            theme.surface,
             in: RoundedRectangle(cornerRadius: FleetTheme.radiusCard)
         )
         .overlay(
@@ -147,16 +148,16 @@ public struct ApprovalBanner: View {
             Text(text)
                 .font(.body.weight(.semibold))
         }
-        .foregroundStyle(FleetTheme.accent)
+        .foregroundStyle(theme.highlight)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .background(
-            FleetTheme.surfaceElevated,
+            theme.surfaceElevated,
             in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
         )
         .overlay(
             RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                .strokeBorder(FleetTheme.accent.opacity(0.4), lineWidth: 1)
+                .strokeBorder(theme.highlight.opacity(0.4), lineWidth: 1)
         )
     }
 

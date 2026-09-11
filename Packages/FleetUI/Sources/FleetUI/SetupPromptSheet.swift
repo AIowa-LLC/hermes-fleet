@@ -18,6 +18,7 @@ import UIKit
 /// SECURITY: this view never renders secret material — the prompt itself is
 /// parameterized and carries no credentials (see `OnboardingPrompt`).
 public struct SetupPromptSheet: View {
+    @Environment(\.fleetTheme) private var theme
 
     @Environment(\.dismiss) private var dismiss
 
@@ -56,7 +57,7 @@ public struct SetupPromptSheet: View {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
                 Text("Send this prompt to your Hermes agent and it will set up the gateway end-to-end — network path, a scoped credential, and verification — then reply with the three values to add in the app.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Button {

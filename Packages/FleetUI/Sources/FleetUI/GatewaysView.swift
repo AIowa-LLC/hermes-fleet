@@ -14,6 +14,7 @@ import FleetCore
 /// M14 theme: Black/White/Signal Red; status is icon + text (color is
 /// reinforcement only), per the semantic status map.
 public struct GatewaysView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let connectionGatewayID: GatewayID?
 
@@ -181,7 +182,7 @@ public struct GatewaysView: View {
         } message: {
             Text("Undo restores \"\(lastRemovedGateway?.displayName ?? "")\" as a gateway (no stored credential).")
         }
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.gateways")
         // P0-2: after the H1 biometric lock releases, this view is re-created
         // with `presentedSheet == nil`. If a gateway-form draft is in flight,
@@ -227,7 +228,7 @@ public struct GatewaysView: View {
                     if let capabilities, !capabilities.isEmpty {
                         ForEach(capabilities.sorted(), id: \.self) { Text($0).font(.footnote.monospaced()) }
                     } else { Text("No capability catalog observed.") }
-                    Text("Groups and RoomLink capabilities are negotiated separately.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Groups and RoomLink capabilities are negotiated separately.").font(.footnote).foregroundStyle(theme.textSecondary)
                 }
             }
             Section {
@@ -285,7 +286,7 @@ public struct GatewaysView: View {
                 Text("No Gateways")
             } icon: {
                 Image(systemName: "server.rack")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
         } description: {
             Text("Add your first Hermes gateway to see your fleet.")
@@ -296,14 +297,14 @@ public struct GatewaysView: View {
                 presentedSheet = .onboarding
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accent)
+            .tint(theme.highlight)
             .accessibilityIdentifier("fleet.gateways.empty.onboarding")
 
             Button("Add Gateway") {
                 presentAddForm()
             }
             .buttonStyle(.bordered)
-            .tint(FleetTheme.accent)
+            .tint(theme.highlight)
             .accessibilityIdentifier("fleet.gateways.empty.add")
         }
         .accessibilityIdentifier("fleet.gateways.empty")
@@ -387,7 +388,7 @@ public struct GatewaysView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(FleetTheme.background)
+        .background(theme.background)
         .accessibilityIdentifier("fleet.gateways.list")
     }
 
@@ -445,6 +446,7 @@ public struct GatewaysView: View {
 /// One gateway row: identity + test-result §13 status + runtime connection
 /// lifecycle badge.
 private struct GatewayRowView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gateway: FleetGateway
 
@@ -469,27 +471,27 @@ private struct GatewayRowView: View {
     private func fullRow(state: GatewayConnectionState) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "server.rack")
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
                 .fixedSize()
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(gateway.displayName)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // V3: endpoints are machine data — mono, the terminal voice.
                 Text(gateway.endpoint.map(Redaction.redactedURL) ?? gateway.id.rawValue)
                     .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if gateway.authConfiguration.credentialStored || gateway.authConfigured {
                     Label("Auth configured", systemImage: "key")
                         .font(.caption2)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                         .accessibilityLabel("Authentication configured")
                 }
@@ -518,19 +520,19 @@ private struct GatewayRowView: View {
     private func compactRow(state: GatewayConnectionState) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "server.rack")
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
                 .fixedSize()
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(gateway.displayName)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(gateway.endpoint.map(Redaction.redactedURL) ?? gateway.id.rawValue)
                     .font(FleetTheme.monoFont)
-                    .foregroundStyle(FleetTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -587,7 +589,7 @@ private struct GatewayRowView: View {
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.title3)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .fixedSize()
         }
         .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue).menu")
@@ -619,10 +621,10 @@ private struct GatewayRowView: View {
             case .degraded, .unsupported:
                 return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
-                return FleetTheme.textSecondary
+                return theme.textSecondary
             }
         case .idle, .connecting, .connected, .disconnected:
-            return FleetTheme.textSecondary
+            return theme.textSecondary
         }
     }
 
@@ -652,13 +654,14 @@ private struct GatewayRowView: View {
 /// Renders the last test-connection result status when one exists (so a
 /// failed probe shows Auth Required / Unreachable even without a live connect).
 private struct ConnectionStateBadge: View {
+    @Environment(\.fleetTheme) private var theme
     let state: GatewayConnectionState
 
     var body: some View {
         Label {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         } icon: {
             Image(systemName: symbol)
                 .foregroundStyle(color)
@@ -701,10 +704,10 @@ private struct ConnectionStateBadge: View {
             case .degraded, .unsupported:
                 return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
-                return FleetTheme.textSecondary
+                return theme.textSecondary
             }
         case .idle, .connecting, .connected, .disconnected:
-            return FleetTheme.textSecondary
+            return theme.textSecondary
         }
     }
 

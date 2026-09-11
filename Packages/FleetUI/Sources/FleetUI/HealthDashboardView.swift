@@ -20,6 +20,7 @@ import FleetCore
 /// M14 theme: Black/White/Signal Red; state is icon + text (color is
 /// reinforcement only).
 public struct HealthDashboardView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID?
 
@@ -37,7 +38,7 @@ public struct HealthDashboardView: View {
             }
         }
         .navigationTitle("Connection Health")
-        .background(FleetTheme.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.health")
         .task {
             // Live refresh while the dashboard is visible. The accumulator is
@@ -56,7 +57,7 @@ public struct HealthDashboardView: View {
                 Text("No Gateways")
             } icon: {
                 Image(systemName: "heart.text.square")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
             }
         } description: {
             Text("Add a gateway to see its connection health.")
@@ -71,7 +72,7 @@ public struct HealthDashboardView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(FleetTheme.background)
+        .background(theme.background)
         .accessibilityIdentifier("fleet.health.list")
     }
 }
@@ -79,6 +80,7 @@ public struct HealthDashboardView: View {
 /// One gateway's connection-health row: identity + live state + the
 /// accumulated stats (uptime %, reconnects, last disconnect, ping RTT).
 private struct HealthRowView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gateway: FleetGateway
 
@@ -94,17 +96,17 @@ private struct HealthRowView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: "server.rack")
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .accessibilityHidden(true)
                     .fixedSize()
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(gateway.displayName)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text(gateway.endpoint?.absoluteString ?? gateway.id.rawValue)
                         .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -171,13 +173,14 @@ private struct HealthRowView: View {
 /// The §13 semantic status badge for the health row (icon + text; color is
 /// reinforcement only). Mirrors the Gateways row presentation.
 private struct HealthStateBadge: View {
+    @Environment(\.fleetTheme) private var theme
     let state: GatewayConnectionState
 
     var body: some View {
         Label {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         } icon: {
             Image(systemName: symbol)
                 .foregroundStyle(color)
@@ -220,10 +223,10 @@ private struct HealthStateBadge: View {
             case .degraded, .unsupported:
                 return FleetTheme.statusDegraded
             case .offline, .online, .connecting:
-                return FleetTheme.textSecondary
+                return theme.textSecondary
             }
         case .idle, .connecting, .connected, .disconnected:
-            return FleetTheme.textSecondary
+            return theme.textSecondary
         }
     }
 

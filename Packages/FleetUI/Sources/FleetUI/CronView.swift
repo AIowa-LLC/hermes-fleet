@@ -9,6 +9,7 @@ import FleetCore
 /// GatewayFormSheet styling). Jobs are scoped to the gateway's profile —
 /// the profile picker rides the header (scripted/simulator: default).
 public struct CronView: View {
+    @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let profile: ProfileSlug
@@ -29,7 +30,7 @@ public struct CronView: View {
                 unavailableContent
             }
         }
-        .background(FleetTheme.background)
+        .background(theme.background)
         .navigationTitle("Schedules")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: profileScope) {
@@ -70,7 +71,7 @@ public struct CronView: View {
                     Spacer()
                     ProgressView("Loading jobs…")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Spacer()
                 }
                 .listRowBackground(Color.clear)
@@ -108,7 +109,7 @@ public struct CronView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityLabel("New cron job")
                 .accessibilityIdentifier("cron.new")
             }
@@ -121,13 +122,13 @@ public struct CronView: View {
         FleetListRow(showsSeparator: false) {
             HStack(spacing: FleetTheme.spacingMd) {
                 Circle()
-                    .fill(job.isEnabled ? FleetTheme.statusOnline : FleetTheme.textMuted)
+                    .fill(job.isEnabled ? FleetTheme.statusOnline : theme.textMuted)
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(job.name)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(FleetTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         // The row identity rides the NAME text — a
                         // container-level identifier propagates to every
                         // descendant and overrides the per-control ids.
@@ -135,13 +136,13 @@ public struct CronView: View {
                     // Schedule is machine data — mono, the terminal voice.
                     Text(job.schedule)
                         .font(FleetTheme.monoFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                         .accessibilityIdentifier("cron.row.schedule.\(job.jobID)")
                     if let preview = job.promptPreview, !preview.isEmpty {
                         Text(preview)
                             .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(FleetTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                     nextFireLine(job)
@@ -152,7 +153,7 @@ public struct CronView: View {
                 } label: {
                     Image(systemName: "play.circle")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(FleetTheme.accent)
+                        .foregroundStyle(theme.highlight)
                 }
                 .buttonStyle(.borderless)
                 // FOS-6 tap-target: the 18pt icon is a real action — pad to
@@ -168,7 +169,7 @@ public struct CronView: View {
                 } label: {
                     Image(systemName: job.isEnabled ? "pause.circle" : "arrow.up.circle")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOnline)
+                        .foregroundStyle(job.isEnabled ? theme.textSecondary : FleetTheme.statusOnline)
                 }
                 .buttonStyle(.borderless)
                 // FOS-6 tap-target: pad to the 44pt actionable bar.
@@ -185,7 +186,7 @@ public struct CronView: View {
             } label: {
                 Label(job.isEnabled ? "Disable" : "Enable", systemImage: job.isEnabled ? "pause.circle" : "arrow.up.circle")
             }
-            .tint(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.statusOnline)
+            .tint(job.isEnabled ? theme.textSecondary : FleetTheme.statusOnline)
             .accessibilityIdentifier("cron.swipe.toggle.\(job.jobID)")
 
             Button(role: .destructive) {
@@ -207,15 +208,15 @@ public struct CronView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             Image(systemName: "clock")
                 .font(.caption2)
-                .foregroundStyle(FleetTheme.textMuted)
+                .foregroundStyle(theme.textMuted)
                 .accessibilityHidden(true)
             Text(job.isEnabled ? (job.nextRunAt ?? "no upcoming run") : "Paused")
                 .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(job.isEnabled ? FleetTheme.textSecondary : FleetTheme.textMuted)
+                .foregroundStyle(job.isEnabled ? theme.textSecondary : theme.textMuted)
             if let last = job.lastStatus, !last.isEmpty {
                 Label(last, systemImage: ["failed", "error", "failure"].contains(last.lowercased()) ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(["failed", "error", "failure"].contains(last.lowercased()) ? FleetTheme.statusDestructive : FleetTheme.textMuted)
+                    .foregroundStyle(["failed", "error", "failure"].contains(last.lowercased()) ? FleetTheme.statusDestructive : theme.textMuted)
             }
         }
     }
@@ -261,6 +262,7 @@ public struct CronView: View {
 /// R9-T5 — new-job form sheet (GatewayFormSheet styling: Form sections,
 /// FleetTheme surfaces, explicit Save/Cancel, non-dismissable while saving).
 struct CronJobFormSheet: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ManagementPanesViewModel
     let profile: String?
 
@@ -281,7 +283,7 @@ struct CronJobFormSheet: View {
                         .accessibilityIdentifier("cron.form.schedule")
                 } header: {
                     Text("Job")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Section {
                     TextField("Prompt", text: $draft.prompt, axis: .vertical)
@@ -289,11 +291,11 @@ struct CronJobFormSheet: View {
                         .accessibilityIdentifier("cron.form.prompt")
                 } header: {
                     Text("Prompt")
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 } footer: {
                     Text("The gateway validates the schedule and scans the prompt before storing it.")
                         .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 if let formError = model.formError {
                     Section {
@@ -314,7 +316,7 @@ struct CronJobFormSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FleetTheme.background.ignoresSafeArea())
+            .background(theme.background.ignoresSafeArea())
             .navigationTitle("New Cron Job")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -333,12 +335,12 @@ struct CronJobFormSheet: View {
                         }
                     }
                     .disabled(!draft.isValid || isSaving)
-                    .foregroundStyle(FleetTheme.accent)
+                    .foregroundStyle(theme.highlight)
                     .accessibilityIdentifier("cron.form.save")
                 }
             }
         }
-        .tint(FleetTheme.accent)
+        .tint(theme.highlight)
         .presentationDetents([.large])
         .accessibilityIdentifier("cron.form.sheet")
     }

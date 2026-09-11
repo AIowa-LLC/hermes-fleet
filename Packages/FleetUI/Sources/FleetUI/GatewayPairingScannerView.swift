@@ -26,6 +26,7 @@ import AVFoundation
 /// payload. On a successful apply the sheet dismisses so the QR is never
 /// re-scannable from a lingering screen.
 struct GatewayPairingScannerView: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable private var draftStore: GatewayFormDraftStore
     @Environment(\.dismiss) private var dismiss
 
@@ -62,8 +63,8 @@ struct GatewayPairingScannerView: View {
                     }
                 }
         }
-        .background(Color.black.ignoresSafeArea())
-        .tint(.white)
+        .background(theme.background.ignoresSafeArea())
+        .tint(theme.highlight)
     }
 
     @ViewBuilder
@@ -99,11 +100,11 @@ struct GatewayPairingScannerView: View {
                 VStack(spacing: FleetTheme.spacingLg) {
                     Image(systemName: "camera.aperture")
                         .font(.system(size: 44))
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .accessibilityHidden(true)
                     Text("Checking camera access…")
                         .font(.callout)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 .padding(FleetTheme.spacingXl)
                 .task { await resolveCameraPermission() }
@@ -145,7 +146,7 @@ struct GatewayPairingScannerView: View {
                 .accessibilityHidden(true)
             Text("Camera access is off.\nAllow camera access in Settings to scan pairing codes, or enter the gateway details manually below.")
                 .font(.callout)
-                .foregroundStyle(FleetTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.gateways.scan.denied")
@@ -155,7 +156,7 @@ struct GatewayPairingScannerView: View {
                 Label("Open Settings", systemImage: "gear")
             }
             .buttonStyle(.borderedProminent)
-            .tint(FleetTheme.accent)
+            .tint(theme.highlight)
             .accessibilityIdentifier("fleet.gateways.scan.denied.settings")
         }
         .padding(FleetTheme.spacingXl)
@@ -170,16 +171,16 @@ struct GatewayPairingScannerView: View {
     }
 
     /// Live status / error overlay above the camera preview.
-    /// U7 (Gold Fleet): gold-accent hint capsule; scan errors keep a high-
-    /// contrast black capsule with the degraded-red warning glyph (camera
-    /// previews stay legible over any live frame).
+    /// The scan-error and hint capsules intentionally retain a black backing
+    /// so their text stays legible over arbitrary live camera frames. This is
+    /// the one camera-overlay exception recorded by theme_callsite_audit.sh.
     private var statusOverlay: some View {
         VStack {
             Spacer()
             if let scanError {
                 Label(scanError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.7), in: Capsule())
@@ -191,11 +192,11 @@ struct GatewayPairingScannerView: View {
                     systemImage: "qrcode.viewfinder"
                 )
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .padding(.horizontal, FleetTheme.spacingLg)
                 .padding(.vertical, 10)
                 .background(.black.opacity(0.6), in: Capsule())
-                .overlay(Capsule().strokeBorder(FleetTheme.accent.opacity(0.4), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(theme.highlight.opacity(0.4), lineWidth: 1))
                 .accessibilityIdentifier("fleet.gateways.scan.hint")
             }
         }
@@ -212,11 +213,11 @@ struct GatewayPairingScannerView: View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "qrcode.viewfinder")
                 .font(.system(size: 44))
-                .foregroundStyle(FleetTheme.accent)
+                .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             Text("Live camera scanning isn't available on this device.\nUse a device with a camera, or enter the gateway details manually.")
                 .font(.callout)
-                .foregroundStyle(FleetTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.gateways.scan.unavailable")
@@ -224,7 +225,7 @@ struct GatewayPairingScannerView: View {
             if let scanError {
                 Label(scanError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(FleetTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, 10)
                     .background(FleetTheme.statusDestructive.opacity(0.35), in: Capsule())
@@ -236,14 +237,14 @@ struct GatewayPairingScannerView: View {
                 VStack(spacing: FleetTheme.spacingSm) {
                     Text("TEST HOOK (DEBUG)")
                         .font(.caption2)
-                        .foregroundStyle(FleetTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Button {
                         handleRaw(simulated)
                     } label: {
                         Label("Simulate Scanned Code", systemImage: "wand.and.stars")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(FleetTheme.accent)
+                    .tint(theme.highlight)
                     .accessibilityIdentifier("fleet.gateways.scan.simulate")
                 }
                 .padding(.top, FleetTheme.spacingSm)

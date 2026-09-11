@@ -11,6 +11,7 @@ import FleetCore
 /// the confirm action (spec requires the confirmation alert only); the
 /// FaceID gate applies to approval-banner APPROVE, not to YOLO enable.
 public struct SessionYoloToggle: View {
+    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ApprovalViewModel
 
     public init(model: ApprovalViewModel) {
@@ -27,7 +28,7 @@ public struct SessionYoloToggle: View {
         } label: {
             Image(systemName: model.isYoloEnabled ? "bolt.fill" : "bolt.slash")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(model.isYoloEnabled ? FleetTheme.statusNeedsIntervention : FleetTheme.textSecondary)
+                .foregroundStyle(model.isYoloEnabled ? FleetTheme.statusNeedsIntervention : theme.textSecondary)
         }
         .buttonStyle(.fleetPressable)
         .accessibilityLabel(model.isYoloEnabled ? "YOLO on" : "YOLO off")
