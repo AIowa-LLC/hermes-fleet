@@ -57,14 +57,11 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // Read the combined row labels only after the streaming AX subtree has
         // settled. This preserves both VoiceOver assertions without asking
         // XCTest for a fresh broad snapshot during active Markdown updates.
-        // Rich content can auto-scroll the transcript while it settles, so
-        // wait for the fixture's terminal status before revealing the user row.
-        let complete = app.descendants(matching: .any)
-            .matching(NSPredicate(
-                format: "identifier == %@ AND label CONTAINS[c] %@",
-                "fleet.conversation.row.row-3", "complete"))
-            .firstMatch
-        XCTAssertTrue(complete.waitForExistence(timeout: 30),
+        // Rich content can auto-scroll the transcript while it settles. The
+        // composer exposes the view model's terminal state directly: the
+        // streaming Stop control becomes Send only after message.complete.
+        let send = app.buttons["Send"].firstMatch
+        XCTAssertTrue(send.waitForExistence(timeout: 30),
                       "the scripted rich-text turn should complete before scrolling")
         let transcript = app.scrollViews["fleet.conversation.transcript"]
         for _ in 0..<4 { transcript.swipeDown() }
