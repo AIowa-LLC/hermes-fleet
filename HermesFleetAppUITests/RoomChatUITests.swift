@@ -36,6 +36,15 @@ final class RoomChatUITests: XCTestCase {
 
     /// Scroll the roster until an element exists AND is hittable (rows can
     /// sit behind the bottom tab bar; small drags beat full swipes).
+    ///
+    /// A row can be present in the AX tree while its frame lies entirely
+    /// outside the window (materialized just below the fold). Asking for
+    /// `isHittable` on such an element does NOT return false: it fails the
+    /// test outright with "Failed to determine hittability … Activation point
+    /// invalid and no suggested hit points based on element frame"
+    /// (merge-group run 34699513638, shard 5 — same roster geometry this
+    /// suite drives). Only consult hittability once the frame actually
+    /// overlaps the window; otherwise keep scrolling.
     private func scrollToFind(
         _ app: XCUIApplication, identifier: String? = nil, label: String? = nil,
         attempts: Int = 20
@@ -46,17 +55,24 @@ final class RoomChatUITests: XCTestCase {
             }
             return app.staticTexts[label ?? ""]
         }
-        if found().exists && found().isHittable { return found() }
         let window = app.windows.firstMatch
+        func hittable() -> Bool {
+            guard found().exists else { return false }
+            let windowFrame = window.frame
+            // If the window itself cannot be measured, keep the old behaviour.
+            if !windowFrame.isEmpty && !found().frame.intersects(windowFrame) { return false }
+            return found().isHittable
+        }
+        if hittable() { return found() }
         for _ in 0..<attempts {
             window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
                 .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
-            if found().exists && found().isHittable { return found() }
+            if hittable() { return found() }
         }
         for _ in 0..<attempts {
             window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
                 .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
-            if found().exists && found().isHittable { return found() }
+            if hittable() { return found() }
         }
         if found().exists { return found() }
         XCTFail("element not found: identifier=\(identifier ?? "-") label=\(label ?? "-")")

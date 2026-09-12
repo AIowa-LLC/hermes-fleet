@@ -48,9 +48,19 @@ final class S3CleartextWarningUITests: XCTestCase {
         XCTAssertFalse(save.isEnabled,
                        "Save must be disabled while cleartext warning is unconfirmed")
 
-        // Explicit confirmation unlocks Save. Tap the switch KNOB (right edge
-        // of the Form row) — tapping the row's center can land on the label
-        // area and miss the SwiftUI Toggle control.
+        // Explicit confirmation unlocks Save. The endpoint field keeps focus
+        // (and the software keyboard up), and the confirmation row is the
+        // last content in the sheet — so the tap point lands within a couple
+        // of points of the keyboard's top edge. On a runner whose keyboard
+        // sits slightly higher the synthesized tap is delivered to the
+        // keyboard and the Toggle silently never commits, which no amount of
+        // waiting fixes (merge-group run 34699513638, shard 4). Dismiss the
+        // keyboard first: measured locally the row is then ~18pt clear of it.
+        // Tap the switch KNOB (right edge of the Form row) — tapping the
+        // row's center can land on the label area and miss the SwiftUI Toggle
+        // control.
+        dismissKeyboard(app)
+
         let confirm = app.switches["fleet.gateways.form.cleartext-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation toggle should appear")
         XCTAssertTrue(waitUntilHittable(confirm, timeout: 10),
@@ -170,6 +180,31 @@ final class S3CleartextWarningUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return (element.value as? String) == wanted
+    }
+
+    /// Resign the endpoint field's focus and wait — bounded, on the real
+    /// condition — until the software keyboard is off-screen. The keyboard
+    /// covers the bottom of the sheet, which is where the confirmation row
+    /// lives, so this must happen before the switch is tapped. A single-line
+    /// SwiftUI TextField submits and resigns on Return; that is the only
+    /// dismissal affordance here (iPhone keyboards have no dismiss key and
+    /// this sheet opts into no scroll-dismisses-keyboard behaviour). If the
+    /// keyboard is somehow still up afterwards, scroll the form so the row
+    /// clears it rather than tapping into an ambiguous band.
+    private func dismissKeyboard(_ app: XCUIApplication) {
+        guard app.keyboards.count > 0 else { return }
+        let endpoint = app.textFields["fleet.gateways.form.endpoint"]
+        if endpoint.exists {
+            endpoint.typeText("\n")
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while app.keyboards.count > 0 && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        guard app.keyboards.count > 0 else { return }
+        let window = app.windows.firstMatch
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)))
     }
 
 }
