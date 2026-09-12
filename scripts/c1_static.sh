@@ -46,6 +46,33 @@ else
   bad "theme call-site audit FAILED"; cat /tmp/c1_theme.log
 fi
 
+# --- privacy manifest and required-reason audit -------------------------------
+note "Privacy manifest validation"
+if bash scripts/privacy_manifest_validate.sh >/tmp/c1_privacy_manifest.log 2>&1; then
+  ok "privacy manifest: present, well-formed, and truthful"
+else
+  bad "privacy manifest validation FAILED"; cat /tmp/c1_privacy_manifest.log
+fi
+
+if bash scripts/privacy_manifest_validate_test.sh >/tmp/c1_privacy_manifest_test.log 2>&1; then
+  ok "privacy manifest fail-closed tests: disappearance/malformed content rejected"
+else
+  bad "privacy manifest fail-closed tests FAILED"; cat /tmp/c1_privacy_manifest_test.log
+fi
+
+note "Required-reason API audit"
+if bash scripts/privacy_required_reason_audit.sh >/tmp/c1_privacy_reason.log 2>&1; then
+  ok "required-reason API audit: declarations match production use"
+else
+  bad "required-reason API audit FAILED"; cat /tmp/c1_privacy_reason.log
+fi
+
+if bash scripts/privacy_required_reason_audit_test.sh >/tmp/c1_privacy_reason_test.log 2>&1; then
+  ok "required-reason scanner positive/negative fixtures: complete API table covered"
+else
+  bad "required-reason scanner tests FAILED"; cat /tmp/c1_privacy_reason_test.log
+fi
+
 # --- public-safety residue guard ----------------------------------------------
 note "public-safety residue guard"
 if bash scripts/public_safety_guard.sh >/tmp/c1_guard.log 2>&1; then

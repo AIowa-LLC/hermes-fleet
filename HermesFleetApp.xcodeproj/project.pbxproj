@@ -115,6 +115,7 @@
 		D1E600C197F91CC57F736C98 /* ConversationToolingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA799545FCC5860AE8ABB192 /* ConversationToolingTests.swift */; };
 		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
 		D82BFF6EBCBB2A7B6D1B0C11 /* U4DashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */; };
+		D9DC730BEE5131BE4CDFB4B2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8DE26D4BAD2C7D97E451973 /* PrivacyInfo.xcprivacy */; };
 		DEA04FB333232EAAE82C9AD7 /* R9ManagementPanesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C593000BFB095D711C803E /* R9ManagementPanesUITests.swift */; };
 		E068680EB7D3C89322F99764 /* R10AttachmentTrayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B326FB606E259B0116F2F6D /* R10AttachmentTrayUITests.swift */; };
 		E11564C663A832D24FFDC972 /* C2SetupPromptUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170055003D9EF98D50EDBA27 /* C2SetupPromptUITests.swift */; };
@@ -250,6 +251,7 @@
 		D5CE67029BF123907966D4C2 /* ModuleBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModuleBoundaryTests.swift; sourceTree = "<group>"; };
 		D7476BD8D66AF84CF099DA07 /* FOS5BotsGroupsChatsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS5BotsGroupsChatsTests.swift; sourceTree = "<group>"; };
 		D8AD8785E7085FFB646B0A9C /* FleetUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetUI; path = Packages/FleetUI; sourceTree = SOURCE_ROOT; };
+		D8DE26D4BAD2C7D97E451973 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		D8DF5B94BC0B059D55DDF707 /* ScriptedCreateFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCreateFlowTests.swift; sourceTree = "<group>"; };
 		DE435C9B85312695131CC209 /* FleetPersistence */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetPersistence; path = Packages/FleetPersistence; sourceTree = SOURCE_ROOT; };
 		E355C0C291D253CB607D22B0 /* FOS8RoomLinkRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS8RoomLinkRecoveryTests.swift; sourceTree = "<group>"; };
@@ -397,6 +399,7 @@
 				F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */,
 				FABC7CBF939AAF966D3C7ACD /* Info.plist */,
 				CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */,
+				D8DE26D4BAD2C7D97E451973 /* PrivacyInfo.xcprivacy */,
 				171DB809769D21B3E41B0561 /* SplashOverlayView.swift */,
 				35E6CE9927E15E78239C062A /* UnconfiguredGateways.swift */,
 				36FAEE832413ACBA6AF7F206 /* VoiceIO.swift */,
@@ -606,6 +609,7 @@
 				90B9C115EEE142503EBBF622 /* Assets.xcassets in Resources */,
 				B370F267CF80B8A8161A8527 /* FleetWing.icon in Resources */,
 				179BD4EFE6311D44DEF19762 /* LaunchScreen.storyboard in Resources */,
+				D9DC730BEE5131BE4CDFB4B2 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

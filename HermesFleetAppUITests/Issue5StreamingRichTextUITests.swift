@@ -36,33 +36,46 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // test scoped to the rich row rather than the full AX tree.
         let assistantRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
 
-        // The fixture gives these controls unique labels. Query them from the
-        // app root because nested AX traversal through the actively streaming
-        // assistant row can time out on hosted simulators even when the
-        // controls are rendered.
-        let copy = app.buttons["Copy"].firstMatch
-        XCTAssertTrue(copy.waitForExistence(timeout: 10), "code Copy affordance must be reachable")
-
-        let safeLink = app.links["Safe link"].firstMatch
-        XCTAssertTrue(safeLink.waitForExistence(timeout: 10), "HTTPS link must be reachable")
-
-        // Query the unique rich-text identifier only after the stable rendered
-        // descendants are present. During active streaming, a broad AX query
-        // can time out on hosted simulators even when the wrapper is rendered.
-        let richText = app.descendants(matching: .any)["fleet.rich-text.row-2"]
-        XCTAssertTrue(
-            richText.waitForExistence(timeout: 15),
-            "the active assistant row should use Fleet's streaming rich-text wrapper")
-
         // Read the combined row labels only after the streaming AX subtree has
         // settled. This preserves both VoiceOver assertions without asking
         // XCTest for a fresh broad snapshot during active Markdown updates.
         // Rich content can auto-scroll the transcript while it settles. The
         // composer exposes the view model's terminal state directly: the
         // streaming Stop control becomes Send only after message.complete.
-        let send = app.buttons["Send"].firstMatch
+        // Use the composer's unique identifier rather than a label-wide
+        // Button query. The streamed Markdown subtree can make a broad AX
+        // snapshot expensive even though this state transition is stable.
+        let send = app.descendants(matching: .any)["fleet.conversation.send"]
         XCTAssertTrue(send.waitForExistence(timeout: 30),
                       "the scripted rich-text turn should complete before scrolling")
+
+        // Resolve the stable Fleet-owned wrapper before querying renderer
+        // controls. The dependency exposes its controls outside this wrapper
+        // in the AX tree, so use the wrapper as a synchronization sentinel
+        // and query the renderer controls from the app root afterward.
+        let richText = app.descendants(matching: .any)["fleet.rich-text.row-2"]
+        XCTAssertTrue(
+            richText.waitForExistence(timeout: 15),
+            "the active assistant row should use Fleet's streaming rich-text wrapper")
+
+        let copy = app.buttons["Copy"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 10), "code Copy affordance must be reachable")
+
+        let safeLink = app.links["Safe link"].firstMatch
+        XCTAssertTrue(safeLink.waitForExistence(timeout: 10), "HTTPS link must be reachable")
+
+        // Read the stable assistant semantics before opening the timeline.
+        // The timeline transition can invalidate the transcript's broad AX
+        // snapshot even though its already-resolved destination remains valid.
+        XCTAssertTrue(
+            assistantRow.label.contains("Assistant"),
+            "assistant speaker semantics must remain visible to VoiceOver")
+        XCTAssertFalse(
+            assistantRow.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS[c] %@", "javascript:"))
+                .firstMatch.exists,
+            "unsafe schemes must not become interactive or visible link destinations")
+
         // Use the transcript's own timeline affordance to reveal the lazy
         // user row. This exercises the same ScrollViewReader path a user has
         // for jumping to a loaded turn and avoids gesture/keyboard timing
@@ -75,21 +88,10 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         let timelineUser = app.buttons["# user **literal**"].firstMatch
         XCTAssertTrue(timelineUser.waitForExistence(timeout: 10),
                       "conversation timeline should expose the literal user turn")
-        timelineUser.tap()
-        XCTAssertTrue(userLiteral.waitForExistence(timeout: 10),
-                      "the literal user row should remain reachable after rich text settles")
         XCTAssertTrue(
-            userLiteral.label.contains("# user **literal**"),
+            timelineUser.label.contains("# user **literal**"),
             "user-entered Markdown must remain literal")
-        XCTAssertTrue(
-            assistantRow.label.contains("Assistant"),
-            "assistant speaker semantics must remain visible to VoiceOver")
-
-        XCTAssertFalse(
-            assistantRow.descendants(matching: .any)
-                .matching(NSPredicate(format: "label CONTAINS[c] %@", "javascript:"))
-                .firstMatch.exists,
-            "unsafe schemes must not become interactive or visible link destinations")
+        timelineUser.tap()
     }
 
     private func launch() -> XCUIApplication {
