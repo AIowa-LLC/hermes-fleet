@@ -47,16 +47,29 @@ final class FOS8AccessibilityUITests: XCTestCase {
     private func scrollToFind(_ app: XCUIApplication, identifier: String,
                               attempts: Int = 16) -> XCUIElement {
         let element = firstMatch(in: app, identifier: identifier)
-        if element.exists && element.isHittable { return element }
+        if isVisibleAndHittable(element, in: app) { return element }
         let window = app.windows.firstMatch
+        let roster = app.scrollViews["fleet.roster"].firstMatch
         for _ in 0..<attempts {
-            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
-                .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
-            if element.exists && element.isHittable { return element }
+            if roster.exists {
+                roster.swipeUp()
+            } else {
+                window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+                    .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            if isVisibleAndHittable(element, in: app) { return element }
         }
-        if element.exists { return element }
-        XCTFail("element not found: \(identifier)")
+        XCTFail("element not visible and hittable after scrolling: \(identifier)")
         return element
+    }
+
+    private func isVisibleAndHittable(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard element.exists else { return false }
+        let frame = element.frame
+        let windowFrame = app.windows.firstMatch.frame
+        guard frame.width > 0, frame.height > 0, frame.intersects(windowFrame) else { return false }
+        return element.isHittable
     }
 
     // MARK: 1+2. VoiceOver composite labels
