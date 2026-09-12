@@ -58,9 +58,16 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // settled. This preserves both VoiceOver assertions without asking
         // XCTest for a fresh broad snapshot during active Markdown updates.
         // Rich content can auto-scroll the transcript while it settles, so
-        // reveal the user row again before resolving its combined label.
+        // wait for the fixture's terminal status before revealing the user row.
+        let complete = app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ AND label CONTAINS[c] %@",
+                "fleet.conversation.row.row-3", "complete"))
+            .firstMatch
+        XCTAssertTrue(complete.waitForExistence(timeout: 30),
+                      "the scripted rich-text turn should complete before scrolling")
         let transcript = app.scrollViews["fleet.conversation.transcript"]
-        for _ in 0..<30 { transcript.swipeUp() }
+        for _ in 0..<4 { transcript.swipeDown() }
         XCTAssertTrue(userLiteral.waitForExistence(timeout: 10),
                       "the literal user row should remain reachable after rich text settles")
         XCTAssertTrue(
