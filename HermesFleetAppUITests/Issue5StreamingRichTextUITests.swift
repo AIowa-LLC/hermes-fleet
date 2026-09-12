@@ -63,8 +63,19 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         let send = app.buttons["Send"].firstMatch
         XCTAssertTrue(send.waitForExistence(timeout: 30),
                       "the scripted rich-text turn should complete before scrolling")
-        let transcript = app.scrollViews["fleet.conversation.transcript"]
-        for _ in 0..<4 { transcript.swipeDown() }
+        // Use the transcript's own timeline affordance to reveal the lazy
+        // user row. This exercises the same ScrollViewReader path a user has
+        // for jumping to a loaded turn and avoids gesture/keyboard timing
+        // variance when the rich assistant row is much taller than the
+        // viewport.
+        let timeline = app.descendants(matching: .any)["fleet.conversation.timeline.open"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10),
+                      "conversation timeline should expose loaded turns")
+        timeline.tap()
+        let timelineUser = app.buttons["# user **literal**"].firstMatch
+        XCTAssertTrue(timelineUser.waitForExistence(timeout: 10),
+                      "conversation timeline should expose the literal user turn")
+        timelineUser.tap()
         XCTAssertTrue(userLiteral.waitForExistence(timeout: 10),
                       "the literal user row should remain reachable after rich text settles")
         XCTAssertTrue(
