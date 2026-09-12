@@ -36,12 +36,14 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // test scoped to the rich row rather than the full AX tree.
         let assistantRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
 
-        // The dependency's code block control and link text must remain
-        // reachable descendants of the contained assistant row.
-        let copy = assistantRow.buttons["Copy"]
+        // The fixture gives these controls unique labels. Query them from the
+        // app root because nested AX traversal through the actively streaming
+        // assistant row can time out on hosted simulators even when the
+        // controls are rendered.
+        let copy = app.buttons["Copy"].firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10), "code Copy affordance must be reachable")
 
-        let safeLink = assistantRow.links["Safe link"]
+        let safeLink = app.links["Safe link"].firstMatch
         XCTAssertTrue(safeLink.waitForExistence(timeout: 10), "HTTPS link must be reachable")
 
         // Query the unique rich-text identifier only after the stable rendered
