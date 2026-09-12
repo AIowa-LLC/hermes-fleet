@@ -59,10 +59,11 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         endpointField.tap()
         endpointField.typeText("http://100.100.200.61:8642")
 
-        // Username & Password strategy + credentials.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.form.strategy"))
-        let userPass = app.buttons["Username & Password"]
-        if userPass.waitForExistence(timeout: 5) { userPass.tap() }
+        // Username & Password strategy + credentials. Picker menus can take
+        // an extra hosted-simulator turn to materialize after endpoint entry;
+        // select it explicitly and fail at the selection boundary if it does
+        // not open, rather than masking that state as a missing text field.
+        selectUsernamePassword(in: app)
         let usernameField = app.textFields["fleet.gateways.form.username"]
         let passwordField = app.secureTextFields["fleet.gateways.form.password"]
         XCTAssertTrue(usernameField.waitForExistence(timeout: 5), "username field should appear")
@@ -129,9 +130,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
                        "endpoint paste button must fill the URL field")
 
         // Username & Password strategy → paste buttons for both.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.form.strategy"))
-        let userPass = app.buttons["Username & Password"]
-        if userPass.waitForExistence(timeout: 5) { userPass.tap() }
+        selectUsernamePassword(in: app)
         let usernameField = app.textFields["fleet.gateways.form.username"]
         let passwordField = app.secureTextFields["fleet.gateways.form.password"]
         XCTAssertTrue(usernameField.waitForExistence(timeout: 5), "username field should appear")
@@ -153,6 +152,23 @@ final class P2GatewayFormDraftUITests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private func selectUsernamePassword(in app: XCUIApplication) {
+        let strategy = firstMatch(in: app, identifier: "fleet.gateways.form.strategy")
+        XCTAssertTrue(strategy.waitForExistence(timeout: 10), "authentication strategy picker should appear")
+
+        let option = app.buttons["Username & Password"].firstMatch
+        var selected = false
+        for _ in 0..<3 {
+            strategy.tap()
+            if option.waitForExistence(timeout: 3) {
+                option.tap()
+                selected = true
+                break
+            }
+        }
+        XCTAssertTrue(selected, "authentication strategy picker should expose Username & Password")
+    }
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
         let any = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
