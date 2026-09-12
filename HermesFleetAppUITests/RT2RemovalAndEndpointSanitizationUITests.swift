@@ -84,9 +84,9 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        nameField.tap()
+        focus(nameField, in: app)
         nameField.typeText("Tainted Gateway")
-        endpointField.tap()
+        focus(endpointField, in: app)
 
         // user:pass@host is not a valid ORIGIN — Save must stay disabled so
         // credential material never leaves the text field.
@@ -113,6 +113,19 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
     private func tap(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "element \(element) should appear")
         element.tap()
+    }
+
+    /// Hosted simulators can report a visible text field before the first tap
+    /// has transferred keyboard focus. Confirm the keyboard is active and use
+    /// a coordinate tap once when the semantic tap was only acknowledged by
+    /// the accessibility tree.
+    private func focus(_ field: XCUIElement, in app: XCUIApplication) {
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 2) {
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "text field should receive keyboard focus")
     }
 
     @discardableResult
