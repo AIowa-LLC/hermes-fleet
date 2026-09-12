@@ -35,14 +35,6 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // deterministic. Querying the exact visible identifier keeps this
         // test scoped to the rich row rather than the full AX tree.
         let assistantRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
-        // Query the unique rich-text identifier from the app tree directly.
-        // Nested AX snapshots for this active streaming row can time out on
-        // hosted simulators even when the wrapper is rendered and reachable.
-        let richText = app.descendants(matching: .any)["fleet.rich-text.row-2"]
-        XCTAssertTrue(
-            richText.waitForExistence(timeout: 15),
-            "the active assistant row should use Fleet's streaming rich-text wrapper")
-
         XCTAssertTrue(assistantRow.label.contains("Assistant"), "assistant speaker semantics must remain visible to VoiceOver")
 
         // The dependency's code block control and link text must remain
@@ -52,6 +44,14 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
 
         let safeLink = assistantRow.links["Safe link"]
         XCTAssertTrue(safeLink.waitForExistence(timeout: 10), "HTTPS link must be reachable")
+
+        // Query the unique rich-text identifier only after the stable rendered
+        // descendants are present. During active streaming, a broad AX query
+        // can time out on hosted simulators even when the wrapper is rendered.
+        let richText = app.descendants(matching: .any)["fleet.rich-text.row-2"]
+        XCTAssertTrue(
+            richText.waitForExistence(timeout: 15),
+            "the active assistant row should use Fleet's streaming rich-text wrapper")
 
         XCTAssertFalse(
             assistantRow.descendants(matching: .any)
