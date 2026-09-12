@@ -60,10 +60,7 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // Rich content can auto-scroll the transcript while it settles, so
         // reveal the user row again before resolving its combined label.
         let transcript = app.scrollViews["fleet.conversation.transcript"]
-        for _ in 0..<4 {
-            if userLiteral.exists { break }
-            transcript.swipeDown()
-        }
+        for _ in 0..<12 { transcript.swipeDown() }
         XCTAssertTrue(userLiteral.waitForExistence(timeout: 10),
                       "the literal user row should remain reachable after rich text settles")
         XCTAssertTrue(
