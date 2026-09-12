@@ -31,6 +31,8 @@ jobs:
         run: bash scripts/c1_static.sh
       - name: CI gate policy guard
         run: bash scripts/ci_gate_policy_check.sh
+      - name: UI preflight selector self-test
+        run: bash scripts/c1_ui_preflight_test.sh
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)
@@ -58,6 +60,10 @@ jobs:
 
   ui-shard:
     name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
+    # Dev Loop v2: the complete five-shard matrix is the authoritative
+    # integration validation. It runs for merge_group candidates and main
+    # pushes only; pull requests run the focused ui-preflight job below.
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     # Observed runner pace (run 34405682516): ~10 min initial build + first
     # boot, then ~3.5-11 min per suite. 10 suites/shard measured 54-61 min
@@ -86,9 +92,37 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  ui-preflight:
+    name: UI preflight (focused, pull request)
+    # Dev Loop v2: pull-request UI validation is a focused subset of the same
+    # deterministic inventory, selected from the changed files by
+    # scripts/c1_ui_preflight.sh. The merge_group matrix above remains the
+    # full authoritative gate; this job only catches obvious defects earlier.
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The selector diffs against the pull request's base commit, so the
+          # full pull request history must be present.
+          fetch-depth: 0
+      - name: Run focused UI preflight (changed-area selection)
+        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha }}"
+
+      - name: Upload xcresults (failure diagnostics)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresults-pr-preflight
+          path: /tmp/hermes-c1-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   ci-gate:
     name: CI Gate
-    needs: [static-guards, packages, units, ui-shard]
+    needs: [static-guards, packages, units, ui-shard, ui-preflight]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -100,5 +134,17 @@ jobs:
           test "${{ needs.static-guards.result }}" = "success"
           test "${{ needs.packages.result }}" = "success"
           test "${{ needs.units.result }}" = "success"
-          test "${{ needs.ui-shard.result }}" = "success"
-          echo "CI Gate: all required validation jobs succeeded."
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # Pull requests run the focused UI preflight. The full matrix must
+            # not have run in its place, and a skipped preflight is a failure,
+            # not a pass.
+            test "${{ needs.ui-preflight.result }}" = "success"
+            test "${{ needs.ui-shard.result }}" = "skipped"
+          else
+            # merge_group candidates (and main pushes) run the complete
+            # five-shard matrix. The PR-only preflight must not have run in
+            # its place, and a skipped shard is a failure, not a pass.
+            test "${{ needs.ui-shard.result }}" = "success"
+            test "${{ needs.ui-preflight.result }}" = "skipped"
+          fi
+          echo "CI Gate: all required validation jobs succeeded for ${{ github.event_name }}."
