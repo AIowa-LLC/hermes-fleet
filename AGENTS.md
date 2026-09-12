@@ -42,6 +42,7 @@ HermesFleetApp depends on all modules.
 Run the smallest relevant tests while iterating, then the broader gate appropriate to the change:
 
 ```sh
+make dev-check        # fast local loop: static + build + packages + focused UI subset
 xcodegen generate
 make test-core
 make test
@@ -54,6 +55,8 @@ For changes covered by the full CI matrix:
 ```sh
 bash scripts/c1_ci_validate.sh
 ```
+
+Dev Loop v2 — the focused pull-request preflight and the merge-queue integration gate — is documented in `docs/dev-loop.md`.
 
 Live gateway, physical-device, signing, and deployment checks are environmental validation and should remain optional unless a change specifically requires them.
 

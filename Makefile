@@ -14,7 +14,7 @@ DD := build/DerivedData
 # the same explicit trust bypass as the canonical CI phase scripts.
 XCODEBUILD_FLAGS := -skipMacroValidation
 
-.PHONY: generate build test test-core validate ci clean
+.PHONY: generate build test test-core validate dev-check ci clean
 
 ## Regenerate the Xcode project from project.yml (single source of truth).
 generate:
@@ -35,6 +35,12 @@ test-core:
 ## Fast local development validation: generate -> build -> simulator unit tests -> package tests.
 ## Not the full repository gate — run `make ci` for that.
 validate: generate build test test-core
+
+## Fast local development loop (Dev Loop v2): static guards -> simulator build
+## -> package tests -> focused UI suites selected from the working diff.
+## Never runs the complete UI matrix; the merge queue runs the full C1.
+dev-check:
+	bash scripts/dev_check.sh
 
 ## Authoritative broad repository/CI validation gate (wraps scripts/c1_ci_validate.sh).
 ci:

@@ -32,6 +32,7 @@ the v0.1 document deferred or excluded.
 - [`features.md`](features.md) - current user-facing and management surfaces
 - [`navigation.md`](navigation.md) - four-tab structure, screen ownership, and navigation restoration
 - [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
+- [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`adr/`](adr/) - architectural decision records
 
 ## Historical milestone files
