@@ -22,20 +22,19 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         tap(app.descendants(matching: .any)["fleet.conversation.send"])
 
         // The scripted fixture pauses after message.start, so the user row
-        // remains visible before the rich answer grows past the viewport.
+        // remains visible while the rich answer grows. Keep the existence
+        // query early, but defer reading accessibility labels until the rich
+        // descendants are stable: hosted AX snapshots can stall while the
+        // streaming renderer is mutating the tree.
         let userLiteral = app.descendants(matching: .any)["fleet.conversation.row.row-1"]
         XCTAssertTrue(
             userLiteral.waitForExistence(timeout: 10),
-            "user-entered Markdown must remain literal")
-        XCTAssertTrue(
-            userLiteral.label.contains("# user **literal**"),
             "user-entered Markdown must remain literal")
 
         // The scripted session starts empty, so the assistant row ID is
         // deterministic. Querying the exact visible identifier keeps this
         // test scoped to the rich row rather than the full AX tree.
         let assistantRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
-        XCTAssertTrue(assistantRow.label.contains("Assistant"), "assistant speaker semantics must remain visible to VoiceOver")
 
         // The dependency's code block control and link text must remain
         // reachable descendants of the contained assistant row.
@@ -52,6 +51,25 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         XCTAssertTrue(
             richText.waitForExistence(timeout: 15),
             "the active assistant row should use Fleet's streaming rich-text wrapper")
+
+        // Read the combined row labels only after the streaming AX subtree has
+        // settled. This preserves both VoiceOver assertions without asking
+        // XCTest for a fresh broad snapshot during active Markdown updates.
+        // Rich content can auto-scroll the transcript while it settles, so
+        // reveal the user row again before resolving its combined label.
+        let transcript = app.scrollViews["fleet.conversation.transcript"]
+        for _ in 0..<4 {
+            if userLiteral.exists { break }
+            transcript.swipeDown()
+        }
+        XCTAssertTrue(userLiteral.waitForExistence(timeout: 10),
+                      "the literal user row should remain reachable after rich text settles")
+        XCTAssertTrue(
+            userLiteral.label.contains("# user **literal**"),
+            "user-entered Markdown must remain literal")
+        XCTAssertTrue(
+            assistantRow.label.contains("Assistant"),
+            "assistant speaker semantics must remain visible to VoiceOver")
 
         XCTAssertFalse(
             assistantRow.descendants(matching: .any)
