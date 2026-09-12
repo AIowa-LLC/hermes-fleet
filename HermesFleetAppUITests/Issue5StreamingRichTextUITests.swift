@@ -36,10 +36,24 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // test scoped to the rich row rather than the full AX tree.
         let assistantRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
 
+        // Read the combined row labels only after the streaming AX subtree has
+        // settled. This preserves both VoiceOver assertions without asking
+        // XCTest for a fresh broad snapshot during active Markdown updates.
+        // Rich content can auto-scroll the transcript while it settles. The
+        // composer exposes the view model's terminal state directly: the
+        // streaming Stop control becomes Send only after message.complete.
+        // Use the composer's unique identifier rather than a label-wide
+        // Button query. The streamed Markdown subtree can make a broad AX
+        // snapshot expensive even though this state transition is stable.
+        let send = app.descendants(matching: .any)["fleet.conversation.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 30),
+                      "the scripted rich-text turn should complete before scrolling")
+
         // The fixture gives these controls unique labels. Query them from the
-        // app root because nested AX traversal through the actively streaming
-        // assistant row can time out on hosted simulators even when the
-        // controls are rendered.
+        // app root only after the stream has settled: the dependency's code
+        // block and link descendants are still being replaced while deltas
+        // arrive, and an in-flight broad AX snapshot can wedge XCTest for a
+        // full query timeout even when the controls will render.
         let copy = app.buttons["Copy"].firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10), "code Copy affordance must be reachable")
 
@@ -47,22 +61,11 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         XCTAssertTrue(safeLink.waitForExistence(timeout: 10), "HTTPS link must be reachable")
 
         // Query the unique rich-text identifier only after the stable rendered
-        // descendants are present. During active streaming, a broad AX query
-        // can time out on hosted simulators even when the wrapper is rendered.
+        // descendants are present.
         let richText = app.descendants(matching: .any)["fleet.rich-text.row-2"]
         XCTAssertTrue(
             richText.waitForExistence(timeout: 15),
             "the active assistant row should use Fleet's streaming rich-text wrapper")
-
-        // Read the combined row labels only after the streaming AX subtree has
-        // settled. This preserves both VoiceOver assertions without asking
-        // XCTest for a fresh broad snapshot during active Markdown updates.
-        // Rich content can auto-scroll the transcript while it settles. The
-        // composer exposes the view model's terminal state directly: the
-        // streaming Stop control becomes Send only after message.complete.
-        let send = app.buttons["Send"].firstMatch
-        XCTAssertTrue(send.waitForExistence(timeout: 30),
-                      "the scripted rich-text turn should complete before scrolling")
         // Use the transcript's own timeline affordance to reveal the lazy
         // user row. This exercises the same ScrollViewReader path a user has
         // for jumping to a loaded turn and avoids gesture/keyboard timing
