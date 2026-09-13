@@ -100,19 +100,25 @@ xcodegen generate
 make build
 make test
 make test-core
+make dev-check
 make validate
 ```
 
-`make validate` is the fast local development loop. The authoritative broad
-repository/CI validation gate is `scripts/c1_ci_validate.sh` — XcodeGen
+`make dev-check` is the fast local development loop: static guards, a
+simulator build, package tests, and the focused UI suites selected from the
+working diff (see [`docs/dev-loop.md`](docs/dev-loop.md)). The authoritative
+broad repository/CI validation gate is `scripts/c1_ci_validate.sh` — XcodeGen
 generation and drift gate, package tests, hosted unit tests, simulator UI
 suites, module-boundary enforcement, the public-safety residue guard, and
 gitleaks. Run `make ci` (or the script directly) before opening a pull
 request.
 
-On GitHub, the same validation runs as parallel jobs (static guards, package
-tests, unit tests, UI-matrix shards) summarized by a single `CI Gate`
-check; locally `make ci` runs the identical phases in sequence.
+On GitHub, pull requests run a fast preflight — static guards, package tests,
+unit tests, and a focused UI subset selected from the changed files — while
+merge-queue candidates run the complete validation (all five UI shards)
+against the exact queued candidate; a single `CI Gate` check summarizes the
+result for each topology. Locally `make ci` runs the identical full phases in
+sequence.
 
 For the repository safety gates:
 
@@ -121,7 +127,7 @@ bash scripts/public_safety_guard.sh
 gitleaks detect --source . --no-git
 ```
 
-The GitHub Actions workflow runs the repository's C1 validation script for source, project, test, and CI changes.
+The GitHub Actions workflow runs the repository's C1 validation for source, project, test, and CI changes; see [`docs/dev-loop.md`](docs/dev-loop.md) for the pull-request preflight vs merge-queue split.
 
 ## Connecting a gateway
 

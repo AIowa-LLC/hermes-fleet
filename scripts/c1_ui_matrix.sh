@@ -4,6 +4,8 @@
 # Usage:
 #   scripts/c1_ui_matrix.sh --all                  # every suite, serially (local full C1)
 #   scripts/c1_ui_matrix.sh --shard N --shards M   # shard N of M (CI parallel topology)
+#   scripts/c1_ui_matrix.sh --classes "A B C"      # explicit deterministic subset (focused PR preflight)
+#   scripts/c1_ui_matrix.sh --list-classes         # print the deterministic CI class inventory
 #   scripts/c1_ui_matrix.sh --audit                # print shard mapping + coverage proof, run nothing
 #
 # DESIGN NOTES (carried from c1_ci_validate.sh):
@@ -18,6 +20,10 @@
 #    to HermesFleetAppUITests makes --audit (and every shard run) FAIL LOUDLY
 #    until it is added to UI_CLASSES (and, if it is environmental, to
 #    ENVIRONMENTAL_CLASSES). No suite can silently disappear.
+#  - --classes is used by the focused pull-request preflight
+#    (scripts/c1_ui_preflight.sh, Dev Loop v2). It selects a deterministic
+#    SUBSET of this same inventory and never forks it; the full five-shard
+#    matrix remains the authoritative merge_group gate.
 set -u
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
@@ -81,13 +87,15 @@ audit() {
 shard_for_index() { echo $(( $1 % SHARDS + 1 )); }
 
 # --- argument parsing --------------------------------------------------------
-MODE=all; SHARD=1; SHARDS=4
+MODE=all; SHARD=1; SHARDS=4; CLASSES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) MODE=all ;;
     --audit) MODE=audit ;;
     --shard) MODE=shard; SHARD="${2:?--shard needs a value}"; shift ;;
     --shards) SHARDS="${2:?--shards needs a value}"; shift ;;
+    --classes) MODE=classes; CLASSES="${2:?--classes needs a value}"; shift ;;
+    --list-classes) MODE=listclasses ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -98,6 +106,20 @@ if [ "$MODE" = shard ]; then
   case "$SHARD" in ''|*[!0-9]*) die "--shard must be a positive integer" ;; esac
   [ "$SHARD" -ge 1 ] && [ "$SHARD" -le "$SHARDS" ] || die "--shard must be in 1..$SHARDS"
 fi
+if [ "$MODE" = listclasses ]; then
+  echo "${UI_CLASSES[*]}"
+  exit 0
+fi
+if [ "$MODE" = classes ]; then
+  [ -n "$CLASSES" ] || die "--classes needs at least one suite"
+  for wanted in $CLASSES; do
+    found=0
+    for known in "${UI_CLASSES[@]}"; do
+      if [ "$wanted" = "$known" ]; then found=1; break; fi
+    done
+    [ "$found" -eq 1 ] || die "--classes entry is not a deterministic CI suite: $wanted"
+  done
+fi
 
 audit  # every mode audits first — fail loudly before running anything
 
@@ -107,6 +129,7 @@ for i in "${!UI_CLASSES[@]}"; do
   case "$MODE" in
     all) SELECTED+=("${UI_CLASSES[$i]}") ;;
     shard) [ "$(shard_for_index "$i")" -eq "$SHARD" ] && SELECTED+=("${UI_CLASSES[$i]}") ;;
+    classes) case " $CLASSES " in *" ${UI_CLASSES[$i]} "*) SELECTED+=("${UI_CLASSES[$i]}") ;; esac ;;
   esac
 done
 
