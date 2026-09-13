@@ -109,4 +109,98 @@ final class FleetChatsPresentationTests: XCTestCase {
                        "the reserve must come from the design-token scale, never a device constant")
         XCTAssertGreaterThan(FleetChatsListLayout.bottomBreathingRoom, 0)
     }
+
+    // MARK: - Finding 5: settled claims only after the refresh completes
+
+    /// While the refresh is still running, other routes have not returned yet,
+    /// so the prominent surface must NOT claim they "returned no
+    /// conversations"; once it settles, the settled wording returns.
+    func testProminentPartialCopyGatesSettledClaimUntilRefreshCompletes() {
+        let settled = FleetChatsPresentation.prominentFailureDetail(
+            failedRouteCount: 1, totalRouteCount: 2, isRefreshing: false)
+        let loading = FleetChatsPresentation.prominentFailureDetail(
+            failedRouteCount: 1, totalRouteCount: 2, isRefreshing: true)
+        XCTAssertNotEqual(loading, settled,
+                          "the partial copy must change while other routes are still loading")
+        XCTAssertTrue(settled.localizedCaseInsensitiveContains("returned no conversations"),
+                      "settled partial copy states the honest settled claim (got: \(settled))")
+        XCTAssertFalse(loading.localizedCaseInsensitiveContains("returned no conversations"),
+                       "a still-refreshing surface must not claim the rest returned nothing (got: \(loading))")
+        for copy in [settled, loading] {
+            XCTAssertTrue(copy.localizedCaseInsensitiveContains("retry"),
+                          "the failure copy must keep the retry path visible (got: \(copy))")
+        }
+    }
+
+    /// With EVERY current route failed there is nothing left loading, so the
+    /// total-outage claim is already settled and identical either way.
+    func testProminentTotalCopyIsUnchangedWhileRefreshing() {
+        XCTAssertEqual(
+            FleetChatsPresentation.prominentFailureDetail(
+                failedRouteCount: 2, totalRouteCount: 2, isRefreshing: true),
+            FleetChatsPresentation.prominentFailureDetail(
+                failedRouteCount: 2, totalRouteCount: 2, isRefreshing: false))
+    }
+
+    /// Default preserves the historical (settled) signature for callers that
+    /// do not pass a refresh state.
+    func testProminentCopyDefaultsToSettled() {
+        XCTAssertEqual(
+            FleetChatsPresentation.prominentFailureDetail(failedRouteCount: 1, totalRouteCount: 2),
+            FleetChatsPresentation.prominentFailureDetail(
+                failedRouteCount: 1, totalRouteCount: 2, isRefreshing: false))
+    }
+
+    // MARK: - Finding 4: truthful, filter-scoped empty state
+
+    /// The first-run copy may only appear when nothing filters the list.
+    func testEmptyStateKeepsFirstRunCopyOnlyWithoutAnyFilter() {
+        let state = FleetChatsPresentation.emptyState(
+            hasQuery: false, hasGatewayFilter: false, hasUsableSessions: false)
+        XCTAssertEqual(state.title, "Your next idea starts here")
+    }
+
+    /// A gateway filter that hides usable conversations must NOT claim the user
+    /// has no data — the copy is scoped to the filtered gateway.
+    func testEmptyStateIsFilterScopedWhenGatewayFilterHidesUsableData() {
+        let state = FleetChatsPresentation.emptyState(
+            hasQuery: false, hasGatewayFilter: true, hasUsableSessions: true)
+        XCTAssertNotEqual(state.title, "Your next idea starts here",
+                          "a filtered-empty screen must not claim there is no data")
+        XCTAssertTrue(state.title.localizedCaseInsensitiveContains("gateway"),
+                      "the empty copy must name the filtered scope (got: \(state.title))")
+        XCTAssertTrue(state.description.localizedCaseInsensitiveContains("gateway"),
+                      "the empty description must offer the gateway-scoped path (got: \(state.description))")
+    }
+
+    /// The gateway-filter copy is truthful whether or not data exists
+    /// elsewhere — it never claims absence of usable data.
+    func testEmptyStateGatewayScopeNeverClaimsNoData() {
+        for usable in [true, false] {
+            let state = FleetChatsPresentation.emptyState(
+                hasQuery: false, hasGatewayFilter: true, hasUsableSessions: usable)
+            XCTAssertFalse(state.title.localizedCaseInsensitiveContains("next idea"))
+            XCTAssertFalse(state.description.localizedCaseInsensitiveContains("choose a bot to begin"))
+        }
+    }
+
+    /// A query keeps its own copy — and wins over the gateway scope — but still
+    /// never falls back to the first-run claim.
+    func testEmptyStateQueryCopyIsUnchangedAndNeverFirstRun() {
+        let queryOnly = FleetChatsPresentation.emptyState(
+            hasQuery: true, hasGatewayFilter: false, hasUsableSessions: false)
+        XCTAssertEqual(queryOnly.title, "No matching conversations")
+        let both = FleetChatsPresentation.emptyState(
+            hasQuery: true, hasGatewayFilter: true, hasUsableSessions: true)
+        XCTAssertEqual(both.title, "No matching conversations")
+    }
+
+    /// Defensive: with no filter, usable sessions hidden by something else must
+    /// still not be reported as "no data".
+    func testEmptyStateWithoutFilterAndUsableSessionsNeverClaimsFirstRun() {
+        let state = FleetChatsPresentation.emptyState(
+            hasQuery: false, hasGatewayFilter: false, hasUsableSessions: true)
+        XCTAssertNotEqual(state.title, "Your next idea starts here",
+                          "usable (if unrendered) conversations must not be denied")
+    }
 }

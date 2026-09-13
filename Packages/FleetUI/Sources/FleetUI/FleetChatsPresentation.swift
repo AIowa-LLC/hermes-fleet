@@ -64,14 +64,70 @@ public enum FleetChatsPresentation {
     /// conversations when every current route failed. When some routes failed
     /// and the rest simply had zero sessions it says so instead, so the user is
     /// never told their whole fleet is down when it is not.
+    ///
+    /// `isRefreshing` gates the SETTLED partial claim (dogfood finding 5):
+    /// while the refresh is still running, other routes have not returned yet,
+    /// so the copy must not claim "the rest returned no conversations". The
+    /// failure stays visible and retryable either way.
     public static func prominentFailureDetail(
         failedRouteCount: Int,
-        totalRouteCount: Int
+        totalRouteCount: Int,
+        isRefreshing: Bool = false
     ) -> String {
         let allRoutesFailed = totalRouteCount > 0 && failedRouteCount >= totalRouteCount
-        return allRoutesFailed
-            ? "None of your gateways returned conversations, and none were previously loaded. Check the connection to your gateways, then retry."
+        if allRoutesFailed {
+            return "None of your gateways returned conversations, and none were previously loaded. Check the connection to your gateways, then retry."
+        }
+        // Partial failure: the "the rest returned no conversations" claim is
+        // only settled once the refresh has finished.
+        return isRefreshing
+            ? "Some gateways could not be reached. Still loading conversations from the rest — retry if they do not appear."
             : "Some gateways could not be reached, and the rest returned no conversations. Check the connection to your gateways, then retry."
+    }
+
+    /// Dogfood finding 4 — the honest Chats empty state.
+    ///
+    /// The first-run copy ("Your next idea starts here") may only be shown
+    /// when NOTHING is filtering the list. With a query or a gateway filter
+    /// active, an empty screen usually means the filter hid usable
+    /// conversations, so the copy is filter-scoped and never claims the user
+    /// has no data.
+    public struct FleetChatsEmptyState: Equatable, Sendable {
+        public let title: String
+        public let description: String
+    }
+
+    /// The empty-state copy for the current filter/refresh state.
+    ///
+    /// The first-run copy is reserved for the genuinely-unfiltered, genuinely-
+    /// empty case; any active filter yields filter-scoped copy. A gateway
+    /// filter that hides usable conversations therefore says "no conversations
+    /// from this gateway" instead of claiming the user has no data.
+    public static func emptyState(
+        hasQuery: Bool,
+        hasGatewayFilter: Bool,
+        hasUsableSessions: Bool
+    ) -> FleetChatsEmptyState {
+        if hasQuery {
+            return FleetChatsEmptyState(
+                title: "No matching conversations",
+                description: "Try a different title or bot name.")
+        }
+        if hasGatewayFilter {
+            return FleetChatsEmptyState(
+                title: "No conversations from this gateway",
+                description: "Choose a different gateway, or refresh to load this gateway's conversations.")
+        }
+        if hasUsableSessions {
+            // Defensive: usable conversations exist but nothing rendered them.
+            // Never deny them with the first-run copy.
+            return FleetChatsEmptyState(
+                title: "No conversations to show",
+                description: "Refresh to load conversations for your bots.")
+        }
+        return FleetChatsEmptyState(
+            title: "Your next idea starts here",
+            description: "Choose a bot to begin, or refresh to load its conversations.")
     }
 }
 

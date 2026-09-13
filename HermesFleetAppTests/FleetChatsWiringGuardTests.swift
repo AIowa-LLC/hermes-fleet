@@ -109,4 +109,97 @@ final class FleetChatsWiringGuardTests: XCTestCase {
         XCTAssertTrue(source.contains("Color.clear"),
                       "the reserve is an invisible spacer (no visual change)")
     }
+
+    // MARK: - Corrective pass F1: roster + dashboard latest-session previews
+
+    private var rosterPath: String { "Packages/FleetUI/Sources/FleetUI/FleetRosterView.swift" }
+    private var dashboardPath: String { "Packages/FleetUI/Sources/FleetUI/FleetDashboardView.swift" }
+
+    /// F1: the roster bot row renders the gateway's stored `SessionSummary`
+    /// preview in BOTH the visible line and the composite VoiceOver label — QA
+    /// found the raw stored string (client control markup + internal paths)
+    /// still reaching users on current main.
+    func testRosterBotRowRendersHumanReadablePreview() throws {
+        let source = try source(rosterPath)
+        XCTAssertTrue(source.contains("SessionPreviewText.humanReadable("),
+                      "the roster bot row's latest-session preview must derive through SessionPreviewText")
+        XCTAssertFalse(source.contains("preview: anchor.preview"),
+                       "the roster must not pass the raw stored preview into the visible or VoiceOver line")
+    }
+
+    /// F1: the dashboard Active Now subtitle is a user-facing latest-session
+    /// surface too — same sanitizer, same contract.
+    func testDashboardActiveSubtitleRendersHumanReadablePreview() throws {
+        let source = try source(dashboardPath)
+        XCTAssertTrue(source.contains("SessionPreviewText.humanReadable("),
+                      "the dashboard Active Now subtitle must derive through SessionPreviewText")
+        XCTAssertTrue(source.contains("\\(readable)"),
+                      "the subtitle must interpolate the sanitized value, not the raw stored preview")
+        XCTAssertFalse(source.contains("· \\(preview)"),
+                       "the dashboard subtitle must not render the raw stored preview")
+    }
+
+    // MARK: - Corrective pass F2: surface ids must ride leaves, never containers
+
+    /// F2: a container `.accessibilityIdentifier` overrides EVERY descendant id
+    /// (repo lesson) — QA found `fleet.chats.refresh.retry` at count zero while
+    /// the Retry button was visibly hittable. The surface ids must NOT sit on
+    /// the wrapping HStack/VStack (right after its padding); they ride leaf
+    /// elements so the Retry control keeps its own id.
+    func testChatsFailureSurfaceIdentifiersRideLeavesNotContainers() throws {
+        let normalized = try source(chatsPath)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        for containerAdornment in [
+            ".padding(.vertical, FleetTheme.spacingXs) .accessibilityIdentifier(\"fleet.chats.refresh.inline\")",
+            ".padding(.vertical, FleetTheme.spacingXs) .accessibilityIdentifier(\"fleet.chats.refresh.error\")",
+        ] {
+            XCTAssertFalse(normalized.contains(containerAdornment),
+                           "the failure surface id must not sit on the wrapping container: \(containerAdornment)")
+        }
+        // The ids still exist (on leaves) and the Retry control keeps its own.
+        for identifier in [
+            "\"fleet.chats.refresh.inline\"", "\"fleet.chats.refresh.error\"",
+            "\"fleet.chats.refresh.retry\"",
+        ] {
+            XCTAssertTrue(normalized.contains(identifier),
+                          "the accessibility contract id must remain discoverable: \(identifier)")
+        }
+    }
+
+    // MARK: - Corrective pass F3: Retry is a genuine 44pt tap target
+
+    /// F3: `.frame(minHeight: 44)` alone leaves the accessibility frame at the
+    /// label's intrinsic size (QA measured 34.3 × 15.7). The repo's established
+    /// control pattern is the 44pt frame PLUS an explicit hit shape — otherwise
+    /// the padded area is not the AX frame and the tap target is not real.
+    func testChatsRetryControlsUseTheShared44PointTapTargetPattern() throws {
+        let source = try source(chatsPath)
+        let padded = source.components(separatedBy: ".frame(minWidth: 44, minHeight: 44)").count - 1
+        XCTAssertGreaterThanOrEqual(padded, 2,
+                                    "both Chats Retry controls must use the shared 44pt frame")
+        XCTAssertTrue(source.contains(".contentShape(Rectangle())"),
+                      "the padded area must be the hit shape, or the AX frame stays at label size")
+        XCTAssertFalse(source.contains(".frame(minHeight: 44)"),
+                       "a bare minHeight frame does not expand the accessibility frame")
+    }
+
+    // MARK: - Corrective pass F4/F5: view call sites use the policies
+
+    /// F4: the empty state must be the filter-aware policy, not the old
+    /// query-only ternary that claimed "no data" behind a gateway filter.
+    func testChatsEmptyStateUsesTheFilterAwarePolicy() throws {
+        let source = try source(chatsPath)
+        XCTAssertTrue(source.contains("FleetChatsPresentation.emptyState("),
+                      "the empty state must be decided by the filter-aware policy")
+        XCTAssertFalse(source.contains("\"Your next idea starts here\""),
+                       "the first-run copy must come from the policy, never hard-coded in the view")
+    }
+
+    /// F5: the prominent copy must be told whether the refresh is still
+    /// running, so it does not claim a settled result it cannot know yet.
+    func testChatsProminentFailurePassesTheLiveRefreshState() throws {
+        let source = try source(chatsPath)
+        XCTAssertTrue(source.contains("isRefreshing: !environment.loadingRoutes.isEmpty"),
+                      "the settled-claim copy must be gated on the live refresh state")
+    }
 }

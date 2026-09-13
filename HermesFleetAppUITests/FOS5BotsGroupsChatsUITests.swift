@@ -166,4 +166,42 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
             candidate.label.localizedCaseInsensitiveContains("workstation"),
             "compose row carries gateway provenance (got: \(candidate.label))")
     }
+
+    // MARK: 5. Chats refresh-failure surface (dogfood corrective pass F2/F3)
+
+    /// F2: a container `accessibilityIdentifier` on the failure surface
+    /// overrode every descendant id, so `fleet.chats.refresh.retry` matched
+    /// ZERO elements even though a hittable Retry button was on screen.
+    /// F3: the compact Retry's AX frame stayed at the label size despite
+    /// `.frame(minHeight: 44)` (QA measured 34.3 × 15.7).
+    ///
+    /// Deterministic probe: fail the session read for ONE gateway
+    /// (`HERMES_FLEET_SESSIONS_FAIL`) while another keeps usable sessions →
+    /// the compact INLINE surface renders. The Retry control must be
+    /// discoverable by its own identifier AND be a genuine 44pt tap target.
+    func testChatsInlineRefreshFailureRetryIsDiscoverableAndMeetsTapTarget() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSIONS_FAIL"] = "render-box"
+        app.launch()
+
+        let inline = app.descendants(matching: .any)["fleet.chats.refresh.inline"]
+        XCTAssertTrue(inline.waitForExistence(timeout: 15),
+                      "a partial refresh failure must render the compact inline surface")
+
+        let retry = app.buttons["fleet.chats.refresh.retry"].firstMatch
+        XCTAssertTrue(retry.waitForExistence(timeout: 5),
+                      "the Retry control must be discoverable by its own identifier")
+        XCTAssertTrue(retry.isHittable, "the Retry control must be hittable")
+
+        let frame = retry.frame
+        XCTAssertGreaterThanOrEqual(
+            frame.height, 44,
+            "Retry's rendered accessibility frame must be a real tap target (height was \(frame.height))")
+        XCTAssertGreaterThanOrEqual(
+            frame.width, 44,
+            "Retry's rendered accessibility frame must be a real tap target (width was \(frame.width))")
+    }
 }

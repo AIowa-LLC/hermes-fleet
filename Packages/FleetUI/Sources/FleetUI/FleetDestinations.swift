@@ -203,7 +203,14 @@ struct FleetChatsView: View {
                     }.accessibilityIdentifier("fleet.chats.session.\(entry.id)")
                 }
                 if entries.isEmpty && environment.loadingRoutes.isEmpty && refreshFailure != .prominent {
-                    ContentUnavailableView(query.isEmpty ? "Your next idea starts here" : "No matching conversations", systemImage: "bubble.left.and.bubble.right", description: Text(query.isEmpty ? "Choose a bot to begin, or refresh to load its conversations." : "Try a different title or bot name."))
+                    // F4 (dogfood corrective pass): the empty state is
+                    // filter-aware and never claims the user has no data when
+                    // a filter merely hid usable conversations.
+                    let empty = FleetChatsPresentation.emptyState(
+                        hasQuery: !query.isEmpty,
+                        hasGatewayFilter: gatewayID != nil,
+                        hasUsableSessions: usableSessionCount > 0)
+                    ContentUnavailableView(empty.title, systemImage: "bubble.left.and.bubble.right", description: Text(empty.description))
                 }
             }
             if !query.isEmpty {
@@ -240,23 +247,30 @@ struct FleetChatsView: View {
                 .font(.footnote)
                 .foregroundStyle(theme.textSecondary)
                 .accessibilityHidden(true)
+            // F2 (dogfood corrective pass): the surface id rides this LEAF. A
+            // container `accessibilityIdentifier` overrides every descendant
+            // id, which erased the Retry control's own id from the
+            // accessibility tree (QA: `fleet.chats.refresh.retry` = 0 matches).
             Text("Some conversations could not refresh. Previously loaded chats may be out of date.")
                 .font(.footnote)
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("fleet.chats.refresh.inline")
             Spacer(minLength: FleetTheme.spacingSm)
             Button("Retry") { Task { await refresh() } }
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(theme.highlight)
                 .buttonStyle(.borderless)
-                // Keeps the compact row's only control at the shared 44pt
-                // actionable bar (FleetListRow's rule) — the inline surface
-                // must not shrink the tap target.
-                .frame(minHeight: 44)
+                // F3 (dogfood corrective pass): the shared 44pt control
+                // pattern (FleetListRow's rule). A bare `.frame(minHeight:)`
+                // leaves the accessibility frame at the label's intrinsic
+                // size; the explicit hit shape makes the padded area the real
+                // tap target without changing compact visual density.
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityIdentifier("fleet.chats.refresh.retry")
         }
         .padding(.vertical, FleetTheme.spacingXs)
-        .accessibilityIdentifier("fleet.chats.refresh.inline")
     }
 
     /// The stronger empty/error surface: no conversations could be loaded and
@@ -269,13 +283,19 @@ struct FleetChatsView: View {
                     .font(.headline)
                     .foregroundStyle(theme.textPrimary)
                     .accessibilityHidden(true)
+                // F2: heading id rides this LEAF, never the wrapping container.
                 Text("Could not load conversations")
                     .font(.headline)
                     .foregroundStyle(theme.textPrimary)
+                    .accessibilityIdentifier("fleet.chats.refresh.error")
             }
             Text(FleetChatsPresentation.prominentFailureDetail(
                 failedRouteCount: reportedFailureRouteCount,
-                totalRouteCount: currentRosterRoutes.count))
+                totalRouteCount: currentRosterRoutes.count,
+                // F5 (dogfood corrective pass): while the refresh is still
+                // running, other routes have not returned yet — the surface
+                // must not claim the rest returned no conversations.
+                isRefreshing: !environment.loadingRoutes.isEmpty))
                 .font(.footnote)
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -283,11 +303,12 @@ struct FleetChatsView: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(theme.highlight)
                 .buttonStyle(.borderless)
-                .frame(minHeight: 44)
+                // F3: same shared 44pt control pattern as the inline surface.
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
                 .accessibilityIdentifier("fleet.chats.refresh.retry")
         }
         .padding(.vertical, FleetTheme.spacingXs)
-        .accessibilityIdentifier("fleet.chats.refresh.error")
     }
 
     private func refresh() async {
