@@ -40,8 +40,11 @@ check "a test-suite class file maps to its own suite" "RoomChat" \
 check "a test-support file falls back to CORE" "$CORE" \
   "HermesFleetAppUITests/UITabNavigation.swift"
 
-check "a quarantined/environmental test class falls back to CORE" "$CORE" \
+check "a re-admitted canonical CI class file maps to its own suite" "H1AppLock" \
   "HermesFleetAppUITests/H1AppLockUITests.swift"
+
+check "an environmental (non-CI) test class falls back to CORE" "$CORE" \
+  "HermesFleetAppUITests/L1LiveGatewayUITests.swift"
 
 check "bot-avatar area maps to the avatar suites" "BotAvatarAppearance BotPetAvatar" \
   "Packages/FleetUI/Sources/FleetUI/BotAvatarEditor.swift"
