@@ -448,8 +448,9 @@ private struct SessionRowView: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(2)
-                if !session.preview.isEmpty {
-                    Text(session.preview)
+                let preview = SessionPreviewText.humanReadable(session.preview)
+                if !preview.isEmpty {
+                    Text(preview)
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(2)
