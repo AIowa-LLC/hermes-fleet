@@ -45,6 +45,10 @@ UI_CLASSES=(
   FOS5BotsGroupsChats FOS6ComponentDensity
   FOS8Accessibility
   BotAvatarAppearance BotPetAvatar
+  # Re-admitted 2026-09-10 (i16): the 2026-09-10 hosted failures were a
+  # proven test-harness defect (cross-suite persisted-nav leakage, H7), fixed
+  # by NAV_RESET hermeticity in H1AppLockUITests — not environmental.
+  H1AppLock
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They
@@ -53,15 +57,6 @@ ENVIRONMENTAL_CLASSES=(
   B1LiveBoardPicker BotChatTap BotRosterSlice2 F1TwoGatewayFleetLive
   H2HealthDashboard L1FixLiveGateway L1LiveGateway P0_7LiveTailnet
   P3FixLANGateway P3FixLoopbackGateway T2FixTailnetGateway
-  # H1AppLock: QUARANTINED from CI 2026-09-10 (PR #3). 5 fails / 1 pass on
-  # GitHub runners (runs 34405682516, 34411504021 a1+a2, 34418740262 a1+a2,
-  # 34426824450) — roster never renders after scripted biometric unlock;
-  # 60s waits did not help (100s failure = not latency). Passes in every
-  # local configuration (clean sim, churned sim, exact shard-order replay).
-  # ScriptedLockAuth is deterministic in code, so the cause is environmental
-  # on runner simulators — needs on-runner xcresult evidence to root-cause.
-  # Follow-up card: H1AppLock runner root-cause (re-add to CI when fixed).
-  H1AppLock
 )
 
 die() { printf 'UI-MATRIX FAIL: %s\n' "$1" >&2; exit 1; }
