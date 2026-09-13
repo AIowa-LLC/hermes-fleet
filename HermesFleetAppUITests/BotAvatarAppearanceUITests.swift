@@ -45,24 +45,47 @@ final class BotAvatarAppearanceUITests: XCTestCase {
         }
         XCTAssertTrue(edit.waitForExistence(timeout: 10), "Edit button should render")
         edit.tap()
+        // i7-gapfill: the Avatar section is taller on the asset-capable
+        // scripted seam; a lazy Form only materializes rows near the
+        // viewport — swipe the preview into view if it does not appear.
+        let preview = app.descendants(matching: .any)
+            .matching(identifier: "fleet.bot.avatar.preview").firstMatch
+        for _ in 0..<4 where !preview.waitForExistence(timeout: 4) {
+            app.swipeUp()
+        }
         XCTAssertTrue(
-            app.descendants(matching: .any)
-                .matching(identifier: "fleet.bot.avatar.preview").firstMatch
-                .waitForExistence(timeout: 10),
+            preview.waitForExistence(timeout: 10),
             "the Edit sheet must render the draft preview")
     }
 
     private func previewLabel(_ app: XCUIApplication) -> String {
-        app.descendants(matching: .any)
-            .matching(identifier: "fleet.bot.avatar.preview").firstMatch.label
+        let preview = app.descendants(matching: .any)
+            .matching(identifier: "fleet.bot.avatar.preview").firstMatch
+        // Lazy Form: earlier swipes (toward the shape picker) can scroll
+        // the preview OUT of the materialized window — scroll it back.
+        for _ in 0..<6 where !preview.exists {
+            app.swipeDown()
+        }
+        XCTAssertTrue(preview.waitForExistence(timeout: 10),
+                      "preview must re-materialize after scrolling back")
+        return preview.label
     }
 
     /// The staged shape picker selection (a Form picker renders as a menu
-    /// on iOS 26; the value row shows the current selection).
+    /// on iOS 26; the value row shows the current selection). The Avatar
+    /// section may be taller than the viewport (asset rows render on the
+    /// capable seam) and a lazy Form only materializes rows near the
+    /// viewport — swipe until the picker exists and is hittable.
     private func chooseShape(_ app: XCUIApplication, _ shape: String) {
         let picker = app.descendants(matching: .any)
             .matching(identifier: "fleet.bot.avatar.shape").firstMatch
+        for _ in 0..<8 where !picker.exists {
+            app.swipeUp()
+        }
         XCTAssertTrue(picker.waitForExistence(timeout: 10), "shape picker should render")
+        for _ in 0..<4 where !picker.isHittable {
+            app.swipeUp()
+        }
         picker.tap()
         // Menu items materialize as buttons in the presented menu.
         let option = app.buttons[shape].firstMatch
