@@ -73,6 +73,14 @@ else
   bad "required-reason scanner tests FAILED"; cat /tmp/c1_privacy_reason_test.log
 fi
 
+# --- release preflight contract ----------------------------------------------
+note "Release preflight contract"
+if bash scripts/release_preflight_contract_test.sh >/tmp/c1_release_preflight.log 2>&1; then
+  ok "release preflight: archive/export/signing contract fails closed"
+else
+  bad "release preflight contract tests FAILED"; cat /tmp/c1_release_preflight.log
+fi
+
 # --- public-safety residue guard ----------------------------------------------
 note "public-safety residue guard"
 if bash scripts/public_safety_guard.sh >/tmp/c1_guard.log 2>&1; then
