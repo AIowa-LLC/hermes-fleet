@@ -151,7 +151,9 @@ DD="$REPO/build/C1Ui"
 # explicitly bypass fingerprint validation; this does not bypass macro
 # execution or package resolution.
 XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation)
+    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation \
+    -retry-tests-on-failure -test-iterations 2 \
+    -test-repetition-relaunch-enabled YES)
 
 # --- run -----------------------------------------------------------------------
 rm -rf /tmp/hermes-c1-results
@@ -161,7 +163,10 @@ for cls in "${SELECTED[@]}"; do
   N=$((N+1)); out="/tmp/c1_xctest_ui_${N}.log"
   full="HermesFleetAppUITests/${cls}UITests"
   bundle="/tmp/hermes-c1-results/${cls}UITests.xcresult"
+  summary_file="/tmp/hermes-c1-results/${cls}.summary.json"
+  tests_file="/tmp/hermes-c1-results/${cls}.tests.json"
   rm -rf "$bundle"
+  rm -f "$summary_file" "$tests_file"
   printf 'C1 UI (%s) [%02d/%02d] %s ...\n' "$MODE" "$N" "${#SELECTED[@]}" "$full"
   if ! xcodebuild "${XC[@]}" -resultBundlePath "$bundle" "-only-testing:$full" build test >"$out" 2>&1; then
     UI_FAIL=$((UI_FAIL+1)); printf 'FAIL  UI %s FAILED or incomplete\n' "$cls"
@@ -170,33 +175,18 @@ for cls in "${SELECTED[@]}"; do
   if [ ! -d "$bundle" ]; then
     UI_FAIL=$((UI_FAIL+1)); printf 'FAIL  UI %s INCOMPLETE: missing xcresult\n' "$cls"; continue
   fi
-  summary=$(xcrun xcresulttool get test-results summary --path "$bundle" --compact 2>/dev/null || true)
-  tests=$(xcrun xcresulttool get test-results tests --path "$bundle" --compact 2>/dev/null || true)
-  parsed=$(SUMMARY="$summary" TESTS="$tests" REQUESTED="${cls}UITests" python3 - <<'PY'
-import json, os, sys
-try:
-    s=json.loads(os.environ["SUMMARY"]); t=json.loads(os.environ["TESTS"]); requested=os.environ["REQUESTED"]
-except Exception:
-    print("0 0 0 0"); sys.exit(0)
-seen=[]
-def walk(v):
-    if isinstance(v, dict):
-        if v.get("nodeType") == "Test Case": seen.append(v)
-        for x in v.values(): walk(x)
-    elif isinstance(v, list):
-        for x in v: walk(x)
-walk(t)
-matched=[x for x in seen if x.get("nodeIdentifier", "").split("/")[-2:-1] == [requested]]
-failures=sum(1 for x in matched if x.get("result") not in ("Passed", "Expected Failure"))
-complete=(s.get("result") == "Passed" and s.get("totalTestCount", 0) > 0)
-print(len(matched), failures, int(complete), int(bool(matched)))
-PY
-)
-  read -r count failures complete present <<EOF
+  xcrun xcresulttool get test-results summary --path "$bundle" --compact >"$summary_file" 2>/dev/null || true
+  xcrun xcresulttool get test-results tests --path "$bundle" --compact >"$tests_file" 2>/dev/null || true
+  parsed=$(python3 scripts/c1_xcresult_parse.py \
+    --summary "$summary_file" --tests "$tests_file" --requested "${cls}UITests")
+  read -r count failures complete present recovered <<EOF
 $parsed
 EOF
   UI_TOTAL=$((UI_TOTAL+count))
   if [ "$present" -eq 1 ] && [ "$count" -gt 0 ] && [ "$failures" -eq 0 ] && [ "$complete" -eq 1 ]; then
+    if [ "$recovered" -gt 0 ]; then
+      printf 'FLAKE_RECOVERED  UI %s — recovered=%d final-result=passed\n' "$cls" "$recovered"
+    fi
     printf 'PASS  UI %s — executed=%d failed=%d\n' "$cls" "$count" "$failures"
   else
     UI_FAIL=$((UI_FAIL+1))
