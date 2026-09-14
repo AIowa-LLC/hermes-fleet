@@ -11,7 +11,7 @@
 #   static-guards  -> scripts/c1_static.sh
 #   packages       -> scripts/c1_packages.sh
 #   units          -> scripts/c1_units.sh
-#   ui-shard (x4)  -> scripts/c1_ui_matrix.sh --shard N --shards 4
+#   ui-shard (x5)  -> scripts/c1_ui_matrix.sh --shard N --shards 5
 #   ci-gate        -> needs: all of the above (workflow-level)
 #
 # ONE source of validation logic, multiple execution topologies: this script
