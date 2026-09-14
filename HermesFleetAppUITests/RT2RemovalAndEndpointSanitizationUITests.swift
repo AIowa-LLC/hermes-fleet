@@ -21,7 +21,9 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
     func testRemovalRequiresConfirmationAndCanUndo() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         // Seed fleet present.
@@ -31,6 +33,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
         // Swipe the row left to reveal the destructive Remove action.
         let row = firstMatch(in: app, identifier: "fleet.gateways.row.workstation")
         XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitUntilHittable(row, timeout: 10), "gateway row should become hittable before swipe")
         row.swipeLeft()
 
         let remove = firstMatch(in: app, identifier: "fleet.gateways.row.workstation.remove")
@@ -53,6 +56,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Cancel keeps the gateway")
 
         // Swipe again and confirm removal.
+        XCTAssertTrue(waitUntilHittable(row, timeout: 10), "gateway row should become hittable before second swipe")
         row.swipeLeft()
         let removeAgain = firstMatch(in: app, identifier: "fleet.gateways.row.workstation.remove")
         XCTAssertTrue(removeAgain.waitForExistence(timeout: 5))
@@ -77,7 +81,9 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
     func testFormRejectsUserInfoEndpoint() throws {
         let app = XCUIApplication()
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
@@ -113,6 +119,15 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
     private func tap(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "element \(element) should appear")
         element.tap()
+    }
+
+    @discardableResult
+    private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !element.isHittable && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return element.isHittable
     }
 
     /// Hosted simulators can report a visible text field before the first tap

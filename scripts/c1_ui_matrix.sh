@@ -82,7 +82,7 @@ audit() {
 shard_for_index() { echo $(( $1 % SHARDS + 1 )); }
 
 # --- argument parsing --------------------------------------------------------
-MODE=all; SHARD=1; SHARDS=4; CLASSES=""
+MODE=all; SHARD=1; SHARDS=5; CLASSES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) MODE=all ;;

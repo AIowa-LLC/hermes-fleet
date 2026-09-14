@@ -21,7 +21,9 @@ final class S3CleartextWarningUITests: XCTestCase {
     func testPublicHTTPEndpointShowsWarningAndGatesSave() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         // Open the add-gateway form.
@@ -29,9 +31,9 @@ final class S3CleartextWarningUITests: XCTestCase {
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        nameField.tap()
+        focus(nameField, in: app)
         nameField.typeText("Public Gateway")
-        endpointField.tap()
+        focus(endpointField, in: app)
         endpointField.typeText("http://gateway.example.com:9120")
 
         // Prominent warning must appear for a public http host.
@@ -79,16 +81,18 @@ final class S3CleartextWarningUITests: XCTestCase {
     func testPrivateHTTPEndpointShowsNoWarning() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        nameField.tap()
+        focus(nameField, in: app)
         nameField.typeText("LAN Gateway")
-        endpointField.tap()
+        focus(endpointField, in: app)
         endpointField.typeText("http://192.168.50.37:9120")
 
         // No warning for an RFC1918 private host; Save enabled immediately.
@@ -106,16 +110,18 @@ final class S3CleartextWarningUITests: XCTestCase {
     func testLoopbackHTTPEndpointShowsNoWarning() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        nameField.tap()
+        focus(nameField, in: app)
         nameField.typeText("Local Gateway")
-        endpointField.tap()
+        focus(endpointField, in: app)
         endpointField.typeText("http://127.0.0.1:8642")
 
         let warning = firstMatch(in: app, identifier: "fleet.gateways.form.cleartext-warning")
@@ -150,6 +156,18 @@ final class S3CleartextWarningUITests: XCTestCase {
     private func tap(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "element \(element) should appear")
         element.tap()
+    }
+
+    /// Hosted runners can expose a visible field before the first tap has
+    /// transferred keyboard focus. Confirm the keyboard is active before
+    /// typing, with one coordinate fallback for SwiftUI text fields.
+    private func focus(_ field: XCUIElement, in app: XCUIApplication) {
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 2) {
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "text field should receive keyboard focus")
     }
 
     @discardableResult

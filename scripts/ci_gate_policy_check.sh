@@ -5,12 +5,12 @@
 #
 # Dev Loop v2 contract: pull requests run a fast preflight whose UI component
 # is a focused subset selected by scripts/c1_ui_preflight.sh; merge_group
-# candidates (and main pushes) run the complete five-shard C1 matrix. The
-# required `CI Gate` check must fail closed in BOTH topologies: every expected
-# dependency must report success, and the job that must not run for an event
-# must be reported skipped (substituted validation is a topology failure, not
-# extra safety). A skipped expected dependency, a failure, or a cancellation
-# all fail the gate.
+# candidates run the complete five-shard C1 matrix. Main pushes run only the
+# post-merge static/package/unit validation; the merge_group event is the sole
+# UI authority. The required `CI Gate` check must fail closed in every
+# topology: every expected dependency must report success, and the job that
+# must not run for an event must be reported skipped. A skipped expected
+# dependency, a failure, or a cancellation all fail the gate.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -49,23 +49,23 @@ require "    name: CI Gate" "the aggregation job must remain named CI Gate"
 require "    needs: [static-guards, packages, units, ui-shard, ui-preflight]" "both UI topologies must feed CI Gate"
 require "    if: always()" "CI Gate must run even when a dependency fails or is skipped"
 require 'echo "${{ toJSON(needs.*.result) }}"' "CI Gate must expose every dependency result"
-require 'test "${{ needs.static-guards.result }}" = "success"' "static guards must be fail-closed"
-require 'test "${{ needs.packages.result }}" = "success"' "package tests must be fail-closed"
-require 'test "${{ needs.units.result }}" = "success"' "hosted units must be fail-closed"
-require 'if [[ "${{ github.event_name }}" == "pull_request" ]]; then' "CI Gate must branch on the event topology"
-require 'test "${{ needs.ui-preflight.result }}" = "success"' "the PR UI preflight must be fail-closed"
-require 'test "${{ needs.ui-shard.result }}" = "skipped"' "the full matrix must not substitute for the PR preflight"
-require 'test "${{ needs.ui-shard.result }}" = "success"' "the full UI matrix must be fail-closed outside pull requests"
-require 'test "${{ needs.ui-preflight.result }}" = "skipped"' "the PR preflight must not substitute for the full matrix"
+require 'CI_GATE_EVENT_NAME: ${{ github.event_name }}' "CI Gate must pass the event topology to the executable evaluator"
+require 'CI_GATE_STATIC_RESULT: ${{ needs.static-guards.result }}' "CI Gate must pass static result to the evaluator"
+require 'CI_GATE_PACKAGES_RESULT: ${{ needs.packages.result }}' "CI Gate must pass package result to the evaluator"
+require 'CI_GATE_UNITS_RESULT: ${{ needs.units.result }}' "CI Gate must pass unit result to the evaluator"
+require 'CI_GATE_UI_SHARD_RESULT: ${{ needs.ui-shard.result }}' "CI Gate must pass UI matrix result to the evaluator"
+require 'CI_GATE_UI_PREFLIGHT_RESULT: ${{ needs.ui-preflight.result }}' "CI Gate must pass preflight result to the evaluator"
+require 'bash scripts/ci_gate_policy_eval.sh' "CI Gate must execute the fail-closed evaluator"
 require "  ui-preflight:" "a PR-focused UI preflight job must remain present"
 require "    if: github.event_name == 'pull_request'" "the UI preflight must be PR-only"
 require 'run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha }}"' "the PR preflight must select from the pull request's changed files"
 require "  ui-shard:" "the full UI matrix job must remain present"
-require "    if: github.event_name != 'pull_request'" "the full UI matrix must run on merge groups and main pushes"
+require "    if: github.event_name == 'merge_group'" "the full UI matrix must run on merge groups only"
 require "      fail-fast: false" "a failing UI shard must not cancel its siblings"
 require "        shard: [1, 2, 3, 4, 5]" "all deterministic UI shards must remain configured"
 require "        shards: [5]" "the UI matrix must keep its five-shard split"
 require "        run: bash scripts/ci_gate_policy_check.sh" "CI must verify its own integration policy"
+require "        run: bash scripts/ci_gate_policy_contract_test.sh" "CI must execute event-specific CI Gate contract tests"
 require "        run: bash scripts/c1_ui_preflight_test.sh" "CI must verify the preflight selector"
 
 echo "PASS: CI Gate policy is merge-group aware, PR-preflight aware, and fail-closed across all C1 phases."

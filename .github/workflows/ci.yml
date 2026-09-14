@@ -31,6 +31,8 @@ jobs:
         run: bash scripts/c1_static.sh
       - name: CI gate policy guard
         run: bash scripts/ci_gate_policy_check.sh
+      - name: CI gate executable contract test
+        run: bash scripts/ci_gate_policy_contract_test.sh
       - name: UI preflight selector self-test
         run: bash scripts/c1_ui_preflight_test.sh
 
@@ -61,9 +63,10 @@ jobs:
   ui-shard:
     name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
     # Dev Loop v2: the complete five-shard matrix is the authoritative
-    # integration validation. It runs for merge_group candidates and main
-    # pushes only; pull requests run the focused ui-preflight job below.
-    if: github.event_name != 'pull_request'
+    # integration validation for merge_group candidates. Main pushes retain
+    # static/package/unit post-merge validation without paying for the same UI
+    # matrix a second time; pull requests run the focused ui-preflight below.
+    if: github.event_name == 'merge_group'
     runs-on: macos-latest
     # Observed runner pace (run 34405682516): ~10 min initial build + first
     # boot, then ~3.5-11 min per suite. 10 suites/shard measured 54-61 min
@@ -127,24 +130,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout gate evaluator
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - name: Require every validation job to have succeeded
+        env:
+          CI_GATE_EVENT_NAME: ${{ github.event_name }}
+          CI_GATE_STATIC_RESULT: ${{ needs.static-guards.result }}
+          CI_GATE_PACKAGES_RESULT: ${{ needs.packages.result }}
+          CI_GATE_UNITS_RESULT: ${{ needs.units.result }}
+          CI_GATE_UI_SHARD_RESULT: ${{ needs.ui-shard.result }}
+          CI_GATE_UI_PREFLIGHT_RESULT: ${{ needs.ui-preflight.result }}
         run: |
           echo "CI Gate dependency results:"
           echo "${{ toJSON(needs.*.result) }}"
-          test "${{ needs.static-guards.result }}" = "success"
-          test "${{ needs.packages.result }}" = "success"
-          test "${{ needs.units.result }}" = "success"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # Pull requests run the focused UI preflight. The full matrix must
-            # not have run in its place, and a skipped preflight is a failure,
-            # not a pass.
-            test "${{ needs.ui-preflight.result }}" = "success"
-            test "${{ needs.ui-shard.result }}" = "skipped"
-          else
-            # merge_group candidates (and main pushes) run the complete
-            # five-shard matrix. The PR-only preflight must not have run in
-            # its place, and a skipped shard is a failure, not a pass.
-            test "${{ needs.ui-shard.result }}" = "success"
-            test "${{ needs.ui-preflight.result }}" = "skipped"
-          fi
-          echo "CI Gate: all required validation jobs succeeded for ${{ github.event_name }}."
+          bash scripts/ci_gate_policy_eval.sh
