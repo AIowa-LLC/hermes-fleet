@@ -11,7 +11,7 @@ final class KanbanEventStreamClientTests: XCTestCase {
 
     func testBuildEventsURLLoopbackToken() throws {
         let url = try XCTUnwrap(KanbanEventStreamClient.buildEventsURL(
-            base: try XCTUnwrap(URL(string: "https://gateway.example.invalid:9119")),
+            base: try XCTUnwrap(URL(string: "http://gateway.example.invalid:9119")),
             since: 41,
             authentication: .loopbackToken(StoredToken(rawValue: "sekret"))
         ))
