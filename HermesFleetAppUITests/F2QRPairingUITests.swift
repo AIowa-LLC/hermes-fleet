@@ -81,7 +81,7 @@ final class F2QRPairingUITests: XCTestCase {
 
     /// The raw QR text the gateway side would render (F2 v1 payload).
     private var simulatedScan: String {
-        "{\"password\":\"NOT-A-CREDENTIAL\",\"url\":\"https://gateway.example.invalid:8642\",\"username\":\"fixture-user\",\"v\":1}"
+        "{\"password\":\"NOT-A-CREDENTIAL\",\"url\":\"http://127.0.0.1:8642\",\"username\":\"fixture-user\",\"v\":1}"
     }
 
     func testScanFillsFormAndSaveRegistersGateway() throws {
@@ -112,10 +112,10 @@ final class F2QRPairingUITests: XCTestCase {
 
         // Back on the form: every field filled from ONE scan.
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "scanner should dismiss back to the form")
-        XCTAssertEqual(nameField.value as? String, "gateway.example.invalid",
+        XCTAssertEqual(nameField.value as? String, "127.0.0.1",
                        "display name derives from the endpoint host")
         let endpoint = app.textFields["fleet.gateways.form.endpoint"]
-        XCTAssertEqual(endpoint.value as? String, "https://gateway.example.invalid:8642")
+        XCTAssertEqual(endpoint.value as? String, "http://127.0.0.1:8642")
         let username = app.textFields["fleet.gateways.form.username"]
         XCTAssertEqual(username.value as? String, "fixture-user")
         // Password is a secure field — assert presence, never the value.
@@ -128,7 +128,7 @@ final class F2QRPairingUITests: XCTestCase {
         XCTAssertTrue(save.isEnabled, "scanned draft must satisfy form validity")
         save.tap()
 
-        XCTAssertTrue(app.staticTexts["gateway.example.invalid"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.staticTexts["127.0.0.1"].waitForExistence(timeout: 15),
                       "saved gateway row should appear in the list")
         attachScreenshotF2(of: app, name: "f2-paired-gateway-row")
     }
