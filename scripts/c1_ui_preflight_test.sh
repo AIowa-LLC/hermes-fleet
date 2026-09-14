@@ -63,6 +63,21 @@ check "union across files, canonical order" "Splash RoomChat RoomLinkMentions" \
   "HermesFleetAppUITests/SplashUITests.swift" \
   "Packages/FleetUI/Sources/FleetUI/RoomChatView.swift"
 
+check "oversized product diff uses bounded CORE subset" "$CORE" \
+  "HermesFleetAppUITests/HermesFleetHappyPathUITests.swift" \
+  "HermesFleetAppUITests/HermesFleetReconnectUITests.swift" \
+  "HermesFleetAppUITests/P0_7SessionStateMachineUITests.swift" \
+  "HermesFleetAppUITests/S3CleartextWarningUITests.swift" \
+  "HermesFleetAppUITests/RT2RemovalAndEndpointSanitizationUITests.swift" \
+  "HermesFleetAppUITests/RT4RosterEmptyStateUITests.swift" \
+  "HermesFleetAppUITests/RT4FormSaveFailureUITests.swift" \
+  "HermesFleetAppUITests/RT4VoiceOverUITests.swift" \
+  "HermesFleetAppUITests/SplashUITests.swift" \
+  "HermesFleetAppUITests/P2GatewayFormDraftUITests.swift" \
+  "HermesFleetAppUITests/F2QRPairingUITests.swift" \
+  "HermesFleetAppUITests/U3TabNavigationUITests.swift" \
+  "HermesFleetAppUITests/SecondGenerationUITests.swift"
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   echo "PASS: UI preflight selector self-test — all cases green."

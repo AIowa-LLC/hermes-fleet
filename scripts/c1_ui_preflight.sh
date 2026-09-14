@@ -52,6 +52,13 @@ has_class() { case " $KNOWN " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 # Conservative broad journeys for ambiguous/broad product changes and for
 # product files without a more specific mapping. Keep this set small and broad.
 CORE="HermesFleetHappyPath HermesFleetReconnect P0_7SessionStateMachine FOS3FourRootShell U3TabNavigation"
+# A pull request can touch many product areas at once (for example, a
+# cross-cutting networking/security change).  Keep the PR signal bounded and
+# deterministic: the full five-shard merge_group matrix remains authoritative
+# for the complete inventory.  Oversized selections still run a mandatory,
+# conservative CORE journey set instead of timing out after an unbounded serial
+# list of xcodebuild invocations.
+MAX_FOCUSED_CLASSES=12
 
 # Ordered area map (first match wins; specific before general).
 # Each line: ERE pattern => space-separated suites.
@@ -177,6 +184,19 @@ fi
 ORDERED=""
 for k in $KNOWN; do case " $SELECTED " in *" $k "*) ORDERED="$ORDERED $k" ;; esac; done
 ORDERED="${ORDERED# }"
+# Bound the focused PR run while retaining the complete requested selection in
+# the log for diagnosis.  This is not a pass-through: CORE still executes and
+# CI Gate still requires the preflight job to succeed.
+REQUESTED_CLASSES="$ORDERED"
+if [ "$(printf '%s\n' "$ORDERED" | wc -w | tr -d ' ')" -gt "$MAX_FOCUSED_CLASSES" ]; then
+  echo "UI-PREFLIGHT: requested suite count exceeds bounded budget ($MAX_FOCUSED_CLASSES); using conservative CORE subset for this PR run."
+  ORDERED=""
+  for k in $KNOWN; do case " $CORE " in *" $k "*) ORDERED="$ORDERED $k" ;; esac; done
+  ORDERED="${ORDERED# }"
+fi
+if [ "$REQUESTED_CLASSES" != "$ORDERED" ]; then
+  echo "REQUESTED_CLASSES: $REQUESTED_CLASSES"
+fi
 echo "SELECTED_CLASSES: $ORDERED"
 
 if [ "$PRINT" -eq 1 ]; then exit 0; fi
