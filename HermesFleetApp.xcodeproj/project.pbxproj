@@ -73,6 +73,7 @@
 		700DFE4F228CE222DCF6B3F4 /* GatewayRoomProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAFAC9427FB277EA0C2D8B4 /* GatewayRoomProviders.swift */; };
 		70DBE252BC45F78409C8C733 /* ApprovalFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B652485831E5050A35169A /* ApprovalFlowTests.swift */; };
 		768404B993FAA1E100FC3F0E /* BotManagementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A13AE51B5D6BF2B4E2910E4 /* BotManagementTests.swift */; };
+		789CA16B2875E2B19C6B1E95 /* UITestLaunchSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF524BB131167B4F4E65D756 /* UITestLaunchSupport.swift */; };
 		7C833168DB02614C318E08CD /* R9MemoryGraphUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6676D110095F10C4FB78A5A9 /* R9MemoryGraphUITests.swift */; };
 		7CAFFD3B36AB1B7B3EEEFFCD /* SplashConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3069E03CD70BDCC3377C0D75 /* SplashConfigurationTests.swift */; };
 		7CEC3E04BE1669A048732A54 /* P0_7LiveTailnetUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6325589D12BB7792035231F /* P0_7LiveTailnetUITests.swift */; };
@@ -235,6 +236,7 @@
 		A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U7GatewayQrLockSettingsUITests.swift; sourceTree = "<group>"; };
 		AA0788C641C3AD0C32972980 /* RT2RemovalAndEndpointSanitizationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT2RemovalAndEndpointSanitizationUITests.swift; sourceTree = "<group>"; };
 		AB9D5A666BBC20E8D5453331 /* HermesFleetAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HermesFleetAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF524BB131167B4F4E65D756 /* UITestLaunchSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchSupport.swift; sourceTree = "<group>"; };
 		AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H2SurfaceDoctorDeviceTests.swift; sourceTree = "<group>"; };
 		B066A503BF426E07D5165863 /* FleetSettingsAccentUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSettingsAccentUITests.swift; sourceTree = "<group>"; };
 		B20AB484DBACFFEEC06179C2 /* P0_7SessionStateMachineUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P0_7SessionStateMachineUITests.swift; sourceTree = "<group>"; };
@@ -480,6 +482,7 @@
 				F7D87954F52997464C091EED /* U6ConversationSkinUITests.swift */,
 				A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */,
 				501E486750093968F32F0092 /* UITabNavigation.swift */,
+				AF524BB131167B4F4E65D756 /* UITestLaunchSupport.swift */,
 			);
 			path = HermesFleetAppUITests;
 			sourceTree = "<group>";
@@ -754,6 +757,7 @@
 				184DF99410B6C818C8728DF1 /* U6ConversationSkinUITests.swift in Sources */,
 				26780CF557EC175FB73356B9 /* U7GatewayQrLockSettingsUITests.swift in Sources */,
 				CE2B614CC7652368415DA8C4 /* UITabNavigation.swift in Sources */,
+				789CA16B2875E2B19C6B1E95 /* UITestLaunchSupport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

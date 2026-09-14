@@ -61,9 +61,10 @@ jobs:
   ui-shard:
     name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
     # Dev Loop v2: the complete five-shard matrix is the authoritative
-    # integration validation. It runs for merge_group candidates and main
-    # pushes only; pull requests run the focused ui-preflight job below.
-    if: github.event_name != 'pull_request'
+    # integration validation for merge_group candidates. Main pushes retain
+    # static/package/unit post-merge validation without paying for the same UI
+    # matrix a second time; pull requests run the focused ui-preflight below.
+    if: github.event_name == 'merge_group'
     runs-on: macos-latest
     # Observed runner pace (run 34405682516): ~10 min initial build + first
     # boot, then ~3.5-11 min per suite. 10 suites/shard measured 54-61 min
@@ -140,11 +141,17 @@ jobs:
             # not a pass.
             test "${{ needs.ui-preflight.result }}" = "success"
             test "${{ needs.ui-shard.result }}" = "skipped"
-          else
-            # merge_group candidates (and main pushes) run the complete
-            # five-shard matrix. The PR-only preflight must not have run in
-            # its place, and a skipped shard is a failure, not a pass.
+          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            # Only merge_group candidates run the complete five-shard matrix.
+            # The PR-only preflight must not have run in its place, and a
+            # skipped shard is a failure, not a pass.
             test "${{ needs.ui-shard.result }}" = "success"
+            test "${{ needs.ui-preflight.result }}" = "skipped"
+          else
+            # Main pushes intentionally revalidate static/package/unit state
+            # after merge. The merge_group event is the sole UI authority, so
+            # both UI jobs must be skipped on this topology.
+            test "${{ needs.ui-shard.result }}" = "skipped"
             test "${{ needs.ui-preflight.result }}" = "skipped"
           fi
           echo "CI Gate: all required validation jobs succeeded for ${{ github.event_name }}."

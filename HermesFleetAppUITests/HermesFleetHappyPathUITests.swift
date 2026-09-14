@@ -22,7 +22,9 @@ final class HermesFleetHappyPathUITests: XCTestCase {
     func testHappyPathGatewaysToConversationStreamedAnswer() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         // Step 1+2: open the app, see the machines (gateways) available.
@@ -48,6 +50,9 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
                       "Conversation canvas should open with a composer")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.conversation.transcript").waitForExistence(timeout: 10),
+            "conversation transcript should render before sending")
 
         // Step 5: send a task.
         let composer = app.textFields["fleet.conversation.composer"]
@@ -108,7 +113,9 @@ final class HermesFleetHappyPathUITests: XCTestCase {
         // (deterministic — no multi-pop through the deeper FOS-2 stack).
         app.terminate()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should relaunch and render Workstation")
         UITabNavigation.openGatewayDetail(app, gateway: "render-box")
         UITabNavigation.openGatewayBots(app, gateway: "render-box")
         XCTAssertTrue(app.staticTexts["Default"].waitForExistence(timeout: 10),

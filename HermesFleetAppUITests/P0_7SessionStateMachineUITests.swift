@@ -23,7 +23,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     func testExistingSessionReEntrySendsWithoutConnectFromOpen() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         // Drill to Bot detail (Workstation → Default).
@@ -42,6 +44,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "Conversation canvas opens")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.conversation.transcript").waitForExistence(timeout: 10),
+            "conversation transcript should render before sending")
 
         waitUntilEnabled(composer, timeout: 10)
         composer.tap()
@@ -67,6 +72,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         tap(reentry)
         XCTAssertTrue(composer.waitForExistence(timeout: 10),
                       "Re-entered conversation canvas opens")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.conversation.transcript").waitForExistence(timeout: 10),
+            "re-entered conversation transcript should render before sending")
 
         // THE P0-7 assertion: re-entered send streams a reply, and the
         // in-conversation error surface stays empty (no "connect() from open").
@@ -92,7 +100,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     func testNewSessionAffordanceCreatesUsableConversation() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
@@ -115,6 +125,9 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10),
                       "New session conversation canvas opens with a composer")
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.conversation.transcript").waitForExistence(timeout: 10),
+            "new-session transcript should render before sending")
 
         // Usable immediately: send a prompt, receive the streamed reply
         // (session.create → prompt.submit over the scripted fleet).

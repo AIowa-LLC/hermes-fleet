@@ -5,12 +5,12 @@
 #
 # Dev Loop v2 contract: pull requests run a fast preflight whose UI component
 # is a focused subset selected by scripts/c1_ui_preflight.sh; merge_group
-# candidates (and main pushes) run the complete five-shard C1 matrix. The
-# required `CI Gate` check must fail closed in BOTH topologies: every expected
-# dependency must report success, and the job that must not run for an event
-# must be reported skipped (substituted validation is a topology failure, not
-# extra safety). A skipped expected dependency, a failure, or a cancellation
-# all fail the gate.
+# candidates run the complete five-shard C1 matrix. Main pushes run only the
+# post-merge static/package/unit validation; the merge_group event is the sole
+# UI authority. The required `CI Gate` check must fail closed in every
+# topology: every expected dependency must report success, and the job that
+# must not run for an event must be reported skipped. A skipped expected
+# dependency, a failure, or a cancellation all fail the gate.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -55,13 +55,17 @@ require 'test "${{ needs.units.result }}" = "success"' "hosted units must be fai
 require 'if [[ "${{ github.event_name }}" == "pull_request" ]]; then' "CI Gate must branch on the event topology"
 require 'test "${{ needs.ui-preflight.result }}" = "success"' "the PR UI preflight must be fail-closed"
 require 'test "${{ needs.ui-shard.result }}" = "skipped"' "the full matrix must not substitute for the PR preflight"
-require 'test "${{ needs.ui-shard.result }}" = "success"' "the full UI matrix must be fail-closed outside pull requests"
-require 'test "${{ needs.ui-preflight.result }}" = "skipped"' "the PR preflight must not substitute for the full matrix"
+require 'elif [[ "${{ github.event_name }}" == "merge_group" ]]; then' "CI Gate must distinguish merge groups from main pushes"
+require 'test "${{ needs.ui-shard.result }}" = "success"' "the full UI matrix must be fail-closed for merge groups"
+require 'test "${{ needs.ui-preflight.result }}" = "skipped"' "the PR preflight must not substitute for the merge-group matrix"
+require '# Main pushes intentionally revalidate static/package/unit state' "main-push validation must document the intentional UI skip"
+require 'test "${{ needs.ui-shard.result }}" = "skipped"' "main pushes must not rerun the full UI matrix"
+require 'test "${{ needs.ui-preflight.result }}" = "skipped"' "main pushes must not run PR preflight"
 require "  ui-preflight:" "a PR-focused UI preflight job must remain present"
 require "    if: github.event_name == 'pull_request'" "the UI preflight must be PR-only"
 require 'run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha }}"' "the PR preflight must select from the pull request's changed files"
 require "  ui-shard:" "the full UI matrix job must remain present"
-require "    if: github.event_name != 'pull_request'" "the full UI matrix must run on merge groups and main pushes"
+require "    if: github.event_name == 'merge_group'" "the full UI matrix must run on merge groups only"
 require "      fail-fast: false" "a failing UI shard must not cancel its siblings"
 require "        shard: [1, 2, 3, 4, 5]" "all deterministic UI shards must remain configured"
 require "        shards: [5]" "the UI matrix must keep its five-shard split"
