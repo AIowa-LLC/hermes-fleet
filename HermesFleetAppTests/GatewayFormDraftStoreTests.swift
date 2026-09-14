@@ -60,7 +60,7 @@ final class GatewayFormDraftStoreTests: XCTestCase {
         store.begin(pendingSheet: .add, initial: nil)
 
         store.displayName = "Tailnet Gateway"
-        store.endpointText = "http://100.100.200.61:8642"
+        store.endpointText = "https://gateway.example.invalid:8642"
         store.strategy = .sessionToken
         store.tokenText = "long-generated-session-token-42chars..."
         store.saveError = "connection failed"
@@ -69,7 +69,7 @@ final class GatewayFormDraftStoreTests: XCTestCase {
         // FaceID re-locks, view teardown — the ROOT-OWNED store still holds
         // every field so the re-presented sheet restores them.
         XCTAssertEqual(store.displayName, "Tailnet Gateway")
-        XCTAssertEqual(store.endpointText, "http://100.100.200.61:8642")
+        XCTAssertEqual(store.endpointText, "https://gateway.example.invalid:8642")
         XCTAssertEqual(store.strategy, .sessionToken)
         XCTAssertEqual(store.tokenText, "long-generated-session-token-42chars...")
         XCTAssertEqual(store.saveError, "connection failed")

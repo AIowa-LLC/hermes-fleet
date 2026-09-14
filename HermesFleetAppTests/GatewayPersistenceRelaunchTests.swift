@@ -91,8 +91,8 @@ final class GatewayPersistenceRelaunchTests: XCTestCase {
         )
     }
 
-    private let dogfoodEndpoint = URL(string: "http://100.100.200.61:9120")!
-    private let dogfoodID = GatewayID(rawValue: "100.100.200.61:9120")
+    private let dogfoodEndpoint = URL(string: "https://gateway.example.invalid:9120")!
+    private let dogfoodID = GatewayID(rawValue: "gateway.example.invalid:9120")
 
     // MARK: the P0-4 acceptance
 

@@ -96,7 +96,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
         // user:pass@host is not a valid ORIGIN — Save must stay disabled so
         // credential material never leaves the text field.
-        endpointField.typeText("http://alice:supersecret@192.168.50.58:9120")
+        endpointField.typeText("http://alice:fixture-password@10.0.0.58:9120")
         let save = app.buttons["fleet.gateways.form.save"].firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 5))
         XCTAssertFalse(save.isEnabled,

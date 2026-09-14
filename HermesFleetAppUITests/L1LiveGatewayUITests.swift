@@ -3,22 +3,24 @@ import XCTest
 /// L1 live gateway dogfood — PHASE 2 + 3.
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
-/// on the simulator against a REAL Hermes gateway surface (`hermes serve` on
-/// loopback :9119, started by scripts/l1_start_serve.sh). This is the first
-/// live-connection validation: the app adds a real gateway via the U2
+/// on the simulator against an operator-configured Hermes gateway surface
+/// (`hermes serve`, started by scripts/l1_start_serve.sh). This is the first
+/// live-connection validation: the app adds the configured gateway via the U2
 /// gateway-management UI (no hardcoding), then attempts the §32 walkthrough
 /// steps against the live gateway.
 ///
 /// Credential safety: the loopback test token is read at runtime from
-/// /tmp/l1_live_test/.token (written by l1_start_serve.sh, chmod 600) and is
-/// NEVER printed, logged, or asserted. It is a throwaway test token for a
-/// local throwaway serve instance.
+/// HERMES_FLEET_TOKEN_FILE and is NEVER printed, logged, or asserted.
 final class L1LiveGatewayUITests: XCTestCase {
 
     private let endpoint = "http://127.0.0.1:9119"
     private let displayName = "Mac Live"
 
     override func setUpWithError() throws {
+        guard let tokenFile = ProcessInfo.processInfo.environment["HERMES_FLEET_TOKEN_FILE"],
+              !tokenFile.isEmpty else {
+            throw XCTSkip("L1 live QA requires HERMES_FLEET_TOKEN_FILE")
+        }
         continueAfterFailure = false
     }
 
@@ -116,7 +118,7 @@ final class L1LiveGatewayUITests: XCTestCase {
 
     private func readTestToken() -> String {
         // Test-only token for a local throwaway serve; never printed/logged.
-        (try? String(contentsOfFile: "/tmp/l1_live_test/.token", encoding: .utf8))?
+        (try? String(contentsOfFile: ProcessInfo.processInfo.environment["HERMES_FLEET_TOKEN_FILE"] ?? "", encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 

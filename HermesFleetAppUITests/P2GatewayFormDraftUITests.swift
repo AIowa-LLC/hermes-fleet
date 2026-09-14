@@ -57,7 +57,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         nameField.tap()
         nameField.typeText("Tailnet Gateway")
         endpointField.tap()
-        endpointField.typeText("http://100.100.200.61:8642")
+        endpointField.typeText("https://gateway.example.invalid:8642")
 
         // Username & Password strategy + credentials. Picker menus can take
         // an extra hosted-simulator turn to materialize after endpoint entry;
@@ -68,9 +68,9 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         let passwordField = app.secureTextFields["fleet.gateways.form.password"]
         XCTAssertTrue(usernameField.waitForExistence(timeout: 5), "username field should appear")
         usernameField.tap()
-        usernameField.typeText("fleet-operator")
+        usernameField.typeText("fixture-user")
         passwordField.tap()
-        passwordField.typeText("7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7")
+        passwordField.typeText("NOT-A-CREDENTIAL")
         attachScreenshot(of: app, name: "p0-2-before-background")
 
         // THE defect: background the app (user switches to copy / verify),
@@ -84,9 +84,9 @@ final class P2GatewayFormDraftUITests: XCTestCase {
                       "P0-2: Add-Gateway sheet must re-present after FaceID relock")
         XCTAssertEqual(nameField.value as? String, "Tailnet Gateway",
                        "P0-2: display name must survive the lock")
-        XCTAssertEqual(endpointField.value as? String, "http://100.100.200.61:8642",
+        XCTAssertEqual(endpointField.value as? String, "https://gateway.example.invalid:8642",
                        "P0-2: endpoint must survive the lock")
-        XCTAssertEqual(usernameField.value as? String, "fleet-operator",
+        XCTAssertEqual(usernameField.value as? String, "fixture-user",
                        "P0-2: username must survive the lock")
         // SecureFields mask their value in XCUITest (bullets), so we cannot
         // read the plaintext back — but a reset form would be EMPTY, so a
@@ -126,7 +126,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         let pasteEndpoint = firstMatch(in: app, identifier: "fleet.gateways.form.paste.endpoint")
         XCTAssertTrue(pasteEndpoint.waitForExistence(timeout: 5), "endpoint paste button should exist")
         paste(into: pasteEndpoint, app: app)
-        XCTAssertEqual(endpointField.value as? String, "http://192.168.50.58:8642",
+        XCTAssertEqual(endpointField.value as? String, "https://gateway.example.invalid:8642",
                        "endpoint paste button must fill the URL field")
 
         // Username & Password strategy → paste buttons for both.

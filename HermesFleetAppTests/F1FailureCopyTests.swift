@@ -71,13 +71,13 @@ final class F1FailureCopyTests: XCTestCase {
 
     func testCopyNeverEchoesEndpointHost() {
         let cases: [(GatewayStatus, String?)] = [
-            (.offline, "connection to 100.127.200.89:8642 timed out"),
+            (.offline, "connection to 203.0.113.89:8642 timed out"),
             (.unsupported, "auth endpoint returned HTTP 404"),
             (.authenticationRequired, "auth endpoint returned HTTP 401"),
         ]
         for (status, detail) in cases {
             let copy = GatewayFailureCopy.detail(status: status, detail: detail)
-            XCTAssertFalse(copy.contains("100.127.200.89"),
+            XCTAssertFalse(copy.contains("203.0.113.89"),
                           "copy must not echo the endpoint host: \(copy)")
             XCTAssertFalse(copy.contains("8642"),
                           "copy must not echo the endpoint port: \(copy)")

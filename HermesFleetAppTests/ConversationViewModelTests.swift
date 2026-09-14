@@ -244,7 +244,7 @@ final class ConversationViewModelTests: XCTestCase {
                 ApprovalRequest(
                     requestID: "req-restore-1",
                     sessionID: sessionID,
-                    command: "git push --force",
+                    command: "printf 'fixture approval'",
                     detail: "Force push",
                     choices: ["once", "deny"]
                 )

@@ -3,15 +3,11 @@ import XCTest
 /// T2 (t_f54b722e): prove the app works over the Tailscale (tailnet) endpoint.
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
-/// on the iOS Simulator. The simulator app is held from the Mac's OWN IPs
-/// (both LAN 192.168.50.37 and tailnet 100.100.200.61) by iOS local-network
-/// privacy — the P3-accepted workaround is a Host+Origin-rewriting loopback
-/// forwarder, so this test reaches BOTH real surfaces through the forwarders
-/// started by a TCP forwarder (scripts/t2_tcp_forward.py):
-///   19120 -> 100.100.200.61:9120 (TAILNET surface)
-///   19121 -> 192.168.50.37:9120   (LAN surface)
+/// on the iOS Simulator. The operator-configured loopback forwarders provide
+/// the two gateway surfaces required by this test (see the local QA runner).
 /// and:
-///   1. add the tailnet gateway via the U2 UI (username/password from .cred)
+///   1. add the tailnet gateway via the U2 UI (username/password from the
+///      operator-supplied credential file)
 ///   2. Test Connection -> Connected (Reachable), not Unreachable
 ///   3. add the LAN gateway (regression — multi-gateway list shows both)
 ///   4. refresh the union roster -> BOTH gateways + bots render
@@ -20,15 +16,12 @@ import XCTest
 ///      prompt -> receive the streamed answer
 ///   6. screenshots at every step land in the .xcresult for evidence.
 ///
-/// The direct tailnet endpoint (100.100.200.61:9120) itself is verified by
-/// an HTTP auth-chain probe (full auth chain + live conversation turn +
-/// serve log frames) — the ATS exception for 100.x lives in Info.plist so a
-/// REAL device on the tailnet can reach it directly.
+/// The direct gateway endpoint is verified separately by the operator's
+/// HTTP auth-chain probe; this UI suite only consumes the configured forwarders.
 ///
-/// Credential safety: the real username/password are read at runtime from
-/// /tmp/hermes_lan_surface/.cred (0600) and are NEVER printed, logged, or
-/// committed. The clean session id is read from /tmp/t2_session.json (written
-/// against the forwarder surface).
+/// Credential and session paths are supplied at runtime with
+/// HERMES_FLEET_CREDENTIAL_FILE and HERMES_FLEET_SESSION_FILE. Values are
+/// NEVER printed, logged, or committed.
 final class T2FixTailnetGatewayUITests: XCTestCase {
 
     private let tailnetEndpoint = "http://127.0.0.1:19120"
@@ -40,6 +33,12 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
     private let lanID = "127.0.0.1:19121"
 
     override func setUpWithError() throws {
+        guard let credentialFile = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              !credentialFile.isEmpty,
+              let sessionFile = ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_FILE"],
+              !sessionFile.isEmpty else {
+            throw XCTSkip("T2 live QA requires explicit credential and session files")
+        }
         continueAfterFailure = false
         addUIInterruptionMonitor(withDescription: "Local Network permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -259,7 +258,8 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
     }
 
     private func readCreds() -> (String, String) {
-        guard let text = try? String(contentsOfFile: "/tmp/hermes_lan_surface/.cred", encoding: .utf8) else {
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return ("", "")
         }
         var username = ""
@@ -272,7 +272,8 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
     }
 
     private func readCleanSessionID() -> String {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "/tmp/t2_session.json")),
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_FILE"],
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = obj["session_id"] as? String else {
             return ""

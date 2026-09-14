@@ -1,27 +1,22 @@
 import XCTest
 
-/// F1 LIVE verification (t_10831eec): register Arch as gateway #2 on Tony's
-/// REAL iPhone and prove the multi-gateway fleet is live.
+/// F1 LIVE verification (t_10831eec): register two operator-configured
+/// gateways on a physical device and prove the multi-gateway fleet is live.
 ///
 /// Runs on the PHYSICAL device (Debug build = production graph: real Keychain +
 /// live transports — P0-5 lesson). Two gateways registered through the real
 /// U2 form, no hardcoding:
 ///
-///   #1 Mac   — http://100.100.200.61:9120   (tailnet surface)
-///   #2 Arch  — http://100.127.200.89:9119   (tailnet surface, F1)
 ///
-/// Credential safety: username/password pairs are read at runtime from
-/// /tmp/hermes_lan_surface/.cred (Mac #1) and /tmp/f1_arch_gateway/.cred
-/// (Arch #2, prose format — parsed without printing) and are NEVER printed,
-/// logged, or committed.
+/// Endpoint and credential paths are supplied at runtime with F1_MAC_ENDPOINT,
+/// F1_ARCH_ENDPOINT, HERMES_FLEET_MAC_CREDENTIAL_FILE, and
+/// HERMES_FLEET_ARCH_CREDENTIAL_FILE. Values are NEVER printed, logged, or
+/// committed.
 final class F1TwoGatewayFleetLiveUITests: XCTestCase {
 
     // Endpoints overridable via the test runner env (TEST_RUNNER_F1_* on the
-    // xcodebuild command line) — the PHYSICAL DEVICE runs DIRECT against the
-    // tailnet (override with the real hosts). The DEFAULTS are the P0-7
-    // loopback-forwarder surfaces (sim local-network privacy blocks direct
-    // tailnet access — T2/P0-7 documented wall):
-    //   19120 -> 100.100.200.61:9120  (Mac #1)   19119 -> 100.127.200.89:9119 (Arch #2)
+    // xcodebuild command line). Defaults are local loopback-forwarder
+    // surfaces so the suite cannot accidentally target a private host.
     private let macEndpoint = ProcessInfo.processInfo.environment["F1_MAC_ENDPOINT"]
         ?? "http://127.0.0.1:19120"
     private let macName = "Mac #1"
@@ -33,6 +28,14 @@ final class F1TwoGatewayFleetLiveUITests: XCTestCase {
     private var archID: String { URL(string: archEndpoint).map { "\($0.host ?? ""):\($0.port ?? 80)" } ?? archEndpoint }
 
     override func setUpWithError() throws {
+        guard ProcessInfo.processInfo.environment["F1_MAC_ENDPOINT"] != nil,
+              ProcessInfo.processInfo.environment["F1_ARCH_ENDPOINT"] != nil,
+              let macCreds = ProcessInfo.processInfo.environment["HERMES_FLEET_MAC_CREDENTIAL_FILE"],
+              !macCreds.isEmpty,
+              let archCreds = ProcessInfo.processInfo.environment["HERMES_FLEET_ARCH_CREDENTIAL_FILE"],
+              !archCreds.isEmpty else {
+            throw XCTSkip("F1 live QA requires explicit endpoints and credential files")
+        }
         continueAfterFailure = false
         addUIInterruptionMonitor(withDescription: "Local Network permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -206,7 +209,8 @@ final class F1TwoGatewayFleetLiveUITests: XCTestCase {
     // MARK: Credentials (runtime reads, never printed)
 
     private var macCreds: (username: String, password: String) {
-        guard let text = try? String(contentsOfFile: "/tmp/hermes_lan_surface/.cred", encoding: .utf8) else {
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_MAC_CREDENTIAL_FILE"],
+              let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return ("", "")
         }
         var u = "", p = ""
@@ -223,7 +227,8 @@ final class F1TwoGatewayFleetLiveUITests: XCTestCase {
     /// Arch mirror is PROSE format: "Username: tony" line + a "Password: <v>"
     /// long token line (structure verified in t_7e3edb5a / f1a_01c).
     private var archCreds: (username: String, password: String) {
-        guard let text = try? String(contentsOfFile: "/tmp/f1_arch_gateway/.cred", encoding: .utf8) else {
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_ARCH_CREDENTIAL_FILE"],
+              let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return ("", "")
         }
         var u = "", p = ""

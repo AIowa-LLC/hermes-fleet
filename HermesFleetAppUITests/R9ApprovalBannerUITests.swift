@@ -59,7 +59,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
         let bannerLabel = banner.label
         XCTAssertTrue(bannerLabel.contains("[REDACTED]"),
                       "the bearer token in the scripted command must be masked: \(bannerLabel)")
-        XCTAssertFalse(bannerLabel.contains("sk-live-demo"),
+        XCTAssertFalse(bannerLabel.contains("fixture-bearer-demo"),
                        "the raw demo token must NEVER render")
 
         // Deny is friction-free: one tap clears the banner.

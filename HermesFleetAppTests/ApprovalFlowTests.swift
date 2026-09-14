@@ -91,7 +91,7 @@ final class ApprovalFlowTests: XCTestCase {
         // FAKE token fixture (allowline-annotated: gitleaks curl-auth-header
         // matches any token-shaped bearer literal; this one must stay so the
         // ≥8-char bearer redaction path is exercised end-to-end).
-        command: "curl -H 'Authorization: Bearer sk-live-abc123' https://api", // gitleaks:allow
+        command: "curl -H 'Authorization: Bearer fixture-bearer-abc123' https://api.example.invalid",
         detail: "HTTP request",
         choices: ["once", "session", "always", "deny"]
     )
@@ -125,7 +125,7 @@ final class ApprovalFlowTests: XCTestCase {
             vm.pending?.command,
             "curl -H 'Authorization: Bearer [REDACTED]' https://api"
         )
-        XCTAssertFalse(vm.pending!.command.contains("sk-live-abc123"))
+        XCTAssertFalse(vm.pending!.command.contains("fixture-bearer-abc123"))
     }
 
     func testApprovalClearedByResolution() {
@@ -254,7 +254,7 @@ final class ApprovalFlowTests: XCTestCase {
         vm.bind(sessionID: "s-1")
         let other = ApprovalRequest(
             requestID: "req-2", sessionID: "s-OTHER",
-            command: "rm -rf /x", detail: nil, choices: ["once", "deny"]
+            command: "printf 'fixture operation'", detail: nil, choices: ["once", "deny"]
         )
         vm.handleApprovalRequest(other)
         XCTAssertNil(vm.pending, "another session's approval must not hijack this screen")
@@ -267,7 +267,7 @@ final class ApprovalFlowTests: XCTestCase {
         approvals.pendingResult = .success([
             ApprovalRequest(
                 requestID: "req-9", sessionID: "s-1",
-                command: "git push --force", detail: "Force push", choices: ["once", "deny"]
+                command: "printf 'fixture approval'", detail: "Fixture operation", choices: ["once", "deny"]
             )
         ])
         await vm.restorePendingApprovals()
@@ -275,7 +275,7 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(vm.pending?.requestID, "req-9")
         XCTAssertEqual(vm.state, .pending)
         // Restored commands get the same client-side redaction pass.
-        XCTAssertTrue(vm.pending!.command.contains("git push --force"))
+        XCTAssertTrue(vm.pending!.command.contains("printf 'fixture approval'"))
     }
 
     func testRestorePendingApprovalsDedupesAgainstLiveBanner() async {
@@ -285,7 +285,7 @@ final class ApprovalFlowTests: XCTestCase {
             request,  // same id the live banner already shows
             ApprovalRequest(
                 requestID: "req-10", sessionID: "s-1",
-                command: "rm -rf /tmp/x", detail: nil, choices: ["once", "deny"]
+                command: "printf 'queued fixture operation'", detail: nil, choices: ["once", "deny"]
             )
         ])
         await vm.restorePendingApprovals()

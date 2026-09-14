@@ -1,8 +1,8 @@
 import XCTest
 
 /// P0-7 LIVE verification (t_8a7f3dce): the two dogfood defects from
-/// TestFlight 0.1.0(3) over the tailnet gateway, reproduced against the REAL
-/// gateway through the P3-accepted loopback forwarder (sim local-network
+/// TestFlight 0.1.0(3) over a configured gateway, reproduced through the
+/// operator's loopback forwarder (sim local-network
 /// privacy workaround):
 ///
 ///   (1) "invalid gateway connection state: connect() from open" when opening
@@ -18,9 +18,8 @@ import XCTest
 ///   streams (session.create path).
 ///
 /// Credential safety: username/password are read at runtime from
-/// /tmp/hermes_lan_surface/.cred (0600) and NEVER printed, logged, or
-/// committed. Run via the live LAN/tailnet forwarder pattern (scripts/h2_uitest.sh) +
-/// evidence export).
+/// HERMES_FLEET_CREDENTIAL_FILE and NEVER printed, logged, or committed.
+/// Run via the operator's forwarder pattern plus evidence export.
 final class P0_7LiveTailnetUITests: XCTestCase {
 
     private let tailnetEndpoint = "http://127.0.0.1:19120"
@@ -28,6 +27,10 @@ final class P0_7LiveTailnetUITests: XCTestCase {
     private let tailnetID = "127.0.0.1:19120"
 
     override func setUpWithError() throws {
+        guard let credentialFile = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              !credentialFile.isEmpty else {
+            throw XCTSkip("P0-7 live QA requires HERMES_FLEET_CREDENTIAL_FILE")
+        }
         continueAfterFailure = false
         addUIInterruptionMonitor(withDescription: "Local Network permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -258,7 +261,8 @@ final class P0_7LiveTailnetUITests: XCTestCase {
     }
 
     private func readCreds() -> (String, String) {
-        guard let data = FileManager.default.contents(atPath: "/tmp/hermes_lan_surface/.cred"),
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              let data = FileManager.default.contents(atPath: path),
               let text = String(data: data, encoding: .utf8) else {
             return ("", "")
         }
