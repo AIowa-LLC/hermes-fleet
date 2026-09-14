@@ -232,7 +232,6 @@ public final class ApprovalViewModel {
     // MARK: helpers
 
     nonisolated private static func nonSecret(_ error: Error) -> String {
-        let text = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-        return Redaction.commandPreview(text)
+        Redaction.safeErrorDescription(error)
     }
 }

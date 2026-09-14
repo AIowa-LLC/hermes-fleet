@@ -394,10 +394,7 @@ public struct GatewaysView: View {
 
     /// Non-secret description for a registry operation failure.
     static func describe(_ error: Error) -> String {
-        if let localized = error as? LocalizedError, let text = localized.errorDescription {
-            return text
-        }
-        return String(describing: error)
+        Redaction.safeErrorDescription(error)
     }
 
     // MARK: P1-8 — confirmed removal + bounded undo

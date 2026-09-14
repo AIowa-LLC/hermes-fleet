@@ -8,6 +8,9 @@ import FleetCore
 enum AuthREST {
     /// Bound on any single auth REST call (connect + response).
     static let timeoutSeconds: TimeInterval = 8
+    /// Auth and board responses are small control-plane documents. Reject an
+    /// unexpectedly large body before JSON decoding or error-body inspection.
+    static let maxResponseBytes = 8 * 1024 * 1024
 
     /// A request with the F1 timeout bound applied.
     static func bounded(_ request: inout URLRequest) {
@@ -137,6 +140,9 @@ public struct WSTicketClient: WSTicketMinting {
         AuthREST.bounded(&request)
 
         let (data, response) = try await urlSession.data(for: request)
+        guard data.count <= AuthREST.maxResponseBytes else {
+            throw TicketMintError.malformedResponse
+        }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("ws-ticket: HTTP \(http.statusCode)")
             // P0-9: a rejection the server EXPLAINED (e.g. 401 "no_cookie"

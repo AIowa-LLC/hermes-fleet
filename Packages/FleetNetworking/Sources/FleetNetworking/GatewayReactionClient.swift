@@ -109,11 +109,11 @@ public struct GatewayReactionClient: ReactionProviding {
     /// (methods_session.py:1593-1611).
     static func mapRPCError(_ error: JSONRPCError) -> ReactionError {
         switch error.code {
-        case 4023: return .targetRequired(error.message)
-        case 4024: return .emptyEmoji(error.message)
-        case 4040: return .messageNotFound(error.message)
-        case 4001: return .sessionNotFound(error.message)
-        default: return .rpcFailed(error.message)
+        case 4023: return .targetRequired(Redaction.safeText(error.message))
+        case 4024: return .emptyEmoji(Redaction.safeText(error.message))
+        case 4040: return .messageNotFound(Redaction.safeText(error.message))
+        case 4001: return .sessionNotFound(Redaction.safeText(error.message))
+        default: return .rpcFailed(Redaction.safeText(error.message))
         }
     }
 
@@ -128,7 +128,7 @@ public struct GatewayReactionClient: ReactionProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

@@ -26,9 +26,13 @@ import FleetCore
 ///   enabled}]` (enabled = installed unless in skills.disabled).
 /// - `profiles.configure` — methods_profiles.py:767,935-969:
 ///   `{name, disabled_skills: [...]}` REPLACE semantics → `{ok, applied}`.
-public struct GatewayManagementClient: GatewayManagementProviding {
+public struct GatewayManagementClient: GatewayManagementProviding, GatewaySessionDisconnecting {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
+
+    public func disconnect() async {
+        await transport.disconnect()
+    }
 
     private static let log = Logger(
         subsystem: "com.aiowa.hermesfleet", category: "gateway-management")
@@ -245,16 +249,16 @@ public struct GatewayManagementClient: GatewayManagementProviding {
         switch error.code {
         case 4016:
             // Unknown cron action — 0.21.0's handler does not forward `run`.
-            return .unsupportedAction(error.message)
+            return .unsupportedAction(Redaction.safeText(error.message))
         case 4017:
             // Unknown skills action.
-            return .unsupportedAction(error.message)
+            return .unsupportedAction(Redaction.safeText(error.message))
         case 4063, 4064:
-            return .profileNotFound(error.message)
+            return .profileNotFound(Redaction.safeText(error.message))
         case 5023, 5024, 5064:
-            return .rpcFailed(error.message)
+            return .rpcFailed(Redaction.safeText(error.message))
         default:
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 
@@ -267,7 +271,7 @@ public struct GatewayManagementClient: GatewayManagementProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

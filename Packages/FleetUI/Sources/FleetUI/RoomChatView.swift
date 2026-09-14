@@ -320,7 +320,7 @@ public final class RoomChatViewModel {
         if let failure = error as? RoomCommandFailure {
             return failure.explanation
         }
-        return error.localizedDescription
+        return Redaction.safeErrorDescription(error)
     }
 
     /// Project a legacy room's bounded recentLog window (display-only).

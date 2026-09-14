@@ -88,7 +88,7 @@ public final class BotManagementController {
             sectionsSyncErrors[gatewayID] = nil
         } catch {
             sectionsByGateway[gatewayID] = []
-            sectionsSyncErrors[gatewayID] = error.localizedDescription
+            sectionsSyncErrors[gatewayID] = Redaction.safeErrorDescription(error)
         }
     }
 
@@ -147,7 +147,7 @@ public final class BotManagementController {
             let name = try await seam.createProfile(spec)
             return name
         } catch {
-            lastCreateError = error.localizedDescription
+            lastCreateError = Redaction.safeErrorDescription(error)
             throw error
         }
     }
@@ -452,20 +452,20 @@ public final class BotManagementController {
                 petGalleryByRoute[route] = []
                 petGalleryPhaseByRoute[route] = .unsupported
             } else if petGalleryByRoute[route]?.isEmpty != false {
-                petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+                petGalleryPhaseByRoute[route] = .failed(Redaction.safeErrorDescription(error))
             } else {
                 // W3 review finding 1: local pets stay visible and the
                 // hydrate failure is honest, transient, and retryable —
                 // never a silent permanent spinner over .hydrating.
                 petGalleryPhaseByRoute[route] =
-                    .loaded(.hydrateFailed(error.localizedDescription))
+                    .loaded(.hydrateFailed(Redaction.safeErrorDescription(error)))
             }
         } catch {
             if petGalleryByRoute[route]?.isEmpty != false {
-                petGalleryPhaseByRoute[route] = .failed(error.localizedDescription)
+                petGalleryPhaseByRoute[route] = .failed(Redaction.safeErrorDescription(error))
             } else {
                 petGalleryPhaseByRoute[route] =
-                    .loaded(.hydrateFailed(error.localizedDescription))
+                    .loaded(.hydrateFailed(Redaction.safeErrorDescription(error)))
             }
         }
     }

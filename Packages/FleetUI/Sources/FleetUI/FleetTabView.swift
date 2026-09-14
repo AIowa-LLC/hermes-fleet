@@ -84,7 +84,7 @@ public struct FleetTabView: View {
         }
         .sheet(isPresented: $showingSettings) {
             NavigationStack {
-                FleetSettingsView(controller: lockController)
+                FleetSettingsView(controller: lockController, environment: environment)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { showingSettings = false }

@@ -838,6 +838,31 @@ public final class AppEnvironment {
         healthStats = await health.snapshot()
     }
 
+    /// Delete device-local cached fleet/session data without removing saved
+    /// gateways or their Keychain credentials. This is the user-controlled
+    /// privacy escape hatch exposed by Settings.
+    public func clearLocalCache() async throws {
+        // Stop any live session before deleting its persisted history. The
+        // in-memory session objects are then discarded so stale transcript
+        // rows cannot reappear in the UI after the user confirms deletion.
+        await disconnectAll()
+        try await cache.clearCachedData()
+        activeConnections.removeAll()
+        conversationSessions.removeAll()
+        continueIndex.removeAll()
+        gatewayFormDraft.clear()
+        rosterSnapshot = nil
+        cachedWatermarkCount = 0
+        healthStats = [:]
+        cachedBotsByGateway = [:]
+        roomsByGateway = [:]
+        canCreateRoomsByGateway = [:]
+        observedRoomAttention = [:]
+        rosterObservedAt = nil
+        sessionsByRoute = [:]
+        sessionReadErrors = [:]
+    }
+
     // MARK: Connection lifecycle (runtime-owned, observable)
 
     /// Connect to a gateway: `connecting` → `connected`, or `failed(status)`.
@@ -870,6 +895,70 @@ public final class AppEnvironment {
         }
         await connection.disconnect()
         connectionStates[id] = .disconnected
+    }
+
+    /// Tear down all live gateway sessions at a lifecycle boundary.
+    ///
+    /// The app lock protects presentation, not already-open sockets. This
+    /// method is therefore called when the app backgrounds and before a lock
+    /// screen is shown. Conversation sessions own their own connectivity
+    /// seam, so they are explicitly disconnected in addition to the base
+    /// gateway connections.
+    public func disconnectAll() async {
+        let connections = Array(activeConnections.values)
+        let conversations = Array(conversationSessions.values)
+        let management = Array(managementSeams.values)
+        let learning = Array(learningSeams.values)
+        let projects = Array(projectsSeams.values)
+        let botMode = Array(botModeChatSeams.values)
+        let rooms = Array(roomSources.values)
+        let roomCommandSeams = Array(self.roomCommands.values)
+        let roomStatusSeams = Array(roomDriverStatuses.values)
+        let roomLinkSeams = Array(self.roomLinks.values)
+
+        for connection in connections {
+            await connection.disconnect()
+        }
+        for conversation in conversations {
+            await conversation.disconnect()
+        }
+        for seam in management {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in learning {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in projects {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in botMode {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in rooms {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in roomCommandSeams {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in roomStatusSeams {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in roomLinkSeams {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+
+        for id in Set(activeConnections.keys)
+            .union(conversationSessions.keys)
+            .union(managementSeams.keys)
+            .union(learningSeams.keys)
+            .union(projectsSeams.keys)
+            .union(botModeChatSeams.keys)
+            .union(roomSources.keys)
+            .union(self.roomCommands.keys)
+            .union(roomDriverStatuses.keys)
+            .union(self.roomLinks.keys) {
+            connectionStates[id] = .disconnected
+        }
     }
 
     /// Reconnect: tear down cleanly, then reconnect. Observable as
@@ -1053,9 +1142,9 @@ public final class AppEnvironment {
             sessionsByRoute[route] = sessions
             sessionReadErrors[route] = nil
         } catch let error as RosterError {
-            sessionReadErrors[route] = error.errorDescription
+            sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         } catch {
-            sessionReadErrors[route] = String(describing: error)
+            sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         }
     }
 

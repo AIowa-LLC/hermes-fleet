@@ -205,10 +205,7 @@ public final class BotRoutinesViewModel {
     // MARK: helpers
 
     static func describe(_ error: any Error) -> String {
-        if let localized = error as? LocalizedError, let text = localized.errorDescription {
-            return text
-        }
-        return String(describing: error)
+        Redaction.safeErrorDescription(error)
     }
 }
 

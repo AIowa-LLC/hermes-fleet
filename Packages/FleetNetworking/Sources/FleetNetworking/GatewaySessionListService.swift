@@ -77,7 +77,7 @@ public actor GatewaySessionListService: SessionListProviding {
             // UI renders it as a failed read (never a crash).
             return .failure(mapConnectivity(error))
         } catch {
-            return .failure(.rpcFailed(String(describing: error)))
+            return .failure(.rpcFailed(Redaction.safeErrorDescription(error)))
         }
     }
 

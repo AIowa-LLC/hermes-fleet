@@ -28,9 +28,13 @@ import FleetCore
 ///   0.21.0 handler signature reads `cols/rows/frames` only and IGNORES
 ///   `profile` (methods_tools.py:1846-1848) — the scope is harmless on
 ///   gateways that don't honor it and correct on ones that grow it.
-public struct GatewayLearningClient: GatewayLearningProviding {
+public struct GatewayLearningClient: GatewayLearningProviding, GatewaySessionDisconnecting {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
+
+    public func disconnect() async {
+        await transport.disconnect()
+    }
 
     private static let log = Logger(
         subsystem: "com.aiowa.hermesfleet", category: "gateway-learning")
@@ -200,7 +204,7 @@ public struct GatewayLearningClient: GatewayLearningProviding {
     static func mapError(_ error: JSONRPCError) -> GatewayLearningError {
         switch error.code {
         default:
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 
@@ -213,7 +217,7 @@ public struct GatewayLearningClient: GatewayLearningProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

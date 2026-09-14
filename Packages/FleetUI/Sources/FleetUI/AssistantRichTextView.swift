@@ -100,6 +100,23 @@ public enum AssistantRichTextURLPolicy {
               url.password == nil else {
             return false
         }
+        // Assistant-authored links are untrusted content. Do not make a
+        // link carrying a credential-like query parameter actionable, even
+        // when its scheme and host are otherwise safe.
+        let sensitiveNames: Set<String> = [
+            "access_token", "apikey", "api_key", "auth", "authorization",
+            "credential", "password", "passwd", "secret", "session",
+            "session_token", "token"
+        ]
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if queryItems.contains(where: { item in
+            let normalized = item.name
+                .lowercased()
+                .replacingOccurrences(of: "-", with: "_")
+            return sensitiveNames.contains(normalized)
+        }) {
+            return false
+        }
         return true
     }
 

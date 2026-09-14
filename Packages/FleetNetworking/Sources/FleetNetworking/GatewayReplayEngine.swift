@@ -89,9 +89,9 @@ public actor GatewayReplayEngine: ReplayProviding {
                 outcomes.append(outcome)
             } catch let error as ReplayError {
                 // Best-effort (§10): record and continue; retried next reconnect.
-                outcomes.append(.failed(sessionID: sessionID, detail: error.localizedDescription))
+                outcomes.append(.failed(sessionID: sessionID, detail: Redaction.safeErrorDescription(error)))
             } catch {
-                outcomes.append(.failed(sessionID: sessionID, detail: String(describing: error)))
+                outcomes.append(.failed(sessionID: sessionID, detail: Redaction.safeErrorDescription(error)))
             }
         }
         await transport.endReplayHold()

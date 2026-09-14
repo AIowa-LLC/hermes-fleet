@@ -73,3 +73,22 @@ public final class PinningTrustHandler: @unchecked Sendable {
         }
     }
 }
+
+/// URLSession delegate adapter for REST sessions that share the gateway's
+/// pinning policy. WebSocket sessions have their own close-code-aware adapter;
+/// REST only needs the same server-trust decision and fail-closed rejection.
+public final class URLSessionPinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    private let trustHandler: PinningTrustHandler
+
+    public init(trustHandler: PinningTrustHandler) {
+        self.trustHandler = trustHandler
+    }
+
+    public func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        trustHandler.evaluate(challenge, completionHandler: completionHandler)
+    }
+}

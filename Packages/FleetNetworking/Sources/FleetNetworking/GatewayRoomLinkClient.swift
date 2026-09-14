@@ -30,9 +30,13 @@ import FleetCore
 /// - `groups.promote` — methods_groups.py:508-517 (confirm:true required,
 ///   4118 otherwise) / hosted_room_replicas.py:198-244 receipt.
 /// - `groups.demote` — hosted_room_replicas.py:247-286.
-public struct GatewayRoomLinkClient: Sendable {
+public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
+
+    public func disconnect() async {
+        await transport.disconnect()
+    }
 
     public init(gatewayID: GatewayID, transport: GatewayWebSocketTransport) {
         self.gatewayID = gatewayID
@@ -327,13 +331,13 @@ public struct GatewayRoomLinkClient: Sendable {
     static func mapError(_ error: JSONRPCError) -> RoomLinkError {
         switch error.code {
         case -32601:
-            return .registrationRefusal("gateway does not support \(error.message)")
+            return .registrationRefusal("gateway does not support \(Redaction.safeText(error.message))")
         case 4118:
-            return .confirmRequired(error.message)
+            return .confirmRequired(Redaction.safeText(error.message))
         case 5120:
-            return .registrationRefusal(error.message)
+            return .registrationRefusal(Redaction.safeText(error.message))
         default:
-            return .rpcFailed(error.message, error.code)
+            return .rpcFailed(Redaction.safeText(error.message), error.code)
         }
     }
     // MARK: - Replay source (manual replication choreography)

@@ -103,9 +103,13 @@ public struct HostedRoomEvent: Hashable, Sendable, Identifiable {
 ///
 /// Sendable: an immutable value holding a `GatewayWebSocketTransport` actor
 /// reference (same shape as `GatewayRosterClient`).
-public struct GatewayGroupsClient: Sendable {
+public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
+
+    public func disconnect() async {
+        await transport.disconnect()
+    }
 
     public init(gatewayID: GatewayID, transport: GatewayWebSocketTransport) {
         self.gatewayID = gatewayID
@@ -364,13 +368,13 @@ public struct GatewayGroupsClient: Sendable {
 
     static func mapError(_ error: JSONRPCError) -> GroupsError {
         switch error.code {
-        case -32601: return .unsupportedMethod(error.message)
-        case 4118: return .confirmRequired(error.message)
+        case -32601: return .unsupportedMethod(Redaction.safeText(error.message))
+        case 4118: return .confirmRequired(Redaction.safeText(error.message))
         default:
             if error.message.contains("managed by another gateway") {
-                return .foreignAuthority(error.message)
+                return .foreignAuthority(Redaction.safeText(error.message))
             }
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 }

@@ -175,6 +175,12 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
         persistLocked(pruneLocked().filter { $0.id != id })
     }
 
+    /// Remove every device-local recent destination.
+    public func removeAll() {
+        lock.lock(); defer { lock.unlock() }
+        persistLocked([])
+    }
+
     // MARK: identity
 
     public static func conversationID(route: Route, sessionID: String) -> String {

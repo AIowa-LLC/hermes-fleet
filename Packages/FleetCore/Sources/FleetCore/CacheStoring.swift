@@ -46,6 +46,17 @@ public protocol CacheStoring: Sendable {
     /// so the client rehydrates from authoritative server state. Fail-closed
     /// on a stale replay_epoch (spec §9.6 / §31 Reconnect).
     func resetForReplayEpochChange(gatewayID: GatewayID) async throws
+
+    /// Delete all device-local cached fleet/session data while retaining the
+    /// saved gateway registry and Keychain credentials. Stores that do not
+    /// support this operation may surface `.unsupported`.
+    func clearCachedData() async throws
+}
+
+public extension CacheStoring {
+    func clearCachedData() async throws {
+        throw CacheStoreError.unsupported
+    }
 }
 
 /// Errors a `CacheStoring` implementation surfaces. None carry secret

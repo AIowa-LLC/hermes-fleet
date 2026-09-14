@@ -96,6 +96,19 @@ final class AssistantRichTextTests: XCTestCase {
         XCTAssertFalse(AssistantRichTextURLPolicy.isActionable(URL(string: "https:///missing-host")!))
     }
 
+    func testURLPolicyRejectsCredentialLikeQueryParameters() {
+        for name in [
+            "token", "access_token", "api_key", "authorization", "password",
+            "secret", "session-token"
+        ] {
+            let url = URL(string: "https://example.com/docs?\(name)=redacted")!
+            XCTAssertFalse(
+                AssistantRichTextURLPolicy.isActionable(url),
+                "credential-like query parameter should remain inert: \(name)")
+        }
+        XCTAssertTrue(AssistantRichTextURLPolicy.isActionable(URL(string: "https://example.com/docs?tab=overview")!))
+    }
+
     func testRendererConfigurationDisablesImagesAndRevealAnimation() {
         let normal = FleetMarkdownRenderConfiguration.make(
             reduceMotion: false,

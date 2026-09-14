@@ -224,7 +224,7 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
         } catch let error as TransportError {
             throw Self.mapTransportError(error)
         } catch {
-            throw SlashCommandError.rpcFailed(String(describing: error))
+            throw SlashCommandError.rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 
@@ -232,7 +232,7 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
         if error.code == -32601 {
             return .unsupportedCapability(method: method)
         }
-        return .rpcFailed("\(error.message) (\(error.code))")
+        return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
     }
 
     static func mapTransportError(_ error: TransportError) -> SlashCommandError {
@@ -244,7 +244,7 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
         case .invalidState(let detail):
             return .rpcFailed("invalid state: \(detail)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

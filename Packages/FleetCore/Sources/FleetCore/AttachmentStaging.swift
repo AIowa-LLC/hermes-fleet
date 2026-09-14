@@ -239,6 +239,28 @@ public enum AttachmentStagingRules {
     /// honest error fires before any upload.
     public static let clientCapBytes = 10 * 1024 * 1024
 
+    /// Convert a picker-provided display name into a bounded basename safe to
+    /// send to the gateway. The gateway remains authoritative for its own
+    /// storage path, but the client must never submit traversal separators or
+    /// control characters as a filename hint.
+    public static func sanitizedFilename(_ filename: String) -> String {
+        let basename = (filename as NSString).lastPathComponent
+        var cleanedScalars = String.UnicodeScalarView()
+        for scalar in basename.unicodeScalars {
+            if CharacterSet.controlCharacters.contains(scalar) || scalar == "/" || scalar == "\\" {
+                cleanedScalars.append("_")
+            } else {
+                cleanedScalars.append(scalar)
+            }
+        }
+        let cleaned = String(cleanedScalars)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, cleaned != ".", cleaned != ".." else {
+            return "attachment"
+        }
+        return String(cleaned.prefix(120))
+    }
+
     /// Extensions the gateway image pipeline accepts — `cli.py`
     /// `_IMAGE_EXTENSIONS` (3954-3958): png/jpg/jpeg/gif/webp/bmp/tiff/tif/
     /// svg/ico. (svg/ico are local `image.attach` paths; keep the set

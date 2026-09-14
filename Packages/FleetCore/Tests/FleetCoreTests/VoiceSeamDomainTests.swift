@@ -29,6 +29,13 @@ final class VoiceSeamDomainTests: XCTestCase {
         XCTAssertNotEqual(VoiceError.unsupported, VoiceError.recognizerUnavailable)
     }
 
+    func testRecognizerUnavailableIsTheFailClosedOnDeviceVoiceState() {
+        XCTAssertEqual(
+            VoiceError.recognizerUnavailable.description,
+            "Speech recognition is unavailable on this device or locale."
+        )
+    }
+
     /// The fail-closed default: every surface throws/undetermined — voice is
     /// never silently faked when no engine is wired.
     func testUnsupportedTranscriberFailsClosed() async {
