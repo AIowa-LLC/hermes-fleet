@@ -31,6 +31,8 @@ jobs:
         run: bash scripts/c1_static.sh
       - name: CI gate policy guard
         run: bash scripts/ci_gate_policy_check.sh
+      - name: CI gate executable contract test
+        run: bash scripts/ci_gate_policy_contract_test.sh
       - name: UI preflight selector self-test
         run: bash scripts/c1_ui_preflight_test.sh
 
@@ -129,29 +131,14 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Require every validation job to have succeeded
+        env:
+          CI_GATE_EVENT_NAME: ${{ github.event_name }}
+          CI_GATE_STATIC_RESULT: ${{ needs.static-guards.result }}
+          CI_GATE_PACKAGES_RESULT: ${{ needs.packages.result }}
+          CI_GATE_UNITS_RESULT: ${{ needs.units.result }}
+          CI_GATE_UI_SHARD_RESULT: ${{ needs.ui-shard.result }}
+          CI_GATE_UI_PREFLIGHT_RESULT: ${{ needs.ui-preflight.result }}
         run: |
           echo "CI Gate dependency results:"
           echo "${{ toJSON(needs.*.result) }}"
-          test "${{ needs.static-guards.result }}" = "success"
-          test "${{ needs.packages.result }}" = "success"
-          test "${{ needs.units.result }}" = "success"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # Pull requests run the focused UI preflight. The full matrix must
-            # not have run in its place, and a skipped preflight is a failure,
-            # not a pass.
-            test "${{ needs.ui-preflight.result }}" = "success"
-            test "${{ needs.ui-shard.result }}" = "skipped"
-          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            # Only merge_group candidates run the complete five-shard matrix.
-            # The PR-only preflight must not have run in its place, and a
-            # skipped shard is a failure, not a pass.
-            test "${{ needs.ui-shard.result }}" = "success"
-            test "${{ needs.ui-preflight.result }}" = "skipped"
-          else
-            # Main pushes intentionally revalidate static/package/unit state
-            # after merge. The merge_group event is the sole UI authority, so
-            # both UI jobs must be skipped on this topology.
-            test "${{ needs.ui-shard.result }}" = "skipped"
-            test "${{ needs.ui-preflight.result }}" = "skipped"
-          fi
-          echo "CI Gate: all required validation jobs succeeded for ${{ github.event_name }}."
+          bash scripts/ci_gate_policy_eval.sh
