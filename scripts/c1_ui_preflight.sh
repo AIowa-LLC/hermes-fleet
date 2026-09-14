@@ -50,8 +50,10 @@ KNOWN="$(bash scripts/c1_ui_matrix.sh --list-classes)" || die "could not read th
 has_class() { case " $KNOWN " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Conservative broad journeys for ambiguous/broad product changes and for
-# product files without a more specific mapping. Keep this set small and broad.
-CORE="HermesFleetHappyPath HermesFleetReconnect P0_7SessionStateMachine FOS3FourRootShell U3TabNavigation"
+# product files without a more specific mapping. Keep this set deliberately
+# small: the complete five-shard merge_group matrix remains authoritative for
+# broad diffs, while pull-request preflight must finish within its own budget.
+CORE="HermesFleetHappyPath P0_7SessionStateMachine"
 # A pull request can touch many product areas at once (for example, a
 # cross-cutting networking/security change).  Keep the PR signal bounded and
 # deterministic: the full five-shard merge_group matrix remains authoritative
