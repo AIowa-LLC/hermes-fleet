@@ -1,13 +1,14 @@
 #!/bin/bash
 # L1 live gateway dogfood — start a PERSISTENT real Hermes gateway surface
 # (loopback, fresh serve) for the Phase 2/3 UI dogfood. Writes the test-only
-# token to /tmp/l1_live_test/.token (chmod 600) for the XCUITest to consume.
+# token to the operator-configured live work directory (chmod 600) for the
+# XCUITest to consume.
 # The token is never printed. Prints the serve PID for later teardown.
 set -u
 VENV=~/.hermes/hermes-agent/venv/bin
 HERMES=$VENV/hermes
 PORT=9119
-WORK=/tmp/l1_live_test
+WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
 mkdir -p "$WORK"
 
 echo "=== L1: start persistent live gateway surface on :$PORT ==="

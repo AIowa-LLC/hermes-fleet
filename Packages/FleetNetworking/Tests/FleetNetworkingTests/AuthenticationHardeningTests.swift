@@ -79,11 +79,11 @@ final class AuthenticationHardeningTests: XCTestCase {
 
     func testWSTicketClientDescriptionNeverIncludesSessionToken() {
         let client = WSTicketClient(
-            baseURL: URL(string: "http://192.168.50.58:9119")!,
+            baseURL: URL(string: "https://gateway.example.invalid:9119")!,
             sessionToken: "loopback-secret-token")
         XCTAssertFalse(client.description.contains("loopback-secret"))
         XCTAssertFalse("\(client)".contains("loopback-secret"))
-        XCTAssertTrue(client.description.contains("192.168.50.58"))
+        XCTAssertTrue(client.description.contains("gateway.example.invalid"))
     }
 
     // MARK: GatewayAuthenticator — ticket path

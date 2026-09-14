@@ -146,8 +146,8 @@ final class GatewayRegistryDomainTests: XCTestCase {
 
     func testGatewayIDDerivedFromEndpoint() {
         XCTAssertEqual(
-            GatewayID(endpoint: URL(string: "http://192.168.50.58:8642")!).rawValue,
-            "192.168.50.58:8642")
+            GatewayID(endpoint: URL(string: "https://gateway.example.invalid:8642")!).rawValue,
+            "gateway.example.invalid:8642")
         XCTAssertEqual(
             GatewayID(endpoint: URL(string: "https://workstation:9119")!).rawValue,
             "workstation:9119")

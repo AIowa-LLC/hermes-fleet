@@ -7,6 +7,7 @@
 set -u
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
+WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
 PASS=0
 FAIL=0
 declare -a FAILURES=()
@@ -86,7 +87,7 @@ fi
 # --- 7. Live-gateway Release XCUITest (requires serve on :9119) --------------
 note "Live-gateway Release XCUITest (L1FixLiveGatewayUITests)"
 if lsof -nP -iTCP:9119 -sTCP:LISTEN >/dev/null 2>&1; then
-  if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
+  if HERMES_FLEET_TOKEN_FILE="$WORK/.token" xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
       -destination "$DEST" -derivedDataPath "$DD" -configuration Release \
       -only-testing:HermesFleetAppUITests/L1FixLiveGatewayUITests \
       test >/tmp/l1fix_ui_test.log 2>&1; then
@@ -101,8 +102,8 @@ fi
 
 # --- 8. Secrets scan ---------------------------------------------------------
 note "Secrets scan (test token must not appear in committed files)"
-if [ -f /tmp/l1_live_test/.token ]; then
-  TOK=$(cat /tmp/l1_live_test/.token)
+if [ -f "$WORK/.token" ]; then
+  TOK=$(cat "$WORK/.token")
   CNT=$(grep -rF "$TOK" HermesFleetApp HermesFleetAppTests HermesFleetAppUITests docs scripts Packages 2>/dev/null | grep -v '^Binary' | wc -l | tr -d ' ')
   if [ "$CNT" = "0" ]; then
     ok "test token appears in 0 committed files"

@@ -13,7 +13,7 @@ final class RoutingGuardTests: XCTestCase {
 
     func testValidRouteComponentsPass() {
         for raw in ["default", "researcher", "apple-dev", "gateway-a",
-                    "192.168.50.58", "192.168.50.58:8642", "workstation",
+                    "gateway.example.invalid", "gateway.example.invalid:8642", "workstation",
                     "arch", "render-box", "a_b_c", "0"] {
             XCTAssertTrue(RoutingGuard.isValidRouteComponent(raw),
                           "expected '\(raw)' to be a safe route component")
@@ -76,7 +76,7 @@ final class RoutingGuardTests: XCTestCase {
 
     func testGatewayIDSafetySurface() {
         XCTAssertTrue(GatewayID(rawValue: "workstation").isRoutingSafe)
-        XCTAssertTrue(GatewayID(rawValue: "192.168.50.58:8642").isRoutingSafe)
+        XCTAssertTrue(GatewayID(rawValue: "gateway.example.invalid:8642").isRoutingSafe)
         XCTAssertFalse(GatewayID(rawValue: "../gateway").isRoutingSafe)
         XCTAssertFalse(GatewayID(rawValue: "a/b").isRoutingSafe)
         XCTAssertFalse(GatewayID(rawValue: "a#b").isRoutingSafe)

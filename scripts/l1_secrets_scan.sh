@@ -5,6 +5,7 @@ set -u
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_ROOT"
+WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
 
 echo "=== L1: pre-commit secrets scan ==="
 FILES=$(git status --short | grep -E '^\?\?' | awk '{print $2}' | grep -E 'L1|l1')
@@ -17,9 +18,9 @@ for f in $FILES; do
 done
 
 echo
-echo "--- verify no committed token value: scan /tmp/l1_live_test/.token vs repo ---"
-if [ -f /tmp/l1_live_test/.token ]; then
-  TOK=$(cat /tmp/l1_live_test/.token)
+echo "--- verify no committed token value: scan live token file vs repo ---"
+if [ -f "$WORK/.token" ]; then
+  TOK=$(cat "$WORK/.token")
   CNT=$(grep -rF "$TOK" docs/L1-live-dogfood.md HermesFleetAppUITests/L1LiveGatewayUITests.swift scripts/l1_*.sh 2>/dev/null | wc -l | tr -d ' ')
   echo "  occurrences of the test token in evidence files: $CNT (must be 0)"
 else

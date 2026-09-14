@@ -8,7 +8,7 @@ VENV=~/.hermes/hermes-agent/venv/bin
 VENV_PY=$VENV/python
 HERMES=$VENV/hermes
 PORT=9119
-WORK=/tmp/l1_live_test
+WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
 mkdir -p "$WORK"
 
 echo "=== L1 Phase 1b lean: live JSON-RPC surface proof (?token=) ==="

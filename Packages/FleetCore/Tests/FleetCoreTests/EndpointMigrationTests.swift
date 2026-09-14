@@ -30,13 +30,13 @@ final class EndpointMigrationTests: XCTestCase {
     }
 
     func testTailnetIP8642Migrates() {
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://100.127.200.89:8642", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://100.127.0.89:8642", defaultEndpoint: tunnel), .migrated)
     }
 
     func testTailnetIP9119Migrates() {
         // F1-era direct spelling — its ATS exception is stripped, so leaving
         // it would silently fail ATS on device.
-        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://100.127.200.89:9119", defaultEndpoint: tunnel), .migrated)
+        XCTAssertEqual(EndpointMigration.classify(endpoint: "http://100.127.0.89:9119", defaultEndpoint: tunnel), .migrated)
     }
 
     func testMagicDNSHostMigrates() {
@@ -74,7 +74,7 @@ final class EndpointMigrationTests: XCTestCase {
 
     func testMigrateEndpointsRewritesOnlyDeadRows() {
         let records = [
-            record("http://100.127.200.89:8642", id: "gw-relay"),
+            record("http://100.127.0.89:8642", id: "gw-relay"),
             record("https://other.example.com:9119", id: "other-gateway"),
             record(tunnel, id: "already"),
         ]
@@ -114,8 +114,8 @@ final class EndpointMigrationTests: XCTestCase {
         // Dead classification is SHAPE-based (private/loopback/CGNAT/ts.net).
         // Guards: no LIVE endpoint is compiled in (the classifier never marks
         // a public host dead), and every historical spelling shape is caught.
-        for host in ["192.168.50.20", "100.127.200.89", "node-a.tailnet-example.ts.net",
-                     "127.0.0.1", "localhost", "100.100.200.61"] {
+        for host in ["192.168.50.20", "100.127.0.89", "node-a.tailnet-example.ts.net",
+                     "127.0.0.1", "localhost", "100.100.0.1"] {
             XCTAssertTrue(EndpointMigration.isDeadHost(host), "historical shape must classify dead: \(host)")
         }
         for host in ["gateway.example.net", "example.com", "1.1.1.1"] {

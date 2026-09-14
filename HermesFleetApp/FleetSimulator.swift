@@ -1176,10 +1176,10 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                     sessionID: sessionID,
                     requestID: "scripted-approval-1",
                     // Fixture token is FAKE (demo only) — allowline-annotated
-                    // because the gitleaks curl-auth-header regex matches any
-                    // token-shaped bearer literal regardless of validity.
-                    command: "rm -rf /tmp/scratch && curl -H 'Authorization: Bearer sk-live-demo' https://api", // gitleaks:allow
-                    detail: "Scripted dangerous command (simulator demo)",
+                    // because the redaction path must be exercised with a
+                    // token-shaped bearer fixture, even though it is inert.
+                    command: "curl -H 'Authorization: Bearer fixture-bearer-demo' https://api.example.invalid",
+                    detail: "Scripted credential-bearing command (simulator demo)",
                     choices: ["once", "session", "always", "deny"]
                 ))
             }

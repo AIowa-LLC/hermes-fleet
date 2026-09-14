@@ -92,12 +92,12 @@ final class AuthenticationDomainTests: XCTestCase {
     // MARK: Redaction — spec §29 (redact credentials + sensitive query params)
 
     func testRedactionScrubsSensitiveQueryValues() {
-        let url = URL(string: "http://192.168.50.58:9119/api/ws?ticket=abc123&channel=chat")!
+        let url = URL(string: "https://gateway.example.invalid:9119/api/ws?ticket=abc123&channel=chat")!
         let redacted = Redaction.redactedURL(url)
         XCTAssertFalse(redacted.contains("abc123"), "ticket value must never appear")
         XCTAssertTrue(redacted.contains("ticket="), "sensitive key redacted (encoded [REDACTED] or raw)")
         XCTAssertTrue(redacted.contains("channel=chat"), "non-secret query preserved")
-        XCTAssertTrue(redacted.contains("192.168.50.58"), "host preserved for §30 classification")
+        XCTAssertTrue(redacted.contains("gateway.example.invalid"), "host preserved for §30 classification")
     }
 
     func testRedactionScrubsTokenAndAccessToken() {
@@ -111,7 +111,7 @@ final class AuthenticationDomainTests: XCTestCase {
     }
 
     func testRedactionLeavesNonSensitiveURLsUnchanged() {
-        let url = URL(string: "http://192.168.50.58:8642/profiles.list?limit=10")!
+        let url = URL(string: "https://gateway.example.invalid:8642/profiles.list?limit=10")!
         let redacted = Redaction.redactedURL(url)
         XCTAssertTrue(redacted.contains("limit=10"))
     }
@@ -121,24 +121,24 @@ final class AuthenticationDomainTests: XCTestCase {
     func testRedactionStripsURLUserInfoPassword() {
         // A pasted endpoint with embedded credentials must not print the
         // user:password@ half of the URL (red-team P1-6).
-        let url = URL(string: "http://alice:super-secret-pw@192.168.50.58:9119/api/ws")!
+        let url = URL(string: "https://alice:fixture-password@gateway.example.invalid:9119/api/ws")!
         let redacted = Redaction.redactedURL(url)
         XCTAssertFalse(redacted.contains("super-secret-pw"), "URL password must never be printed")
         XCTAssertFalse(redacted.contains("alice:"), "URL user-info must be stripped")
         XCTAssertFalse(redacted.contains("@"), "the user-info delimiter must not survive")
-        XCTAssertTrue(redacted.contains("192.168.50.58"), "host preserved for §30 classification")
+        XCTAssertTrue(redacted.contains("gateway.example.invalid"), "host preserved for §30 classification")
     }
 
     func testRedactionStripsUserInfoAndStillRedactsSensitiveQuery() {
         // user-info + a secret query key together: BOTH must be scrubbed.
-        let url = URL(string: "http://user:pass@192.168.50.58:9119/api/ws?ticket=abc123&channel=chat")!
+        let url = URL(string: "https://user:fixture-password@gateway.example.invalid:9119/api/ws?ticket=abc123&channel=chat")!
         let redacted = Redaction.redactedURL(url)
         XCTAssertFalse(redacted.contains("pass"))
         XCTAssertFalse(redacted.contains("user:"))
         XCTAssertFalse(redacted.contains("abc123"), "ticket value never appears")
         XCTAssertTrue(redacted.contains("ticket="), "sensitive key redacted")
         XCTAssertTrue(redacted.contains("channel=chat"), "non-secret query preserved")
-        XCTAssertTrue(redacted.contains("192.168.50.58"), "host preserved")
+        XCTAssertTrue(redacted.contains("gateway.example.invalid"), "host preserved")
     }
 
     func testRedactionPlaceholderValue() {

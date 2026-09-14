@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 
 LAN_HOST="${HERMES_FLEET_LAN_HOST:?Set HERMES_FLEET_LAN_HOST to YOUR gateway LAN host}"
 LAN_PORT="${HERMES_FLEET_LAN_PORT:-9120}"
+CRED="${HERMES_FLEET_CREDENTIAL_FILE:?Set HERMES_FLEET_CREDENTIAL_FILE to an operator-owned 0600 credential file}"
 echo "=== gateway $LAN_HOST:$LAN_PORT ==="
 if nc -z -w 3 "$LAN_HOST" "$LAN_PORT" 2>/dev/null; then
   echo "  UP (TCP connect ok)"
@@ -13,9 +14,9 @@ else
   echo "  DOWN — UI test cannot run; is hermes serve LAN surface alive?"
 fi
 
-echo "=== /tmp/hermes_lan_surface/.cred ==="
-if [ -f /tmp/hermes_lan_surface/.cred ]; then
-  perms=$(stat -f '%Lp' /tmp/hermes_lan_surface/.cred)
+echo "=== operator credential file ==="
+if [ -f "$CRED" ]; then
+  perms=$(stat -f '%Lp' "$CRED")
   echo "  present (mode $perms)"
   [ "$perms" = "600" ] && echo "  mode ok (0600)" || echo "  WARN: mode is $perms, expected 600"
 else
