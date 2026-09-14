@@ -175,6 +175,20 @@ final class AttachmentStagingViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.attachmentError)
     }
 
+    func testAttachmentFilenameIsReducedToAPathSafeBoundedBasename() async throws {
+        let (session, viewModel) = try await makeFixture()
+        let payload = Data("fixture".utf8)
+
+        await viewModel.stageAttachment(
+            name: "../private\\notes\u{0000}.md",
+            mime: "text/markdown",
+            byteCount: payload.count,
+            loadBytes: { payload })
+
+        XCTAssertEqual(session.attachmentsBox.calls.first?.name, "private_notes_.md")
+        XCTAssertEqual(viewModel.pendingAttachments.first?.displayName, "private_notes_.md")
+    }
+
     func testSendComposesStagedRefsOntoPromptAndClearsTray() async throws {
         let (session, viewModel) = try await makeFixture()
         let payload = Data("csv,fixture".utf8)

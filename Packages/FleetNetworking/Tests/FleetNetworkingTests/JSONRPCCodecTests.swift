@@ -118,4 +118,11 @@ final class JSONRPCCodecTests: XCTestCase {
         XCTAssertEqual(decoded["nested"]?["k"]?.stringValue, "v")
         XCTAssertEqual(decoded["arr"]?.arrayValue?.count, 2)
     }
+
+    func testOversizedFramesAreRejectedBeforeDecode() {
+        let oversized = Data(repeating: 0x20, count: JSONRPCCodec.maxFrameBytes + 1)
+        XCTAssertThrowsError(try JSONRPCCodec.decode(oversized)) { error in
+            XCTAssertEqual(error as? CodecError, .frameTooLarge)
+        }
+    }
 }
