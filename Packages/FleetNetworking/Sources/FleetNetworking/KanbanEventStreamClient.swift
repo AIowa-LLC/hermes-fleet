@@ -224,6 +224,10 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     public func changeEvents() async -> AsyncStream<KanbanEventBatch> {
         // Runs on the actor: subscriber registration + pump start are
         // isolated state mutations.
+        // A watcher is retained by AppEnvironment across view lifecycles so
+        // the app can stop it at a background/lock boundary. A later board
+        // view is a deliberate new owner, so make that watcher restartable.
+        stopped = false
         let id = UUID()
         return AsyncStream(bufferingPolicy: .bufferingNewest(32)) { continuation in
             subscribers[id] = continuation

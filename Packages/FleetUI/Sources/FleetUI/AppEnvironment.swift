@@ -336,6 +336,12 @@ public final class AppEnvironment {
     /// created on first conversation screen use).
     private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
 
+    /// Long-lived Kanban event watchers, retained by the runtime so a
+    /// background/lock boundary can stop their reconnect pumps even when the
+    /// board view itself remains mounted. The concrete watcher is restartable
+    /// when a board view is opened again.
+    @ObservationIgnored private var kanbanWatchers: [GatewayID: any KanbanBoardWatching] = [:]
+
     /// R9-T5/T6: lazily-built management seams per gateway (one per
     /// gateway; created on first Cron/Skills pane use — the pane's
     /// transport survives view teardowns like a conversation session's).
@@ -849,6 +855,16 @@ public final class AppEnvironment {
         try await cache.clearCachedData()
         activeConnections.removeAll()
         conversationSessions.removeAll()
+        kanbanWatchers.removeAll()
+        managementSeams.removeAll()
+        learningSeams.removeAll()
+        projectsSeams.removeAll()
+        botModeChatSeams.removeAll()
+        roomSources.removeAll()
+        roomCommands.removeAll()
+        roomDriverStatuses.removeAll()
+        roomLinks.removeAll()
+        connectionStates.removeAll()
         continueIndex.removeAll()
         gatewayFormDraft.clear()
         rosterSnapshot = nil
@@ -907,6 +923,7 @@ public final class AppEnvironment {
     public func disconnectAll() async {
         let connections = Array(activeConnections.values)
         let conversations = Array(conversationSessions.values)
+        let kanban = Array(kanbanWatchers.values)
         let management = Array(managementSeams.values)
         let learning = Array(learningSeams.values)
         let projects = Array(projectsSeams.values)
@@ -921,6 +938,9 @@ public final class AppEnvironment {
         }
         for conversation in conversations {
             await conversation.disconnect()
+        }
+        for watcher in kanban {
+            await watcher.stop()
         }
         for seam in management {
             await (seam as? any GatewaySessionDisconnecting)?.disconnect()
@@ -949,6 +969,7 @@ public final class AppEnvironment {
 
         for id in Set(activeConnections.keys)
             .union(conversationSessions.keys)
+            .union(kanbanWatchers.keys)
             .union(managementSeams.keys)
             .union(learningSeams.keys)
             .union(projectsSeams.keys)
@@ -1048,12 +1069,45 @@ public final class AppEnvironment {
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
         // conversation session, and clear observable lifecycle state.
-        if let connection = activeConnections[id] {
-            await connection.disconnect()
+        if let connection = activeConnections[id] { await connection.disconnect() }
+        if let conversation = conversationSessions[id] { await conversation.disconnect() }
+        if let watcher = kanbanWatchers.removeValue(forKey: id) { await watcher.stop() }
+        if let seam = managementSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = learningSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = projectsSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = botModeChatSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomSources[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomCommands[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomDriverStatuses[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomLinks[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
         }
         activeConnections[id] = nil
         conversationSessions[id] = nil
         managementSeams[id] = nil
+        learningSeams[id] = nil
+        projectsSeams[id] = nil
+        botModeChatSeams[id] = nil
+        roomSources[id] = nil
+        roomCommands[id] = nil
+        roomDriverStatuses[id] = nil
+        roomLinks[id] = nil
+        roomsByGateway[id] = nil
+        canCreateRoomsByGateway[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
         testResultObservedAt[id] = nil
@@ -1201,7 +1255,10 @@ public final class AppEnvironment {
     /// factory is wired (the screen renders its unavailable state, fail
     /// closed).
     public func makeKanbanWatcher(for gateway: FleetGateway) -> (any KanbanBoardWatching)? {
-        kanbanWatcherFactory?(gateway)
+        if let existing = kanbanWatchers[gateway.id] { return existing }
+        guard let watcher = kanbanWatcherFactory?(gateway) else { return nil }
+        kanbanWatchers[gateway.id] = watcher
+        return watcher
     }
 
     // MARK: Management panes (R9-T5/T6 — cron + skills)
