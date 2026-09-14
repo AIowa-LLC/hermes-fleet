@@ -130,6 +130,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout gate evaluator
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - name: Require every validation job to have succeeded
         env:
           CI_GATE_EVENT_NAME: ${{ github.event_name }}
