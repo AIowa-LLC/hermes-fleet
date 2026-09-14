@@ -10,7 +10,8 @@ import FleetCore
 /// - `.tofuAccept` / `.pinMatched` → `.useCredential` with a trust derived
 ///   from the CHALLENGE's SecTrust (trusts the self-signed cert by pin,
 ///   ignoring system roots);
-/// - `.pinMismatch` / `.internalError` → `.cancelAuthenticationChallenge`
+/// - `.firstUseRequiresConfirmation` / `.pinMismatch` / `.internalError` →
+///   `.cancelAuthenticationChallenge`
 ///   (REJECT — the connection never completes; no data flows to an
 ///   untrusted peer).
 /// Non-server-trust challenges are `.performDefaultHandling` (not ours).
@@ -24,9 +25,14 @@ public final class PinningTrustHandler: @unchecked Sendable {
 
     private let lock = NSLock()
 
-    public init(gatewayID: GatewayID, pinStore: any SynchronousPinStoring) {
+    public init(
+        gatewayID: GatewayID,
+        pinStore: any SynchronousPinStoring,
+        approvalStore: (any SynchronousTLSFirstUseApprovalStoring)? = nil
+    ) {
         self.gatewayID = gatewayID
-        self.evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: pinStore)
+        self.evaluator = TLSTrustEvaluator(
+            gatewayID: gatewayID, pinStore: pinStore, approvalStore: approvalStore)
     }
 
     /// Evaluate a server-trust authentication challenge (the URLSession
@@ -68,7 +74,7 @@ public final class PinningTrustHandler: @unchecked Sendable {
         switch verdict {
         case .tofuAccept, .pinMatched:
             completionHandler(.useCredential, URLCredential(trust: trust))
-        case .pinMismatch, .internalError:
+        case .firstUseRequiresConfirmation, .pinMismatch, .internalError:
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }

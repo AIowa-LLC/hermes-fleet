@@ -9,6 +9,9 @@ public enum TLSTrustVerdict: Sendable, Equatable {
     case tofuAccept(SPKIFingerprint)
     /// The presented certificate's SPKI matches the stored pin.
     case pinMatched(SPKIFingerprint)
+    /// First use was blocked because the user has not explicitly approved
+    /// trusting this gateway's presented key.
+    case firstUseRequiresConfirmation(SPKIFingerprint)
     /// The presented certificate's SPKI differs from the stored pin —
     /// MITM or replaced certificate. REJECT.
     case pinMismatch(expected: SPKIFingerprint, presented: SPKIFingerprint)
@@ -30,10 +33,16 @@ public enum TLSTrustVerdict: Sendable, Equatable {
 public struct TLSTrustEvaluator: Sendable {
     public let gatewayID: GatewayID
     private let pinStore: any SynchronousPinStoring
+    private let approvalStore: (any SynchronousTLSFirstUseApprovalStoring)?
 
-    public init(gatewayID: GatewayID, pinStore: any SynchronousPinStoring) {
+    public init(
+        gatewayID: GatewayID,
+        pinStore: any SynchronousPinStoring,
+        approvalStore: (any SynchronousTLSFirstUseApprovalStoring)? = nil
+    ) {
         self.gatewayID = gatewayID
         self.pinStore = pinStore
+        self.approvalStore = approvalStore
     }
 
     /// Evaluate the presented leaf certificate. Synchronous by design (the
@@ -49,7 +58,20 @@ public struct TLSTrustEvaluator: Sendable {
             return .internalError("pin store unavailable (fail closed)")
         }
         guard let expected else {
-            // Trust on first use: accept AND persist the pin.
+            // Production requires an explicit user decision before TOFU can
+            // persist a key. Tests and non-production callers may omit the
+            // approval seam to preserve the pure evaluator's legacy contract.
+            if let approvalStore {
+                do {
+                    guard try approvalStore.syncIsFirstUseApproved(for: gatewayID) else {
+                        return .firstUseRequiresConfirmation(presented)
+                    }
+                } catch {
+                    return .internalError("first-use approval store unavailable (fail closed)")
+                }
+            }
+            // Trust on first use: accept AND persist the pin only after the
+            // explicit approval above.
             do {
                 try pinStore.syncSavePin(presented, for: gatewayID)
             } catch {

@@ -51,6 +51,33 @@ final class TLSTrustEvaluatorTests: XCTestCase {
         XCTAssertEqual(stored?.base64String, TLSFixtureIdentities.gatewaySPKIBase64)
     }
 
+    func testFirstUseRequiresExplicitApprovalWhenApprovalStoreIsConfigured() throws {
+        let store = InMemoryPinStore()
+        let evaluator = TLSTrustEvaluator(
+            gatewayID: gatewayID,
+            pinStore: store,
+            approvalStore: store)
+
+        let verdict = evaluator.verdict(forPresentedCertificate: try gatewayCert())
+
+        XCTAssertEqual(verdict, .firstUseRequiresConfirmation(try gatewayPin))
+        XCTAssertNil(try store.syncLoadPin(for: gatewayID), "unapproved first use must not pin")
+    }
+
+    func testApprovedFirstUsePinsAndReconnects() throws {
+        let store = InMemoryPinStore()
+        try store.syncSetFirstUseApproved(true, for: gatewayID)
+        let evaluator = TLSTrustEvaluator(
+            gatewayID: gatewayID,
+            pinStore: store,
+            approvalStore: store)
+
+        let verdict = evaluator.verdict(forPresentedCertificate: try gatewayCert())
+
+        XCTAssertEqual(verdict, .tofuAccept(try gatewayPin))
+        XCTAssertEqual(try store.syncLoadPin(for: gatewayID), try gatewayPin)
+    }
+
     func testPinnedCertificateMatchesOnReconnect() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)

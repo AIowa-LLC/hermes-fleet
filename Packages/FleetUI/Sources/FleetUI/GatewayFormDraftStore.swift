@@ -37,6 +37,10 @@ public final class GatewayFormDraftStore {
     public var usernameText = ""
     public var passwordText = ""
     public var confirmsCleartextSend = false
+    /// Explicit user consent for secure TOFU on the next connection. This is
+    /// in-memory form state only; the approval is persisted by AppEnvironment
+    /// only after a successful save.
+    public var confirmsTLSFirstUse = false
     /// P2-6 inline save-failure message (non-secret) — survives the lock too.
     public var saveError: String?
 
@@ -57,6 +61,7 @@ public final class GatewayFormDraftStore {
         usernameText = ""
         passwordText = ""
         confirmsCleartextSend = false
+        confirmsTLSFirstUse = false
         saveError = nil
     }
 
@@ -72,6 +77,7 @@ public final class GatewayFormDraftStore {
         usernameText = ""
         passwordText = ""
         confirmsCleartextSend = false
+        confirmsTLSFirstUse = false
         saveError = nil
     }
 

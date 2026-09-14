@@ -262,6 +262,10 @@ public final class AppEnvironment {
     private let registry: any GatewayRegistryManaging
     private let roster: any FleetRosterProviding
     private let cache: any CacheStoring
+    /// Optional production TLS trust stores. Scripted/test environments do
+    /// not need the UI re-pair surface and leave these nil.
+    private let tlsPinStore: (any TLSPinStoring)?
+    private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
     private let connectionFactory: FleetConnectionFactory
     /// H2: connection-health accumulator (FleetCore seam; concrete
     /// `GatewayHealthStatsAccumulator` fed by the composition root's transport
@@ -365,6 +369,8 @@ public final class AppEnvironment {
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
         cache: any CacheStoring,
+        tlsPinStore: (any TLSPinStoring)? = nil,
+        tlsApprovalStore: (any TLSFirstUseApprovalStoring)? = nil,
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
@@ -388,6 +394,8 @@ public final class AppEnvironment {
         self.registry = registry
         self.roster = roster
         self.cache = cache
+        self.tlsPinStore = tlsPinStore
+        self.tlsApprovalStore = tlsApprovalStore
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
@@ -1046,9 +1054,13 @@ public final class AppEnvironment {
     /// or logged. `nil` credential → registration only.
     public func addGateway(
         _ registration: GatewayRegistration,
-        credential: GatewayCredential?
+        credential: GatewayCredential?,
+        confirmsTLSFirstUse: Bool = false
     ) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        if confirmsTLSFirstUse {
+            try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
+        }
         if let credential {
             try await registry.saveCredential(credential, for: gateway.id)
         }
@@ -1158,6 +1170,36 @@ public final class AppEnvironment {
     /// Whether a credential is currently stored for a gateway (Keychain).
     public func hasCredential(for id: GatewayID) async -> Bool {
         await registry.hasCredential(for: id)
+    }
+
+    // MARK: TLS trust lifecycle (T3)
+
+    /// Record the user's explicit decision to trust the first secure
+    /// certificate presented by a gateway. The transport will still pin the
+    /// presented SPKI only after this decision is present.
+    public func approveTLSFirstUse(for id: GatewayID) async throws {
+        guard gateways.contains(where: { $0.id == id }) else {
+            throw GatewayRegistryError.notFound(id)
+        }
+        try await tlsApprovalStore?.approveFirstUse(for: id)
+    }
+
+    /// Clear both the stored SPKI and the first-use decision. The next secure
+    /// connection is blocked until the user reviews the gateway again and
+    /// explicitly confirms the new certificate (re-pair/rotation flow).
+    public func resetTLSTrust(for id: GatewayID) async throws {
+        guard gateways.contains(where: { $0.id == id }) else {
+            throw GatewayRegistryError.notFound(id)
+        }
+        try await tlsPinStore?.deletePin(for: id)
+        try await tlsApprovalStore?.resetFirstUseApproval(for: id)
+    }
+
+    /// Public-key fingerprint currently pinned for a gateway, for the
+    /// non-secret trust-status display. The full value is intentionally not
+    /// logged; the UI may show the stable abbreviated description.
+    public func tlsPin(for id: GatewayID) async -> SPKIFingerprint? {
+        try? await tlsPinStore?.loadPin(for: id)
     }
 
     // MARK: Test connection (§13 reachable/unreachable probe, observable)

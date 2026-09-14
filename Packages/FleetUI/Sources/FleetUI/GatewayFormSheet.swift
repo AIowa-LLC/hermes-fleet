@@ -31,7 +31,7 @@ struct GatewayFormSheet: View {
     /// P2-6: the save seam now THROWS on failure so the form can distinguish a
     /// successful save (dismiss + clear secrets) from a failure (keep the
     /// sheet open, preserve non-secret fields for retry, surface the error).
-    private let onSave: (GatewayRegistration, GatewayCredential?) async throws -> Void
+    private let onSave: (GatewayRegistration, GatewayCredential?, Bool) async throws -> Void
 
     /// The root-owned draft store this form binds to (P0-2).
     @Bindable private var draftStore: GatewayFormDraftStore
@@ -46,7 +46,7 @@ struct GatewayFormSheet: View {
         saveButton: String,
         initial: FleetGateway?,
         draftStore: GatewayFormDraftStore,
-        onSave: @escaping (GatewayRegistration, GatewayCredential?) async throws -> Void
+        onSave: @escaping (GatewayRegistration, GatewayCredential?, Bool) async throws -> Void
     ) {
         self.title = title
         self.saveButton = saveButton
@@ -120,6 +120,26 @@ struct GatewayFormSheet: View {
                     } header: {
                         Text("Security Warning")
                             .foregroundStyle(FleetTheme.statusDestructive)
+                    }
+                }
+
+                if secureEndpoint {
+                    Section {
+                        Label {
+                            Text("Verify this address and certificate with the gateway operator before pairing. Hermes Fleet will store the certificate's public-key fingerprint and block unexpected changes.")
+                                .font(.subheadline)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "lock.shield")
+                                .foregroundStyle(theme.highlight)
+                        }
+                        .accessibilityIdentifier("fleet.gateways.form.tls-first-use-warning")
+
+                        Toggle("I trust this gateway's first certificate", isOn: $draftStore.confirmsTLSFirstUse)
+                            .accessibilityIdentifier("fleet.gateways.form.tls-first-use-confirm")
+                    } header: {
+                        Text("Secure Pairing")
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
 
@@ -288,7 +308,13 @@ struct GatewayFormSheet: View {
     }
 
     private var isValid: Bool {
-        !trimmedName.isEmpty && endpointURL != nil && (!cleartextRisk || draftStore.confirmsCleartextSend)
+        !trimmedName.isEmpty && endpointURL != nil
+            && (!cleartextRisk || draftStore.confirmsCleartextSend)
+            && (!secureEndpoint || draftStore.confirmsTLSFirstUse)
+    }
+
+    private var secureEndpoint: Bool {
+        endpointURL?.scheme?.lowercased() == "https"
     }
 
     private func save() {
@@ -321,7 +347,7 @@ struct GatewayFormSheet: View {
                 // P2-6: only dismiss on SUCCESS. On failure the sheet stays
                 // open with the non-secret fields preserved for retry and the
                 // (non-secret) error surfaced inline — no discarded input.
-                try await onSave(registration, credential)
+                try await onSave(registration, credential, draftStore.confirmsTLSFirstUse)
                 isSaving = false
                 // P0-2: successful save wipes the draft (secret material
                 // included) so nothing lingers after the sheet closes.

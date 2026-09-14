@@ -8,15 +8,21 @@ public enum WebSocketMessage: Sendable, Hashable, Equatable {
 }
 
 /// T3 — thrown when the TLS trust handler REJECTED the peer because the
-/// presented certificate's SPKI differs from the pinned pin (possible
-/// MITM / replaced certificate). Carries the pins (public key material —
-/// not secret) so the UI can render the warn-on-change flow.
+/// presented certificate was rejected by the pin policy. It may be a changed
+/// key or an unapproved first-use key. Carries only public key material so the
+/// UI can render the appropriate re-pair/confirmation flow.
 public struct TLSPinRejectedError: Error, Sendable, Equatable {
     public let expected: String
     public let presented: String
-    public init(expected: String, presented: String) {
+    public let requiresFirstUseConfirmation: Bool
+    public init(
+        expected: String,
+        presented: String,
+        requiresFirstUseConfirmation: Bool = false
+    ) {
         self.expected = expected
         self.presented = presented
+        self.requiresFirstUseConfirmation = requiresFirstUseConfirmation
     }
 }
 
@@ -108,13 +114,23 @@ public final class URLSessionWebSocketSession: WebSocketSession, @unchecked Send
                 return
             }
             trustHandler.evaluate(challenge) { [weak self] disposition, credential in
-                if disposition == .cancelAuthenticationChallenge,
-                   case .pinMismatch(let expected, let presented)? = self?.trustHandler?.lastVerdict {
+                if disposition == .cancelAuthenticationChallenge {
+                    let verdict = self?.trustHandler?.lastVerdict
                     self?.failureLock.withLock { box in
-                        if box == nil {
+                        guard box == nil else { return }
+                        guard let verdict else { return }
+                        switch verdict {
+                        case .pinMismatch(let expected, let presented):
                             box = TLSPinRejectedError(
                                 expected: expected.base64String,
                                 presented: presented.base64String)
+                        case .firstUseRequiresConfirmation(let presented):
+                            box = TLSPinRejectedError(
+                                expected: "first-use-approval-required",
+                                presented: presented.base64String,
+                                requiresFirstUseConfirmation: true)
+                        default:
+                            break
                         }
                     }
                 }

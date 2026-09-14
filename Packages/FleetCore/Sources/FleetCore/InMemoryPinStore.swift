@@ -7,8 +7,11 @@ import os
 /// missing item is nil / no-op, errors carry no secrets) but holds values in
 /// a plain dictionary for unit tests and SwiftUI previews. NEVER used in
 /// production.
-public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring, @unchecked Sendable {
+public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring,
+    TLSFirstUseApprovalStoring, SynchronousTLSFirstUseApprovalStoring,
+    @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<[String: SPKIFingerprint]>(initialState: [:])
+    private let approvalLock = OSAllocatedUnfairLock<Set<String>>(initialState: [])
 
     public init() {}
 
@@ -36,5 +39,36 @@ public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring, @unch
 
     public func syncDeletePin(for gatewayID: GatewayID) throws {
         _ = lock.withLock { $0.removeValue(forKey: gatewayID.rawValue) }
+        try syncSetFirstUseApproved(false, for: gatewayID)
+    }
+
+    // MARK: TLSFirstUseApprovalStoring
+
+    public func approveFirstUse(for gatewayID: GatewayID) async throws {
+        try syncSetFirstUseApproved(true, for: gatewayID)
+    }
+
+    public func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool {
+        try syncIsFirstUseApproved(for: gatewayID)
+    }
+
+    public func resetFirstUseApproval(for gatewayID: GatewayID) async throws {
+        try syncSetFirstUseApproved(false, for: gatewayID)
+    }
+
+    // MARK: SynchronousTLSFirstUseApprovalStoring
+
+    public func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool {
+        approvalLock.withLock { $0.contains(gatewayID.rawValue) }
+    }
+
+    public func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws {
+        approvalLock.withLock {
+            if approved {
+                $0.insert(gatewayID.rawValue)
+            } else {
+                $0.remove(gatewayID.rawValue)
+            }
+        }
     }
 }
