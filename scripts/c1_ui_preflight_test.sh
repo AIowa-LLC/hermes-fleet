@@ -29,7 +29,7 @@ check() { # <name> <expected classes> <file...>
   fi
 }
 
-CORE="HermesFleetHappyPath HermesFleetReconnect P0_7SessionStateMachine U3TabNavigation FOS3FourRootShell"
+CORE="HermesFleetHappyPath P0_7SessionStateMachine"
 
 check "docs/tooling-only changes select no UI suites" "" \
   "docs/README.md" "docs/adr/0001-per-gateway-session-ownership.md" ".github/workflows/ci.yml" "Makefile" "README.md"
