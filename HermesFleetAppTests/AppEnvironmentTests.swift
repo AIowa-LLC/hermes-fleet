@@ -362,6 +362,25 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertEqual(environment.connectionStates[id], .disconnected)
     }
 
+    func testDisconnectAllTearsDownEveryActiveConnection() async {
+        let (environment, _) = await makeEnvironment(gateways: [
+            registration("workstation", name: "Workstation"),
+            registration("laptop", name: "Laptop"),
+        ])
+        let workstation = GatewayID(rawValue: "workstation")
+        let laptop = GatewayID(rawValue: "laptop")
+
+        await environment.connect(to: workstation)
+        await environment.connect(to: laptop)
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+        XCTAssertEqual(environment.connectionStates[laptop], .connected)
+
+        await environment.disconnectAll()
+
+        XCTAssertEqual(environment.connectionStates[workstation], .disconnected)
+        XCTAssertEqual(environment.connectionStates[laptop], .disconnected)
+    }
+
     func testReconnectTearsDownThenConnects() async {
         let (environment, _) = await makeEnvironment(gateways: [
             registration("workstation", name: "Workstation"),

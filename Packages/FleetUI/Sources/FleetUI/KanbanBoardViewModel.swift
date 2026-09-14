@@ -204,8 +204,7 @@ public final class KanbanBoardViewModel {
             snapshot = next
             errorMessage = nil
         } catch {
-            errorMessage = (error as? KanbanBoardError)?.errorDescription
-                ?? String(describing: error)
+            errorMessage = Redaction.safeErrorDescription(error)
             if initial {
                 streamPhase = .reconnecting
             }

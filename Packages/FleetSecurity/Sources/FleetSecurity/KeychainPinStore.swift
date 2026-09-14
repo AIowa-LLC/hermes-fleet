@@ -14,7 +14,8 @@ import FleetCore
 /// - delete failures propagate; a missing item is a no-op;
 /// - errors carry no secret material (the pin is public key material
 ///   anyway, but store errors stay typed/numeric).
-public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring {
+public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
+    TLSFirstUseApprovalStoring, SynchronousTLSFirstUseApprovalStoring {
     /// Keychain service name — scoped to this app's TLS pin store (separate
     /// from credentials and tokens so pin lifecycle never collides).
     public static let serviceName = "com.aiowa.hermesfleet.tlspins"
@@ -96,9 +97,70 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring {
         let status = keychain.delete(Self.baseAttributes(account: gatewayID.rawValue) as CFDictionary)
         switch status {
         case errSecSuccess, errSecItemNotFound:
-            return
+            try syncSetFirstUseApproved(false, for: gatewayID)
         default:
             throw PinStoreError.unexpectedStatus(Int(status))
+        }
+    }
+
+    // MARK: TLSFirstUseApprovalStoring
+
+    public func approveFirstUse(for gatewayID: GatewayID) async throws {
+        try syncSetFirstUseApproved(true, for: gatewayID)
+    }
+
+    public func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool {
+        try syncIsFirstUseApproved(for: gatewayID)
+    }
+
+    public func resetFirstUseApproval(for gatewayID: GatewayID) async throws {
+        try syncSetFirstUseApproved(false, for: gatewayID)
+    }
+
+    // MARK: SynchronousTLSFirstUseApprovalStoring
+
+    public func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool {
+        var query = Self.approvalAttributes(account: gatewayID.rawValue)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = keychain.copyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data else { throw PinStoreError.malformedData }
+            return data == Data("approved".utf8)
+        case errSecItemNotFound:
+            return false
+        default:
+            throw PinStoreError.unexpectedStatus(Int(status))
+        }
+    }
+
+    public func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws {
+        let attributes = Self.approvalAttributes(account: gatewayID.rawValue)
+        if !approved {
+            let status = keychain.delete(attributes as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw PinStoreError.unexpectedStatus(Int(status))
+            }
+            return
+        }
+
+        let data = Data("approved".utf8)
+        let updateStatus = keychain.update(
+            attributes as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var query = attributes
+            query[kSecValueData as String] = data
+            let addStatus = keychain.add(query as CFDictionary)
+            guard addStatus == errSecSuccess else {
+                throw PinStoreError.unexpectedStatus(Int(addStatus))
+            }
+            return
+        }
+        guard updateStatus == errSecSuccess else {
+            throw PinStoreError.unexpectedStatus(Int(updateStatus))
         }
     }
 
@@ -115,5 +177,9 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAttrSynchronizable as String: false,
         ]
+    }
+
+    private static func approvalAttributes(account: String) -> [String: Any] {
+        baseAttributes(account: "approval:\(account)")
     }
 }

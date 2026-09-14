@@ -107,6 +107,9 @@ public struct PasswordLoginClient: Sendable {
         Self.log.info("password-login: GET /api/auth/providers (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
         do {
             let (data, response) = try await urlSession.data(for: request)
+            guard data.count <= AuthREST.maxResponseBytes else {
+                throw PasswordLoginError.malformedProvidersResponse
+            }
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 Self.log.error("password-login: providers HTTP \(http.statusCode)")
                 throw AuthenticationError.httpStatus(http.statusCode)
@@ -150,7 +153,10 @@ public struct PasswordLoginClient: Sendable {
         AuthREST.bounded(&request)
 
         Self.log.info("password-login: POST /auth/password-login (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
-        let (_, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
+        guard data.count <= AuthREST.maxResponseBytes else {
+            throw PasswordLoginError.malformedProvidersResponse
+        }
         guard let http = response as? HTTPURLResponse else {
             throw PasswordLoginError.httpStatus(-1)
         }

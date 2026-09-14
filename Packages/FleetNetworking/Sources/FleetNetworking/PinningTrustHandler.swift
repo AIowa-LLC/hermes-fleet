@@ -10,7 +10,8 @@ import FleetCore
 /// - `.tofuAccept` / `.pinMatched` → `.useCredential` with a trust derived
 ///   from the CHALLENGE's SecTrust (trusts the self-signed cert by pin,
 ///   ignoring system roots);
-/// - `.pinMismatch` / `.internalError` → `.cancelAuthenticationChallenge`
+/// - `.firstUseRequiresConfirmation` / `.pinMismatch` / `.internalError` →
+///   `.cancelAuthenticationChallenge`
 ///   (REJECT — the connection never completes; no data flows to an
 ///   untrusted peer).
 /// Non-server-trust challenges are `.performDefaultHandling` (not ours).
@@ -24,9 +25,14 @@ public final class PinningTrustHandler: @unchecked Sendable {
 
     private let lock = NSLock()
 
-    public init(gatewayID: GatewayID, pinStore: any SynchronousPinStoring) {
+    public init(
+        gatewayID: GatewayID,
+        pinStore: any SynchronousPinStoring,
+        approvalStore: (any SynchronousTLSFirstUseApprovalStoring)? = nil
+    ) {
         self.gatewayID = gatewayID
-        self.evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: pinStore)
+        self.evaluator = TLSTrustEvaluator(
+            gatewayID: gatewayID, pinStore: pinStore, approvalStore: approvalStore)
     }
 
     /// Evaluate a server-trust authentication challenge (the URLSession
@@ -68,8 +74,27 @@ public final class PinningTrustHandler: @unchecked Sendable {
         switch verdict {
         case .tofuAccept, .pinMatched:
             completionHandler(.useCredential, URLCredential(trust: trust))
-        case .pinMismatch, .internalError:
+        case .firstUseRequiresConfirmation, .pinMismatch, .internalError:
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
+    }
+}
+
+/// URLSession delegate adapter for REST sessions that share the gateway's
+/// pinning policy. WebSocket sessions have their own close-code-aware adapter;
+/// REST only needs the same server-trust decision and fail-closed rejection.
+public final class URLSessionPinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    private let trustHandler: PinningTrustHandler
+
+    public init(trustHandler: PinningTrustHandler) {
+        self.trustHandler = trustHandler
+    }
+
+    public func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        trustHandler.evaluate(challenge, completionHandler: completionHandler)
     }
 }

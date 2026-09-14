@@ -74,6 +74,12 @@ struct HostedRoomProvider: FleetRoomProviding {
     }
 }
 
+extension HostedRoomProvider: GatewaySessionDisconnecting {
+    func disconnect() async {
+        await client.disconnect()
+    }
+}
+
 /// Desktop-legacy-room provider: decodes the `hermes-bots-groups` v3
 /// projection from the DEFAULT profile's ui_meta via `profiles.list`.
 struct DesktopLegacyRoomProvider: FleetRoomProviding {
@@ -98,6 +104,12 @@ struct DesktopLegacyRoomProvider: FleetRoomProviding {
         guard let metaJSON = row["ui_meta"]?["hermes-bots-groups"] else { return [] }
         let metaValue = ModernProfilesDecoder.toMetadataValue(metaJSON)
         return LegacyGroupProjectionDecoder.decode(gatewayID: gatewayID, metaValue: metaValue).rooms
+    }
+}
+
+extension DesktopLegacyRoomProvider: GatewaySessionDisconnecting {
+    func disconnect() async {
+        await transport.disconnect()
     }
 }
 
@@ -139,6 +151,14 @@ struct GatewayRoomSourceAdapter: FleetRoomSourceProviding {
     /// `groups.capabilities` probe (zero-room capable gateways included).
     func createRoomCapability() async -> GroupsCreateCapability {
         await hosted.createRoomCapability()
+    }
+}
+
+extension GatewayRoomSourceAdapter: GatewaySessionDisconnecting {
+    func disconnect() async {
+        await hosted.disconnect()
+        await legacy.disconnect()
+        await profileReader.disconnect()
     }
 }
 
@@ -278,6 +298,12 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
     }
 }
 
+extension GatewayRoomCommandAdapter: GatewaySessionDisconnecting {
+    func disconnect() async {
+        await client.disconnect()
+    }
+}
+
 /// Slice 4: driver-status adapter — `groups.state` → normalized
 /// `driver_status` (pending retry/approval actions, hosted_room_service.py
 /// status() shape).
@@ -337,6 +363,12 @@ struct GatewayRoomDriverStatusAdapter: RoomDriverStatusProviding {
             counts: counts,
             pendingRetries: retries,
             pendingApprovals: approvals)
+    }
+}
+
+extension GatewayRoomDriverStatusAdapter: GatewaySessionDisconnecting {
+    func disconnect() async {
+        await transport.disconnect()
     }
 }
 
@@ -487,6 +519,12 @@ struct GatewayRoomLinkAdapter: RoomLinkCommanding {
         case .rpcFailed(let message, let code):
             return RoomCommandFailure.rpcFailed(message, code)
         }
+    }
+}
+
+extension GatewayRoomLinkAdapter: GatewaySessionDisconnecting {
+    func disconnect() async {
+        await client.disconnect()
     }
 }
 

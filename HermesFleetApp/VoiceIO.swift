@@ -213,11 +213,12 @@ public final class SpeechVoiceIO: VoiceTranscribing, @unchecked Sendable {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        // Keep audio on-device when supported (privacy: only the recognized
-        // TEXT is ever submitted to the gateway).
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
+        // The product promise is that microphone audio never leaves the
+        // device. Do not silently fall back to Apple's remote recognizer.
+        guard recognizer.supportsOnDeviceRecognition else {
+            throw VoiceError.recognizerUnavailable
         }
+        request.requiresOnDeviceRecognition = true
         // The tap block is @Sendable; the request is not Sendable — hand it
         // over inside a box (append is thread-safe per AVFoundation docs).
         let requestBox = RequestBox(request)

@@ -309,7 +309,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
                     ? .reauthenticationRequired : .abnormalClosure, error: wrapped)
                 throw wrapped
             }
-            let wrapped = TransportError.authenticationFailed(error.localizedDescription)
+            let wrapped = TransportError.authenticationFailed(Redaction.safeErrorDescription(error))
             await teardown(.reauthenticationRequired, error: wrapped)
             throw wrapped
         } catch {
@@ -439,7 +439,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
                 do {
                     try await session.send(.text(line))
                 } catch {
-                    await self.failPending(id: id, error: TransportError.transportFailure("send failed: \(error)"))
+                    await self.failPending(id: id, error: TransportError.transportFailure("send failed: \(Redaction.safeErrorDescription(error))"))
                 }
             }
             // Timeout race: fail the pending continuation if no response
@@ -529,9 +529,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
             await setLastInbound()
             malformedFrameCount = 0
             await handleDecoded(decoded)
-        case .data:
+        case .data(let data):
             // /api/ws is text-only; binary frames are junk (P1-4). They must
             // neither refresh liveness nor be silently tolerated forever.
+            if data.count > JSONRPCCodec.maxFrameBytes {
+                await recordMalformedFrame()
+                return
+            }
             await recordMalformedFrame()
         }
     }

@@ -21,9 +21,13 @@ import FleetCore
 ///   `text` pre-composed with the `@file:`/`@folder:` prefix
 ///   (`:294-302`); empty word is the server's own `{items: []}` fast
 ///   path (`:42-44`) — mirrored client-side, no round trip.
-public struct GatewayProjectsClient: GatewayProjectsProviding {
+public struct GatewayProjectsClient: GatewayProjectsProviding, GatewaySessionDisconnecting {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
+
+    public func disconnect() async {
+        await transport.disconnect()
+    }
 
     private static let log = Logger(
         subsystem: "com.aiowa.hermesfleet", category: "gateway-projects")
@@ -200,9 +204,9 @@ public struct GatewayProjectsClient: GatewayProjectsProviding {
     static func mapError(_ error: JSONRPCError) -> GatewayProjectsError {
         switch error.code {
         case 5063:
-            return .projectRequired(error.message)
+            return .projectRequired(Redaction.safeText(error.message))
         default:
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 
@@ -215,7 +219,7 @@ public struct GatewayProjectsClient: GatewayProjectsProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

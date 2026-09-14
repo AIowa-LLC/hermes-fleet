@@ -49,9 +49,13 @@ public enum BotModeProfileError: Error, Sendable, Equatable, LocalizedError {
 ///   carry `resolved_id` (methods_session.py:363-387).
 /// - session.create `{profile, title, hidden: true, follow_profile_config:
 ///   true}` for canonical creation (canonical-chat.ts:348-363).
-public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
+public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconnecting, Sendable {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
+
+    public func disconnect() async {
+        await transport.disconnect()
+    }
 
     public init(gatewayID: GatewayID, transport: GatewayWebSocketTransport) {
         self.gatewayID = gatewayID
@@ -627,10 +631,10 @@ public struct GatewayBotModeClient: BotModeChatProviding, Sendable {
 
     static func mapError(_ error: JSONRPCError) -> BotModeProfileError {
         switch error.code {
-        case 4063, 4064: return .profileNotFound(error.message)
-        case 5064: return .rpcFailed(error.message)
-        case -32601: return .unsupportedMethod(error.message)
-        default: return .rpcFailed("\(error.message) (\(error.code))")
+        case 4063, 4064: return .profileNotFound(Redaction.safeText(error.message))
+        case 5064: return .rpcFailed(Redaction.safeText(error.message))
+        case -32601: return .unsupportedMethod(Redaction.safeText(error.message))
+        default: return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 

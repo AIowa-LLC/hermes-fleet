@@ -185,6 +185,20 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
         }
         try ctx.save()
     }
+
+    /// Delete all privacy-bearing cached content but keep the saved gateway
+    /// records intact. Credentials are not in this store and remain in the
+    /// Keychain until the user removes a gateway.
+    public func clearCachedData() async throws {
+        let ctx = ModelContext(container)
+        for row in try ctx.fetch(FetchDescriptor<CachedMessageRow>()) { ctx.delete(row) }
+        for row in try ctx.fetch(FetchDescriptor<CachedWatermarkRow>()) { ctx.delete(row) }
+        for row in try ctx.fetch(FetchDescriptor<CachedReplayEpochRow>()) { ctx.delete(row) }
+        for row in try ctx.fetch(FetchDescriptor<CachedHealthStatsRow>()) { ctx.delete(row) }
+        for row in try ctx.fetch(FetchDescriptor<LearningGraphSnapshotRow>()) { ctx.delete(row) }
+        for row in try ctx.fetch(FetchDescriptor<ProjectsSnapshotRow>()) { ctx.delete(row) }
+        try ctx.save()
+    }
 }
 
 // MARK: - HealthStatsStoring (H2 Connection health dashboard)

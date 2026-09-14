@@ -364,7 +364,7 @@ public final class RoomLinkViewModel {
         if let refusal = error as? RoomLinkRegistrationRefusal {
             return refusal.explanation
         }
-        return error.localizedDescription
+        return Redaction.safeErrorDescription(error)
     }
 }
 

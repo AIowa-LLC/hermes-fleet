@@ -190,11 +190,11 @@ public struct GatewayAttachmentClient: AttachmentStagingProviding {
     static func mapError(_ error: JSONRPCError) -> AttachmentStagingError {
         switch error.code {
         case 4018, 4019:
-            return .tooLarge(detail: error.message)
+            return .tooLarge(detail: Redaction.safeText(error.message))
         case 4016:
-            return .notFound(detail: error.message)
+            return .notFound(detail: Redaction.safeText(error.message))
         default:
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 
@@ -207,7 +207,7 @@ public struct GatewayAttachmentClient: AttachmentStagingProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

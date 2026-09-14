@@ -65,7 +65,7 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
         } catch let error as TransportError {
             throw Self.map(error)
         } catch {
-            throw GatewayConnectivityError.connectionFailed(String(describing: error))
+            throw GatewayConnectivityError.connectionFailed(Redaction.safeErrorDescription(error))
         }
         // Adopt gateway.ready metadata (M3: replay_epoch + capabilities).
         if let ready = await transport.adoptedReady() {

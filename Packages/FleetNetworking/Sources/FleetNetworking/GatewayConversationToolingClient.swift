@@ -254,17 +254,17 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
     static func mapError(_ error: JSONRPCError) -> ConversationError {
         switch error.code {
         case 4001, 4007:
-            return .sessionNotFound(error.message)
+            return .sessionNotFound(Redaction.safeText(error.message))
         case 4006, 4002, 4021, 4022:
-            return .invalidRequest(error.message)
+            return .invalidRequest(Redaction.safeText(error.message))
         case 4008:
             // session.branch: "nothing to branch — send a message first".
-            return .invalidRequest(error.message)
+            return .invalidRequest(Redaction.safeText(error.message))
         case 4010:
             // session.steer: "agent does not support steer".
-            return .invalidRequest(error.message)
+            return .invalidRequest(Redaction.safeText(error.message))
         default:
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 
@@ -277,7 +277,7 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

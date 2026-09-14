@@ -144,4 +144,13 @@ final class AuthenticationDomainTests: XCTestCase {
     func testRedactionPlaceholderValue() {
         XCTAssertEqual(Redaction.redacted("anything"), "[REDACTED]")
     }
+
+    func testSafeErrorTextScrubsCredentialsAndBoundsOutput() {
+        let raw = "failed https://alice:pw@gateway.example/api?token=secret-token; "
+            + String(repeating: "x", count: 700)
+        let safe = Redaction.safeText(raw)
+        XCTAssertFalse(safe.contains("alice:pw"))
+        XCTAssertFalse(safe.contains("secret-token"))
+        XCTAssertLessThanOrEqual(safe.count, 512)
+    }
 }

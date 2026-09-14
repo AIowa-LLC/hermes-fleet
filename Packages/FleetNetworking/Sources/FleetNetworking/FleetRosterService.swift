@@ -216,7 +216,7 @@ public actor FleetRosterService: FleetRosterProviding {
             let status = GatewayStatus.offline
             var updated = gateway
             updated.connectionState = .failed(status.rawValue)
-            result = (.failed(status: status, detail: String(describing: error)), updated, [])
+            result = (.failed(status: status, detail: Redaction.safeErrorDescription(error)), updated, [])
         }
 
         // ADR #3 — the probe ALWAYS tears down before returning, on every path.

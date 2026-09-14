@@ -1,4 +1,5 @@
 import Foundation
+import FleetCore
 
 // MARK: - JSONValue
 //
@@ -145,7 +146,9 @@ public struct JSONRPCError: Sendable, Hashable, Codable, Error, LocalizedError {
     }
 
     public var errorDescription: String? {
-        message.isEmpty ? "JSON-RPC error \(code)" : "\(message) (\(code))"
+        message.isEmpty
+            ? "JSON-RPC error \(code)"
+            : "\(Redaction.safeText(message)) (\(code))"
     }
 
     public static let parseError = JSONRPCError(code: -32700, message: "parse error")
@@ -225,6 +228,10 @@ public enum JSONRPCMessage: Sendable, Hashable {
 /// WebSocket means each text frame is exactly one message.
 public enum JSONRPCCodec {
     public static let jsonrpcVersion = "2.0"
+    /// Bound one JSON-RPC frame so a peer or an accidental oversized upload
+    /// cannot force an unbounded decode/allocation. The client-side
+    /// attachment cap (10 MiB raw) stays below this after base64 expansion.
+    public static let maxFrameBytes = 16 * 1024 * 1024
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [] // compact, single line
@@ -243,22 +250,28 @@ public enum JSONRPCCodec {
         guard let s = String(data: data, encoding: .utf8) else {
             throw CodecError.invalidUTF8
         }
+        guard data.count <= maxFrameBytes else { throw CodecError.frameTooLarge }
         return s
     }
 
     public static func encodeData(_ message: JSONRPCMessage) throws -> Data {
+        let data: Data
         switch message {
-        case .request(let m): return try encoder.encode(m)
-        case .response(let m): return try encoder.encode(m)
-        case .error(let m): return try encoder.encode(m)
-        case .event(let m): return try encoder.encode(m)
+        case .request(let m): data = try encoder.encode(m)
+        case .response(let m): data = try encoder.encode(m)
+        case .error(let m): data = try encoder.encode(m)
+        case .event(let m): data = try encoder.encode(m)
         }
+        guard data.count <= maxFrameBytes else { throw CodecError.frameTooLarge }
+        return data
     }
 
     /// Encode a bare `JSONValue` back to JSON bytes (used to decode nested
     /// members like `error` without re-wrapping them in a message).
     public static func encode(_ value: JSONValue) throws -> Data {
-        try encoder.encode(value)
+        let data = try encoder.encode(value)
+        guard data.count <= maxFrameBytes else { throw CodecError.frameTooLarge }
+        return data
     }
 
     /// Decode a single message from one line/WebSocket-text-frame.
@@ -268,6 +281,7 @@ public enum JSONRPCCodec {
     }
 
     public static func decode(_ data: Data) throws -> JSONRPCMessage {
+        guard data.count <= maxFrameBytes else { throw CodecError.frameTooLarge }
         let value: JSONValue
         do {
             value = try decoder.decode(JSONValue.self, from: data)
@@ -318,6 +332,12 @@ public enum JSONRPCCodec {
         var buffer = existingPartial
         buffer.append(data)
         var messages: [JSONRPCMessage] = []
+        guard buffer.count <= maxFrameBytes else {
+            // The framing API is intentionally non-throwing. Drop an
+            // oversized partial frame; the transport's bounded malformed
+            // frame policy will close the connection after repeated junk.
+            return (messages, Data())
+        }
         var start = buffer.startIndex
         for i in buffer.indices where buffer[i] == 0x0A {
             let line = buffer[start..<i]
@@ -331,4 +351,5 @@ public enum JSONRPCCodec {
 
 public enum CodecError: Error, Equatable {
     case invalidUTF8
+    case frameTooLarge
 }

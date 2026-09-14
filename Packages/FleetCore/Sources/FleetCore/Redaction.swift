@@ -61,6 +61,38 @@ public enum Redaction {
         placeholder
     }
 
+    /// Produce bounded, display-safe text from an arbitrary error. Localized
+    /// errors and gateway-provided messages are not trusted: they may echo a
+    /// URL, cookie, bearer token, or a very large server payload.
+    public static func safeErrorDescription(_ error: any Error) -> String {
+        let text = (error as? LocalizedError)?.errorDescription
+            ?? String(describing: error)
+        return safeText(text)
+    }
+
+    /// Redact credential-shaped substrings in untrusted diagnostic text and
+    /// cap its size before it reaches UI, logs, or persisted transient state.
+    public static func safeText(_ text: String) -> String {
+        var safe = String(text.prefix(512))
+        for pattern in errorSecretPatterns {
+            safe = pattern.stringByReplacingMatches(
+                in: safe,
+                range: NSRange(safe.startIndex..., in: safe),
+                withTemplate: "$1[REDACTED]")
+        }
+        return safe
+    }
+
+    private static let errorSecretPatterns: [NSRegularExpression] = {
+        let patterns = [
+            #"(?i)(https?://)[^\s/@:]+(?::[^\s/@]*)?@"#, // URL user-info
+            #"(?i)([?&](?:ticket|token|access_token|refresh_token|session_token|api[_-]?key|password|passwd|secret|authorization)=)[^&\s]+"#,
+            #"(?i)((?:bearer|cookie)\s*[:=]?\s+)[^\s,;]+"#,
+            #"(?i)((?:ticket|token|access_token|session_token|api[_-]?key|password|passwd|secret|authorization)[\"']?\s*[:=]\s*[\"']?)[^\s\"'&,}]+"#,
+        ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+    }()
+
     /// MARK: R9-T1 — approval command preview (second-pass redaction).
     ///
     /// The gateway redacts credentials from `approval.request.command`

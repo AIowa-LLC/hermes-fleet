@@ -137,11 +137,11 @@ public struct GatewayApprovalClient: ApprovalsProviding {
     static func mapError(_ error: JSONRPCError) -> ConversationError {
         switch error.code {
         case 4001, 4007:
-            return .sessionNotFound(error.message)
+            return .sessionNotFound(Redaction.safeText(error.message))
         case 4006, 4002:
-            return .invalidRequest(error.message)
+            return .invalidRequest(Redaction.safeText(error.message))
         default:
-            return .rpcFailed("\(error.message) (\(error.code))")
+            return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
     }
 
@@ -154,7 +154,7 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

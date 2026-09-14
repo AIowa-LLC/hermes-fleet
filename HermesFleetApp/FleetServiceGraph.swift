@@ -171,6 +171,8 @@ enum FleetServiceGraph {
             registry: registry,
             roster: roster,
             cache: cache,
+            tlsPinStore: pinStore,
+            tlsApprovalStore: pinStore,
             sessionList: sessionList,
             connectionFactory: makeConnectionFactory(
                 credentialStore: credentialStore, health: health, pinStore: pinStore),
@@ -243,7 +245,8 @@ enum FleetServiceGraph {
             guard let base = gateway.endpoint else {
                 return UnconfiguredKanbanWatcher()
             }
-            let authenticator = makeAuthenticator(gateway: gateway, credentialStore: credentialStore)
+            let urlSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
+            let authenticator = makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore)
             let strategy = gateway.authConfiguration.strategy
             let httpCredential: @Sendable () async throws -> KanbanEventStreamClient.HTTPCredential = {
                 switch strategy {
@@ -267,7 +270,7 @@ enum FleetServiceGraph {
                           let username = credential.username else {
                         throw KanbanBoardError.malformedResponse("no credential stored")
                     }
-                    let cookie = try await PasswordLoginClient(baseURL: base).login(
+                    let cookie = try await PasswordLoginClient(baseURL: base, urlSession: urlSession).login(
                         username: username, password: credential.rawValue)
                     return .cookie(cookie)
                 }
@@ -277,6 +280,7 @@ enum FleetServiceGraph {
                 baseURL: base,
                 authenticator: authenticator,
                 httpCredential: httpCredential,
+                urlSession: urlSession,
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore)
             )
         }
@@ -297,7 +301,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -325,7 +329,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -348,7 +352,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -368,7 +372,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -388,7 +392,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -412,7 +416,7 @@ enum FleetServiceGraph {
             guard let base = gateway.endpoint else { return nil }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -431,7 +435,7 @@ enum FleetServiceGraph {
             guard let base = gateway.endpoint else { return nil }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -450,7 +454,7 @@ enum FleetServiceGraph {
             guard let base = gateway.endpoint else { return nil }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -474,7 +478,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -496,7 +500,7 @@ enum FleetServiceGraph {
             }
             let transport = GatewayWebSocketTransport(
                 baseURL: base,
-                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
@@ -556,7 +560,32 @@ enum FleetServiceGraph {
             return URLSessionWebSocketSessionFactory()
         }
         return URLSessionWebSocketSessionFactory(
-            trustHandler: PinningTrustHandler(gatewayID: gateway.id, pinStore: pinStore))
+            trustHandler: PinningTrustHandler(
+                gatewayID: gateway.id,
+                pinStore: pinStore,
+                approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring))
+    }
+
+    /// Build the gateway-scoped URLSession used by credential-bearing REST
+    /// calls. HTTPS calls receive the same per-gateway TOFU pin policy as the
+    /// WebSocket session; an unpinned or changed certificate is rejected by
+    /// the shared Keychain-backed pin store. HTTP remains explicitly
+    /// cleartext and is handled by the endpoint warning policy.
+    nonisolated private static func makeGatewayHTTPSession(
+        gateway: FleetGateway,
+        pinStore: (any SynchronousPinStoring)?
+    ) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        guard gateway.endpoint?.scheme?.lowercased() == "https",
+              let pinStore else {
+            return URLSession(configuration: configuration)
+        }
+        let handler = PinningTrustHandler(
+            gatewayID: gateway.id,
+            pinStore: pinStore,
+            approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring)
+        let delegate = URLSessionPinningDelegate(trustHandler: handler)
+        return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
     nonisolated private static func makeConnection(
@@ -581,7 +610,7 @@ enum FleetServiceGraph {
         }
         let transport = GatewayWebSocketTransport(
             baseURL: base,
-            authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore),
+            authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
             sessionFactory: sessionFactory,
             configuration: makeTransportConfiguration()
         )
@@ -629,34 +658,39 @@ enum FleetServiceGraph {
     /// gateway (L1 fix: store split + dead ticket minter).
     nonisolated private static func makeAuthenticator(
         gateway: FleetGateway,
-        credentialStore: any CredentialStoring
+        credentialStore: any CredentialStoring,
+        pinStore: (any SynchronousPinStoring)? = nil
     ) -> any AuthenticationProviding {
         // F2: no compiled loopback default — a nil endpoint flows through as
         // a nil baseURL and the authenticator fails closed with
         // `.notConfigured` (never a phantom loopback mint).
         let base = gateway.endpoint
+        let urlSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
         switch gateway.authConfiguration.strategy {
         case .none:
-            return GatewayAuthenticator(gatewayID: gateway.id, strategy: .none)
+            return GatewayAuthenticator(gatewayID: gateway.id, strategy: .none, urlSession: urlSession)
         case .loopbackToken:
             return GatewayAuthenticator(
                 gatewayID: gateway.id,
                 strategy: .loopbackToken,
-                credentialStore: credentialStore
+                credentialStore: credentialStore,
+                urlSession: urlSession
             )
         case .sessionToken, .bearerToken:
             return GatewayAuthenticator(
                 gatewayID: gateway.id,
                 strategy: gateway.authConfiguration.strategy,
                 credentialStore: credentialStore,
-                baseURL: base
+                baseURL: base,
+                urlSession: urlSession
             )
         case .usernamePassword:
             return GatewayAuthenticator(
                 gatewayID: gateway.id,
                 strategy: .usernamePassword,
                 credentialStore: credentialStore,
-                baseURL: base
+                baseURL: base,
+                urlSession: urlSession
             )
         }
     }

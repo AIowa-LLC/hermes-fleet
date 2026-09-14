@@ -36,11 +36,11 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
             // Decode-level failures (malformed payload) pass through unchanged.
             throw error
         } catch let error as JSONRPCError where error.code == 4001 {
-            throw SessionHistoryError.sessionNotFound(error.message)
+            throw SessionHistoryError.sessionNotFound(Redaction.safeText(error.message))
         } catch let error as TransportError {
             throw Self.mapTransportError(error)
         } catch {
-            throw SessionHistoryError.rpcFailed(String(describing: error))
+            throw SessionHistoryError.rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 
@@ -58,11 +58,11 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
             // Decode-level failures (malformed payload) pass through unchanged.
             throw error
         } catch let error as JSONRPCError where error.code == 4001 {
-            throw SessionHistoryError.sessionNotFound(error.message)
+            throw SessionHistoryError.sessionNotFound(Redaction.safeText(error.message))
         } catch let error as TransportError {
             throw Self.mapTransportError(error)
         } catch {
-            throw SessionHistoryError.rpcFailed(String(describing: error))
+            throw SessionHistoryError.rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 
@@ -181,7 +181,7 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

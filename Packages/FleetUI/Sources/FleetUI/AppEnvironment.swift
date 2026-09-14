@@ -211,6 +211,12 @@ public final class AppEnvironment {
     @ObservationIgnored private var summarySourceStates: [GatewayID: FleetSummaryScheduler.SourceState] = [:]
     @ObservationIgnored private var summaryRefreshInFlight = false
 
+    /// App-launch hydration is shared by the initial authentication task and
+    /// the post-passcode-unlock path. Marking this before the awaits prevents
+    /// those paths from restoring the registry or refreshing the roster twice
+    /// when automatic authentication succeeds.
+    @ObservationIgnored private var didHydrateEnvironment = false
+
     /// Bots per gateway from the last SUCCESSFUL refresh — the offline-ghost
     /// cache (a failed refresh renders these dimmed, identity retained).
     public private(set) var cachedBotsByGateway: [GatewayID: [FleetBot]] = [:]
@@ -262,6 +268,10 @@ public final class AppEnvironment {
     private let registry: any GatewayRegistryManaging
     private let roster: any FleetRosterProviding
     private let cache: any CacheStoring
+    /// Optional production TLS trust stores. Scripted/test environments do
+    /// not need the UI re-pair surface and leave these nil.
+    private let tlsPinStore: (any TLSPinStoring)?
+    private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
     private let connectionFactory: FleetConnectionFactory
     /// H2: connection-health accumulator (FleetCore seam; concrete
     /// `GatewayHealthStatsAccumulator` fed by the composition root's transport
@@ -336,6 +346,12 @@ public final class AppEnvironment {
     /// created on first conversation screen use).
     private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
 
+    /// Long-lived Kanban event watchers, retained by the runtime so a
+    /// background/lock boundary can stop their reconnect pumps even when the
+    /// board view itself remains mounted. The concrete watcher is restartable
+    /// when a board view is opened again.
+    @ObservationIgnored private var kanbanWatchers: [GatewayID: any KanbanBoardWatching] = [:]
+
     /// R9-T5/T6: lazily-built management seams per gateway (one per
     /// gateway; created on first Cron/Skills pane use — the pane's
     /// transport survives view teardowns like a conversation session's).
@@ -359,6 +375,8 @@ public final class AppEnvironment {
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
         cache: any CacheStoring,
+        tlsPinStore: (any TLSPinStoring)? = nil,
+        tlsApprovalStore: (any TLSFirstUseApprovalStoring)? = nil,
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
@@ -382,6 +400,8 @@ public final class AppEnvironment {
         self.registry = registry
         self.roster = roster
         self.cache = cache
+        self.tlsPinStore = tlsPinStore
+        self.tlsApprovalStore = tlsApprovalStore
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
@@ -440,6 +460,19 @@ public final class AppEnvironment {
         }
         await reloadGateways()
         cachedWatermarkCount = (try? await cache.loadWatermarks())?.count ?? 0
+    }
+
+    /// Hydrate protected app content exactly once per runtime instance.
+    ///
+    /// The composition root calls this only after App Lock authentication has
+    /// completed. Keeping the guard here makes the initial-authentication and
+    /// passcode-fallback paths idempotent even though each is launched from a
+    /// separate SwiftUI task.
+    public func hydrateIfNeeded() async {
+        guard !didHydrateEnvironment else { return }
+        didHydrateEnvironment = true
+        await load()
+        await refreshRoster()
     }
 
     private func reloadGateways() async {
@@ -838,6 +871,41 @@ public final class AppEnvironment {
         healthStats = await health.snapshot()
     }
 
+    /// Delete device-local cached fleet/session data without removing saved
+    /// gateways or their Keychain credentials. This is the user-controlled
+    /// privacy escape hatch exposed by Settings.
+    public func clearLocalCache() async throws {
+        // Stop any live session before deleting its persisted history. The
+        // in-memory session objects are then discarded so stale transcript
+        // rows cannot reappear in the UI after the user confirms deletion.
+        await disconnectAll()
+        try await cache.clearCachedData()
+        activeConnections.removeAll()
+        conversationSessions.removeAll()
+        kanbanWatchers.removeAll()
+        managementSeams.removeAll()
+        learningSeams.removeAll()
+        projectsSeams.removeAll()
+        botModeChatSeams.removeAll()
+        roomSources.removeAll()
+        roomCommands.removeAll()
+        roomDriverStatuses.removeAll()
+        roomLinks.removeAll()
+        connectionStates.removeAll()
+        continueIndex.removeAll()
+        gatewayFormDraft.clear()
+        rosterSnapshot = nil
+        cachedWatermarkCount = 0
+        healthStats = [:]
+        cachedBotsByGateway = [:]
+        roomsByGateway = [:]
+        canCreateRoomsByGateway = [:]
+        observedRoomAttention = [:]
+        rosterObservedAt = nil
+        sessionsByRoute = [:]
+        sessionReadErrors = [:]
+    }
+
     // MARK: Connection lifecycle (runtime-owned, observable)
 
     /// Connect to a gateway: `connecting` → `connected`, or `failed(status)`.
@@ -870,6 +938,75 @@ public final class AppEnvironment {
         }
         await connection.disconnect()
         connectionStates[id] = .disconnected
+    }
+
+    /// Tear down all live gateway sessions at a lifecycle boundary.
+    ///
+    /// The app lock protects presentation, not already-open sockets. This
+    /// method is therefore called when the app backgrounds and before a lock
+    /// screen is shown. Conversation sessions own their own connectivity
+    /// seam, so they are explicitly disconnected in addition to the base
+    /// gateway connections.
+    public func disconnectAll() async {
+        let connections = Array(activeConnections.values)
+        let conversations = Array(conversationSessions.values)
+        let kanban = Array(kanbanWatchers.values)
+        let management = Array(managementSeams.values)
+        let learning = Array(learningSeams.values)
+        let projects = Array(projectsSeams.values)
+        let botMode = Array(botModeChatSeams.values)
+        let rooms = Array(roomSources.values)
+        let roomCommandSeams = Array(self.roomCommands.values)
+        let roomStatusSeams = Array(roomDriverStatuses.values)
+        let roomLinkSeams = Array(self.roomLinks.values)
+
+        for connection in connections {
+            await connection.disconnect()
+        }
+        for conversation in conversations {
+            await conversation.disconnect()
+        }
+        for watcher in kanban {
+            await watcher.stop()
+        }
+        for seam in management {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in learning {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in projects {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in botMode {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in rooms {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in roomCommandSeams {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in roomStatusSeams {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        for seam in roomLinkSeams {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+
+        for id in Set(activeConnections.keys)
+            .union(conversationSessions.keys)
+            .union(kanbanWatchers.keys)
+            .union(managementSeams.keys)
+            .union(learningSeams.keys)
+            .union(projectsSeams.keys)
+            .union(botModeChatSeams.keys)
+            .union(roomSources.keys)
+            .union(self.roomCommands.keys)
+            .union(roomDriverStatuses.keys)
+            .union(self.roomLinks.keys) {
+            connectionStates[id] = .disconnected
+        }
     }
 
     /// Reconnect: tear down cleanly, then reconnect. Observable as
@@ -936,9 +1073,13 @@ public final class AppEnvironment {
     /// or logged. `nil` credential → registration only.
     public func addGateway(
         _ registration: GatewayRegistration,
-        credential: GatewayCredential?
+        credential: GatewayCredential?,
+        confirmsTLSFirstUse: Bool = false
     ) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        if confirmsTLSFirstUse {
+            try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
+        }
         if let credential {
             try await registry.saveCredential(credential, for: gateway.id)
         }
@@ -959,12 +1100,45 @@ public final class AppEnvironment {
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
         // conversation session, and clear observable lifecycle state.
-        if let connection = activeConnections[id] {
-            await connection.disconnect()
+        if let connection = activeConnections[id] { await connection.disconnect() }
+        if let conversation = conversationSessions[id] { await conversation.disconnect() }
+        if let watcher = kanbanWatchers.removeValue(forKey: id) { await watcher.stop() }
+        if let seam = managementSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = learningSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = projectsSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = botModeChatSeams[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomSources[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomCommands[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomDriverStatuses[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
+        }
+        if let seam = roomLinks[id] {
+            await (seam as? any GatewaySessionDisconnecting)?.disconnect()
         }
         activeConnections[id] = nil
         conversationSessions[id] = nil
         managementSeams[id] = nil
+        learningSeams[id] = nil
+        projectsSeams[id] = nil
+        botModeChatSeams[id] = nil
+        roomSources[id] = nil
+        roomCommands[id] = nil
+        roomDriverStatuses[id] = nil
+        roomLinks[id] = nil
+        roomsByGateway[id] = nil
+        canCreateRoomsByGateway[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
         testResultObservedAt[id] = nil
@@ -1017,6 +1191,36 @@ public final class AppEnvironment {
         await registry.hasCredential(for: id)
     }
 
+    // MARK: TLS trust lifecycle (T3)
+
+    /// Record the user's explicit decision to trust the first secure
+    /// certificate presented by a gateway. The transport will still pin the
+    /// presented SPKI only after this decision is present.
+    public func approveTLSFirstUse(for id: GatewayID) async throws {
+        guard gateways.contains(where: { $0.id == id }) else {
+            throw GatewayRegistryError.notFound(id)
+        }
+        try await tlsApprovalStore?.approveFirstUse(for: id)
+    }
+
+    /// Clear both the stored SPKI and the first-use decision. The next secure
+    /// connection is blocked until the user reviews the gateway again and
+    /// explicitly confirms the new certificate (re-pair/rotation flow).
+    public func resetTLSTrust(for id: GatewayID) async throws {
+        guard gateways.contains(where: { $0.id == id }) else {
+            throw GatewayRegistryError.notFound(id)
+        }
+        try await tlsPinStore?.deletePin(for: id)
+        try await tlsApprovalStore?.resetFirstUseApproval(for: id)
+    }
+
+    /// Public-key fingerprint currently pinned for a gateway, for the
+    /// non-secret trust-status display. The full value is intentionally not
+    /// logged; the UI may show the stable abbreviated description.
+    public func tlsPin(for id: GatewayID) async -> SPKIFingerprint? {
+        try? await tlsPinStore?.loadPin(for: id)
+    }
+
     // MARK: Test connection (§13 reachable/unreachable probe, observable)
 
     /// Probe a gateway's reachability and capability surface. Observable:
@@ -1053,9 +1257,9 @@ public final class AppEnvironment {
             sessionsByRoute[route] = sessions
             sessionReadErrors[route] = nil
         } catch let error as RosterError {
-            sessionReadErrors[route] = error.errorDescription
+            sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         } catch {
-            sessionReadErrors[route] = String(describing: error)
+            sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         }
     }
 
@@ -1112,7 +1316,10 @@ public final class AppEnvironment {
     /// factory is wired (the screen renders its unavailable state, fail
     /// closed).
     public func makeKanbanWatcher(for gateway: FleetGateway) -> (any KanbanBoardWatching)? {
-        kanbanWatcherFactory?(gateway)
+        if let existing = kanbanWatchers[gateway.id] { return existing }
+        guard let watcher = kanbanWatcherFactory?(gateway) else { return nil }
+        kanbanWatchers[gateway.id] = watcher
+        return watcher
     }
 
     // MARK: Management panes (R9-T5/T6 — cron + skills)

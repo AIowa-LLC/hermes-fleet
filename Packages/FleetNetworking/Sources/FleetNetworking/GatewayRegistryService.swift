@@ -96,7 +96,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             try await persist(gateway)
         } catch {
             registry.remove(id)
-            throw GatewayRegistryError.recordStoreFailed(String(describing: error))
+            throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
         }
         return gateway
     }
@@ -141,7 +141,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         do {
             try await credentials.deleteCredential(for: id)
         } catch {
-            throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
         }
         // T3: retire the TLS pin with the credential — a removed gateway
         // must leave no orphaned trust material. Failures surface (same
@@ -150,7 +150,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             do {
                 try await pinStore.deletePin(for: id)
             } catch {
-                throw GatewayRegistryError.pinStoreFailed(String(describing: error))
+                throw GatewayRegistryError.pinStoreFailed(Redaction.safeErrorDescription(error))
             }
         }
         // P0-4: remove the durable record too — a removed gateway must not
@@ -159,7 +159,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             do {
                 try await recordStore.deleteGatewayRecord(id: id)
             } catch {
-                throw GatewayRegistryError.recordStoreFailed(String(describing: error))
+                throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
             }
         }
         registry.remove(id)
@@ -172,7 +172,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         do {
             try await credentials.saveCredential(credential, for: id)
         } catch {
-            throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
         }
         registry.update(id) { gateway in
             gateway.authConfigured = true
@@ -200,7 +200,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         do {
             try await credentials.deleteCredential(for: id)
         } catch {
-            throw GatewayRegistryError.credentialStoreFailed(String(describing: error))
+            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
         }
         registry.update(id) { gateway in
             gateway.authConfigured = false

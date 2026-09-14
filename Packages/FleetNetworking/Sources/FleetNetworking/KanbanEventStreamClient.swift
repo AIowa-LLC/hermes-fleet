@@ -25,7 +25,7 @@ import FleetCore
 ///   the stored credential) or the login `Cookie` (username/password
 ///   strategy — a fresh `POST /auth/password-login` per fetch, matching the
 ///   ticket-mint freshness discipline; snapshot fetches are infrequent).
-public actor KanbanEventStreamClient: KanbanBoardWatching {
+public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconnecting {
     public let gatewayID: GatewayID
 
     /// HTTP base of the dashboard server (`http(s)://host:port`).
@@ -135,8 +135,12 @@ public actor KanbanEventStreamClient: KanbanBoardWatching {
             url: Self.buildBoardsListURL(base: baseURL))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
         let (data, response) = try await urlSession.data(for: request)
+        guard data.count <= AuthREST.maxResponseBytes else {
+            throw KanbanBoardError.malformedResponse("boards response too large")
+        }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("kanban boards: HTTP \(http.statusCode)")
             throw KanbanBoardError.httpStatus(http.statusCode)
@@ -170,9 +174,13 @@ public actor KanbanEventStreamClient: KanbanBoardWatching {
         var request = URLRequest(url: boardURL)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
 
         let (data, response) = try await urlSession.data(for: request)
+        guard data.count <= AuthREST.maxResponseBytes else {
+            throw KanbanBoardError.malformedResponse("board response too large")
+        }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("kanban board: HTTP \(http.statusCode)")
             throw KanbanBoardError.httpStatus(http.statusCode)
@@ -216,6 +224,10 @@ public actor KanbanEventStreamClient: KanbanBoardWatching {
     public func changeEvents() async -> AsyncStream<KanbanEventBatch> {
         // Runs on the actor: subscriber registration + pump start are
         // isolated state mutations.
+        // A watcher is retained by AppEnvironment across view lifecycles so
+        // the app can stop it at a background/lock boundary. A later board
+        // view is a deliberate new owner, so make that watcher restartable.
+        stopped = false
         let id = UUID()
         return AsyncStream(bufferingPolicy: .bufferingNewest(32)) { continuation in
             subscribers[id] = continuation
@@ -320,6 +332,10 @@ public actor KanbanEventStreamClient: KanbanBoardWatching {
             continuation.finish()
         }
         subscribers.removeAll()
+    }
+
+    public func disconnect() async {
+        await stop()
     }
 
     // MARK: Wire helpers (pure, testable)

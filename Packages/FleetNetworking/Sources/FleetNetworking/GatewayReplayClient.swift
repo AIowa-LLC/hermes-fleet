@@ -81,7 +81,7 @@ public struct GatewayReplayClient {
         } catch let error as TransportError {
             throw Self.mapTransportError(error)
         } catch {
-            throw ReplayError.rpcFailed(String(describing: error))
+            throw ReplayError.rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 
@@ -119,7 +119,7 @@ public struct GatewayReplayClient {
         case .invalidState(let s):
             return .rpcFailed("invalid state: \(s)")
         default:
-            return .rpcFailed(String(describing: error))
+            return .rpcFailed(Redaction.safeErrorDescription(error))
         }
     }
 }

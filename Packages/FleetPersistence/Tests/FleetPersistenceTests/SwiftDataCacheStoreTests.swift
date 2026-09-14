@@ -241,10 +241,39 @@ final class SwiftDataCacheStoreTests: XCTestCase {
             "saveHistory", "loadHistory", "deleteHistory",
             "saveWatermark", "loadWatermarks", "clearWatermarks",
             "saveReplayEpoch", "loadReplayEpoch", "resetForReplayEpochChange",
+            "clearCachedData",
         ]
-        XCTAssertEqual(requirements.count, 9)
+        XCTAssertEqual(requirements.count, 10)
         // No "saveToken"/"credential"/"token" entry exists in the cache seam.
         XCTAssertFalse(requirements.contains { $0.lowercased().contains("token") })
         XCTAssertFalse(requirements.contains { $0.lowercased().contains("credential") })
+    }
+
+    func testClearCachedDataDeletesPrivacyDataButRetainsGatewayRecord() async throws {
+        let store = try await makeStore()
+        try await store.saveHistory(
+            SessionHistory(sessionID: "s1", count: 1, messages: [
+                SessionMessage(role: .assistant, text: "cached transcript", timestamp: 1, rowID: "r1")
+            ]),
+            for: m5
+        )
+        try await store.saveWatermark(
+            SessionEventWatermark(sessionID: "s1", lastSeenSeq: 7), for: m5)
+        try await store.saveReplayEpoch("epoch-1", for: m5)
+        try await store.saveGatewayRecord(StoredGatewayRecord(
+            id: m5.rawValue,
+            displayName: "Workstation",
+            endpoint: "https://gateway.example.invalid"))
+
+        try await store.clearCachedData()
+
+        let history = try await store.loadHistory(sessionID: "s1", for: m5)
+        let watermarks = try await store.loadWatermarks()
+        let epoch = try await store.loadReplayEpoch(for: m5)
+        let records = try await store.loadGatewayRecords()
+        XCTAssertNil(history)
+        XCTAssertTrue(watermarks.isEmpty)
+        XCTAssertNil(epoch)
+        XCTAssertEqual(records.map(\.id), [m5.rawValue])
     }
 }

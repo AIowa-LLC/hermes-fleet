@@ -26,6 +26,8 @@ public struct GatewaysView: View {
     @State private var gatewayPendingRemoval: FleetGateway?
     /// P1-8: the most recently removed gateway, for a bounded undo.
     @State private var lastRemovedGateway: FleetGateway?
+    /// T3: secure trust reset awaiting explicit re-pair confirmation.
+    @State private var gatewayPendingTLSTrustReset: FleetGateway?
 
     enum PresentedSheet: Identifiable {
         case add
@@ -102,8 +104,11 @@ public struct GatewaysView: View {
                     saveButton: "Add",
                     initial: nil,
                     draftStore: environment.gatewayFormDraft
-                ) { registration, credential in
-                    _ = try await environment.addGateway(registration, credential: credential)
+                ) { registration, credential, confirmsTLSFirstUse in
+                    _ = try await environment.addGateway(
+                        registration,
+                        credential: credential,
+                        confirmsTLSFirstUse: confirmsTLSFirstUse)
                 }
             case .edit(let gateway):
                 GatewayFormSheet(
@@ -111,7 +116,7 @@ public struct GatewaysView: View {
                     saveButton: "Save",
                     initial: gateway,
                     draftStore: environment.gatewayFormDraft
-                ) { registration, credential in
+                ) { registration, credential, confirmsTLSFirstUse in
                     // Apply the edited display name / endpoint / strategy.
                     _ = try await environment.updateGateway(
                         gateway.id,
@@ -125,6 +130,9 @@ public struct GatewaysView: View {
                     // nil keeps the registry's existing credential.
                     if let credential {
                         try await environment.saveCredential(credential, for: gateway.id)
+                    }
+                    if confirmsTLSFirstUse {
+                        try await environment.approveTLSFirstUse(for: gateway.id)
                     }
                 }
             case .auth(let id):
@@ -182,6 +190,30 @@ public struct GatewaysView: View {
         } message: {
             Text("Undo restores \"\(lastRemovedGateway?.displayName ?? "")\" as a gateway (no stored credential).")
         }
+        .alert(
+            "Re-pair Secure Gateway?",
+            isPresented: .init(
+                get: { gatewayPendingTLSTrustReset != nil },
+                set: { if !$0 { gatewayPendingTLSTrustReset = nil } }
+            )
+        ) {
+            Button("Clear Trust and Re-pair", role: .destructive) {
+                guard let gateway = gatewayPendingTLSTrustReset else { return }
+                gatewayPendingTLSTrustReset = nil
+                Task {
+                    do {
+                        try await environment.resetTLSTrust(for: gateway.id)
+                    } catch {
+                        operationError = "The secure gateway trust could not be cleared. Try again when no gateway operation is running."
+                    }
+                }
+            }
+            .accessibilityIdentifier("fleet.connection.tls-repair.confirm")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("fleet.connection.tls-repair.cancel")
+        } message: {
+            Text("The next connection will be blocked until you verify the gateway and confirm its new certificate in Edit Gateway. Existing credentials are kept.")
+        }
         .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.gateways")
         // P0-2: after the H1 biometric lock releases, this view is re-created
@@ -235,6 +267,17 @@ public struct GatewaysView: View {
                 Button("Edit Gateway", systemImage: "pencil") { presentEditForm(gateway) }
                 Button("Remove Gateway", role: .destructive) { gatewayPendingRemoval = gateway }
                     .accessibilityIdentifier("fleet.connection.remove.\(gateway.id.rawValue)")
+            }
+            if gateway.endpoint?.scheme?.lowercased() == "https" {
+                Section("TLS Trust") {
+                    Text("The gateway's certificate key is pinned on first approved use. A changed key is blocked until you explicitly re-pair it.")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                    Button("Re-pair / Rotate Certificate", role: .destructive) {
+                        gatewayPendingTLSTrustReset = gateway
+                    }
+                    .accessibilityIdentifier("fleet.connection.tls-repair.\(gateway.id.rawValue)")
+                }
             }
         }.accessibilityIdentifier("fleet.connection.\(gateway.id.rawValue)")
     }
@@ -394,10 +437,7 @@ public struct GatewaysView: View {
 
     /// Non-secret description for a registry operation failure.
     static func describe(_ error: Error) -> String {
-        if let localized = error as? LocalizedError, let text = localized.errorDescription {
-            return text
-        }
-        return String(describing: error)
+        Redaction.safeErrorDescription(error)
     }
 
     // MARK: P1-8 — confirmed removal + bounded undo

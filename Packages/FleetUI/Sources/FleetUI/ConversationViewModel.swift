@@ -870,47 +870,53 @@ public final class ConversationViewModel {
         defer { isUploadingAttachment = false }
         do {
             let bytes = try loadBytes()
-            let lower = (name as NSString).pathExtension.lowercased()
+            guard bytes.count <= AttachmentStagingRules.clientCapBytes else {
+                setAttachmentError(AttachmentStagingError.fileTooLarge(
+                    name: name, sizeBytes: bytes.count, capBytes: AttachmentStagingRules.clientCapBytes))
+                return
+            }
+            let safeName = AttachmentStagingRules.sanitizedFilename(name)
+            let lower = (safeName as NSString).pathExtension.lowercased()
             let refText: String
             if AttachmentStagingRules.imageExtensions.contains(lower) {
                 // Vision-tile path: bytes queue as an attached image the NEXT
                 // prompt.submit consumes (server.py `_queue_attached_image`).
                 // The prompt cites the gateway's own attachment marker form.
-                guard case .success(let dataURL) = AttachmentStagingRules.imageDataURL(filename: name, bytes: bytes) else {
-                    if case .failure(let error) = AttachmentStagingRules.imageDataURL(filename: name, bytes: bytes) {
+                guard case .success(let dataURL) = AttachmentStagingRules.imageDataURL(filename: safeName, bytes: bytes) else {
+                    if case .failure(let error) = AttachmentStagingRules.imageDataURL(filename: safeName, bytes: bytes) {
                         setAttachmentError(error)
                     }
                     return
                 }
                 let image = try await attachments.attachImageBytes(
-                    sessionID: sid, filename: name, dataURL: dataURL)
-                refText = "[User attached image: \(image.name ?? (name as NSString).lastPathComponent)]"
+                    sessionID: sid, filename: safeName, dataURL: dataURL)
+                refText = "[User attached image: \(image.name ?? safeName)]"
             } else if lower == "pdf" {
-                guard case .success(let dataURL) = AttachmentStagingRules.pdfDataURL(filename: name, bytes: bytes) else {
-                    if case .failure(let error) = AttachmentStagingRules.pdfDataURL(filename: name, bytes: bytes) {
+                guard case .success(let dataURL) = AttachmentStagingRules.pdfDataURL(filename: safeName, bytes: bytes) else {
+                    if case .failure(let error) = AttachmentStagingRules.pdfDataURL(filename: safeName, bytes: bytes) {
                         setAttachmentError(error)
                     }
                     return
                 }
-                let pdf = try await attachments.attachPDF(sessionID: sid, filename: name, dataURL: dataURL)
+                let pdf = try await attachments.attachPDF(sessionID: sid, filename: safeName, dataURL: dataURL)
                 refText = "[User attached PDF: \(pdf.filename) (\(pdf.pagesAttached) page(s))]"
             } else {
                 // Generic artifact: the `@file:` ref the agent's file tools
                 // read (file.attach methods_prompt.py:1350).
                 let resolvedMime = mime ?? "application/octet-stream"
-                guard case .success(let dataURL) = AttachmentStagingRules.fileDataURL(filename: name, mime: resolvedMime, bytes: bytes) else {
-                    if case .failure(let error) = AttachmentStagingRules.fileDataURL(filename: name, mime: resolvedMime, bytes: bytes) {
+                guard case .success(let dataURL) = AttachmentStagingRules.fileDataURL(filename: safeName, mime: resolvedMime, bytes: bytes) else {
+                    if case .failure(let error) = AttachmentStagingRules.fileDataURL(filename: safeName, mime: resolvedMime, bytes: bytes) {
                         setAttachmentError(error)
                     }
                     return
                 }
-                let file = try await attachments.attachFile(sessionID: sid, name: name, dataURL: dataURL)
+                let file = try await attachments.attachFile(sessionID: sid, name: safeName, dataURL: dataURL)
                 refText = file.refText
             }
             pendingAttachments.append(PendingAttachment(
                 id: UUID().uuidString,
-                displayName: (name as NSString).lastPathComponent,
-                byteCount: byteCount,
+                displayName: safeName,
+                byteCount: bytes.count,
                 refText: refText))
             attachmentError = nil
         } catch let error as AttachmentStagingError {
@@ -936,7 +942,7 @@ public final class ConversationViewModel {
     }
 
     private func setAttachmentError(_ error: AttachmentStagingError) {
-        attachmentError = error.description
+        attachmentError = Redaction.safeText(error.description)
     }
 
     /// Interrupt a running turn (session.interrupt).
@@ -996,7 +1002,7 @@ public final class ConversationViewModel {
             } catch let error as VoiceError {
                 await MainActor.run {
                     self.isListening = false
-                    self.voiceError = error.description
+                    self.voiceError = Redaction.safeText(error.description)
                 }
             } catch {
                 await MainActor.run {
@@ -1978,10 +1984,7 @@ public final class ConversationViewModel {
     }
 
     static func nonSecret(_ error: any Error) -> String {
-        if let localized = error as? LocalizedError, let text = localized.errorDescription {
-            return text
-        }
-        return String(describing: error)
+        Redaction.safeErrorDescription(error)
     }
 
     /// Human-readable replay hydration notice (non-secret; spec §30 answers

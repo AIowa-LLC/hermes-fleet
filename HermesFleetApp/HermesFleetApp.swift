@@ -27,9 +27,12 @@ struct HermesFleetApp: App {
                 ZStack {
                     FleetTabView(environment: environment, lockController: lockController)
                         .task {
-                            await environment.load()
-                            await environment.refreshRoster()
+                            // Authenticate before touching the registry,
+                            // cache, or roster. Protected content must not
+                            // be hydrated while the lock screen is showing.
                             await lockController.authenticateIfNeeded()
+                            guard !lockController.isLocked else { return }
+                            await environment.hydrateIfNeeded()
                         }
 
                     // Continue the launch artwork past the native LaunchScreen
@@ -52,6 +55,24 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
+            if phase == .background {
+                // A lock screen is not a network boundary. Tear down every
+                // live gateway session as soon as the app leaves the
+                // foreground, even when App Lock is disabled.
+                Task { await environment.disconnectAll() }
+            }
+        }
+        .onChange(of: lockController.isLocked) { _, isLocked in
+            if isLocked {
+                // Covers re-locks caused by authentication transitions as
+                // well as the normal scene-phase background path.
+                Task { await environment.disconnectAll() }
+            } else {
+                // Biometric failure enters passcode fallback. The initial
+                // launch task has already returned at that point, so the
+                // unlock transition must resume protected hydration.
+                Task { await environment.hydrateIfNeeded() }
+            }
         }
     }
 }
