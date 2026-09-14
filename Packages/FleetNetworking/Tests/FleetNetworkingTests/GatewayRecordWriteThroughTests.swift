@@ -11,8 +11,8 @@ import FleetCore
 /// disconnected, auth flags re-derived from the credential store).
 final class GatewayRecordWriteThroughTests: XCTestCase {
 
-    private let gatewayID = GatewayID(rawValue: "100.100.200.61:9120")
-    private let endpoint = URL(string: "http://100.100.200.61:9120")!
+    private let gatewayID = GatewayID(rawValue: "gateway.example.invalid:9120")
+    private let endpoint = URL(string: "https://gateway.example.invalid:9120")!
 
     // MARK: fixtures
 

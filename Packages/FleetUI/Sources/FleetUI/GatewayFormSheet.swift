@@ -259,9 +259,9 @@ struct GatewayFormSheet: View {
         #if DEBUG
         guard ProcessInfo.processInfo.environment["HERMES_FLEET_UI_TEST_PASTE_FIXTURES"] == "1" else { return nil }
         switch identifier {
-        case "fleet.gateways.form.paste.endpoint": return "http://192.168.50.58:8642"
+        case "fleet.gateways.form.paste.endpoint": return "https://gateway.example.invalid:8642"
         case "fleet.gateways.form.paste.username": return "fleet-operator"
-        case "fleet.gateways.form.paste.password": return "7f3a9c21e8b04d5f6a2c9e7b1d4f8a3c5e6b2d9f0a1c3e5b7"
+        case "fleet.gateways.form.paste.password": return "NOT-A-CREDENTIAL"
         default: return nil
         }
         #else

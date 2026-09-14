@@ -26,7 +26,7 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
         GatewayRegistration(
             id: GatewayID(rawValue: id),
             displayName: "MacBook",
-            endpoint: URL(string: "https://100.100.200.61:9120")!
+            endpoint: URL(string: "https://gateway.example.invalid:9120")!
         )
     }
 
@@ -79,7 +79,7 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
             gateway.id,
             edits: GatewayEdit(
                 displayName: nil,
-                endpoint: URL(string: "https://100.100.200.61:9443")!,
+                endpoint: URL(string: "https://gateway.example.invalid:9443")!,
                 authConfiguration: nil))
 
         let after = try await pins.loadPin(for: gateway.id)

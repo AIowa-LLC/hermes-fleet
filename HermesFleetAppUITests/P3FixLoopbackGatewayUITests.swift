@@ -1,17 +1,18 @@
 import XCTest
 
 /// t_eb5455f2 isolation proof: the FULL app auth+connect code path reaches
-/// Connected against the REAL LAN gateway, via a loopback forwarder the
-/// simulator CAN reach (127.0.0.1:9120 -> 192.168.50.37:9120). The simulator
-/// app is gated from the Mac's own LAN IP by iOS local-network privacy, but
-/// 127.0.0.1 is reachable (proven by L1 tests). This drives the same
-/// Username & Password flow + real creds through the SAME code path P3 used.
+/// Connected through an operator-configured loopback forwarder. This drives
+/// the same Username & Password flow through the SAME code path P3 used.
 final class P3FixLoopbackGatewayUITests: XCTestCase {
     private let endpoint = "http://127.0.0.1:9120"
     private let displayName = "Mac LAN (loopback)"
     private let gatewayID = "127.0.0.1:9120"
 
     override func setUpWithError() throws {
+        guard let credentialFile = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              !credentialFile.isEmpty else {
+            throw XCTSkip("loopback live QA requires HERMES_FLEET_CREDENTIAL_FILE")
+        }
         continueAfterFailure = false
         addUIInterruptionMonitor(withDescription: "Local Network permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -53,7 +54,7 @@ final class P3FixLoopbackGatewayUITests: XCTestCase {
         endpointField.tap()
         endpointField.typeText(endpoint)
 
-        // Username & Password strategy + real creds from .cred.
+        // Username & Password strategy + credentials from the operator file.
         tap(firstMatch(in: app, identifier: "fleet.gateways.form.strategy"))
         let userPass = app.buttons["Username & Password"]
         if userPass.waitForExistence(timeout: 5) { userPass.tap() }
@@ -105,7 +106,8 @@ final class P3FixLoopbackGatewayUITests: XCTestCase {
     }
 
     private func readCreds() -> (String, String) {
-        guard let text = try? String(contentsOfFile: "/tmp/hermes_lan_surface/.cred", encoding: .utf8) else {
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return ("", "")
         }
         var username = ""

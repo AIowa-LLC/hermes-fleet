@@ -34,10 +34,16 @@ ARCH_HOST="archlinux""-1"               # private machine hostname
 TS_TAILNET="taila00fdc"                 # real tailnet name fragment
 MAC_HOST="macbook""-m5"                 # maintainer workstation hostname
 PERSONAL_APPLE="asimons""1981"          # personal Apple ID local part
+KNOWN_LAN="192""\\.""168""\\.""50""\\.(37|58)" # retired operator LAN fixtures
+KNOWN_TAIL_A="100""\\.""100""\\.""200""\\.61" # retired operator tailnet fixture
+KNOWN_TAIL_B="100""\\.""127""\\.""200""\\.89" # retired operator tailnet fixture
+LIVE_TOKEN="sk""-live-"              # live-looking credential fixture
+QR_PASSWORD="7f3a""9c21""e8b0"       # retired QR credential fragment
+DESTRUCTIVE_FIXTURE="rm"" -rf /tmp/scratch" # destructive approval fixture
 
 # Keep concrete maintainer-specific patterns while allowing generic public
 # fixture hosts and RFC/private-range examples.
-PATTERN="${HOME_DIR}|${GMAIL}|${ICLOUD}|${ME_COM}|${AGENT_ID}|${DEV_UDID}|${SIM_UDID}|${FLEET_HOST}|${LAN_A}|${TAIL_A}|${TAIL_B}|${ARCH_HOST}|${TS_TAILNET}|${MAC_HOST}|${PERSONAL_APPLE}"
+PATTERN="${HOME_DIR}|${GMAIL}|${ICLOUD}|${ME_COM}|${AGENT_ID}|${DEV_UDID}|${SIM_UDID}|${FLEET_HOST}|${LAN_A}|${TAIL_A}|${TAIL_B}|${ARCH_HOST}|${TS_TAILNET}|${MAC_HOST}|${PERSONAL_APPLE}|${KNOWN_LAN}|${KNOWN_TAIL_A}|${KNOWN_TAIL_B}|${LIVE_TOKEN}|${QR_PASSWORD}|${DESTRUCTIVE_FIXTURE}"
 
 note() { printf '=== %s ===\n' "$1"; }
 

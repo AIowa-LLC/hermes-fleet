@@ -69,9 +69,9 @@ final class GatewayEndpointMigrationTests: XCTestCase {
     func testRestoreMigratesDeadSpellingToDefault() async throws {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(
-            id: "100.127.200.89:8642",
+            id: "100.127.0.89:8642",
             displayName: "Lab Node",
-            endpoint: "http://100.127.200.89:8642",
+            endpoint: "http://100.127.0.89:8642",
             authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true),
             authConfigured: true
         ))
@@ -90,7 +90,7 @@ final class GatewayEndpointMigrationTests: XCTestCase {
 
         XCTAssertEqual(restored.count, 1)
         XCTAssertEqual(restored[0].endpoint, URL(string: tunnel))
-        XCTAssertEqual(restored[0].id, GatewayID(rawValue: "100.127.200.89:8642"),
+        XCTAssertEqual(restored[0].id, GatewayID(rawValue: "100.127.0.89:8642"),
                        "identity must be preserved through migration")
         let stored = try await records.loadGatewayRecords()
         XCTAssertEqual(stored[0].endpoint, tunnel, "migration must write through to the store")
@@ -149,7 +149,7 @@ final class GatewayEndpointMigrationTests: XCTestCase {
     func testConfiguredDefaultAloneNeverMigratesPrivateRows() async throws {
         let cases: [(String, String)] = [
             ("lan-user", "http://192.168.50.10:9119"),            // RFC1918 user gateway
-            ("tailnet-user", "http://100.100.200.61:9120"),       // CGNAT/tailnet user gateway
+            ("tailnet-user", "http://100.100.0.1:9120"),          // CGNAT/tailnet user gateway
             ("magicdns-user", "https://node-b.tailnet-example.ts.net:9119"),
             ("loopback-user", "http://127.0.0.1:9119"),
             ("public-user", "https://gateway.example.net"),
@@ -182,7 +182,7 @@ final class GatewayEndpointMigrationTests: XCTestCase {
             id: "legacy-lan", displayName: "Legacy Lab", endpoint: "http://192.168.50.20:8642"
         )
         let tailnetRow = StoredGatewayRecord(
-            id: "legacy-tailnet", displayName: "Legacy Tailnet", endpoint: "http://100.127.200.89:8642"
+            id: "legacy-tailnet", displayName: "Legacy Tailnet", endpoint: "http://100.127.0.89:8642"
         )
         let publicRow = StoredGatewayRecord(
             id: "public-user", displayName: "User Gateway", endpoint: "https://gateway.example.net"

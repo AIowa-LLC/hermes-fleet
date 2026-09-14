@@ -19,18 +19,18 @@ final class F2PairingApplyTests: XCTestCase {
     func testApplyPairingFillsEntireDraft() throws {
         let store = makeStoreWithAddDraft()
         let payload = PairingPayload(
-            url: "http://192.168.50.37:8642",
-            username: "fleet-operator",
-            password: "test-pairing-secret-00000000000000000000000000001"
+            url: "https://gateway.example.invalid:8642",
+            username: "fixture-user",
+            password: "NOT-A-CREDENTIAL"
         )
 
         try store.applyPairing(payload.encoded())
 
-        XCTAssertEqual(store.displayName, "192.168.50.37", "display name derives from the endpoint host")
-        XCTAssertEqual(store.endpointText, "http://192.168.50.37:8642")
+        XCTAssertEqual(store.displayName, "gateway.example.invalid", "display name derives from the endpoint host")
+        XCTAssertEqual(store.endpointText, "https://gateway.example.invalid:8642")
         XCTAssertEqual(store.strategy, .usernamePassword)
-        XCTAssertEqual(store.usernameText, "fleet-operator")
-        XCTAssertEqual(store.passwordText, "test-pairing-secret-00000000000000000000000000001")
+        XCTAssertEqual(store.usernameText, "fixture-user")
+        XCTAssertEqual(store.passwordText, "NOT-A-CREDENTIAL")
         XCTAssertEqual(store.tokenText, "", "token field unused by the pairing strategy")
         XCTAssertFalse(store.confirmsCleartextSend)
         XCTAssertNil(store.saveError)
@@ -44,10 +44,10 @@ final class F2PairingApplyTests: XCTestCase {
         store.strategy = .bearerToken
         store.tokenText = "old-token"
 
-        try store.applyPairing(PairingPayload(url: "http://10.0.0.5:8642", username: "u", password: "p").encoded())
+        try store.applyPairing(PairingPayload(url: "https://gateway.example.invalid:8642", username: "u", password: "p").encoded())
 
-        XCTAssertEqual(store.displayName, "10.0.0.5")
-        XCTAssertEqual(store.endpointText, "http://10.0.0.5:8642")
+        XCTAssertEqual(store.displayName, "gateway.example.invalid")
+        XCTAssertEqual(store.endpointText, "https://gateway.example.invalid:8642")
         XCTAssertEqual(store.strategy, .usernamePassword)
         XCTAssertEqual(store.tokenText, "", "stale token from a previous strategy must not survive")
         XCTAssertEqual(store.usernameText, "u")
@@ -59,7 +59,7 @@ final class F2PairingApplyTests: XCTestCase {
     func testApplyPairingRejectsUserInfoInEndpoint() {
         let store = makeStoreWithAddDraft()
         // A QR must not smuggle user:pass@host — same rule as typed input.
-        let hostile = PairingPayload(url: "http://evil:pass@10.0.0.5:8642", username: "u", password: "p")
+        let hostile = PairingPayload(url: "http://evil:pass@gateway.example.invalid:8642", username: "u", password: "p")
         XCTAssertThrowsError(try store.applyPairing(hostile.encoded()))
         XCTAssertEqual(store.endpointText, "", "a rejected scan must not partially fill the form")
         XCTAssertEqual(store.passwordText, "")
@@ -67,9 +67,9 @@ final class F2PairingApplyTests: XCTestCase {
 
     func testApplyPairingStripsQueryAndFragment() throws {
         let store = makeStoreWithAddDraft()
-        let payload = PairingPayload(url: "http://10.0.0.5:8642/ws?token=x#frag", username: "u", password: "p")
+        let payload = PairingPayload(url: "https://gateway.example.invalid:8642/ws?token=x#frag", username: "u", password: "p")
         try store.applyPairing(payload.encoded())
-        XCTAssertEqual(store.endpointText, "http://10.0.0.5:8642/ws", "query/fragment stripped by normalizedOrigin")
+        XCTAssertEqual(store.endpointText, "https://gateway.example.invalid:8642/ws", "query/fragment stripped by normalizedOrigin")
     }
 
     // MARK: Decode failures leave the draft untouched
@@ -96,7 +96,7 @@ final class F2PairingApplyTests: XCTestCase {
 
     func testClearAfterPairingWipesSecrets() throws {
         let store = makeStoreWithAddDraft()
-        try store.applyPairing(PairingPayload(url: "http://10.0.0.5:8642", username: "u", password: "secret").encoded())
+        try store.applyPairing(PairingPayload(url: "https://gateway.example.invalid:8642", username: "u", password: "secret").encoded())
         store.clear()
         XCTAssertEqual(store.usernameText, "")
         XCTAssertEqual(store.passwordText, "")

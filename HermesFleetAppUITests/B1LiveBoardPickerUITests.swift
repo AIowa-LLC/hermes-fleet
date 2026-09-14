@@ -1,35 +1,44 @@
 import XCTest
 
 /// B1 QA (t_a0ca4856) — INDEPENDENT live verification of the board selector
-/// on Tony's physical iPhone (build 22, Debug) against the REAL gateway over
-/// WiFi (LAN surface). Device-only: the scripted simulator fleet is excluded
-/// by targeting this suite explicitly on the physical device.
+/// against an operator-supplied gateway. Device-only: the scripted simulator
+/// fleet is excluded by targeting this suite explicitly on the physical device.
 ///
 /// Acceptance surface (from the B1 card, re-derived by QA):
-///   1. Toolbar picker (fleet.kanban.board.picker) lists the gateway's REAL
-///      boards (GET /boards) with the operator's active board displayed.
+///   1. Toolbar picker (fleet.kanban.board.picker) lists the configured
+///      gateway's boards (GET /boards) with the operator's active board shown.
 ///   2. Switching re-targets the SNAPSHOT (visibly different board content).
 ///   3. The re-opened WS stream goes live on the new board.
 ///   4. Selection persists across relaunch (per-device UserDefaults).
 ///   5. Switching back to the active board restores the original content.
 ///   6. Read-only discipline: no mutating controls on the board.
 /// (Orchestrator active-board pointer invariance is asserted host-side by
-///  the QA runner script around this test — it is a MAC-side file.)
+///  the QA runner script around this test — it is a host-side file.)
 ///
-/// Credential safety: username/password are read at runtime from
-/// /tmp/hermes_lan_surface/.cred (0600) and NEVER printed or committed.
+/// Configuration and credentials are supplied at runtime with
+/// HERMES_FLEET_LIVE_ENDPOINT, HERMES_FLEET_LIVE_ACTIVE_BOARD,
+/// HERMES_FLEET_LIVE_OTHER_BOARD, HERMES_FLEET_LIVE_ACTIVE_CARD, and
+/// HERMES_FLEET_CREDENTIAL_FILE. Values are never printed or committed.
 final class B1LiveBoardPickerUITests: XCTestCase {
 
-    private let endpoint = "http://192.168.50.37:9120"
-    private let gatewayID = "192.168.50.37:9120"
+    private var endpoint: String { ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_ENDPOINT"] ?? "" }
+    private var gatewayID: String {
+        guard let url = URL(string: endpoint), let host = url.host else { return endpoint }
+        return "\(host):\(url.port ?? (url.scheme == "https" ? 443 : 80))"
+    }
     private let gwName = "B1 QA LAN"
 
-    // Real board names on the live gateway (verified via GET /boards).
-    private let activeBoardName = "Hermes Fleet R10"          // is_current=true
-    private let otherBoardName = "Hermes Fleet for iOS"       // empty board
-    private let activeBoardCard = "B1 board selector"         // distinctive substring of a live R10 card
+    private var activeBoardName: String { ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_ACTIVE_BOARD"] ?? "" }
+    private var otherBoardName: String { ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_OTHER_BOARD"] ?? "" }
+    private var activeBoardCard: String { ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_ACTIVE_CARD"] ?? "" }
 
     override func setUpWithError() throws {
+        guard !endpoint.isEmpty, !activeBoardName.isEmpty, !otherBoardName.isEmpty,
+              !activeBoardCard.isEmpty,
+              let credentialFile = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              !credentialFile.isEmpty else {
+            throw XCTSkip("B1 live QA requires explicit gateway, board, card, and credential configuration")
+        }
         continueAfterFailure = false
         addUIInterruptionMonitor(withDescription: "Local Network permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -296,7 +305,8 @@ final class B1LiveBoardPickerUITests: XCTestCase {
     }
 
     private func readCreds() -> (String, String) {
-        guard let data = FileManager.default.contents(atPath: "/tmp/hermes_lan_surface/.cred"),
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              let data = FileManager.default.contents(atPath: path),
               let text = String(data: data, encoding: .utf8) else {
             return ("", "")
         }

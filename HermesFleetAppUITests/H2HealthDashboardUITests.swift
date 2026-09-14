@@ -5,11 +5,12 @@ import XCTest
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport +
 /// file-backed SwiftData cache) on the iOS Simulator. Like T2, the simulator
-/// app reaches the Mac's LAN surface through the loopback forwarder
-/// (19121 -> 192.168.50.37:9120) started by scripts/h2_uitest.sh.
+/// app reaches an operator-configured gateway through the loopback forwarder
+/// started by scripts/h2_uitest.sh.
 ///
 /// Flow:
-///   1. add the LAN gateway via the U2 UI (username/password from .cred)
+///   1. add the configured gateway via the U2 UI (username/password from the
+///      operator-supplied credential file)
 ///   2. row menu Connect -> Connected (live against the LAN gateway; the
 ///      health-fed connection factory)
 ///   3. row menu Disconnect -> Reconnect (drives a real transport teardown +
@@ -21,9 +22,8 @@ import XCTest
 ///      reopen the Health dashboard -> assert stats SURVIVED the restart
 ///      (reconnect count >= 1, last-disconnect reason, uptime present)
 ///
-/// Credential safety: the real username/password are read at runtime from
-/// /tmp/hermes_lan_surface/.cred (0600) and are NEVER printed, logged, or
-/// committed.
+/// Credential safety: username/password are read at runtime from
+/// HERMES_FLEET_CREDENTIAL_FILE and are NEVER printed, logged, or committed.
 final class H2HealthDashboardUITests: XCTestCase {
 
     private let lanEndpoint = "http://127.0.0.1:19121"
@@ -31,6 +31,10 @@ final class H2HealthDashboardUITests: XCTestCase {
     private let lanID = "127.0.0.1:19121"
 
     override func setUpWithError() throws {
+        guard let credentialFile = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              !credentialFile.isEmpty else {
+            throw XCTSkip("health live QA requires HERMES_FLEET_CREDENTIAL_FILE")
+        }
         continueAfterFailure = false
         addUIInterruptionMonitor(withDescription: "Local Network permission") { alert in
             let allow = alert.buttons["Allow"]
@@ -255,7 +259,8 @@ final class H2HealthDashboardUITests: XCTestCase {
     }
 
     private func readCreds() -> (String, String) {
-        guard let text = try? String(contentsOfFile: "/tmp/hermes_lan_surface/.cred", encoding: .utf8) else {
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return ("", "")
         }
         var username = ""

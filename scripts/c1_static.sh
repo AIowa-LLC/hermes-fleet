@@ -105,11 +105,11 @@ note "gitleaks detect"
 # equivalent of what CI always scanned — and its fingerprints are stable
 # across checkouts, unlike git-mode fingerprints that embed the introducing
 # commit SHA (unstable on PR merge commits). Known-good exceptions live in
-# .gitleaksignore (currently one: the fleet.navigation.v1 UserDefaults
-# storage-key string, a generic-api-key rule false positive).
+# .gitleaks.toml (currently one: the RFC 6455 sample nonce, a generic-api-key
+# false positive).
 # A full local git-history scan would additionally flag F2's known
-# fixture-password noise in the superseded commit 5ed93e3 (files no longer
-# contain those strings at HEAD) — not a leak, not a gate concern.
+# fixture-password and approval-fixture noise in superseded commits (files no
+# longer contain those strings at HEAD) — not a leak, not a gate concern.
 # Scan EXACTLY the tracked tree at HEAD: extract via git archive into a temp
 # dir and --no-git scan that. This is deterministic in any clone (shallow or
 # full — the old git-mode tip scan silently collapsed to a whole-tree scan in

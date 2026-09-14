@@ -126,7 +126,7 @@ final class GatewayApprovalClientTests: XCTestCase {
         let malformed = Self.eventFrame(
             type: "approval.request",
             sessionID: "abc12345",
-            payload: ["command": "rm -rf /x", "choices": ["once", "deny"]]  // no request_id
+            payload: ["command": "printf 'fixture operation'", "choices": ["once", "deny"]]  // no request_id
         )
         let benign = Self.eventFrame(
             type: "status.update", sessionID: "abc12345",
@@ -244,7 +244,7 @@ final class GatewayApprovalClientTests: XCTestCase {
                     return [Self.responseFrame(id: id, result: [
                         "approvals": [[
                             "request_id": "req-p1",
-                            "command": "git push --force",
+                            "command": "printf 'fixture approval'",
                             "description": "Force push",
                             "choices": ["once", "deny"],
                         ]]

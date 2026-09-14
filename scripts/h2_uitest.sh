@@ -3,8 +3,8 @@
 # dashboard against the LIVE LAN gateway. Builds the Release app + UI test
 # bundle, fresh-installs on the booted iPhone 17 Pro sim, runs ONLY
 # H2HealthDashboardUITests, and exports the result summary + screenshots.
-# No secrets printed (creds are read at runtime by the test from
-# /tmp/hermes_lan_surface/.cred).
+# No secrets printed (creds are read at runtime by the test from the
+# operator-owned file named by HERMES_FLEET_CREDENTIAL_FILE).
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO" || exit 1
@@ -14,6 +14,7 @@ DEST="platform=iOS Simulator,name=${SIM},OS=latest"
 DD=build/H2DerivedData
 XCRESULT=build/h2_uitest.xcresult
 E=build/h2_evidence
+CRED="${HERMES_FLEET_CREDENTIAL_FILE:?Set HERMES_FLEET_CREDENTIAL_FILE to an operator-owned 0600 credential file}"
 mkdir -p "$E" "$E/screenshots"
 rm -rf "$DD" "$XCRESULT"
 
@@ -45,7 +46,7 @@ fi
 echo "SIM_UDID=$UDID"
 
 echo "=== [1/5] Build Release app + UI test bundle (simulator) ==="
-xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
+HERMES_FLEET_CREDENTIAL_FILE="$CRED" xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
   -configuration Release \
   -destination "$DEST" \
   -derivedDataPath "$DD" \
@@ -87,7 +88,7 @@ PYEOF
 
 echo "=== [4/5] Run H2HealthDashboardUITests (Release) ==="
 set -o pipefail
-xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
+HERMES_FLEET_CREDENTIAL_FILE="$CRED" xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
   -configuration Release \
   -destination "$DEST" \
   -derivedDataPath "$DD" \

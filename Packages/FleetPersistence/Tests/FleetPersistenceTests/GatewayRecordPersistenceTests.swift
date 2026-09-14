@@ -14,9 +14,9 @@ import FleetCore
 final class GatewayRecordPersistenceTests: XCTestCase {
 
     private func sampleRecord(
-        id: String = "100.100.200.61:9120",
+        id: String = "gateway.example.invalid:9120",
         displayName: String = "Lab Node",
-        endpoint: String = "http://100.100.200.61:9120"
+        endpoint: String = "https://gateway.example.invalid:9120"
     ) -> StoredGatewayRecord {
         StoredGatewayRecord(
             id: id,

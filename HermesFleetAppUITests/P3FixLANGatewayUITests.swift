@@ -1,25 +1,32 @@
 import XCTest
 
-/// P3 fix (t_eb5455f2): prove the app reaches **Connected** against the REAL
-/// live LAN gateway using the **Username & Password** strategy.
+/// P3 fix (t_eb5455f2): prove the app reaches **Connected** against an
+/// operator-supplied gateway using the **Username & Password** strategy.
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
-/// on the simulator against the real LAN gateway at 192.168.50.37:9120 (the
-/// same code path P3 used). Adds the gateway via the U2 UI with username +
+/// on the simulator against the configured gateway. Adds it via the U2 UI with username +
 /// password, then asserts the in-app live probe classifies it **Connected**
 /// (not Unreachable/offline) — the exact acceptance the installed app
 /// (71023f9) failed.
 ///
-/// Credential safety: the real username/password are read at runtime from
-/// /tmp/hermes_lan_surface/.cred (0600, written by the operator) and are
+/// Endpoint and credentials are supplied at runtime with
+/// HERMES_FLEET_LIVE_ENDPOINT and HERMES_FLEET_CREDENTIAL_FILE. Values are
 /// NEVER printed, logged, asserted, or committed.
 final class P3FixLANGatewayUITests: XCTestCase {
 
-    private let endpoint = "http://192.168.50.37:9120"
-    private let displayName = "Mac LAN"
-    private let gatewayID = "192.168.50.37:9120"
+    private var endpoint: String { ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_ENDPOINT"] ?? "" }
+    private var displayName: String { ProcessInfo.processInfo.environment["HERMES_FLEET_LIVE_NAME"] ?? "Live Gateway" }
+    private var gatewayID: String {
+        guard let url = URL(string: endpoint), let host = url.host else { return endpoint }
+        return "\(host):\(url.port ?? (url.scheme == "https" ? 443 : 80))"
+    }
 
     override func setUpWithError() throws {
+        guard !endpoint.isEmpty,
+              let credentialFile = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              !credentialFile.isEmpty else {
+            throw XCTSkip("P3 live QA requires an explicit gateway endpoint and credential file")
+        }
         continueAfterFailure = false
         // The iOS Local Network permission is a SYSTEM alert hosted by a
         // separate process (SpringBoard / SafariViewService) — `app.alerts`
@@ -140,11 +147,12 @@ final class P3FixLANGatewayUITests: XCTestCase {
 
     // MARK: Helpers
 
-    /// Reads username= / password= lines from /tmp/hermes_lan_surface/.cred.
+    /// Reads username= / password= lines from the operator-supplied credential file.
     /// Values are used only to fill the secure form fields — never printed,
     /// logged, or asserted.
     private func readCreds() -> (String, String) {
-        guard let text = try? String(contentsOfFile: "/tmp/hermes_lan_surface/.cred", encoding: .utf8) else {
+        guard let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"],
+              let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return ("", "")
         }
         var username = ""

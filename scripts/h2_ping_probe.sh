@@ -5,12 +5,14 @@
 # and prints the response frames + connection lifetime, so we know whether the
 # gateway echoes the request id (the transport's RTT correlation depends on it)
 # and whether the socket stays alive with no other inbound traffic.
-# Runs via `bash scripts/h2_ping_probe.sh`. No secrets printed.
+# Runs via `HERMES_FLEET_CREDENTIAL_FILE=/path/to/credentials bash
+# scripts/h2_ping_probe.sh`. No secrets printed.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 LAN_HOST="${HERMES_FLEET_LAN_HOST:?Set HERMES_FLEET_LAN_HOST to YOUR gateway LAN host}"
 LAN_PORT="${HERMES_FLEET_LAN_PORT:-9120}"
+CRED="${HERMES_FLEET_CREDENTIAL_FILE:?Set HERMES_FLEET_CREDENTIAL_FILE to an operator-owned 0600 credential file}"
 PORT=19121
 FWD_PID=""
 if ! nc -z -w 2 127.0.0.1 "$PORT" 2>/dev/null; then
@@ -22,7 +24,7 @@ fi
 trap '[ -n "$FWD_PID" ] && kill "$FWD_PID" 2>/dev/null || true' EXIT
 nc -z -w 2 127.0.0.1 "$PORT" 2>/dev/null || { echo "forwarder failed to come up"; exit 1; }
 echo "forwarder 127.0.0.1:$PORT UP"
-[ -f /tmp/hermes_lan_surface/.cred ] || { echo "MISSING /tmp/hermes_lan_surface/.cred"; exit 1; }
+[ -f "$CRED" ] || { echo "MISSING credential file: $CRED"; exit 1; }
 
 cat > /tmp/h2_ping_probe.swift <<'SWIFT'
 import Foundation
@@ -31,7 +33,8 @@ let base = URL(string: "http://127.0.0.1:19121")!
 let sema = DispatchSemaphore(value: 0)
 
 func readCreds() -> (String, String) {
-    let text = (try? String(contentsOfFile: "/tmp/hermes_lan_surface/.cred", encoding: .utf8)) ?? ""
+    let path = ProcessInfo.processInfo.environment["HERMES_FLEET_CREDENTIAL_FILE"] ?? ""
+    let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
     var u = "", p = ""
     for line in text.split(separator: "\n") {
         if line.hasPrefix("username=") { u = String(line.dropFirst(9)) }
@@ -135,4 +138,4 @@ Task {
 }
 sema.wait()
 SWIFT
-swift /tmp/h2_ping_probe.swift 2>&1 | grep -vE "^warning:|^note:|Compiling|Build complete|^$" | head -40
+HERMES_FLEET_CREDENTIAL_FILE="$CRED" swift /tmp/h2_ping_probe.swift 2>&1 | grep -vE "^warning:|^note:|Compiling|Build complete|^$" | head -40

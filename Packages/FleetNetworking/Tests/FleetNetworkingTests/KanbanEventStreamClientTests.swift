@@ -11,12 +11,12 @@ final class KanbanEventStreamClientTests: XCTestCase {
 
     func testBuildEventsURLLoopbackToken() throws {
         let url = try XCTUnwrap(KanbanEventStreamClient.buildEventsURL(
-            base: try XCTUnwrap(URL(string: "http://192.168.50.58:9119")),
+            base: try XCTUnwrap(URL(string: "http://gateway.example.invalid:9119")),
             since: 41,
             authentication: .loopbackToken(StoredToken(rawValue: "sekret"))
         ))
         XCTAssertEqual(url.scheme, "ws")
-        XCTAssertEqual(url.host, "192.168.50.58")
+        XCTAssertEqual(url.host, "gateway.example.invalid")
         XCTAssertEqual(url.port, 9119)
         XCTAssertEqual(url.path, "/api/plugins/kanban/events")
         let comps = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
@@ -103,7 +103,7 @@ final class KanbanEventStreamClientTests: XCTestCase {
 
     func testBuildEventsURLIncludesBoardParam() throws {
         let url = try XCTUnwrap(KanbanEventStreamClient.buildEventsURL(
-            base: try XCTUnwrap(URL(string: "http://192.168.50.58:9119")),
+            base: try XCTUnwrap(URL(string: "https://gateway.example.invalid:9119")),
             since: 7,
             board: "r10-slug",
             authentication: .none
@@ -117,7 +117,7 @@ final class KanbanEventStreamClientTests: XCTestCase {
 
     func testBuildEventsURLOmitsBoardParamWhenNil() throws {
         let url = try XCTUnwrap(KanbanEventStreamClient.buildEventsURL(
-            base: try XCTUnwrap(URL(string: "http://192.168.50.58:9119")),
+            base: try XCTUnwrap(URL(string: "https://gateway.example.invalid:9119")),
             since: 7,
             board: nil,
             authentication: .none
@@ -130,7 +130,7 @@ final class KanbanEventStreamClientTests: XCTestCase {
     }
 
     func testBuildBoardURLCarriesBoardQueryParam() throws {
-        let base = try XCTUnwrap(URL(string: "http://192.168.50.58:9119"))
+        let base = try XCTUnwrap(URL(string: "https://gateway.example.invalid:9119"))
         // Pinned slug → ?board= in the query.
         let pinned = try XCTUnwrap(KanbanEventStreamClient.buildBoardURL(base: base, board: "r10-slug"))
         var comps = try XCTUnwrap(URLComponents(url: pinned, resolvingAgainstBaseURL: false))
@@ -257,7 +257,7 @@ final class KanbanEventStreamClientTests: XCTestCase {
         config.protocolClasses = [BoardURLProtocol.self]
         return KanbanEventStreamClient(
             gatewayID: GatewayID(rawValue: "g1"),
-            baseURL: URL(string: "http://192.168.50.58:9119")!,
+            baseURL: URL(string: "https://gateway.example.invalid:9119")!,
             authenticator: StaticAuthenticator(authentication: .none),
             httpCredential: { .none },
             urlSession: URLSession(configuration: config)

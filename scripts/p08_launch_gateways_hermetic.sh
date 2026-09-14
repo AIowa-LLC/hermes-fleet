@@ -4,7 +4,7 @@
 # the long-lived gateway process and affecting request routing.
 set -euo pipefail
 
-CRED=/tmp/hermes_lan_surface/.cred
+CRED="${HERMES_FLEET_CREDENTIAL_FILE:?Set HERMES_FLEET_CREDENTIAL_FILE to an operator-owned 0600 credential file}"
 LAN_IP="${HERMES_FLEET_LAN_HOST:?Set HERMES_FLEET_LAN_HOST to YOUR gateway LAN host}"
 TAIL_IP="${HERMES_FLEET_TAILNET_HOST:-}"
 PORT=9120

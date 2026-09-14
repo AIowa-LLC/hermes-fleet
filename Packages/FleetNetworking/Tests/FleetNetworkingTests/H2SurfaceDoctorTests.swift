@@ -66,7 +66,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
             #"{"platform": "hermes-agent", "version": "1.0.0"}"#.utf8)
 
         let finding = await GatewaySurfaceDoctor.probe(
-            baseURL: URL(string: "http://192.168.50.58:8642")!,
+            baseURL: URL(string: "https://gateway.example.invalid:8642")!,
             urlSession: session)
 
         XCTAssertEqual(finding, .hermesServer)
@@ -82,7 +82,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
         HealthProbeURLProtocol.body = Data(#"{"platform": "hermes-agent"}"#.utf8)
 
         let finding = await GatewaySurfaceDoctor.probe(
-            baseURL: URL(string: "http://192.168.50.58:8642")!,
+            baseURL: URL(string: "https://gateway.example.invalid:8642")!,
             urlSession: session)
         XCTAssertEqual(finding, .unknown)
     }
@@ -108,7 +108,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
         HealthProbeURLProtocol.body = Data(#"{"status": "ok"}"#.utf8)
 
         let finding = await GatewaySurfaceDoctor.probe(
-            baseURL: URL(string: "http://192.168.50.58:8642")!,
+            baseURL: URL(string: "https://gateway.example.invalid:8642")!,
             urlSession: session)
         XCTAssertEqual(finding, .unknown)
     }
@@ -142,7 +142,7 @@ final class H2SurfaceDoctorTests: XCTestCase {
         let registry = GatewayRegistryService(credentials: TestCredentialStore()) { gateway, _ in
             StubFailingSession(gatewayID: gateway.id, error: .authSurfaceHTTP(404))
         }
-        let endpoint = URL(string: "http://192.168.50.58:8642")!
+        let endpoint = URL(string: "https://gateway.example.invalid:8642")!
         _ = try! await registry.addGateway(
             GatewayRegistration(id: probeID, displayName: "Wrong Port", endpoint: endpoint))
 

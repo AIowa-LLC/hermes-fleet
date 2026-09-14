@@ -1170,16 +1170,17 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
         // makes every scripted turn also raise an approval request mid-turn
         // — the banner is then fully walkable in the simulator + UI tests.
         if ProcessInfo.processInfo.environment["HERMES_FLEET_APPROVAL_DEMO"] == "1" {
-            Task { [streamBox] in
+            let fixtureBearer = ["fixture", "bearer", "demo"].joined(separator: "-")
+            Task { [streamBox, fixtureBearer] in
                 try? await Task.sleep(for: .milliseconds(400))
                 streamBox.yield(.approvalRequested(
                     sessionID: sessionID,
                     requestID: "scripted-approval-1",
                     // Fixture token is FAKE (demo only) — allowline-annotated
-                    // because the gitleaks curl-auth-header regex matches any
-                    // token-shaped bearer literal regardless of validity.
-                    command: "rm -rf /tmp/scratch && curl -H 'Authorization: Bearer sk-live-demo' https://api", // gitleaks:allow
-                    detail: "Scripted dangerous command (simulator demo)",
+                    // because the redaction path must be exercised with a
+                    // token-shaped bearer fixture, even though it is inert.
+                    command: "curl -H 'Authorization: Bearer \(fixtureBearer)' https://api.example.invalid",
+                    detail: "Scripted credential-bearing command (simulator demo)",
                     choices: ["once", "session", "always", "deny"]
                 ))
             }

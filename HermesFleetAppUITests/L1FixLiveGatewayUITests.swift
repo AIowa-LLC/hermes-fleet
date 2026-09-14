@@ -1,11 +1,11 @@
 import XCTest
 
 /// L1 follow-up (t_c0bfc604): prove the app auth-wiring fix end-to-end against
-/// a REAL live Hermes gateway.
+/// an operator-configured live Hermes gateway.
 ///
 /// Drives the RELEASE app (production graph: real Keychain + live transport)
-/// on the simulator against a real `hermes serve` on loopback :9119 (started
-/// by scripts/l1_start_serve.sh). Adds a real gateway via the U2 UI with the
+/// on the simulator against a `hermes serve` on a configured loopback port
+/// (started by scripts/l1_start_serve.sh). Adds the gateway via the U2 UI with the
 /// **loopback token** strategy (the `?token=` path the live serve accepts),
 /// then asserts the acceptance criteria:
 ///   1. the in-app live probe classifies the gateway **Reachable** (Connected),
@@ -14,15 +14,17 @@ import XCTest
 ///      (no "No Bots").
 ///
 /// Credential safety: the loopback test token is read at runtime from
-/// /tmp/l1_live_test/.token (chmod 600, written by l1_start_serve.sh) and is
-/// NEVER printed, logged, or asserted. It is a throwaway test token for a
-/// local throwaway serve instance.
+/// HERMES_FLEET_TOKEN_FILE and is NEVER printed, logged, or asserted.
 final class L1FixLiveGatewayUITests: XCTestCase {
 
     private let endpoint = "http://127.0.0.1:9119"
     private let displayName = "Mac Live"
 
     override func setUpWithError() throws {
+        guard let tokenFile = ProcessInfo.processInfo.environment["HERMES_FLEET_TOKEN_FILE"],
+              !tokenFile.isEmpty else {
+            throw XCTSkip("L1 live QA requires HERMES_FLEET_TOKEN_FILE")
+        }
         continueAfterFailure = false
     }
 
@@ -36,7 +38,7 @@ final class L1FixLiveGatewayUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
         attachScreenshot(of: app, name: "l1fix-step1-open-gateways")
 
-        // Add the REAL gateway via the U2 add-gateway sheet (no hardcode).
+        // Add the configured gateway via the U2 add-gateway sheet.
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
@@ -119,7 +121,7 @@ final class L1FixLiveGatewayUITests: XCTestCase {
 
     private func readTestToken() -> String {
         // Test-only token for a local throwaway serve; never printed/logged.
-        (try? String(contentsOfFile: "/tmp/l1_live_test/.token", encoding: .utf8))?
+        (try? String(contentsOfFile: ProcessInfo.processInfo.environment["HERMES_FLEET_TOKEN_FILE"] ?? "", encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
