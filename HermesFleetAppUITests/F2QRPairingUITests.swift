@@ -1,5 +1,4 @@
 import XCTest
-import FleetCore
 
 /// F2 — QR-code gateway pairing: one scan fills the Add-Gateway form.
 ///
@@ -82,11 +81,7 @@ final class F2QRPairingUITests: XCTestCase {
 
     /// The raw QR text the gateway side would render (F2 v1 payload).
     private var simulatedScan: String {
-        PairingPayload(
-            url: "https://gateway.example.invalid:8642",
-            username: "fixture-user",
-            password: "NOT-A-CREDENTIAL"
-        ).encoded()
+        "{\"password\":\"NOT-A-CREDENTIAL\",\"url\":\"https://gateway.example.invalid:8642\",\"username\":\"fixture-user\",\"v\":1}"
     }
 
     func testScanFillsFormAndSaveRegistersGateway() throws {
