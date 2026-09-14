@@ -81,6 +81,14 @@ else
   bad "release preflight contract tests FAILED"; cat /tmp/c1_release_preflight.log
 fi
 
+# --- xcresult retry parser contract ------------------------------------------
+note "xcresult retry parser contract"
+if python3 scripts/c1_xcresult_parse_test.py >/tmp/c1_xcresult_parse.log 2>&1; then
+  ok "xcresult retry parser: final-attempt and recovered-flake semantics verified"
+else
+  bad "xcresult retry parser contract tests FAILED"; cat /tmp/c1_xcresult_parse.log
+fi
+
 # --- public-safety residue guard ----------------------------------------------
 note "public-safety residue guard"
 if bash scripts/public_safety_guard.sh >/tmp/c1_guard.log 2>&1; then
