@@ -5,8 +5,9 @@ import FleetCore
 @testable import FleetNetworking
 
 /// T3 — the URLSession challenge handler applies the TOFU verdict:
-/// accept trusts the (self-signed) credential, mismatch REJECTS, first use
-/// trusts-and-pins, non-server-trust challenges fall through to default
+/// accept trusts the (self-signed) credential, mismatch REJECTS, approved
+/// first use trusts-and-pins, unapproved first use REJECTS, non-server-trust
+/// challenges fall through to default
 /// handling. The trust-level decisions drive the `evaluate(serverTrust:)`
 /// seam (a synthetic URLProtectionSpace cannot carry a serverTrust; the
 /// challenge-extraction path is proven by the live TLS fixture suite).
@@ -80,6 +81,40 @@ final class PinningTrustHandlerTests: XCTestCase {
         XCTAssertNotNil(credential)
         let stored = try await store.loadPin(for: gatewayID)
         XCTAssertEqual(stored?.base64String, TLSFixtureIdentities.gatewaySPKIBase64)
+    }
+
+    func testFirstUseWithoutExplicitApprovalIsRejected() async throws {
+        let store = InMemoryPinStore()
+        let handler = PinningTrustHandler(
+            gatewayID: gatewayID, pinStore: store, approvalStore: store)
+
+        let (disposition, credential) = await evaluate(
+            handler,
+            trust: makeTrust(certDER: TLSFixtureIdentities.gatewayCertificateDER))
+
+        XCTAssertEqual(disposition, .cancelAuthenticationChallenge)
+        XCTAssertNil(credential)
+        XCTAssertEqual(
+            handler.lastVerdict,
+            .firstUseRequiresConfirmation(try gatewayPin))
+        let storedPin = try await store.loadPin(for: gatewayID)
+        XCTAssertNil(storedPin)
+    }
+
+    func testApprovedFirstUseIsAcceptedAndPins() async throws {
+        let store = InMemoryPinStore()
+        try store.syncSetFirstUseApproved(true, for: gatewayID)
+        let handler = PinningTrustHandler(
+            gatewayID: gatewayID, pinStore: store, approvalStore: store)
+
+        let (disposition, credential) = await evaluate(
+            handler,
+            trust: makeTrust(certDER: TLSFixtureIdentities.gatewayCertificateDER))
+
+        XCTAssertEqual(disposition, .useCredential)
+        XCTAssertNotNil(credential)
+        let storedPin = try await store.loadPin(for: gatewayID)
+        XCTAssertEqual(storedPin, try gatewayPin)
     }
 
     func testLastVerdictRecordsMismatch() async throws {

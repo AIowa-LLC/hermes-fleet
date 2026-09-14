@@ -4,8 +4,8 @@ import FleetCore
 
 /// T3 — the typed TOFU trust verdict for one presented certificate.
 public enum TLSTrustVerdict: Sendable, Equatable {
-    /// First use: no pin stored; the presented pin was accepted AND written
-    /// to the store (trust on first use).
+    /// First use: no pin stored; the presented pin was accepted after any
+    /// configured explicit approval and written to the store.
     case tofuAccept(SPKIFingerprint)
     /// The presented certificate's SPKI matches the stored pin.
     case pinMatched(SPKIFingerprint)
@@ -24,7 +24,10 @@ public enum TLSTrustVerdict: Sendable, Equatable {
 ///
 /// Pure decision logic over the `SynchronousPinStoring` seam (the URLSession
 /// challenge callback cannot await):
-/// - no stored pin → `.tofuAccept` and the pin is WRITTEN (first use trusts);
+/// - no stored pin → require configured first-use approval, then `.tofuAccept`
+///   and write the pin (the production composition root supplies approval);
+/// - no approval seam → retain the pure evaluator's legacy TOFU contract for
+///   hermetic tests and explicitly non-production callers;
 /// - stored pin == presented pin → `.pinMatched` (connect);
 /// - stored pin != presented pin → `.pinMismatch` (REJECT; the composition
 ///   root surfaces the warn-on-change flow to the user);
