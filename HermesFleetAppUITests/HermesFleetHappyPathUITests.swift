@@ -92,7 +92,9 @@ final class HermesFleetHappyPathUITests: XCTestCase {
     func testReturnToFleetSwitchMachine() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launch()
+        XCTAssertTrue(
+            UITestLaunchSupport.launch(app, ready: app.staticTexts["Workstation"].firstMatch),
+            "scripted fleet should launch and render Workstation")
         UITabNavigation.openGatewaysTab(app)
 
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
