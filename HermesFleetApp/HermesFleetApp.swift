@@ -32,8 +32,7 @@ struct HermesFleetApp: App {
                             // be hydrated while the lock screen is showing.
                             await lockController.authenticateIfNeeded()
                             guard !lockController.isLocked else { return }
-                            await environment.load()
-                            await environment.refreshRoster()
+                            await environment.hydrateIfNeeded()
                         }
 
                     // Continue the launch artwork past the native LaunchScreen
@@ -64,10 +63,16 @@ struct HermesFleetApp: App {
             }
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
-            guard isLocked else { return }
-            // Covers re-locks caused by authentication transitions as well as
-            // the normal scene-phase background path.
-            Task { await environment.disconnectAll() }
+            if isLocked {
+                // Covers re-locks caused by authentication transitions as
+                // well as the normal scene-phase background path.
+                Task { await environment.disconnectAll() }
+            } else {
+                // Biometric failure enters passcode fallback. The initial
+                // launch task has already returned at that point, so the
+                // unlock transition must resume protected hydration.
+                Task { await environment.hydrateIfNeeded() }
+            }
         }
     }
 }

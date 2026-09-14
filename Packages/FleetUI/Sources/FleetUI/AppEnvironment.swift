@@ -211,6 +211,12 @@ public final class AppEnvironment {
     @ObservationIgnored private var summarySourceStates: [GatewayID: FleetSummaryScheduler.SourceState] = [:]
     @ObservationIgnored private var summaryRefreshInFlight = false
 
+    /// App-launch hydration is shared by the initial authentication task and
+    /// the post-passcode-unlock path. Marking this before the awaits prevents
+    /// those paths from restoring the registry or refreshing the roster twice
+    /// when automatic authentication succeeds.
+    @ObservationIgnored private var didHydrateEnvironment = false
+
     /// Bots per gateway from the last SUCCESSFUL refresh — the offline-ghost
     /// cache (a failed refresh renders these dimmed, identity retained).
     public private(set) var cachedBotsByGateway: [GatewayID: [FleetBot]] = [:]
@@ -454,6 +460,19 @@ public final class AppEnvironment {
         }
         await reloadGateways()
         cachedWatermarkCount = (try? await cache.loadWatermarks())?.count ?? 0
+    }
+
+    /// Hydrate protected app content exactly once per runtime instance.
+    ///
+    /// The composition root calls this only after App Lock authentication has
+    /// completed. Keeping the guard here makes the initial-authentication and
+    /// passcode-fallback paths idempotent even though each is launched from a
+    /// separate SwiftUI task.
+    public func hydrateIfNeeded() async {
+        guard !didHydrateEnvironment else { return }
+        didHydrateEnvironment = true
+        await load()
+        await refreshRoster()
     }
 
     private func reloadGateways() async {
