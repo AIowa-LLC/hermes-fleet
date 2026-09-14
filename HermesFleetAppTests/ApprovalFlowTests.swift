@@ -125,7 +125,7 @@ final class ApprovalFlowTests: XCTestCase {
         // the bearer token never renders.
         XCTAssertEqual(
             vm.pending?.command,
-            "curl -H 'Authorization: Bearer [REDACTED]' https://api"
+            "curl -H 'Authorization: Bearer [REDACTED]' https://api.example.invalid"
         )
         XCTAssertFalse(vm.pending!.command.contains(["fixture", "bearer", "abc123"].joined(separator: "-")))
     }
