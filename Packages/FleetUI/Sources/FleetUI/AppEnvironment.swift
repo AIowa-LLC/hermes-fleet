@@ -369,6 +369,11 @@ public final class AppEnvironment {
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
 
+    /// Desired connection intent is deliberately distinct from live transport
+    /// state. The store contains gateway IDs only; production backs it with
+    /// UserDefaults and tests/simulator may keep it in-process.
+    private let connectionIntent: ConnectionIntentStore
+
     /// Lazily-built U3 conversation sessions per gateway (one per gateway;
     /// created on first conversation screen use).
     private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
@@ -422,7 +427,8 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
-        voiceEngineFactory: FleetVoiceEngineFactory? = nil
+        voiceEngineFactory: FleetVoiceEngineFactory? = nil,
+        connectionIntentDefaults: UserDefaults? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -443,6 +449,7 @@ public final class AppEnvironment {
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
         self.voiceEngineFactory = voiceEngineFactory
+        self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -503,10 +510,12 @@ public final class AppEnvironment {
         didHydrateEnvironment = true
         await load()
         await refreshRoster()
+        await restoreIntendedConnections()
     }
 
     private func reloadGateways() async {
         gateways = await registry.allGateways()
+        connectionIntent.prune(to: Set(gateways.map(\.id)))
         for gateway in gateways where connectionStates[gateway.id] == nil {
             connectionStates[gateway.id] = .idle
         }
@@ -911,6 +920,7 @@ public final class AppEnvironment {
         // Stop any live session before deleting its persisted history. The
         // in-memory session objects are then discarded so stale transcript
         // rows cannot reappear in the UI after the user confirms deletion.
+        connectionIntent.removeAll()
         await disconnectAll()
         try await cache.clearCachedData()
         activeConnections.removeAll()
@@ -950,6 +960,7 @@ public final class AppEnvironment {
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
         guard let gateway = gateways.first(where: { $0.id == id }) else { return }
+        connectionIntent.record(id)
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
         activeConnections[id] = connection
@@ -957,7 +968,14 @@ public final class AppEnvironment {
             try await connection.connect()
             connectionStates[id] = GatewayConnectionState(status: connection.status)
         } catch let error as GatewayConnectivityError {
-            connectionStates[id] = .failed(GatewayStatus(connectivityError: error))
+            let status = GatewayStatus(connectivityError: error)
+            connectionStates[id] = .failed(status)
+            switch status {
+            case .authenticationRequired, .unsupported:
+                connectionIntent.clear(id)
+            default:
+                break
+            }
         } catch {
             connectionStates[id] = .failed(.offline)
         }
@@ -965,6 +983,7 @@ public final class AppEnvironment {
 
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
+        connectionIntent.clear(id)
         guard let connection = activeConnections[id] else {
             connectionStates[id] = .disconnected
             return
@@ -1049,6 +1068,32 @@ public final class AppEnvironment {
         await connect(to: id)
     }
 
+    /// Reconnect only gateways the user explicitly chose to keep connected.
+    /// Transport teardown caused by suspension, backgrounding, or app lock
+    /// never clears this intent. Each gateway is restored independently;
+    /// auth/unsupported failures clear only that gateway's intent, while
+    /// transient failures remain retryable.
+    public func restoreIntendedConnections() async {
+        guard !gateways.isEmpty else {
+            connectionIntent.prune(to: [])
+            return
+        }
+        for gateway in gateways where connectionIntent.isIntended(gateway.id) {
+            if connectionStates[gateway.id] == .connected || connectionStates[gateway.id] == .connecting {
+                continue
+            }
+            if let connection = activeConnections[gateway.id], !connection.status.isReachable {
+                await connection.disconnect()
+                activeConnections[gateway.id] = nil
+            }
+            await connect(to: gateway.id)
+        }
+    }
+
+    public func isConnectionIntended(_ id: GatewayID) -> Bool {
+        connectionIntent.isIntended(id)
+    }
+
     // MARK: Roster accessors (for the Bots / Sessions screens)
 
     /// Bots owned by a gateway from the latest roster snapshot (fail closed:
@@ -1130,6 +1175,7 @@ public final class AppEnvironment {
 
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
+        connectionIntent.clear(id)
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
         // conversation session, and clear observable lifecycle state.
