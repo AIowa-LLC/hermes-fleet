@@ -2,238 +2,259 @@ import XCTest
 import FleetCore
 @testable import FleetNetworking
 
+/// Slash-command parity — wire decode contracts for `commands.catalog`,
+/// `complete.slash`, `command.dispatch`, and `slash.exec`, mirroring
+/// hermes-agent 0.21.3 shapes (`tui_gateway/contracts/tools_commands.py`,
+/// `apps/shared/src/slash.ts::parseCommandDispatch`).
 final class GatewaySlashCommandClientTests: XCTestCase {
 
-    func testCatalogUsesAuthoritativeSkillsAndOmitsCollisions() throws {
+    // MARK: commands.catalog
+
+    func testCatalogDecodesFullCommandSurfaceWithMetaAndSkills() throws {
         let result: JSONValue = .object([
             "pairs": .array([
-                .array([.string("/review"), .string("Review changes")]),
-                .array([.string("/shadowed"), .string("Built-in command")]),
-                // A quick command collision is exposed as a duplicate pair.
-                .array([.string("/quick"), .string("Quick command")]),
-                .array([.string("/quick"), .string("Skill with same token")]),
+                .array([.string("/new"), .string("Start a new session")]),
+                .array([.string("/steer"), .string("Inject a message after the next tool call")]),
+                .array([.string("/redraw"), .string("Force a full UI repaint")]),
+                .array([.string("/deploy-check"), .string("exec: fleet-status")]),
+                .array([.string("/hermes-change-review"), .string("Review a change against its issue")]),
             ]),
-            "skills": .object([
-                "/review": .object([:]),
-                "/shadowed": .object([:]),
-                "/quick": .object([:]),
-                "/not-in-pairs": .object([:]),
+            "canon": .object([
+                "/reset": .string("/new"),
+                "/fork": .string("/branch"),
             ]),
             "commands": .object([
-                "/shadowed": .object(["argument_mode": .string("text")]),
+                "/new": .object([
+                    "argument_mode": .string("text"),
+                    "desktop": .null,
+                ]),
+                "/reset": .object([
+                    "argument_mode": .string("text"),
+                    "desktop": .null,
+                ]),
+                "/redraw": .object([
+                    "argument_mode": .null,
+                    "desktop": .string("terminal"),
+                ]),
             ]),
+            "skills": .object([
+                "/hermes-change-review": .object([
+                    "usage": .number(4),
+                    "origin": .string("local"),
+                ]),
+            ]),
+            "skill_count": .number(1),
+            "warning": .string(""),
         ])
 
-        let decoded = try GatewaySlashCommandClient.decodeSkillCatalog(result)
+        let catalog = try GatewaySlashCommandClient.decodeCatalog(result)
 
-        XCTAssertEqual(decoded, [
-            SlashCommandSuggestion(
-                text: "/review",
-                description: "Review changes",
-                kind: .skill),
+        // Backend order preserved.
+        XCTAssertEqual(catalog.commands.map(\.text), [
+            "/new", "/steer", "/redraw", "/deploy-check", "/hermes-change-review",
         ])
+        // Registry meta: argument modes + desktop dispositions attached.
+        let new = catalog.commands[0]
+        XCTAssertEqual(new.kind, .command)
+        XCTAssertEqual(new.argumentMode, .text)
+        XCTAssertNil(new.desktopDisposition)
+        // Terminal disposition preserved for the router.
+        let redraw = catalog.commands[2]
+        XCTAssertEqual(redraw.desktopDisposition, "terminal")
+        // Quick/plugin command (no registry meta) is an extension row.
+        XCTAssertEqual(catalog.commands[3].kind, .extensionCommand)
+        // Skill row carries usage from the skills map.
+        let skill = catalog.commands[4]
+        XCTAssertEqual(skill.kind, .skill)
+        XCTAssertEqual(skill.usage, 4)
+        XCTAssertEqual(catalog.skills["/hermes-change-review"]?.origin, "local")
+        // Canon aliases resolve.
+        XCTAssertEqual(catalog.canonicalForm(of: "/reset"), "/new")
+        // No warning surfaces when the string is empty.
+        XCTAssertNil(catalog.warning)
     }
 
-    func testCompletionKeepsOnlyBackendIdentifiedSkills() throws {
+    func testCatalogWarningSurfacesWhenNonEmpty() throws {
+        let result: JSONValue = .object([
+            "pairs": .array([]),
+            "warning": .string("quick commands unavailable"),
+        ])
+        let catalog = try GatewaySlashCommandClient.decodeCatalog(result)
+        XCTAssertEqual(catalog.warning, "quick commands unavailable")
+    }
+
+    func testCatalogRequiresPairsAndObject() {
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeCatalog(.array([]))) { error in
+            XCTAssertEqual(error as? SlashCommandError, .malformedResponse("commands.catalog result is not an object"))
+        }
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeCatalog(.object([:]))) { error in
+            XCTAssertEqual(error as? SlashCommandError, .malformedResponse("commands.catalog result missing 'pairs'"))
+        }
+    }
+
+    // MARK: complete.slash
+
+    func testCompletionDecodesCommandAndSkillKindsWithBackendOrder() throws {
         let result: JSONValue = .object([
             "items": .array([
                 .object([
-                    "text": .string("/review"),
-                    "display": .string("/review"),
-                    "meta": .string("Review changes"),
-                    "kind": .string("skill"),
+                    "text": .string("/steer"),
+                    "display": .string("/steer"),
+                    "meta": .string("Inject a message after the next tool call"),
+                    "kind": .string("command"),
                 ]),
                 .object([
-                    "text": .string("/reload"),
-                    "display": .string("/reload"),
-                    "meta": .string("Reload"),
-                    "kind": .string("command"),
+                    "text": .string("/hermes-change-review"),
+                    "display": .string("/hermes-change-review"),
+                    "meta": .string("Review a change against its issue"),
+                    "kind": .string("skill"),
                 ]),
             ]),
         ])
-
-        let decoded = try GatewaySlashCommandClient.decodeSkillCompletions(result)
-
-        XCTAssertEqual(decoded.map(\.text), ["/review"])
-        XCTAssertEqual(decoded.first?.description, "Review changes")
+        let decoded = try GatewaySlashCommandClient.decodeCompletions(result)
+        XCTAssertEqual(decoded.map(\.text), ["/steer", "/hermes-change-review"])
+        XCTAssertEqual(decoded[0].kind, .command)
+        XCTAssertEqual(decoded[1].kind, .skill)
+        XCTAssertEqual(decoded[0].description, "Inject a message after the next tool call")
     }
 
-    func testDispatchRequiresSkillTypeAndNonEmptyMessage() throws {
-        let valid: JSONValue = .object([
-            "type": .string("skill"),
-            // Hermes returns the human frontmatter name, not the slash slug.
-            "name": .string("Foo Bar"),
-            "message": .string("expanded instructions"),
-            "display": .string("/hermes-change-review Review this PR"),
+    func testCompletionUnknownKindFailsOpenAsUnknownNotDropped() throws {
+        // A future backend kind must not be silently dropped — it stays
+        // addressable as .unknown for honest handling upstream.
+        let result: JSONValue = .object([
+            "items": .array([
+                .object([
+                    "text": .string("/weird"),
+                    "kind": .string("hologram"),
+                ]),
+            ]),
         ])
-        let decoded = try GatewaySlashCommandClient.decodeSkillDispatch(
-            valid,
-            requestedName: "hermes-change-review",
-            argument: "Review this PR")
-        XCTAssertEqual(decoded.name, "hermes-change-review")
-        XCTAssertEqual(decoded.message, "expanded instructions")
-        XCTAssertEqual(decoded.display, "/hermes-change-review Review this PR")
+        let decoded = try GatewaySlashCommandClient.decodeCompletions(result)
+        XCTAssertEqual(decoded.map(\.text), ["/weird"])
+        XCTAssertEqual(decoded[0].kind, .unknown)
+    }
 
-        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeSkillDispatch(
-            .object(["type": .string("exec"), "output": .string("wrong path")]),
-            requestedName: "review",
-            argument: "")) { error in
-            XCTAssertEqual(error as? SlashCommandError, .notSkillCommand("review"))
-        }
+    // MARK: command.dispatch — every directive
 
-        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeSkillDispatch(
-            .object(["type": .string("skill"), "name": .string("review"), "message": .string(" ")]),
-            requestedName: "review",
-            argument: "")) { error in
-            XCTAssertEqual(
-                error as? SlashCommandError,
-                .malformedResponse("skill dispatch result missing non-empty 'message'"))
-        }
+    func testDispatchDecodesEveryKnownDirective() throws {
+        XCTAssertEqual(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("exec"), "output": .string("done"),
+            ])),
+            .exec(output: "done", warning: nil))
+        XCTAssertEqual(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("plugin"), "output": .string("plugin out"),
+            ])),
+            .plugin(output: "plugin out"))
+        XCTAssertEqual(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("alias"), "target": .string("new"),
+            ])),
+            .alias(target: "new"))
+        XCTAssertEqual(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("send"),
+                "message": .string("model text"),
+                "display": .string("/goal fix the leak"),
+                "notice": .string("⊙ Goal set"),
+            ])),
+            .send(message: "model text", display: "/goal fix the leak", notice: "⊙ Goal set"))
+        XCTAssertEqual(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("skill"),
+                "name": .string("Foo Bar"),
+                "message": .string("expanded body"),
+                "display": .string("/work fix the leak"),
+            ])),
+            .skill(message: "expanded body", display: "/work fix the leak"))
+        XCTAssertEqual(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("prefill"),
+                "message": .string("draft"),
+                "notice": .string("Backed up 1 turn"),
+            ])),
+            .prefill(message: "draft", notice: "Backed up 1 turn"))
+    }
 
-        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeSkillDispatch(
-            .object(["type": .string("skill"), "name": .string("Foo Bar"), "message": .string("expanded")]),
-            requestedName: "review/",
-            argument: "")) { error in
-            XCTAssertEqual(
-                error as? SlashCommandError,
-                .invalidRequest("requested skill name is not a safe command token"))
+    func testDispatchUnknownTypeFailsClosed() {
+        XCTAssertThrowsError(
+            try GatewaySlashCommandClient.decodeDispatch(.object([
+                "type": .string("holodeck"),
+            ]))
+        ) { error in
+            XCTAssertEqual(error as? SlashCommandError, .unknownDispatchType("holodeck"))
         }
     }
+
+    func testDispatchMalformedDirectivesThrow() {
+        // Missing type.
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeDispatch(.object([:])))
+        // alias without target.
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeDispatch(.object([
+            "type": .string("alias"),
+        ])))
+        // send without message.
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeDispatch(.object([
+            "type": .string("send"),
+        ])))
+        // skill without message.
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeDispatch(.object([
+            "type": .string("skill"), "name": .string("x"),
+        ])))
+        // prefill without message.
+        XCTAssertThrowsError(try GatewaySlashCommandClient.decodeDispatch(.object([
+            "type": .string("prefill"),
+        ])))
+    }
+
+    // MARK: slash.exec
+
+    func testExecutionPlainOutputAndWarning() throws {
+        let execution = try GatewaySlashCommandClient.decodeExecution(.object([
+            "output": .string("worker text"),
+            "warning": .string("careful"),
+        ]))
+        XCTAssertEqual(execution.output, "worker text")
+        XCTAssertEqual(execution.warning, "careful")
+        XCTAssertNil(execution.dispatch)
+    }
+
+    func testExecutionStructuredDispatchRouting() throws {
+        let execution = try GatewaySlashCommandClient.decodeExecution(.object([
+            "type": .string("skill"),
+            "name": .string("x"),
+            "message": .string("expanded"),
+        ]))
+        XCTAssertEqual(execution.dispatch, .skill(message: "expanded", display: nil))
+        XCTAssertNil(execution.output)
+    }
+
+    // MARK: Error mapping
 
     func testMethodNotFoundMapsToUnsupportedCapability() {
-        XCTAssertEqual(
-            GatewaySlashCommandClient.mapRPCError(
-                JSONRPCError(code: -32601, message: "method not found"),
-                method: "complete.slash"),
-            .unsupportedCapability(method: "complete.slash"))
+        let error = JSONRPCError(code: -32601, message: "Method not found", data: nil)
+        let mapped = GatewaySlashCommandClient.mapRPCError(error, method: "commands.catalog")
+        XCTAssertEqual(mapped, .unsupportedCapability(method: "commands.catalog"))
     }
 
-    func testSlashRPCsUseExactMethodsAndParameters() async throws {
-        let recorder = SlashRequestRecorder()
-        let script = InProcessWebSocketServer.Script(
-            onOpen: [#"{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"change_events":true,"heartbeat":false,"replay_epoch":"epoch-1"}}}"#],
-            onText: { frame in
-                guard let request = Self.request(frame) else { return [] }
-                recorder.record(method: request.method, params: request.params)
-                switch request.method {
-                case "commands.catalog":
-                    return [Self.response(id: request.id, result: [
-                        "pairs": [
-                            ["/review", "Review changes"],
-                            ["/shadowed", "Shadowed skill"],
-                        ],
-                        "skills": [
-                            "/review": [:],
-                            "/shadowed": [:],
-                        ],
-                        "commands": ["/shadowed": ["argument_mode": "text"]],
-                    ])]
-                case "complete.slash":
-                    return [Self.response(id: request.id, result: [
-                        "items": [[
-                            "text": "/review",
-                            "display": "/review",
-                            "meta": "Review changes",
-                            "kind": "skill",
-                        ], [
-                            // Hermes also labels bundles as kind: skill; the
-                            // catalog intersection must remove this row.
-                            "text": "/bundle",
-                            "display": "/bundle",
-                            "meta": "A skill bundle",
-                            "kind": "skill",
-                        ], [
-                            // The catalog exposes this token as shadowed by a
-                            // higher-precedence command, so it must be removed.
-                            "text": "/shadowed",
-                            "display": "/shadowed",
-                            "meta": "Shadowed skill",
-                            "kind": "skill",
-                        ]],
-                    ])]
-                case "command.dispatch":
-                    return [Self.response(id: request.id, result: [
-                        "type": "skill",
-                        "name": "Foo Bar",
-                        "message": "expanded",
-                        "display": "/review Check the diff",
-                    ])]
-                default:
-                    return []
-                }
-            })
-        let server = try InProcessWebSocketServer(script: script)
-        try await server.start()
-        defer { server.stop() }
-
-        let transport = GatewayWebSocketTransport(
-            baseURL: URL(string: "http://127.0.0.1:\(server.listeningPort)")!,
-            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)),
-            configuration: TransportConfiguration(
-                pingInterval: .seconds(30), inboundDeadline: .seconds(30),
-                connectTimeout: .seconds(10), requestTimeout: .seconds(2)))
-        try await transport.connect()
-        defer { Task { await transport.disconnect() } }
-
-        let client = GatewaySlashCommandClient(
-            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
-        let completions = try await client.completeSkills(sessionID: "s1", text: "/rev")
-        XCTAssertEqual(completions.map(\.text), ["/review"])
-        let dispatch = try await client.dispatchSkill(
-            sessionID: "s1", name: "review", argument: "Check the diff")
-        XCTAssertEqual(dispatch.name, "review")
-        XCTAssertEqual(dispatch.message, "expanded")
-        XCTAssertEqual(dispatch.display, "/review Check the diff")
-
-        XCTAssertEqual(recorder.methods, ["commands.catalog", "complete.slash", "command.dispatch"])
-        XCTAssertEqual(recorder.params[0]["session_id"] as? String, "s1")
-        XCTAssertEqual(recorder.params[1]["session_id"] as? String, "s1")
-        XCTAssertEqual(recorder.params[1]["text"] as? String, "/rev")
-        XCTAssertEqual(recorder.params[2]["session_id"] as? String, "s1")
-        XCTAssertEqual(recorder.params[2]["name"] as? String, "review")
-        XCTAssertEqual(recorder.params[2]["arg"] as? String, "Check the diff")
-    }
-
-    private struct Request {
-        let id: String
-        let method: String
-        let params: [String: Any]
-    }
-
-    private static func request(_ frame: String) -> Request? {
-        guard let data = frame.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = object["id"] as? String,
-              let method = object["method"] as? String else { return nil }
-        return Request(id: id, method: method, params: object["params"] as? [String: Any] ?? [:])
-    }
-
-    private static func response(id: String, result: [String: Any]) -> String {
-        let data = try! JSONSerialization.data(withJSONObject: [
-            "jsonrpc": "2.0", "id": id, "result": result,
-        ])
-        return String(data: data, encoding: .utf8)!
+    func testStopProcessesDecodesKilledCount() throws {
+        // Wire shape verified: process.stop → {killed: N}.
+        let result: JSONValue = .object(["killed": .number(2)])
+        let killed = GatewaySlashCommandClient.intValueForTest(result["killed"])
+        XCTAssertEqual(killed, 2)
     }
 }
 
-private final class SlashRequestRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _methods: [String] = []
-    private var _params: [[String: Any]] = []
-
-    var methods: [String] {
-        lock.lock(); defer { lock.unlock() }
-        return _methods
-    }
-
-    var params: [[String: Any]] {
-        lock.lock(); defer { lock.unlock() }
-        return _params
-    }
-
-    func record(method: String, params: [String: Any]) {
-        lock.lock(); defer { lock.unlock() }
-        _methods.append(method)
-        _params.append(params)
+/// Test-only exposure of the private int decoder.
+extension GatewaySlashCommandClient {
+    static func intValueForTest(_ value: JSONValue?) -> Int? {
+        value.flatMap { v in
+            // Mirror of the private intValue implementation.
+            if case .number(let n) = v, n.isFinite, n >= 0, n <= Double(Int.max) {
+                return Int(n)
+            }
+            return nil
+        }
     }
 }

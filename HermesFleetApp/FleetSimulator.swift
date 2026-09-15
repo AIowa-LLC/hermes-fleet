@@ -968,31 +968,116 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     }
 }
 
-/// Issue #4 scripted slash capability. The submitted expanded message still
-/// travels through the regular scripted conversation client, preserving the
-/// same streaming transcript path as a live Hermes gateway.
+/// Slash-command parity scripted capability: models the real Hermes wire
+/// shapes (commands.catalog / complete.slash / command.dispatch / slash.exec
+/// / process.stop) so the composer palette and command routing are walkable
+/// in simulator UI tests without a gateway.
 ///
-/// UI-test-only fixtures (DEBUG simulator builds) are selected by the
-/// existing scripted route/session combinations: workstation/default/s2 has
-/// no skills, workstation/researcher/s1 fails discovery, and render-box
-/// models a stale dispatch.
+/// Fixtures (DEBUG simulator builds, selected by the existing scripted
+/// route/session combinations): workstation/default/s2 has an empty catalog,
+/// workstation/researcher/s1 fails discovery, and render-box models a stale
+/// dispatch. The normal workstation/default/s1 conversation carries the full
+/// parity fixture set: /new, /reset (alias), /steer, /stop, /title, /branch,
+/// /fork (alias), /status, /help, one exec command, one prefill command, one
+/// installed skill, one dynamic quick/extension command, one terminal-only
+/// (unavailable) command, and one unknown-dispatch command.
 private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked Sendable {
     private enum FixtureMode: Equatable {
         case normal
-        case noSkills
+        case emptyCatalog
         case discoveryFailure
         case staleDispatch
     }
 
-    private let catalog: [SlashCommandSuggestion] = [
+    /// Mirrors the real 0.21.3 catalog shape: registry built-ins carry
+    /// argument modes + desktop dispositions; quick/plugin commands ride
+    /// `pairs` without `commands` meta; skills carry usage/origin.
+    private let catalogRows: [SlashCommandSuggestion] = [
+        SlashCommandSuggestion(
+            text: "/new",
+            description: "Start a new session (fresh session ID + history)",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/steer",
+            description: "Inject a message after the next tool call without interrupting",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/stop",
+            description: "Kill all running background processes",
+            kind: .command),
+        SlashCommandSuggestion(
+            text: "/title",
+            description: "Set a title for the current session",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/branch",
+            description: "Branch the current session (explore a different path)",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/status",
+            description: "Show session, model, token, and context info",
+            kind: .command),
+        SlashCommandSuggestion(
+            text: "/help",
+            description: "Show available commands",
+            kind: .command),
+        SlashCommandSuggestion(
+            text: "/model",
+            description: "Switch model (session-scoped)",
+            kind: .command,
+            desktopDisposition: "hidden"),
+        SlashCommandSuggestion(
+            text: "/resume",
+            description: "Resume a previously-named session",
+            kind: .command,
+            argumentMode: .mixed),
+        // Exec-style backend command (plain worker output).
+        SlashCommandSuggestion(
+            text: "/usage",
+            description: "Show token usage and rate limits",
+            kind: .command),
+        // Prefill-style backend command (/undo returns a prefill directive).
+        SlashCommandSuggestion(
+            text: "/undo",
+            description: "Back up N user turns and re-prompt (default 1)",
+            kind: .command),
+        // Terminal-only: present in the catalog but never suggested on iOS.
+        SlashCommandSuggestion(
+            text: "/redraw",
+            description: "Force a full UI repaint (recovers from terminal drift)",
+            kind: .command,
+            desktopDisposition: "terminal"),
+        // Dynamic extension (quick command): no registry meta.
+        SlashCommandSuggestion(
+            text: "/deploy-check",
+            description: "exec: fleet-status --canary",
+            kind: .extensionCommand),
+        // Unknown-dispatch probe: backend-owned, returns a future type.
+        SlashCommandSuggestion(
+            text: "/future-probe",
+            description: "Returns a dispatch Fleet does not know",
+            kind: .command),
+        // Installed skills (usage-ranked in the fixture).
         SlashCommandSuggestion(
             text: "/hermes-change-review",
             description: "Review a change against its issue",
-            kind: .skill),
+            kind: .skill,
+            usage: 4),
         SlashCommandSuggestion(
             text: "/hermes-plan",
             description: "Build an implementation plan",
-            kind: .skill),
+            kind: .skill,
+            usage: 0),
+    ]
+
+    /// The canon map: aliases → canonical (mirrors `canon` on the wire).
+    private let canon: [String: String] = [
+        "/reset": "/new",
+        "/fork": "/branch",
     ]
 
     private let gatewayID: GatewayID
@@ -1010,7 +1095,7 @@ private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked S
         }
         switch sessionID {
         case "workstation.default.s2":
-            return .noSkills
+            return .emptyCatalog
         case "workstation.researcher.s1":
             return .discoveryFailure
         default:
@@ -1018,43 +1103,97 @@ private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked S
         }
     }
 
-    func skillCatalog(sessionID: String?) async throws -> [SlashCommandSuggestion] {
+    private func catalogPayload(sessionID: String?) throws -> HermesCommandCatalog {
         switch mode(for: sessionID) {
         case .discoveryFailure:
-            throw SlashCommandError.rpcFailed("scripted skill discovery failed")
-        case .noSkills:
-            return []
+            throw SlashCommandError.rpcFailed("scripted command discovery failed")
+        case .emptyCatalog:
+            return HermesCommandCatalog(commands: [], canon: [:], commandMeta: [:], skills: [:])
         case .normal, .staleDispatch:
-            return catalog
+            var meta: [String: SlashCommandSuggestion] = [:]
+            for row in catalogRows where row.desktopDisposition != nil || row.argumentMode != nil {
+                meta[row.text.lowercased()] = row
+            }
+            let skills = Dictionary(
+                uniqueKeysWithValues: catalogRows.filter { $0.kind == .skill }.map {
+                    ($0.text, HermesCommandCatalog.SkillEntry(usage: $0.usage, origin: "local"))
+                })
+            return HermesCommandCatalog(
+                commands: catalogRows,
+                canon: canon,
+                commandMeta: meta,
+                skills: skills)
         }
     }
 
-    func completeSkills(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
-        switch mode(for: sessionID) {
-        case .discoveryFailure:
-            throw SlashCommandError.rpcFailed("scripted skill discovery failed")
-        case .noSkills:
-            return []
-        case .normal, .staleDispatch:
-            break
-        }
+    func catalog(sessionID: String?) async throws -> HermesCommandCatalog {
+        try catalogPayload(sessionID: sessionID)
+    }
+
+    func complete(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
+        let payload = try catalogPayload(sessionID: sessionID)
         let query = text.drop(while: { $0 == "/" }).split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
-        return catalog.filter { $0.text.dropFirst().lowercased().hasPrefix(query.lowercased()) }
+        let lowered = query.lowercased()
+        return payload.commands.filter { $0.text.dropFirst().lowercased().hasPrefix(lowered) }
     }
 
-    func dispatchSkill(sessionID: String, name: String, argument: String) async throws -> SkillCommandDispatch {
+    func dispatch(sessionID: String, name: String, argument: String) async throws -> HermesCommandDispatch {
         let canonical = name.hasPrefix("/") ? String(name.dropFirst()) : name
+        let lowered = canonical.lowercased()
         if mode(for: sessionID) == .staleDispatch {
-            throw SlashCommandError.notSkillCommand(canonical)
+            throw SlashCommandError.commandUnavailable(lowered)
         }
-        guard catalog.contains(where: { $0.text.dropFirst().lowercased() == canonical.lowercased() }) else {
-            throw SlashCommandError.notSkillCommand(canonical)
+        if lowered == "future-probe" {
+            throw SlashCommandError.unknownDispatchType("holodeck")
+        }
+        guard catalogRows.contains(where: { $0.text.dropFirst().lowercased() == lowered }) else {
+            throw SlashCommandError.commandUnavailable(lowered)
+        }
+        if lowered == "undo" {
+            return .prefill(message: "Edited follow-up prompt", notice: "Backed up 1 turn")
         }
         let display = argument.isEmpty ? "/" + canonical : "/" + canonical + " " + argument
-        return SkillCommandDispatch(
-            name: canonical,
+        return .skill(
             message: "[Scripted expanded skill: \(canonical)]\n\(argument)",
             display: display)
+    }
+
+    func execute(sessionID: String, command: String) async throws -> HermesSlashExecution {
+        let bare = command.drop(while: { $0 == "/" })
+        let parts = bare.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = parts.first.map(String.init) ?? ""
+        let argument = parts.count > 1 ? String(parts[1]) : ""
+        let lowered = name.lowercased()
+        if mode(for: sessionID) == .staleDispatch {
+            throw SlashCommandError.commandUnavailable(lowered)
+        }
+        if lowered == "future-probe" {
+            throw SlashCommandError.unknownDispatchType("holodeck")
+        }
+        guard catalogRows.contains(where: { $0.text.dropFirst().lowercased() == lowered }) else {
+            throw SlashCommandError.commandUnavailable(lowered)
+        }
+        if lowered == "undo" {
+            return HermesSlashExecution(
+                output: nil,
+                warning: nil,
+                dispatch: .prefill(message: "Edited follow-up prompt", notice: "Backed up 1 turn"))
+        }
+        if lowered == "usage" {
+            return HermesSlashExecution(output: "Session tokens: 1,234 input / 567 output", warning: nil)
+        }
+        let display = argument.isEmpty ? "/" + name : "/" + name + " " + argument
+        return HermesSlashExecution(
+            output: nil,
+            warning: nil,
+            dispatch: .skill(
+                message: "[Scripted expanded skill: \(name)]\n\(argument)",
+                display: display))
+    }
+
+    func stopProcesses(sessionID: String) async throws -> Int {
+        // Fixture: one background process existed and was killed.
+        1
     }
 }
 

@@ -103,6 +103,13 @@ public final class ConversationToolingViewModel {
         }
     }
 
+    /// Live `model.options` fetch (slash-parity /model typed-argument
+    /// resolution); public so ConversationViewModel can resolve an exact id
+    /// without touching the private seam.
+    public func liveModelChoices(sessionID: String) async throws -> [ModelChoice] {
+        try await tooling.modelChoices(sessionID: sessionID)
+    }
+
     /// The params the conversation open should ride on `session.create`:
     /// the sticky pick when set, else nil/nil (inherit the profile).
     public var createModelParams: (model: String?, provider: String?) {

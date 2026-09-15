@@ -18,6 +18,7 @@ import FleetPersistence
 /// the app composition root (M0 hard guard).
 public struct ConversationView: View {
     @Environment(\.fleetTheme) private var theme
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingTimeline = false
@@ -49,6 +50,10 @@ public struct ConversationView: View {
     @State private var showingContextBreakdown = false
     /// R9-T4: fork navigation — the new session id to route to.
     @State private var forkTargetSessionID: String?
+    /// Slash parity: pending command-driven navigation (new chat / model
+    /// picker / sessions list) and composer prefill adoption, each fired once.
+    @State private var consumedCommandNavigation: ConversationViewModel.CommandNavigation?
+    @State private var newChatTargetSessionID: String?
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingFileImporter = false
@@ -159,6 +164,48 @@ public struct ConversationView: View {
                 sessionID: forkTargetSessionID
             )
         }
+        // Slash parity: command-driven navigation. /new pushes a fresh
+        // conversation on the SAME route (gateway/profile preserved);
+        // /model opens the native picker; /resume,/sessions,/switch pop to
+        // the Chats list (Fleet's native session UX).
+        .onChange(of: model.commandNavigation) { _, navigation in
+            guard let navigation, navigation != consumedCommandNavigation else { return }
+            consumedCommandNavigation = navigation
+            switch navigation {
+            case .newConversation(let sessionID):
+                newChatTargetSessionID = sessionID
+            case .modelPicker:
+                showingModelPicker = true
+            case .sessionsList:
+                dismiss()
+            }
+        }
+        .navigationDestination(isPresented: newChatBinding) {
+            ConversationView(
+                environment: environment,
+                route: route,
+                sessionID: newChatTargetSessionID
+            )
+        }
+        // Slash parity: a prefill directive REPLACES the composer draft
+        // (never auto-submits) and returns focus for editing.
+        .onChange(of: model.prefillText) { _, prefill in
+            guard let prefill, !prefill.isEmpty, prefill != composerText else { return }
+            composerText = prefill
+            composerFocused = true
+        }
+    }
+
+    /// Two-way binding for the /new push: entering pushes the fresh
+    /// conversation; popping clears the target so a SECOND /new can push
+    /// again.
+    private var newChatBinding: Binding<Bool> {
+        Binding(
+            get: { newChatTargetSessionID != nil },
+            set: { shown in
+                if !shown { newChatTargetSessionID = nil }
+            }
+        )
     }
 
     /// Two-way binding for the fork push: entering pushes the forked
@@ -793,11 +840,11 @@ public struct ConversationView: View {
             HStack(spacing: FleetTheme.spacingSm) {
                 Image(systemName: "sparkles")
                     .foregroundStyle(theme.highlight)
-                Text("Skills")
+                Text("Commands")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                 Spacer()
-                if model.isLoadingSkillSuggestions {
+                if model.isLoadingCommandSuggestions {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -805,51 +852,38 @@ public struct ConversationView: View {
             .padding(.horizontal, FleetTheme.spacingLg)
             .padding(.vertical, FleetTheme.spacingXs)
 
-            if let error = model.skillSuggestionError {
+            if let error = model.commandSuggestionError {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(FleetTheme.statusDegraded)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, FleetTheme.spacingSm)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(error)
-                    .accessibilityIdentifier("fleet.conversation.skill.error")
-            } else if model.skillSuggestions.isEmpty && !model.isLoadingSkillSuggestions {
-                Text("No skills available in this Hermes profile")
+                    .accessibilityIdentifier("fleet.conversation.command.error")
+            } else if model.commandSuggestions.isEmpty && !model.isLoadingCommandSuggestions {
+                Text("No commands available in this Hermes profile")
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .padding(.vertical, FleetTheme.spacingSm)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("No skills available in this Hermes profile")
-                    .accessibilityIdentifier("fleet.conversation.skill.empty")
+                    .accessibilityLabel("No commands available in this Hermes profile")
+                    .accessibilityIdentifier("fleet.conversation.command.empty")
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        ForEach(model.skillSuggestions) { suggestion in
-                            Button {
-                                composerText = model.selectedSkillText(
-                                    suggestion,
-                                    replacing: composerText)
-                                composerFocused = true
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(suggestion.text)
-                                        .font(FleetTheme.monoCaptionFont)
-                                        .foregroundStyle(theme.textPrimary)
-                                    if !suggestion.description.isEmpty {
-                                        Text(suggestion.description)
-                                            .font(.caption2)
-                                            .foregroundStyle(theme.textSecondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, FleetTheme.spacingLg)
-                                .padding(.vertical, FleetTheme.spacingSm)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("fleet.conversation.skill.\(suggestion.text.dropFirst())")
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        let commandRows = model.commandSuggestions.filter { $0.kind != .skill }
+                        let skillRows = model.commandSuggestions.filter { $0.kind == .skill }
+                        if !commandRows.isEmpty {
+                            paletteSectionLabel("Commands")
+                        }
+                        ForEach(commandRows) { suggestion in
+                            paletteRow(model, suggestion)
+                        }
+                        if !skillRows.isEmpty {
+                            paletteSectionLabel("Skills")
+                        }
+                        ForEach(skillRows) { suggestion in
+                            paletteRow(model, suggestion)
                         }
                     }
                 }
@@ -863,7 +897,43 @@ public struct ConversationView: View {
                 .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("fleet.conversation.skill.palette")
+        .accessibilityIdentifier("fleet.conversation.command.palette")
+    }
+
+    /// One palette row: canonical token + description. Inserting the token
+    /// never auto-executes; focus returns to the composer for arguments.
+    private func paletteRow(_ model: ConversationViewModel, _ suggestion: SlashCommandSuggestion) -> some View {
+        Button {
+            composerText = model.selectedCommandText(
+                suggestion,
+                replacing: composerText)
+            composerFocused = true
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(suggestion.text)
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(theme.textPrimary)
+                if !suggestion.description.isEmpty {
+                    Text(suggestion.description)
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.vertical, FleetTheme.spacingSm)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("fleet.conversation.command.\(suggestion.text.dropFirst())")
+    }
+
+    private func paletteSectionLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, FleetTheme.spacingLg)
+            .padding(.top, FleetTheme.spacingSm)
     }
 
     // MARK: R10-T1 — attachment tray + pickers

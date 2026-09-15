@@ -181,20 +181,24 @@ public final class ConversationViewModel {
     public private(set) var integrityNotice: String?
     /// Non-secret error / auth surface text.
     public private(set) var errorMessage: String?
-    /// Issue #4 — live skill suggestions for the slash composer palette.
-    public private(set) var skillSuggestions: [SlashCommandSuggestion] = []
+    /// Slash-command parity — live command suggestions (built-ins, quick
+    /// commands, plugins, skills) for the composer palette.
+    public private(set) var commandSuggestions: [SlashCommandSuggestion] = []
+    /// The last full catalog fetch (route/session-scoped, ephemeral — never
+    /// persisted, never shared across gateways).
+    public private(set) var commandCatalog: HermesCommandCatalog?
     /// True while a catalog/completion request is in flight.
-    public private(set) var isLoadingSkillSuggestions = false
+    public private(set) var isLoadingCommandSuggestions = false
     /// Non-secret discovery/dispatch compatibility or stale-command error.
     /// The composer keeps the text editable while this is shown.
-    public private(set) var skillSuggestionError: String?
+    public private(set) var commandSuggestionError: String?
     /// Whether the composer is currently editing slash-prefixed input. This
     /// remains true for an empty catalog so the palette can honestly render
-    /// its "No skills available" state.
+    /// its "No commands available" state.
     public private(set) var isSlashInputActive = false
     /// Whether the slash palette should render above the input.
     public var isSlashPaletteVisible: Bool {
-        isSlashInputActive || isLoadingSkillSuggestions || !skillSuggestions.isEmpty || skillSuggestionError != nil
+        isSlashInputActive || isLoadingCommandSuggestions || !commandSuggestions.isEmpty || commandSuggestionError != nil
     }
     /// R9-T1 — the approval banner state (pending request + YOLO readback).
     /// Lazily built once the session opens; nil when the concrete session
@@ -634,10 +638,10 @@ public final class ConversationViewModel {
     public private(set) var botDraftNotice: String?
 
     ///
-    /// Issue #4 keeps skill display text separate from the expanded model
-    /// payload. The Bool tells the SwiftUI composer whether it may clear the
-    /// field: a stale/unknown slash command returns false so the invocation
-    /// remains editable for correction.
+    /// Slash-command parity: a leading slash is routed through the Fleet
+    /// command router (native action / picker / rpc / backend exec), never
+    /// submitted as ordinary chat. Failed or unavailable commands leave the
+    /// draft editable.
     @discardableResult
     public func send(_ text: String) async -> Bool {
         if isVoiceModeEnabled {
@@ -650,32 +654,381 @@ public final class ConversationViewModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return false }
 
-        // A leading slash is a deliberate skill invocation. Never pass it to
-        // ordinary prompt.submit: dispatch is the canonical Hermes expansion
-        // path, and a failed/stale dispatch must leave the field editable.
+        // A leading slash is a deliberate command invocation.
         if let invocation = Self.parseSlashInvocation(in: text) {
-            do {
-                let dispatch = try await slashCommands.dispatchSkill(
-                    sessionID: sid,
-                    name: invocation.name,
-                    argument: invocation.argument)
-                skillSuggestionError = nil
-                return await sendPrepared(
-                    modelText: dispatch.message,
-                    displayText: dispatch.display.isEmpty ? trimmed : dispatch.display,
-                    sessionID: sid)
-            } catch {
-                skillSuggestionError = Self.nonSecret(error)
-                return false
-            }
+            return await routeCommand(
+                name: invocation.name,
+                argument: invocation.argument,
+                sessionID: sid)
         }
         if Self.isSlashPrefixed(text) {
-            skillSuggestionError = "Enter a skill name after /, or remove / to send ordinary chat."
+            commandSuggestionError = "Enter a command after /, or remove / to send ordinary chat."
             return false
         }
 
         return await sendPrepared(modelText: trimmed, displayText: trimmed, sessionID: sid)
     }
+
+    // MARK: - Hermes command routing (slash parity)
+
+    /// Where the composer should navigate after a command produced a new
+    /// session (used by /new, /branch, /fork).
+    public private(set) var commandNavigation: CommandNavigation?
+    public enum CommandNavigation: Equatable, Sendable {
+        /// Push a fresh conversation (same route, new session id).
+        case newConversation(sessionID: String)
+        /// Open Fleet's native model picker.
+        case modelPicker
+        /// Open Fleet's native sessions list (Chats tab).
+        case sessionsList
+    }
+
+    /// Text the composer should adopt (prefill directives). Editable; never
+    /// auto-submitted.
+    public private(set) var prefillText: String?
+
+    /// Render a command result row into the transcript as a system/output
+    /// row (used by exec output, status output, notices).
+    private func appendCommandRow(_ text: String) {
+        appendRow(.init(id: nextRowID(), kind: .system, text: text))
+    }
+
+    /// Route one parsed slash invocation through the fulfillment rule:
+    /// native Fleet action → picker → dedicated RPC → backend exec.
+    private func routeCommand(name: String, argument: String, sessionID sid: String) async -> Bool {
+        await routeCommandRouted(name: name, argument: argument, sessionID: sid, aliasDepth: 0)
+    }
+
+    private func routeCommandRouted(name: String, argument: String, sessionID sid: String, aliasDepth: Int) async -> Bool {
+        commandSuggestionError = nil
+        prefillText = nil
+        // The gateway is the source of truth for existence/aliases/disposition.
+        // Fetch the catalog once per session if the composer has not already
+        // loaded it (fail-soft: routing falls back to the typed token).
+        if commandCatalog == nil {
+            commandCatalog = try? await slashCommands.catalog(sessionID: sid)
+        }
+        let typedKey = "/" + name.lowercased()
+        let canonicalToken = commandCatalog?.canonicalForm(of: typedKey) ?? typedKey
+        let canonicalName = String(canonicalToken.dropFirst())
+        // Disposition lives on the catalog rows (folded from the wire
+        // commands map at decode time) — resolve via canonical, then typed.
+        let disposition = commandCatalog?.commands
+            .first { $0.text.lowercased() == canonicalToken.lowercased() }?.desktopDisposition
+            ?? commandCatalog?.commands
+            .first { $0.text.lowercased() == typedKey }?.desktopDisposition
+        let surface = FleetCommandRouter.surface(
+            for: canonicalName,
+            desktopDisposition: disposition)
+        switch surface {
+        case .action(let action):
+            return await runNativeAction(action, argument: argument, sessionID: sid)
+        case .picker(let picker):
+            return await runPicker(picker, argument: argument, sessionID: sid)
+        case .rpc(let rpc):
+            return await runRPC(rpc, argument: argument, sessionID: sid)
+        case .exec:
+            return await runBackendCommand(
+                name: name,
+                canonicalName: canonicalName,
+                argument: argument,
+                sessionID: sid,
+                aliasDepth: aliasDepth)
+        case .unavailable(let reason):
+            let slash = "/" + canonicalName
+            commandSuggestionError = "\(slash) \(reason.message)"
+            return false
+        }
+    }
+
+    /// /new, /steer, /stop, /title, /branch, /help.
+    private func runNativeAction(_ action: FleetCommandAction, argument: String, sessionID sid: String) async -> Bool {
+        switch action {
+        case .new:
+            // A new chat must feel exactly like Fleet's own New Chat: create
+            // a genuinely new Hermes session (with Hermes' optional naming
+            // semantics via `title`), never submit "/new" as model text.
+            let title = argument.isEmpty ? nil : argument
+            do {
+                let modelParams = toolingViewModel?.createModelParams
+                    ?? (model: nil as String?, provider: nil as String?)
+                let created = try await session.conversation.createSession(
+                    title: title,
+                    profile: route.profileSlug.rawValue,
+                    model: modelParams.model,
+                    provider: modelParams.provider,
+                    cols: nil)
+                commandNavigation = .newConversation(sessionID: created.sessionID)
+                return true
+            } catch {
+                commandSuggestionError = "Could not start a new conversation: \(Self.nonSecret(error))"
+                return false
+    }
+        case .steer:
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                commandSuggestionError = "Usage: /steer <guidance> — injects guidance after the next tool call."
+                return false
+            }
+            // The tooling seam is authoritative: session.steer on the exact
+            // active session; no new user turn, no duplicate RPC client.
+            guard let tooling = toolingViewModel else {
+                commandSuggestionError = "Steering is not available on this session."
+                return false
+            }
+            await tooling.steer(text: trimmed)
+            commandNavigation = nil
+            return true
+        case .stop:
+            // Desktop semantics: interrupt the active turn, then clean up
+            // background processes (process.stop). No fake success when one
+            // half fails; safe when nothing is running.
+            var lines: [String] = []
+            if isStreaming {
+                do {
+                    let result = try await session.conversation.interrupt(sessionID: sid)
+                    if result.isInterrupted {
+                        finalizeStreamingRow()
+                        isStreaming = false
+                        phase = .ready
+                        await persistTranscript()
+                        lines.append("Stopped the active turn.")
+                    } else {
+                        lines.append("No active turn to stop.")
+                    }
+                } catch {
+                    lines.append("Could not stop the active turn: \(Self.nonSecret(error))")
+                }
+            } else {
+                lines.append("No active turn to stop.")
+            }
+            do {
+                let stopped = try await slashCommands.stopProcesses(sessionID: sid)
+                if stopped > 0 {
+                    lines.append("Stopped \(stopped) background process\(stopped == 1 ? "" : "es").")
+                }
+            } catch SlashCommandError.unsupportedCapability {
+                // Older gateway without process.stop — honest partial state.
+                lines.append("Background process cleanup is unavailable on this gateway.")
+            } catch {
+                lines.append("Could not stop background processes: \(Self.nonSecret(error))")
+            }
+            appendCommandRow(lines.joined(separator: "\n"))
+            return true
+        case .title:
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                commandSuggestionError = "Usage: /title <name> — renames the current session."
+                return false
+            }
+            if let resolved = await toolingViewModel?.rename(title: trimmed) {
+                sessionTitle = resolved
+                return true
+            }
+            commandSuggestionError = "Could not rename this session."
+            return false
+        case .branch:
+            guard let branch = await toolingViewModel?.fork(name: argument.isEmpty ? nil : argument) else {
+                commandSuggestionError = "Could not branch this session."
+                return false
+            }
+            forkedSession = branch
+            return true
+        case .help:
+            appendCommandRow(commandHelpText)
+            return true
+        }
+    }
+
+    /// `/model`, `/resume`, `/sessions`, `/switch`.
+    private func runPicker(_ picker: FleetCommandPicker, argument: String, sessionID sid: String) async -> Bool {
+        switch picker {
+        case .model:
+            // Typed arguments are honored when the exact model id matches a
+            // live choice; otherwise Fleet's native picker stays the surface.
+            // The sticky-local rule is preserved: `select` persists per-device
+            // and rides the NEXT session.create — never a config write.
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, let tooling = toolingViewModel {
+                var choices = tooling.modelChoices ?? []
+                if choices.isEmpty {
+                    choices = (try? await tooling.liveModelChoices(sessionID: sid)) ?? []
+                }
+                if let match = choices.first(where: { $0.model.lowercased() == trimmed.lowercased() }) {
+                    tooling.select(match)
+                    appendCommandRow("Model set to \(match.model) for this session.")
+                    return true
+                }
+                commandSuggestionError = "No model named \"\(trimmed)\" — opening the model picker."
+                commandNavigation = .modelPicker
+                return true
+            }
+            commandNavigation = .modelPicker
+            return true
+        case .sessions:
+            commandNavigation = .sessionsList
+            return true
+        }
+    }
+
+    /// `/status` — session.status via the history seam (structured output,
+    /// never raw JSON).
+    private func runRPC(_ rpc: FleetCommandRPC, argument: String, sessionID sid: String) async -> Bool {
+        switch rpc {
+        case .status:
+            do {
+                let status = try await session.history.fetchSessionStatus(sessionID: sid)
+                appendCommandRow(status.rawOutput)
+                return true
+            } catch {
+                commandSuggestionError = "Could not read session status: \(Self.nonSecret(error))"
+                return false
+            }
+        }
+    }
+
+    /// Backend-owned execution: `slash.exec` → `command.dispatch` fallback
+    /// (the Desktop-verified flow), interpreted by the shared dispatch
+    /// interpreter with alias redispatch and cycle protection.
+    private func runBackendCommand(name: String, canonicalName: String, argument: String, sessionID sid: String, aliasDepth: Int) async -> Bool {
+        let execution: HermesSlashExecution
+        do {
+            execution = try await slashCommands.execute(
+                sessionID: sid,
+                command: "/\(name) \(argument)".trimmingCharacters(in: .whitespaces))
+        } catch SlashCommandError.unknownDispatchType(let type) {
+            commandSuggestionError = SlashCommandError.unknownDispatchType(type).errorDescription ?? "Unknown response."
+            appendCommandRow(commandSuggestionError!)
+            return true
+        } catch SlashCommandError.commandUnavailable {
+            commandSuggestionError = "/\(name) is no longer available on this gateway. Refresh and try again."
+            return false
+        } catch {
+            // command.dispatch fallback (Desktop: slash.exec timeout/route-noise
+            // falls back to command.dispatch; keep the worker error when the
+            // fallback adds nothing).
+            do {
+                let dispatch = try await slashCommands.dispatch(
+                    sessionID: sid,
+                    name: name,
+                    argument: argument)
+                return await interpret(dispatch: dispatch, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+            } catch SlashCommandError.unknownDispatchType(let type) {
+                commandSuggestionError = "This Hermes command returned a response this version of Fleet does not understand (type \(type))."
+                appendCommandRow(commandSuggestionError!)
+                return true
+            } catch let error as SlashCommandError {
+                commandSuggestionError = Self.nonSecret(error)
+                return false
+            } catch {
+                commandSuggestionError = "Command failed: \(Self.nonSecret(error))"
+                return false
+            }
+        }
+        return await interpret(execution: execution, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+    }
+
+    /// The shared dispatch interpreter for structured directives (alias /
+    /// exec / plugin / send / skill / prefill), with alias cycle protection.
+    private func interpret(
+        execution: HermesSlashExecution? = nil,
+        dispatch: HermesCommandDispatch? = nil,
+        name: String,
+        canonicalName: String,
+        argument: String,
+        sessionID sid: String,
+        aliasDepth: Int = 0
+    ) async -> Bool {
+        // Normalize: slash.exec may embed a dispatch.
+        let directive: HermesCommandDispatch?
+        if let dispatch { directive = dispatch }
+        else if let exec = execution?.dispatch { directive = exec }
+        else { directive = nil }
+
+        // Plain worker output.
+        if directive == nil {
+            let out = execution?.output ?? "(no output)"
+            let warning = execution?.warning
+            appendCommandRow(warning.map { "warning: \($0)\n\(out)" } ?? out)
+            return true
+        }
+        return await interpretDirective(directive!, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+    }
+
+    private func interpretDirective(
+        _ directive: HermesCommandDispatch,
+        name: String,
+        canonicalName: String,
+        argument: String,
+        sessionID sid: String,
+        aliasDepth: Int = 0
+    ) async -> Bool {
+        switch directive {
+        case .exec(let output, let warning):
+            let out = output ?? "(no output)"
+            appendCommandRow(warning.map { "warning: \($0)\n\(out)" } ?? out)
+            return true
+        case .plugin(let output):
+            appendCommandRow(output ?? "(no output)")
+            return true
+        case .alias(let target):
+            // Resolve/redispatch safely with cycle/depth protection.
+            guard aliasDepth < 5 else {
+                appendCommandRow("/\(name): alias chain too deep — refusing to continue.")
+                return true
+            }
+            let targetName = target.hasPrefix("/") ? String(target.dropFirst()) : target
+            return await routeCommandRouted(
+                name: targetName,
+                argument: argument,
+                sessionID: sid,
+                aliasDepth: aliasDepth + 1)
+        case .send(let message, let display, let notice):
+            if let notice, !notice.isEmpty {
+                appendCommandRow(notice)
+            }
+            return await sendPrepared(
+                modelText: message,
+                displayText: display ?? "/" + name + (argument.isEmpty ? "" : " " + argument),
+                sessionID: sid)
+        case .skill(let message, let display):
+            return await sendPrepared(
+                modelText: message,
+                displayText: display ?? "/" + name + (argument.isEmpty ? "" : " " + argument),
+                sessionID: sid)
+        case .prefill(let message, let notice):
+            if let notice, !notice.isEmpty {
+                appendCommandRow(notice)
+            }
+            prefillText = message
+            return true
+        }
+    }
+
+    /// `/help` content: the live Fleet-compatible Hermes catalog, never a
+    /// hard-coded help string.
+    private var commandHelpText: String {
+        guard let catalog = commandCatalog else {
+            return "Commands are still loading — try again in a moment."
+        }
+        var lines: [String] = ["Commands"]
+        let suggestible = catalog.commands.filter {
+            FleetCommandRouter.isSuggestible($0, canon: catalog.canon)
+        }
+        for row in suggestible where row.kind != .skill {
+            lines.append("\(row.text)\(row.description.isEmpty ? "" : " — \(row.description)")")
+        }
+        let skills = suggestible.filter { $0.kind == .skill }
+        if !skills.isEmpty {
+            lines.append("")
+            lines.append("Skills")
+            for row in skills {
+                lines.append("\(row.text)\(row.description.isEmpty ? "" : " — \(row.description)")")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
 
     /// The shared send path for ordinary messages and expanded skill
     /// invocations. Attachments are appended to both representations so the
@@ -712,65 +1065,124 @@ public final class ConversationViewModel {
         return true
     }
 
-    // MARK: Issue #4 — slash discovery/composer state
+    // MARK: Slash-command parity — discovery/composer state
 
-    /// Update the palette for a composer edit. Bare `/` uses the catalog;
-    /// every other slash-prefixed value uses Hermes' live completer.
-    /// Requests are canceled and generation-fenced so an older response can
-    /// never replace a newer query's results.
+    /// Update the palette for a composer edit. Bare `/` uses the catalog
+    /// (filtered to Fleet-suggestible rows, commands ranked ahead of skills
+    /// with browsing-usage ordering inside each group); every other
+    /// slash-prefixed value uses Hermes' live completer (backend ranking
+    /// preserved, query matches never hidden). Requests are canceled and
+    /// generation-fenced so an older response can never replace a newer
+    /// query's results.
     public func updateSlashSuggestions(for text: String) {
         slashSuggestionTask?.cancel()
         slashSuggestionGeneration += 1
         let generation = slashSuggestionGeneration
         guard let slashText = Self.normalizedSlashInput(text) else {
             isSlashInputActive = false
-            skillSuggestions = []
-            skillSuggestionError = nil
-            isLoadingSkillSuggestions = false
+            commandSuggestions = []
+            commandSuggestionError = nil
+            isLoadingCommandSuggestions = false
             return
         }
         isSlashInputActive = true
         guard let sessionID = openedSessionID else {
-            skillSuggestions = []
-            skillSuggestionError = nil
-            isLoadingSkillSuggestions = false
+            commandSuggestions = []
+            commandSuggestionError = nil
+            isLoadingCommandSuggestions = false
             return
         }
 
-        skillSuggestions = []
-        skillSuggestionError = nil
-        isLoadingSkillSuggestions = true
+        commandSuggestions = []
+        commandSuggestionError = nil
+        isLoadingCommandSuggestions = true
         let provider = slashCommands
         slashSuggestionTask = Task { [weak self] in
             do {
-                let suggestions: [SlashCommandSuggestion]
+                var suggestions: [SlashCommandSuggestion]
                 if slashText == "/" {
-                    suggestions = try await provider.skillCatalog(sessionID: sessionID)
+                    let catalog = try await provider.catalog(sessionID: sessionID)
+                    guard !Task.isCancelled, let self,
+                          generation == self.slashSuggestionGeneration else { return }
+                    self.commandCatalog = catalog
+                    suggestions = catalog.commands
+                        .filter { FleetCommandRouter.isSuggestible($0, canon: catalog.canon) }
+                    // Browsing rank: Commands group first, Skills ranked by
+                    // live usage (most-used first) within their group — a
+                    // browsing-only ordering; a typed query keeps backend
+                    // ranking untouched.
+                    suggestions = Self.browsingOrdered(suggestions)
                 } else {
-                    suggestions = try await provider.completeSkills(
-                        sessionID: sessionID,
-                        text: slashText)
+                    let raw = try await provider.complete(sessionID: sessionID, text: slashText)
+                    guard !Task.isCancelled, let self,
+                          generation == self.slashSuggestionGeneration else { return }
+                    // Typed query = search: keep backend ranking, drop only
+                    // aliases and genuinely unavailable rows.
+                    let canon = self.commandCatalog?.canon ?? [:]
+                    suggestions = raw.filter { FleetCommandRouter.isSuggestible($0, canon: canon) }
+                    // Fold catalog metadata (dispositions/argument modes) into
+                    // completion rows so the router sees the same picture.
+                    if let catalog = self.commandCatalog {
+                        suggestions = suggestions.map { row in
+                            Self.row(row, enrichedWith: catalog)
+                        }
+                    }
                 }
                 guard !Task.isCancelled, let self,
                       generation == self.slashSuggestionGeneration else { return }
-                self.skillSuggestions = suggestions
-                self.isLoadingSkillSuggestions = false
+                self.commandSuggestions = suggestions
+                self.isLoadingCommandSuggestions = false
             } catch is CancellationError {
                 // A newer keystroke owns the palette state.
             } catch {
                 guard !Task.isCancelled, let self,
                       generation == self.slashSuggestionGeneration else { return }
-                self.skillSuggestions = []
-                self.skillSuggestionError = Self.nonSecret(error)
-                self.isLoadingSkillSuggestions = false
+                self.commandSuggestions = []
+                self.commandSuggestionError = Self.nonSecret(error)
+                self.isLoadingCommandSuggestions = false
             }
         }
     }
 
-    /// Insert a selected canonical skill token while retaining any argument
-    /// suffix already typed. The view restores focus after calling this.
-    public func selectedSkillText(_ suggestion: SlashCommandSuggestion, replacing text: String) -> String {
-        guard suggestion.kind == .skill else { return text }
+    /// Browsing order for a bare `/`: commands (incl. extensions) first in
+    /// backend order, then skills by live usage (desc), A–Z tiebreak —
+    /// mirroring Desktop's `rankSkillCommands` browsing behavior.
+    private static func browsingOrdered(_ rows: [SlashCommandSuggestion]) -> [SlashCommandSuggestion] {
+        let commands = rows.filter { $0.kind != .skill }
+        let skills = rows
+            .filter { $0.kind == .skill }
+            .sorted { lhs, rhs in
+                if lhs.usage != rhs.usage { return lhs.usage > rhs.usage }
+                return lhs.text.localizedStandardCompare(rhs.text) == .orderedAscending
+            }
+        return commands + skills
+    }
+
+    /// Fold catalog metadata into a completion row (dispositions and
+    /// argument modes live only in the catalog's `commands` map).
+    private static func row(
+        _ row: SlashCommandSuggestion,
+        enrichedWith catalog: HermesCommandCatalog
+    ) -> SlashCommandSuggestion {
+        let key = row.text.lowercased()
+        let canonicalKey = catalog.canon[key] ?? key
+        guard let meta = catalog.commandMeta[canonicalKey] ?? catalog.commandMeta[key] else { return row }
+        return SlashCommandSuggestion(
+            text: row.text,
+            display: row.display,
+            description: row.description,
+            kind: row.kind,
+            argumentMode: meta.argumentMode ?? row.argumentMode,
+            canonical: row.canonical,
+            desktopDisposition: meta.desktopDisposition ?? row.desktopDisposition,
+            usage: row.usage)
+    }
+
+    /// Insert a selected command token while retaining any argument suffix
+    /// already typed. The view restores focus after calling this. Selection
+    /// never auto-executes: the token lands in the composer for argument
+    /// entry.
+    public func selectedCommandText(_ suggestion: SlashCommandSuggestion, replacing text: String) -> String {
         let leading = String(text.prefix(while: { $0.isWhitespace }))
         let body = String(text.dropFirst(leading.count))
         guard body.first == "/" else { return text }
@@ -782,9 +1194,9 @@ public final class ConversationViewModel {
     public func clearSlashSuggestions() {
         slashSuggestionTask?.cancel()
         slashSuggestionGeneration += 1
-        skillSuggestions = []
-        skillSuggestionError = nil
-        isLoadingSkillSuggestions = false
+        commandSuggestions = []
+        commandSuggestionError = nil
+        isLoadingCommandSuggestions = false
         isSlashInputActive = false
     }
 
@@ -1177,6 +1589,12 @@ public final class ConversationViewModel {
         } else {
             toolingViewModel?.bind(sessionID: opened.sessionID)
         }
+        // Slash parity: a different session may expose a different command
+        // surface — invalidate the cached catalog so the next `/` refetches
+        // against THIS session's gateway/profile route. (Catalog state is
+        // ephemeral and per-VM; a VM instance is bound to exactly one route,
+        // so cross-gateway leakage is structurally impossible.)
+        commandCatalog = nil
         Task { await persistTranscript() }
     }
 
