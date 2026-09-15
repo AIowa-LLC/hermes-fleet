@@ -134,6 +134,12 @@ enum FleetServiceGraph {
     nonisolated static var botChatLookupFails: Bool {
         ProcessInfo.processInfo.environment["HERMES_FLEET_BOT_CHAT_FAIL"] == "1"
     }
+
+    /// Bots-presence sync UI-test knob: the workstation roster starts down
+    /// and recovers only after the lifecycle connect path succeeds.
+    nonisolated static var connectSyncEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_CONNECT_SYNC"] == "1"
+    }
     #endif
 
     // MARK: Production — real stores + live transports

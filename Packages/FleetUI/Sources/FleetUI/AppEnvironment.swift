@@ -403,6 +403,12 @@ public final class AppEnvironment {
     /// `OnboardingViewModel.beginOperation()` fencing pattern).
     @ObservationIgnored private var rosterGeneration = 0
 
+    /// A successful connection repairs the roster source, but its probe may
+    /// race an already-running refresh. Coalesce that repair into one
+    /// trailing observation instead of starting a refresh storm.
+    @ObservationIgnored private var needsPostConnectRosterSync = false
+    @ObservationIgnored private var postConnectSyncQueued = false
+
     public init(
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
@@ -546,6 +552,10 @@ public final class AppEnvironment {
     /// completion is silently dropped so observable state always reflects
     /// only the most recent refresh.
     public func refreshRoster() async {
+        // A refresh beginning now probes every registered gateway. Clear the
+        // pending repair before awaiting so a connect that lands during this
+        // wave can re-arm the trailing refresh below.
+        needsPostConnectRosterSync = false
         let token = beginRosterRefresh()
         isRefreshing = true
         let snapshot = await roster.refreshRoster()
@@ -591,6 +601,34 @@ public final class AppEnvironment {
         // refresh (observational, never blocks the roster).
         await loadRooms()
         await loadAllSections()
+
+        if needsPostConnectRosterSync {
+            needsPostConnectRosterSync = false
+            queuePostConnectRosterSync()
+        }
+    }
+
+    /// Re-observe the authoritative roster after a gateway transport repair.
+    /// Presence still comes only from a successful `profiles.list` outcome;
+    /// connection state alone never fabricates an online bot.
+    private func scheduleRosterSyncAfterConnectionRepair(for id: GatewayID) {
+        // Reset the documented per-gateway summary backoff after an explicit
+        // connection repair so the next Bots/Home observation is due now.
+        summarySourceStates[id] = nil
+        if isRefreshing {
+            needsPostConnectRosterSync = true
+        } else {
+            queuePostConnectRosterSync()
+        }
+    }
+
+    private func queuePostConnectRosterSync() {
+        guard !postConnectSyncQueued else { return }
+        postConnectSyncQueued = true
+        Task {
+            postConnectSyncQueued = false
+            await refreshRoster()
+        }
     }
 
     // MARK: FOS-4 — bounded Home summary observation (SPEC §17)
@@ -967,6 +1005,9 @@ public final class AppEnvironment {
         do {
             try await connection.connect()
             connectionStates[id] = GatewayConnectionState(status: connection.status)
+            if connectionStates[id] == .connected {
+                scheduleRosterSyncAfterConnectionRepair(for: id)
+            }
         } catch let error as GatewayConnectivityError {
             let status = GatewayStatus(connectivityError: error)
             connectionStates[id] = .failed(status)

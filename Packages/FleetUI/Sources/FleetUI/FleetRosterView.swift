@@ -180,6 +180,11 @@ public struct FleetRosterView: View {
             // Re-render from the latest snapshot on entry (idempotent).
             if environment.rosterSnapshot == nil {
                 await environment.refreshRoster()
+            } else {
+                // Known state renders immediately. A repaired gateway may
+                // have reset its observation backoff, so use the shared
+                // scheduler seam for at most one due refresh on entry.
+                await environment.refreshSummaryIfDue()
             }
         }
         .background(theme.background.ignoresSafeArea())

@@ -44,6 +44,7 @@ UI_CLASSES=(
   FOS2GatewayDetail FOS3FourRootShell FOS4TruthfulHome
   FOS5BotsGroupsChats FOS6ComponentDensity
   FOS8Accessibility
+  BotsPresenceSync
   BotAvatarAppearance BotPetAvatar BotAvatarSources
   # Re-admitted 2026-09-10 (i16): the 2026-09-10 hosted failures were a
   # proven test-harness defect (cross-suite persisted-nav leakage, H7), fixed
