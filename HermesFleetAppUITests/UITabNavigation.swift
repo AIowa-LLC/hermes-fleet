@@ -15,6 +15,28 @@ import XCTest
 /// the switch took effect and retry the tap once before failing.
 enum UITabNavigation {
 
+    /// SwiftUI's sidebarAdaptable style is a tab bar on iPhone, but may
+    /// render the same four destinations as an adaptive segmented control on
+    /// iPad. Keep the semantic lookup shared so tests assert the navigation
+    /// contract instead of a device-specific UIKit container.
+    static func tabControl(_ app: XCUIApplication, label: String) -> XCUIElement {
+        let tabBar = app.tabBars.firstMatch
+        if tabBar.exists || tabBar.waitForExistence(timeout: 2) {
+            let tabButton = tabBar.buttons[label].firstMatch
+            if tabButton.exists || tabButton.waitForExistence(timeout: 2) {
+                return tabButton
+            }
+        }
+        let button = app.buttons[label].firstMatch
+        if button.exists || button.waitForExistence(timeout: 2) {
+            return button
+        }
+        // iPad landscape presents the same destinations as sidebar cells;
+        // their semantic labels remain the navigation contract even though
+        // UIKit does not expose them as Button elements.
+        return app.cells[label].firstMatch
+    }
+
     /// Open a tab by label and verify the switch took effect, retrying the
     /// tap ONCE only when the tab is still not selected (a first tap can be
     /// swallowed by the lock-unlock hierarchy swap). Never re-taps a selected
@@ -26,15 +48,16 @@ enum UITabNavigation {
         expectedBar: String,
         timeout: TimeInterval
     ) -> XCUIElement {
-        let tab = app.tabBars.firstMatch.buttons[label]
-        XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) tab should exist in the tab bar")
+        let tab = tabControl(app, label: label)
+        XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) destination control should exist")
         let bar = app.navigationBars[expectedBar]
         // Under heavy simulator load (long CI gates) the first tap can land
         // during the lock-unlock hierarchy swap and be dropped. Retry up to
-        // three times, and never re-tap a selected tab (that pops to root).
+        // three times. On iPad the adaptive control does not expose the
+        // selected-state contract that UITabBar provides on iPhone.
         for _ in 0..<3 {
             if bar.waitForExistence(timeout: 6) { break }
-            if tab.isSelected { continue } // selected but bar not showing: wait, don't pop
+            if tab.elementType == .button && tab.isSelected { continue }
             tab.tap()
         }
         XCTAssertTrue(bar.waitForExistence(timeout: timeout),

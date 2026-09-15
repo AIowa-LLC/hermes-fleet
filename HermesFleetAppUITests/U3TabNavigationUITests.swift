@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// U3 (Gold Fleet) — root tab-bar navigation regression suite.
@@ -23,11 +24,12 @@ final class U3TabNavigationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // The tab bar exposes the four current tabs by label.
-        let tabBar = app.tabBars.firstMatch
-        XCTAssertTrue(tabBar.waitForExistence(timeout: 15), "the root shell must render a tab bar")
+        // The root shell exposes four semantic destinations. On iPhone these
+        // are a tab bar; on iPad the adaptive style renders another control.
         for label in ["Fleet", "Chats", "Bots", "Gateways"] {
-            XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
+            XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
+                .waitForExistence(timeout: 15),
+                "root shell must include \(label)")
         }
 
         // Fleet is the initial tab and shows the real dashboard (the scripted
@@ -122,10 +124,36 @@ final class U3TabNavigationUITests: XCTestCase {
         attachScreenshot(of: app, name: "u3-tab-switch-preserves-stack")
     }
 
+    /// iPad smoke coverage: the universal target remains usable after an
+    /// orientation change, with the adaptive destination control and owning
+    /// navigation stack still present. iPhone CI runs skip this device-only
+    /// check; the manual iPad smoke invocation executes it on an iPad target.
+    func testIPadLandscapePreservesRootNavigation() throws {
+        try XCTSkipUnless(
+            UIDevice.current.userInterfaceIdiom == .pad,
+            "iPad-only orientation smoke test")
+
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        let device = XCUIDevice.shared
+        device.orientation = .landscapeLeft
+        defer { device.orientation = .portrait }
+
+        XCTAssertTrue(
+            UITabNavigation.tabControl(app, label: "Fleet")
+                .waitForExistence(timeout: 10),
+            "Fleet destination remains available in landscape")
+        XCTAssertTrue(
+            app.navigationBars["Fleet"].waitForExistence(timeout: 10),
+            "Fleet navigation bar remains available in landscape")
+    }
+
     // MARK: - Tab helpers (verified switch, one retry on a dropped tap)
 
     private func tapTab(_ app: XCUIApplication, _ label: String) {
-        let tab = app.tabBars.firstMatch.buttons[label]
+        let tab = UITabNavigation.tabControl(app, label: label)
         XCTAssertTrue(tab.waitForExistence(timeout: 15), "\(label) tab should exist")
         tab.tap()
     }
