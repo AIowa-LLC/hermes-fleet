@@ -32,7 +32,8 @@ check() { # <name> <expected classes> <file...>
 CORE="HermesFleetHappyPath P0_7SessionStateMachine"
 
 check "docs/tooling-only changes select no UI suites" "" \
-  "docs/README.md" "docs/adr/0001-per-gateway-session-ownership.md" ".github/workflows/ci.yml" "Makefile" "README.md"
+  "docs/README.md" "docs/adr/0001-per-gateway-session-ownership.md" ".github/workflows/ci.yml" "Makefile" "README.md" \
+  "hosted/34426824450_s5.log" "local/repro_hosted.sh" "evidence.md"
 
 check "a test-suite class file maps to its own suite" "RoomChat" \
   "HermesFleetAppUITests/RoomChatUITests.swift"
