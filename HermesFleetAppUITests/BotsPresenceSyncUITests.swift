@@ -2,6 +2,7 @@ import XCTest
 
 /// End-to-end regression for the dogfood defect where a repaired gateway
 /// remained offline in Bots until the user pressed Refresh.
+@MainActor
 final class BotsPresenceSyncUITests: XCTestCase {
     private var app: XCUIApplication?
 

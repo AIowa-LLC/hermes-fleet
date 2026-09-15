@@ -296,6 +296,14 @@ public final class AppEnvironment {
     /// error state. Absent until a fetch fails.
     public private(set) var sessionReadErrors: [Route: String] = [:]
 
+    /// When each route's sessions were last successfully observed. This is
+    /// in-process freshness metadata only; a failed read never stamps a
+    /// route fresh and never removes its cached sessions.
+    @ObservationIgnored private var sessionsObservedAt: [Route: Date] = [:]
+
+    /// Chats session-list freshness window.
+    public static let sessionFreshnessTTL: TimeInterval = 30
+
     // MARK: Injected seams (composition root)
 
     private let registry: any GatewayRegistryManaging
@@ -570,6 +578,7 @@ public final class AppEnvironment {
         needsPostConnectRosterSync = false
         let token = beginRosterRefresh()
         isRefreshing = true
+        let previousOutcomes = rosterSnapshot?.gatewayOutcomes ?? [:]
         let snapshot = await roster.refreshRoster()
         // Stale completion: a newer refresh owns settlement — silently drop
         // the result (observable state stays what the newest refresh set).
@@ -601,6 +610,12 @@ public final class AppEnvironment {
         // when the gateway answered.
         for gateway in snapshot.roster.allGateways {
             if case .loaded = snapshot.outcome(for: gateway.id) {
+                // A recovered gateway may have changed session state while it
+                // was unreachable. Invalidate only that gateway's cached
+                // observations; unrelated gateways remain fresh.
+                if case .failed = previousOutcomes[gateway.id] {
+                    invalidateSessions(on: gateway.id)
+                }
                 let bots = snapshot.bots(on: gateway.id)
                 if !bots.isEmpty {
                     cachedBotsByGateway[gateway.id] = bots
@@ -992,6 +1007,7 @@ public final class AppEnvironment {
         cachedWatermarkCount = 0
         healthStats = [:]
         cachedBotsByGateway = [:]
+        sessionsObservedAt = [:]
         roomsByGateway = [:]
         canCreateRoomsByGateway = [:]
         observedRoomAttention = [:]
@@ -1290,6 +1306,9 @@ public final class AppEnvironment {
         continueIndex.prune(gatewayID: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
+        for route in sessionsObservedAt.keys where route.gatewayID == id {
+            sessionsObservedAt[route] = nil
+        }
         // H2: drop the gateway's accumulated + persisted health stats.
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
@@ -1306,6 +1325,8 @@ public final class AppEnvironment {
         continueIndex.recordConversationOpen(
             route: route, sessionID: sessionID, canonical: canonical,
             title: title, subtitle: subtitle)
+        // Opening can mint a new session; stale only the owning route.
+        sessionsObservedAt[route] = nil
     }
 
     /// Record an open of an exact room (called by RoomChatView).
@@ -1400,10 +1421,85 @@ public final class AppEnvironment {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
             sessionsByRoute[route] = sessions
             sessionReadErrors[route] = nil
+            sessionsObservedAt[route] = Date()
         } catch let error as RosterError {
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         } catch {
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
+        }
+    }
+
+    // MARK: Chats session freshness
+
+    /// When this route's sessions were last successfully observed.
+    public func sessionsLastObserved(_ route: Route) -> Date? {
+        sessionsObservedAt[route]
+    }
+
+    /// Missing or never-successfully-read routes are stale. A failed read
+    /// retains the old timestamp (or nil), so stale data cannot be laundered
+    /// as fresh.
+    public func needsSessionRefresh(_ route: Route, now: Date = Date()) -> Bool {
+        guard sessionsByRoute[route] != nil else { return true }
+        guard let observed = sessionsObservedAt[route] else { return true }
+        return now.timeIntervalSince(observed) >= Self.sessionFreshnessTTL
+    }
+
+    /// Narrowly invalidate one route's cached observation.
+    public func invalidateSessions(for route: Route) {
+        sessionsObservedAt[route] = nil
+    }
+
+    /// Narrowly invalidate observations owned by one gateway.
+    public func invalidateSessions(on gatewayID: GatewayID) {
+        for route in sessionsObservedAt.keys where route.gatewayID == gatewayID {
+            sessionsObservedAt[route] = nil
+        }
+    }
+
+    /// Refresh missing/stale routes with an explicit bounded concurrency
+    /// window. `force` is reserved for explicit pull-to-refresh behavior.
+    public func refreshSessions(
+        routes: [Route],
+        force: Bool = false,
+        concurrencyLimit: Int = 4,
+        now: Date = Date()
+    ) async {
+        var byGateway: [GatewayID: [Route]] = [:]
+        var gatewayOrder: [GatewayID] = []
+        for route in routes where force || needsSessionRefresh(route, now: now) {
+            if byGateway[route.gatewayID] == nil { gatewayOrder.append(route.gatewayID) }
+            byGateway[route.gatewayID, default: []].append(route)
+        }
+
+        var ordered: [Route] = []
+        var remaining = !gatewayOrder.isEmpty
+        while remaining {
+            remaining = false
+            for gateway in gatewayOrder {
+                guard var list = byGateway[gateway], !list.isEmpty else { continue }
+                ordered.append(list.removeFirst())
+                byGateway[gateway] = list
+                remaining = true
+            }
+        }
+        guard !ordered.isEmpty else { return }
+
+        let bound = max(1, concurrencyLimit)
+        await withTaskGroup(of: Void.self) { group in
+            var iterator = ordered.makeIterator()
+            var inFlight = 0
+            func addNext() {
+                while inFlight < bound, let route = iterator.next() {
+                    inFlight += 1
+                    group.addTask { await self.loadSessions(for: route) }
+                }
+            }
+            addNext()
+            for await _ in group {
+                inFlight -= 1
+                addNext()
+            }
         }
     }
 
