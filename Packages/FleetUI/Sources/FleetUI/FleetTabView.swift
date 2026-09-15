@@ -43,42 +43,24 @@ public struct FleetTabView: View {
             if lockController.isLocked {
                 AppLockView(controller: lockController)
             } else {
-                TabView(selection: Binding(get: { navigation.selection }, set: { tab in
-                    navigation.selection = tab
-                })) {
-                    ForEach(FleetTab.allCases) { tab in
-                        Tab(tab.label, systemImage: tab.systemImage, value: tab) {
-                            NavigationStack(path: Binding(get: { navigation.paths[tab] ?? [] }, set: { path in
-                                if let target = path.last, path.count > (navigation.paths[tab]?.count ?? 0) { navigation.open(target) }
-                                else { navigation.paths[tab] = path }
-                            })) {
-                                root(tab)
-                                    .navigationDestination(for: FleetScreen.self) { destination($0) }
-                                    .toolbar {
-                                        ToolbarItem(placement: .topBarLeading) {
-                                            if tab == .fleet {
-                                                Button("Settings", systemImage: "gearshape") { showingSettings = true }
-                                                    .accessibilityIdentifier("fleet.settings.open")
-                                            }
-                                        }
-                                        ToolbarItem(placement: .topBarTrailing) {
-                                            Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
-                                                .accessibilityIdentifier("fleet.command-center.open")
-                                                .keyboardShortcut("k", modifiers: .command)
-                                        }
-                                    }
-                            }
-                            .accessibilityIdentifier("fleet.tab.\(tab.rawValue)")
-                        }
-                    }
-                }
-                .tabViewStyle(.sidebarAdaptable)
-                .sheet(isPresented: $showingCommandCenter) {
-                    FleetCommandCenter(environment: environment, navigate: { screen in
-                        navigation.open(screen)
-                    }, selectTab: { navigation.selection = $0 }, openSettings: {
-                        showingSettings = true
-                    })
+                // First-run gate (Hermex-style lifecycle): before the
+                // registry has hydrated we show the launch continuation (the
+                // splash overlay covers this window on cold launch); once
+                // hydration settles, a ZERO-gateway fleet lands on the
+                // first-server setup experience INSTEAD of the normal tab
+                // UI — a brand-new user must understand Fleet needs a Hermes
+                // server before entering the cockpit. The gate is driven by
+                // the hydrated registry itself (no hasSeenOnboarding flag):
+                // registering the first gateway swaps in the normal app, and
+                // removing the final gateway returns to setup (intended).
+                switch environment.hydrationPhase {
+                case .loading:
+                    ProgressView("Starting…")
+                        .accessibilityIdentifier("fleet.root.loading")
+                case .unconfigured:
+                    FirstRunSetupView(environment: environment)
+                case .configured:
+                    tabShell
                 }
             }
         }
@@ -125,6 +107,47 @@ public struct FleetTabView: View {
                 GatewayResourceView.resetStoredSelections()
             }
             await performAutoNavIfNeeded()
+        }
+    }
+
+    /// The normal four-tab Fleet application (configured state).
+    private var tabShell: some View {
+        TabView(selection: Binding(get: { navigation.selection }, set: { tab in
+            navigation.selection = tab
+        })) {
+            ForEach(FleetTab.allCases) { tab in
+                Tab(tab.label, systemImage: tab.systemImage, value: tab) {
+                    NavigationStack(path: Binding(get: { navigation.paths[tab] ?? [] }, set: { path in
+                        if let target = path.last, path.count > (navigation.paths[tab]?.count ?? 0) { navigation.open(target) }
+                        else { navigation.paths[tab] = path }
+                    })) {
+                        root(tab)
+                            .navigationDestination(for: FleetScreen.self) { destination($0) }
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    if tab == .fleet {
+                                        Button("Settings", systemImage: "gearshape") { showingSettings = true }
+                                            .accessibilityIdentifier("fleet.settings.open")
+                                    }
+                                }
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
+                                        .accessibilityIdentifier("fleet.command-center.open")
+                                        .keyboardShortcut("k", modifiers: .command)
+                                }
+                            }
+                    }
+                    .accessibilityIdentifier("fleet.tab.\(tab.rawValue)")
+                }
+            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .sheet(isPresented: $showingCommandCenter) {
+            FleetCommandCenter(environment: environment, navigate: { screen in
+                navigation.open(screen)
+            }, selectTab: { navigation.selection = $0 }, openSettings: {
+                showingSettings = true
+            })
         }
     }
 

@@ -122,7 +122,11 @@ extension FleetServiceGraph {
                 ScriptedRoomLinkEngine.shared
             },
             health: health,
-            seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled ? [] : ScriptedFleet.registrations,
+            seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled
+                ? []
+                : (FleetServiceGraph.singleGatewayEnabled
+                    ? [ScriptedFleet.registrations[0]]
+                    : ScriptedFleet.registrations),
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
             // authorization gate and transcript review are walkable
             // deterministically in the simulator + UI tests — no live speech.

@@ -1,13 +1,14 @@
 import XCTest
 
-/// F3 — onboarding UI regression suite (deterministic, CI-safe).
+/// F3 — first-run onboarding UI regression suite (deterministic, CI-safe).
 ///
 /// Drives the DEBUG simulator build with `HERMES_FLEET_ZERO_GATEWAYS=1`,
 /// which suppresses the scripted seed fleet so the app launches with an
-/// EMPTY registry — the brand-new-user state. Proves the card's acceptance:
-/// empty state shows the "Set up with your agent" CTA; one tap opens the
-/// onboarding screen; the copy button confirms visibly; the prompt preview
-/// renders the full versioned text; and the hand-off routes into the REAL
+/// EMPTY registry. Under the first-run hydration gate the app presents the
+/// setup experience AT THE ROOT — before any tab UI. Proves: onboarding is
+/// the first meaningful surface; the copy button confirms visibly; the
+/// prompt preview renders the universal (v4) text with no environment
+/// assumptions; and the already-have-details hand-off routes into the REAL
 /// Add-Gateway form (URL/username/password entry).
 final class F3OnboardingUITests: XCTestCase {
 
@@ -23,33 +24,34 @@ final class F3OnboardingUITests: XCTestCase {
         return app
     }
 
-    private func openGatewaysTab(_ app: XCUIApplication) {
-        UITabNavigation.openGatewaysTab(app)
-        XCTAssertTrue(app.staticTexts["No Gateways"].waitForExistence(timeout: 15))
+    func testFreshInstallLandsOnOnboardingAsRootSurface() throws {
+        let app = launchEmptyFleet()
+
+        // The first-run setup experience is the ROOT surface — no tab bar
+        // before the first gateway is registered.
+        let copy = app.buttons["fleet.onboarding.copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 15),
+                      "a fresh zero-gateway install must land on the setup experience")
+        XCTAssertFalse(app.tabBars.firstMatch.exists,
+                      "no tab bar before the first gateway is registered")
+
+        // The universal copy is present: connect your first Hermes server.
+        XCTAssertTrue(app.staticTexts["Connect your first Hermes server"].exists
+                      || app.descendants(matching: .any)
+                          .matching(identifier: "fleet.onboarding.headline").firstMatch.exists,
+                      "the setup headline renders")
+
+        attachScreenshot(of: app, name: "f3-onboarding-root")
     }
 
-    func testEmptyStateShowsOnboardingCTAAndCopyFlow() throws {
+    func testCopyFlowConfirmsVisiblyAndPreviewIsUniversal() throws {
         let app = launchEmptyFleet()
-        openGatewaysTab(app)
 
-        // F3: the brand-new-user CTA is the prominent action. NOTE: a
-        // ContentUnavailableView flattens its children under the parent
-        // identifier (RT4 lesson) — the buttons surface with the container's
-        // `fleet.gateways` identifier, so query by visible label.
-        let cta = app.buttons["Set up with your agent"]
-        XCTAssertTrue(cta.waitForExistence(timeout: 10),
-                      "empty state must show the 'Set up with your agent' CTA")
-        XCTAssertTrue(cta.isEnabled)
-        cta.tap()
-
-        // Onboarding screen appears with the big copy button.
         let copy = app.buttons["fleet.onboarding.copy"]
-        XCTAssertTrue(copy.waitForExistence(timeout: 10),
-                      "onboarding sheet must show the copy button")
-        XCTAssertTrue(app.staticTexts["Hermes Fleet"].exists)
+        XCTAssertTrue(copy.waitForExistence(timeout: 15))
+        copy.tap()
 
         // One tap copies — visible confirmation appears.
-        copy.tap()
         let confirmation = app.staticTexts["Copied — paste it in chat"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 10),
                       "copy must show a visible confirmation")
@@ -60,42 +62,44 @@ final class F3OnboardingUITests: XCTestCase {
         toggle.tap()
         XCTAssertTrue(app.staticTexts["The prompt you'll send"].waitForExistence(timeout: 10),
                       "prompt preview must open")
-        XCTAssertTrue(app.staticTexts["1. Install: I sideload Hermes Fleet from my Mac"].exists ||
-                      app.descendants(matching: .any)
-                        .matching(identifier: "fleet.onboarding.prompt-text").firstMatch.exists,
-                      "full prompt text must render")
+        XCTAssertTrue(
+            app.descendants(matching: .any)
+                .matching(identifier: "fleet.onboarding.prompt-text").firstMatch.exists,
+            "full prompt text must render"
+        )
+
+        // Neutrality on-device: the rendered prompt carries no environment
+        // assumptions (the stale v3 legs named Wi-Fi sideloading/TestFlight).
+        let promptText = app.descendants(matching: .any)
+            .matching(identifier: "fleet.onboarding.prompt-text").firstMatch.label
+        for banned in ["sideload", "Wi-Fi", "TestFlight", "Mac", "tailnet", "Tailscale", "dogfood"] {
+            XCTAssertFalse(promptText.contains(banned),
+                           "rendered prompt must not contain environment assumption \"\(banned)\"")
+        }
 
         // Docs link is present.
         XCTAssertTrue(app.buttons["fleet.onboarding.docs"].exists,
                       "docs link must be present")
 
-        attachScreenshot(of: app, name: "f3-onboarding-screen")
+        attachScreenshot(of: app, name: "f3-onboarding-copy")
     }
 
     func testOnboardingHandsOffToAddGatewayForm() throws {
         let app = launchEmptyFleet()
-        openGatewaysTab(app)
 
-        // Label query (see note above — ContentUnavailableView flattening).
-        let cta = app.buttons["Set up with your agent"]
-        XCTAssertTrue(cta.waitForExistence(timeout: 10))
-        cta.tap()
-
-        // The user has the agent's reply — the hand-off must route into the
-        // REAL Add-Gateway sheet (same draft + Keychain path as manual entry).
         let enter = app.buttons["fleet.onboarding.enter-values"]
-        XCTAssertTrue(enter.waitForExistence(timeout: 10),
-                      "onboarding must offer the Add-Gateway hand-off")
+        XCTAssertTrue(enter.waitForExistence(timeout: 15),
+                      "onboarding must offer the already-have-details hand-off")
         enter.tap()
 
+        // The hand-off must present the REAL Add-Gateway sheet (same draft +
+        // Keychain path as manual entry).
         let endpoint = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(endpoint.waitForExistence(timeout: 10),
                       "hand-off must present the real Add-Gateway form")
-        // The three returned values land in the same fields (paste buttons
-        // exist next to endpoint/username/password in the form).
         XCTAssertTrue(app.buttons["fleet.gateways.form.paste.endpoint"].exists ||
                       app.buttons["fleet.gateways.form.paste.username"].exists,
-                      "the form's paste affordances must be reachable for the agent's values")
+                      "the form's paste affordances must be reachable for the returned values")
 
         attachScreenshot(of: app, name: "f3-onboarding-to-add-gateway")
     }

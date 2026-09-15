@@ -21,16 +21,25 @@ final class RT4FormSaveFailureUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_SAVE_FAIL"] = "1"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
-        UITabNavigation.openGatewaysTab(app)
 
         // With save-fail enabled, the scripted seed (registry.addGateway) also
-        // throws, so the fleet is empty — the Add Gateway entry point must not
-        // depend on a seeded gateway. The toolbar + empty state both expose it.
-        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.gateways.add").waitForExistence(timeout: 10),
-                      "Add Gateway entry should appear (empty state or toolbar)")
+        // throws, so the fleet is empty. The first-run gate now owns that
+        // empty state and exposes the same Add Gateway form directly; a
+        // configured-fleet launch still reaches the form from Gateways. Keep
+        // both paths in the regression so the form contract is tested without
+        // assuming a tab that is intentionally unavailable on first run.
+        let onboardingEntry = firstMatch(in: app, identifier: "fleet.onboarding.enter-values")
+        if onboardingEntry.waitForExistence(timeout: 10) {
+            onboardingEntry.tap()
+        } else {
+            UITabNavigation.openGatewaysTab(app)
+            let gatewaysEntry = firstMatch(in: app, identifier: "fleet.gateways.add")
+            XCTAssertTrue(gatewaysEntry.waitForExistence(timeout: 10),
+                          "Add Gateway entry should appear (empty state or toolbar)")
+            gatewaysEntry.tap()
+        }
 
-        // Open the Add Gateway form and enter a name + endpoint.
-        tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        // Enter a name + endpoint in the shared Add Gateway form.
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")

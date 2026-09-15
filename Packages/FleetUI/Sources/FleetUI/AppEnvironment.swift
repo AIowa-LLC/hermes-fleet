@@ -217,6 +217,33 @@ public final class AppEnvironment {
     /// when automatic authentication succeeds.
     @ObservationIgnored private var didHydrateEnvironment = false
 
+    /// First-run gate (hydration model): the root shell distinguishes
+    /// "registry not loaded yet" from "loaded and empty" so a brand-new user
+    /// lands on setup BEFORE the normal tab UI, without a fragile
+    /// hasSeenOnboarding flag. The authoritative state is the hydrated
+    /// gateway registry itself: `.loading` until the first `load()` settles,
+    /// then `.unconfigured` (zero gateways) or `.configured` (≥1). Removing
+    /// the final gateway flips back to `.unconfigured` — returning to setup
+    /// is the intended product behavior. In-process only; the registry
+    /// (SwiftData records) remains the durable truth.
+    public enum HydrationPhase: Equatable, Sendable {
+        case loading
+        case unconfigured
+        case configured
+    }
+
+    /// Current first-run phase. Observable so the root shell can gate the
+    /// whole UI on it (see FleetTabView).
+    public private(set) var hydrationPhase: HydrationPhase = .loading
+
+    /// Recompute the first-run phase from the hydrated registry. Called at
+    /// the end of every `load()`/`reloadGateways()` settlement so the phase
+    /// always reflects reality (add → configured; remove-the-last →
+    /// unconfigured).
+    private func settleHydrationPhase() {
+        hydrationPhase = gateways.isEmpty ? .unconfigured : .configured
+    }
+
     /// Bots per gateway from the last SUCCESSFUL refresh — the offline-ghost
     /// cache (a failed refresh renders these dimmed, identity retained).
     public private(set) var cachedBotsByGateway: [GatewayID: [FleetBot]] = [:]
@@ -460,6 +487,9 @@ public final class AppEnvironment {
         }
         await reloadGateways()
         cachedWatermarkCount = (try? await cache.loadWatermarks())?.count ?? 0
+        // First-run gate: load() has settled — the registry's emptiness (or
+        // not) is now authoritative, so the root shell may leave .loading.
+        settleHydrationPhase()
     }
 
     /// Hydrate protected app content exactly once per runtime instance.
@@ -486,6 +516,9 @@ public final class AppEnvironment {
         // is not). Live entries are untouched by the accumulator's guard.
         await health.rehydrate(gatewayIDs: gateways.map(\.id))
         healthStats = await health.snapshot()
+        // First-run gate: keep the phase honest on every registry settlement
+        // (add-gateway → configured; remove-the-last → unconfigured).
+        settleHydrationPhase()
     }
 
     /// Begins a tracked roster refresh and returns its generation token used
