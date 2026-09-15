@@ -110,7 +110,7 @@ classify_file() {
   f="$1"
   # Non-product changes never require UI validation.
   case "$f" in
-    docs/*|.github/*|scripts/*|Design/*|Makefile|AGENTS.md|README.md|SECURITY.md|LICENSE|LICENSE.*|CODE_OF_CONDUCT.md|CONTRIBUTING.md|.gitignore|.gitleaksignore) return ;;
+    docs/*|.github/*|scripts/*|Design/*|hosted/*|local/*|Makefile|AGENTS.md|README.md|SECURITY.md|LICENSE|LICENSE.*|CODE_OF_CONDUCT.md|CONTRIBUTING.md|.gitignore|.gitleaksignore|evidence.md) return ;;
     */*) ;;
     *.md|.*) return ;;
   esac

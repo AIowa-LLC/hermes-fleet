@@ -58,6 +58,17 @@ else
   echo "PASS: no known private residue in tracked tree"
 fi
 
+# --- 1b. local/operator evidence must never be tracked ----------------------
+# These paths are intentionally ignored, but the guard also fails closed if a
+# future force-add or generated commit attempts to publish them again.
+if git ls-files | grep -Eq '^(hosted|local)/|^evidence\.md$'; then
+  echo "FAIL: local/hosted operator evidence is tracked; keep it outside the public repository"
+  git ls-files | grep -E '^(hosted|local)/|^evidence\.md$' | head -40
+  FAIL=1
+else
+  echo "PASS: local/hosted operator evidence is not tracked"
+fi
+
 # --- 2. shipped configuration must not pin an endpoint ------------------------
 note "shipped Info.plist endpoint check"
 if git ls-files --error-unmatch HermesFleetApp/Info.plist >/dev/null 2>&1; then
