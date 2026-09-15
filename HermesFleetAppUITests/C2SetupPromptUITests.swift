@@ -30,7 +30,7 @@ final class C2SetupPromptUITests: XCTestCase {
         }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "Settings must expose the Agent Setup Prompt row — the door was orphaned once; never again")
-        XCTAssertTrue(app.staticTexts["Agent Setup Prompt"].exists || row.exists)
+        XCTAssertTrue(app.staticTexts["Set Up Another Server"].exists || row.exists)
         attachScreenshot(of: app, name: "c2-settings-row")
     }
 
@@ -55,7 +55,7 @@ final class C2SetupPromptUITests: XCTestCase {
                       "the setup-prompt sheet must show the Copy button")
         XCTAssertTrue(app.buttons["fleet.setup-prompt.share"].exists,
                       "the setup-prompt sheet must show the Share affordance")
-        XCTAssertTrue(app.navigationBars["Agent Setup Prompt"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Set Up Another Server"].waitForExistence(timeout: 5))
 
         // Copy confirms visibly.
         copy.tap()
@@ -65,7 +65,7 @@ final class C2SetupPromptUITests: XCTestCase {
             || app.buttons["fleet.setup-prompt.copy"].label.contains("Copied")
         XCTAssertTrue(confirmed, "copy must show a visible confirmation")
 
-        // Preview renders the full versioned prompt text (v2: tunnel flow).
+        // Preview renders the full universal prompt text (v4: detect-based).
         let toggle = app.buttons["fleet.setup-prompt.toggle-prompt"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         toggle.tap()
@@ -73,9 +73,8 @@ final class C2SetupPromptUITests: XCTestCase {
                       "prompt preview must open")
         XCTAssertTrue(
             app.descendants(matching: .any)
-                .matching(identifier: "fleet.setup-prompt.prompt-text").firstMatch.exists
-                || app.staticTexts["2. Network: the gateway must be reachable"].exists,
-            "the v2 prompt text must render")
+                .matching(identifier: "fleet.setup-prompt.prompt-text").firstMatch.exists,
+            "the universal prompt text must render")
 
         // Close dismisses back to Settings.
         app.buttons["fleet.setup-prompt.close"].tap()

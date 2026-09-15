@@ -120,6 +120,13 @@ enum FleetServiceGraph {
         ProcessInfo.processInfo.environment["HERMES_FLEET_ZERO_GATEWAYS"] == "1"
     }
 
+    /// F4 UI-test knob (DEBUG simulator only): `HERMES_FLEET_SINGLE_GATEWAY=1`
+    /// seeds exactly ONE scripted gateway so the remove-the-final-gateway →
+    /// first-run-setup transition is deterministically walkable.
+    nonisolated static var singleGatewayEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_SINGLE_GATEWAY"] == "1"
+    }
+
     /// True Bots Mode UI-test knob (DEBUG simulator only):
     /// `HERMES_FLEET_BOT_CHAT_FAIL=1` makes the scripted canonical-chat
     /// lookup throw, so the fail-closed tap behavior (retryable error, no

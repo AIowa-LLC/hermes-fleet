@@ -33,14 +33,11 @@ public struct GatewaysView: View {
         case add
         case edit(FleetGateway)
         case auth(GatewayID)
-        /// F3: agent-assisted first-run onboarding (empty state CTA).
-        case onboarding
         var id: String {
             switch self {
             case .add: return "add"
             case .edit(let gateway): return "edit-\(gateway.id.rawValue)"
             case .auth(let id): return "auth-\(id.rawValue)"
-            case .onboarding: return "onboarding"
             }
         }
     }
@@ -137,14 +134,6 @@ public struct GatewaysView: View {
                 }
             case .auth(let id):
                 GatewayAuthSheet(environment: environment, gatewayID: id)
-            case .onboarding:
-                // F3: onboarding hands off to the SAME Add-Gateway sheet the
-                // toolbar plus presents — the returned URL/username/password
-                // flow through the existing draft + Keychain path, and the
-                // sheet swap dismisses the onboarding screen.
-                GatewayOnboardingView {
-                    presentAddForm()
-                }
             }
         }
         .alert("Gateway Error", isPresented: .init(
@@ -334,19 +323,10 @@ public struct GatewaysView: View {
         } description: {
             Text("Add your first Hermes gateway to see your fleet.")
         } actions: {
-            // F3: brand-new users bootstrap their first connection through
-            // their own agent — one tap copies the mission prompt.
-            Button("Set up with your agent") {
-                presentedSheet = .onboarding
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(theme.highlight)
-            .accessibilityIdentifier("fleet.gateways.empty.onboarding")
-
             Button("Add Gateway") {
                 presentAddForm()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .tint(theme.highlight)
             .accessibilityIdentifier("fleet.gateways.empty.add")
         }

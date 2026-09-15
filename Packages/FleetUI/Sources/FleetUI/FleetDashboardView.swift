@@ -637,7 +637,7 @@ public struct FleetDashboardView: View {
     private var emptyFleetState: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             FleetGlanceFact(value: "No gateways", label: "Connected", id: "fleet.dashboard.glance.connected")
-            Text("Set up with your agent to see your fleet here.")
+            Text("Add a Hermes server in Gateways to see your fleet here.")
                 .font(FleetTheme.secondaryFont)
                 .foregroundStyle(theme.textSecondary)
             NavigationLink(value: FleetScreen.gateways) {

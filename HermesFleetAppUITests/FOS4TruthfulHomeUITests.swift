@@ -54,28 +54,20 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
 
     func testGlanceStripEmptyFleetSaysNoGateways() throws {
         let app = launch(extra: ["HERMES_FLEET_ZERO_GATEWAYS": "1"])
-        // FOS-6: the glance fact is one AX element labeled
-        // 'Connected: No gateways' (value + caption fact component).
-        let connected = app.staticTexts["fleet.dashboard.glance.connected"]
+        // First-run gate: a hydrated ZERO-gateway fleet never renders the
+        // dashboard at all — it lands on the first-server setup experience.
+        // The old guarantee (never fabricate "0/0" stats for an empty fleet)
+        // is now structural: the dashboard is unreachable with zero gateways.
+        let copy = app.buttons["fleet.onboarding.copy"]
         XCTAssertTrue(
-            connected.waitForExistence(timeout: 15),
-            "the empty-fleet glance fact renders"
+            copy.waitForExistence(timeout: 15),
+            "an empty fleet must land on setup, never a dashboard with fabricated 0/0 stats"
         )
-        XCTAssertTrue(
-            connected.label.contains("No gateways"),
-            "0/0 connected must render 'No gateways', never '0/0' (got: \(connected.label))"
+        XCTAssertFalse(
+            app.staticTexts["fleet.dashboard.glance.connected"].waitForExistence(timeout: 2),
+            "the glance strip must not render for an unconfigured fleet"
         )
-        // The empty state offers the setup path (Add Gateway) — query by
-        // label across element types (the Label button surfaces as Other).
-        let add = app.descendants(matching: .any)["fleet.dashboard.empty.add"].firstMatch
-        if !add.waitForExistence(timeout: 5) {
-            XCTAssertTrue(
-                app.staticTexts["Add Gateway"].waitForExistence(timeout: 5)
-                    || app.buttons["Add Gateway"].waitForExistence(timeout: 5),
-                "the empty fleet state offers Add Gateway"
-            )
-        }
-        attachScreenshot(of: app, name: "fos4-empty-fleet")
+        attachScreenshot(of: app, name: "fos4-empty-fleet-setup")
     }
 
     func testNeedsYouAuthEpisodeNavigatesNotApproves() throws {

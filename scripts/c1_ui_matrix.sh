@@ -36,7 +36,7 @@ UI_CLASSES=(
   RT4RosterEmptyState RT4FormSaveFailure RT4VoiceOver Splash
   P2GatewayFormDraft F2QRPairing U3TabNavigation SecondGeneration
   U4Dashboard U5BotDetail U6ConversationSkin U7GatewayQrLockSettings
-  F3Onboarding C2SetupPrompt KanbanBoard R9ApprovalBanner
+  F3Onboarding F4FirstRunGate C2SetupPrompt KanbanBoard R9ApprovalBanner
   R9ConversationTooling R9ManagementPanes R9MemoryGraph R10AttachmentTray
   R10MessageReactions R10ProjectsBrowser R10Voice R10MemoryGraphEdit
   Issue4SlashSkill Issue5StreamingRichText

@@ -38,7 +38,7 @@ public struct SetupPromptSheet: View {
                 copySection
                 previewSection
             }
-            .navigationTitle("Agent Setup Prompt")
+            .navigationTitle("Set Up Another Server")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -55,7 +55,7 @@ public struct SetupPromptSheet: View {
     private var copySection: some View {
         Section {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                Text("Send this prompt to your Hermes agent and it will set up the gateway end-to-end — network path, a scoped credential, and verification — then reply with the three values to add in the app.")
+                Text("Send this prompt to Hermes on the computer you want to add. It will inspect that machine, prepare its gateway connection, choose a secure network path, and reply with the values to enter in Add Gateway.")
                     .font(.subheadline)
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -76,7 +76,7 @@ public struct SetupPromptSheet: View {
 
                 ShareLink(
                     item: OnboardingPrompt.text,
-                    subject: Text("Hermes Fleet — agent setup prompt")
+                    subject: Text("Hermes Fleet — server setup prompt")
                 ) {
                     Label("Share…", systemImage: "square.and.arrow.up")
                         .frame(maxWidth: .infinity)
@@ -99,7 +99,7 @@ public struct SetupPromptSheet: View {
             }
             .listRowBackground(Color.clear)
         } footer: {
-            Text("v\(OnboardingPrompt.version) — no secrets inside; your agent fills in the real values.")
+            Text("v\(OnboardingPrompt.version) — no secrets inside; your Hermes fills in the real values.")
         }
     }
 

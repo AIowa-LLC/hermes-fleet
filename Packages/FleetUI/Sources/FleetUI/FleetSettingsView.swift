@@ -106,14 +106,15 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(theme.textSecondary)
             }
 
-            // C2: the ALWAYS-REACHABLE door to the agent setup prompt. The
-            // old onboarding entry only existed in the empty-gateways state,
-            // so it silently vanished for anyone with a configured gateway.
+            // C2: the ALWAYS-REACHABLE door to the agent setup prompt. With
+            // one or more gateways configured this is the add-another-server
+            // path; the sheet itself carries the copy. The row stays
+            // available with 1, 2, or 20 gateways.
             Section {
                 Button {
                     showingSetupPrompt = true
                 } label: {
-                    Label("Agent Setup Prompt", systemImage: "text.badge.star")
+                    Label("Set Up Another Server", systemImage: "text.badge.star")
                         .foregroundStyle(theme.textPrimary)
                 }
                 .buttonStyle(.plain)
@@ -122,7 +123,7 @@ public struct FleetSettingsView: View {
                 Text("Agent")
                     .foregroundStyle(theme.textSecondary)
             } footer: {
-                Text("Copy or share the versioned setup prompt for your Hermes agent.")
+                Text("Copy or share the setup prompt to add another Hermes server to Fleet.")
                     .foregroundStyle(theme.textSecondary)
             }
 
