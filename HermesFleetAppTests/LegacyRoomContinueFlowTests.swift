@@ -170,7 +170,7 @@ final class LegacyRoomContinueFlowTests: XCTestCase {
             members: [
                 FleetRoomMember(name: "default", handle: "default-this-device", connectionID: "local", connectionLabel: "This device", sourceScoped: true),
                 FleetRoomMember(name: "apple", handle: "apple", connectionID: "local", connectionLabel: "This device", sourceScoped: true),
-                FleetRoomMember(name: "researcher", handle: "researcher", connectionID: "archlinux-1", connectionLabel: "Arch (archlinux-1)", sourceScoped: true),
+                FleetRoomMember(name: "researcher", handle: "researcher", connectionID: "peer-host-a", connectionLabel: "Peer Host A", sourceScoped: true),
             ],
             recentLog: [],
             revision: 824)

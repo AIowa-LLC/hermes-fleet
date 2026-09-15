@@ -28,7 +28,7 @@ final class LegacyRoomContinuationTests: XCTestCase {
                     name: $0.name,
                     handle: $0.name,
                     connectionID: $0.connectionID,
-                    connectionLabel: $0.connectionID == "local" ? "This device" : "Arch (archlinux-1)",
+                    connectionLabel: $0.connectionID == "local" ? "This device" : "Peer Host A",
                     sourceScoped: true)
             })
     }
@@ -78,8 +78,8 @@ final class LegacyRoomContinuationTests: XCTestCase {
         let room = legacyRoom(key: "id:r1", members: [
             ("default", "local"),
             ("apple", "local"),
-            ("default", "macbook-m5"),
-            ("researcher", "archlinux-1"),
+            ("default", "peer-host-b"),
+            ("researcher", "peer-host-a"),
         ])
         let roster = [
             candidate("researcher", display: "Deep Research"),
