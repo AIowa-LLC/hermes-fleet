@@ -8,8 +8,17 @@ public actor GatewaySessionStore {
     private var inFlightLogins: [GatewayID: Task<SessionCookie, Error>] = [:]
     private var generations: [GatewayID: Int] = [:]
     private var inFlightGenerations: [GatewayID: Int] = [:]
+    private let onSharedFlightWait: (@Sendable () -> Void)?
 
-    public init() {}
+    public init() {
+        onSharedFlightWait = nil
+    }
+
+    /// Package-test seam for proving that a caller took the shared-flight
+    /// waiter path. It is intentionally not part of the public API.
+    internal init(onSharedFlightWait: @escaping @Sendable () -> Void) {
+        self.onSharedFlightWait = onSharedFlightWait
+    }
 
     public func lease(
         gatewayID: GatewayID,
@@ -19,7 +28,21 @@ public actor GatewaySessionStore {
         if let cookie = sessions[gatewayID] { return cookie }
         if let flight = inFlightLogins[gatewayID],
            inFlightGenerations[gatewayID] == generation {
-            return try await flight.value
+            onSharedFlightWait?()
+            do {
+                let cookie = try await flight.value
+                guard generations[gatewayID, default: 0] == generation else {
+                    return try await lease(gatewayID: gatewayID, login: login)
+                }
+                return cookie
+            } catch {
+                // Match the task-creating caller: if invalidation advanced
+                // the generation while the shared flight was pending, retry
+                // against the current generation instead of leaking an
+                // obsolete flight's cancellation to the waiter.
+                guard generations[gatewayID, default: 0] != generation else { throw error }
+                return try await lease(gatewayID: gatewayID, login: login)
+            }
         }
 
         let task = Task<SessionCookie, Error> { try await login() }

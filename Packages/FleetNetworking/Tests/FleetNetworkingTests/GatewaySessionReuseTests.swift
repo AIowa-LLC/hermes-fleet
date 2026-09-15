@@ -76,15 +76,27 @@ final class GatewaySessionReuseTests: XCTestCase {
     private final class GatedLogin: @unchecked Sendable {
         private let lock = NSLock()
         private var calls = 0
+        private var inFlight = 0
+        private var maxInFlight = 0
         private var started = false
         private var release: CheckedContinuation<Void, Never>?
+        private var sharedFlightWaitObserved = false
+        private var sharedFlightWaitContinuation: CheckedContinuation<Void, Never>?
 
         private func reserveCall() -> Int {
             lock.lock()
             calls += 1
+            inFlight += 1
+            maxInFlight = max(maxInFlight, inFlight)
             let call = calls
             lock.unlock()
             return call
+        }
+
+        private func finishCall() {
+            lock.lock()
+            inFlight -= 1
+            lock.unlock()
         }
 
         private var hasStarted: Bool {
@@ -106,6 +118,43 @@ final class GatewaySessionReuseTests: XCTestCase {
             continuation?.resume()
         }
 
+        func markSharedFlightWaitObserved() {
+            lock.lock()
+            sharedFlightWaitObserved = true
+            let continuation = sharedFlightWaitContinuation
+            sharedFlightWaitContinuation = nil
+            lock.unlock()
+            continuation?.resume()
+        }
+
+        func waitUntilSharedFlightWaitObserved() async {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                lock.lock()
+                if sharedFlightWaitObserved {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    sharedFlightWaitContinuation = continuation
+                    lock.unlock()
+                }
+            }
+        }
+
+        func loginCallCount() -> Int {
+            lock.lock(); defer { lock.unlock() }
+            return calls
+        }
+
+        func currentInFlightCount() -> Int {
+            lock.lock(); defer { lock.unlock() }
+            return inFlight
+        }
+
+        func maximumInFlightCount() -> Int {
+            lock.lock(); defer { lock.unlock() }
+            return maxInFlight
+        }
+
         func login() async throws -> SessionCookie {
             let call = reserveCall()
             if call == 1 {
@@ -116,6 +165,7 @@ final class GatewaySessionReuseTests: XCTestCase {
                     lock.unlock()
                 }
             }
+            defer { finishCall() }
             if call == 1 {
                 return SessionCookie(name: "hermes_session_at", value: "old-cookie")
             }
@@ -235,5 +285,40 @@ final class GatewaySessionReuseTests: XCTestCase {
 
         let cookie = try await lease.value
         XCTAssertEqual(cookie.value, "new-cookie")
+    }
+
+    func testInvalidatedSharedFlightWaiterCannotReturnOldCookie() async throws {
+        let login = GatedLogin()
+        let store = GatewaySessionStore(onSharedFlightWait: {
+            login.markSharedFlightWaitObserved()
+        })
+        let gatewayID = gateway
+
+        // Caller A owns the generation-0 login and is held behind a
+        // continuation before caller B is started.
+        let callerA = Task<SessionCookie, Error> {
+            try await store.lease(gatewayID: gatewayID) { try await login.login() }
+        }
+        await login.waitUntilStarted()
+
+        // Caller B is started only after A is known to be blocked. The store
+        // observer completes only from the existing-flight branch, proving B
+        // joined A rather than starting a second generation-0 login.
+        let callerB = Task<SessionCookie, Error> {
+            try await store.lease(gatewayID: gatewayID) { try await login.login() }
+        }
+        await login.waitUntilSharedFlightWaitObserved()
+        XCTAssertEqual(login.loginCallCount(), 1)
+        XCTAssertEqual(login.currentInFlightCount(), 1)
+
+        await store.invalidate(gatewayID: gatewayID)
+        login.releaseFirstLogin()
+
+        let cookies = try await [callerA.value, callerB.value]
+        XCTAssertEqual(cookies.map(\.value), ["new-cookie", "new-cookie"])
+        XCTAssertEqual(login.loginCallCount(), 2,
+                       "the current generation should still share one relogin")
+        XCTAssertEqual(login.maximumInFlightCount(), 1,
+                       "invalidation must not create an old-generation login stampede")
     }
 }
