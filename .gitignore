@@ -32,3 +32,8 @@ xcodespeed/
 .env
 .env.*
 !.env.example
+
+# Local/hosted QA forensics and operator evidence (never ship)
+/hosted/
+/local/
+/evidence.md
