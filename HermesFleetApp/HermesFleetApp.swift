@@ -55,23 +55,22 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
-            if phase == .background {
-                // A lock screen is not a network boundary. Tear down every
-                // live gateway session as soon as the app leaves the
-                // foreground, even when App Lock is disabled.
-                Task { await environment.disconnectAll() }
+            if phase == .active && !lockController.isLocked {
+                Task { await environment.restoreIntendedConnections() }
             }
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
             if isLocked {
-                // Covers re-locks caused by authentication transitions as
-                // well as the normal scene-phase background path.
-                Task { await environment.disconnectAll() }
+                // App Lock gates presentation. It is not a user disconnect
+                // and must not clear desired gateway connection intent.
             } else {
                 // Biometric failure enters passcode fallback. The initial
                 // launch task has already returned at that point, so the
                 // unlock transition must resume protected hydration.
-                Task { await environment.hydrateIfNeeded() }
+                Task {
+                    await environment.hydrateIfNeeded()
+                    await environment.restoreIntendedConnections()
+                }
             }
         }
     }

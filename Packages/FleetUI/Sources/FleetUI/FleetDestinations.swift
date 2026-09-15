@@ -163,7 +163,21 @@ struct FleetChatsView: View {
                 .accessibilityIdentifier("fleet.chats.gateway-filter")
             }
             if !environment.loadingRoutes.isEmpty {
-                ProgressView("Refreshing conversations…")
+                if entries.isEmpty && environment.sessionsByRoute.isEmpty {
+                    ProgressView("Refreshing conversations…")
+                        .accessibilityIdentifier("fleet.chats.loading.first")
+                } else {
+                    HStack(spacing: FleetTheme.spacingSm) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityHidden(true)
+                        Text("Updating…")
+                            .font(.footnote)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("fleet.chats.loading.background")
+                }
             }
             // Dogfood finding 1: truthful failure reporting, scoped to routes
             // this screen can actually retry. Compact/inline while usable
@@ -233,7 +247,7 @@ struct FleetChatsView: View {
                 .accessibilityHidden(true)
         }
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")
-        .refreshable { await refresh() }.task { await refresh() }
+        .refreshable { await refresh(force: true) }.task { await refresh() }
         .accessibilityIdentifier("fleet.chats")
     }
 
@@ -257,7 +271,7 @@ struct FleetChatsView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.chats.refresh.inline")
             Spacer(minLength: FleetTheme.spacingSm)
-            Button("Retry") { Task { await refresh() } }
+            Button("Retry") { Task { await refresh(force: true) } }
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(theme.highlight)
                 .buttonStyle(.borderless)
@@ -299,7 +313,7 @@ struct FleetChatsView: View {
                 .font(.footnote)
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Retry") { Task { await refresh() } }
+            Button("Retry") { Task { await refresh(force: true) } }
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(theme.highlight)
                 .buttonStyle(.borderless)
@@ -311,13 +325,11 @@ struct FleetChatsView: View {
         .padding(.vertical, FleetTheme.spacingXs)
     }
 
-    private func refresh() async {
+    private func refresh(force: Bool = false) async {
         if environment.rosterSnapshot == nil { await environment.refreshRoster() }
-        // Sequential fetches avoid opening an unbounded number of roster transports.
-        for bot in environment.rosterSnapshot?.roster.allBots ?? [] {
-            guard !Task.isCancelled else { return }
-            await environment.loadSessions(for: bot.route)
-        }
+        let routes = (environment.rosterSnapshot?.roster.allBots ?? []).map(\.route)
+        guard !Task.isCancelled else { return }
+        await environment.refreshSessions(routes: routes, force: force)
     }
 }
 

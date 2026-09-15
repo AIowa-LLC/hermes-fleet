@@ -1815,6 +1815,9 @@ private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
         if isOutage {
             throw GatewayConnectivityError.unreachable
         }
+        if FleetServiceGraph.connectSyncEnabled, gatewayID.rawValue == "workstation" {
+            ScriptedConnectSyncStore.shared.markRecovered()
+        }
         // No-op: scripted connect succeeds instantly.
     }
 
@@ -1824,6 +1827,23 @@ private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
 
     func currentGateway() async -> FleetGateway {
         FleetGateway(id: gatewayID, displayName: gatewayID.rawValue, endpoint: nil)
+    }
+}
+
+/// State for the deterministic connect→roster recovery UI scenario.
+final class ScriptedConnectSyncStore: @unchecked Sendable {
+    static let shared = ScriptedConnectSyncStore()
+    private let lock = NSLock()
+    private var _recovered = false
+
+    var recovered: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _recovered
+    }
+
+    func markRecovered() {
+        lock.lock(); defer { lock.unlock() }
+        _recovered = true
     }
 }
 
@@ -1872,6 +1892,11 @@ private struct ScriptedRosterSession: GatewayRosterSession {
     }
 
     private var isOutage: Bool {
+        if FleetServiceGraph.connectSyncEnabled,
+           gatewayID.rawValue == "workstation",
+           !ScriptedConnectSyncStore.shared.recovered {
+            return true
+        }
         guard !FleetServiceGraph.zeroBotsEnabled else { return false }
         return gatewayID.rawValue == "arch"
     }

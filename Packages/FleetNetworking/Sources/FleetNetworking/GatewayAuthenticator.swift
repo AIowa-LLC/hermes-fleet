@@ -39,6 +39,17 @@ public struct GatewayAuthenticator: AuthenticationProviding {
     /// URLSession forwarded to the built `WSTicketClient` (testable injection;
     /// defaults to `.shared`).
     private let urlSession: URLSession
+    /// Shared per-gateway session-cookie ownership. Nil preserves the
+    /// legacy per-call login behavior for isolated test/scripted graphs.
+    private let sessionStore: (any GatewaySessionLeasing)?
+
+    public protocol GatewaySessionLeasing: Sendable {
+        func lease(
+            gatewayID: GatewayID,
+            login: @escaping @Sendable () async throws -> SessionCookie
+        ) async throws -> SessionCookie
+        func invalidate(gatewayID: GatewayID) async
+    }
 
     public init(
         gatewayID: GatewayID,
@@ -46,7 +57,8 @@ public struct GatewayAuthenticator: AuthenticationProviding {
         ticketMinter: (any WSTicketMinting)? = nil,
         credentialStore: (any CredentialStoring)? = nil,
         baseURL: URL? = nil,
-        urlSession: URLSession = .shared
+        urlSession: URLSession = .shared,
+        sessionStore: (any GatewaySessionLeasing)? = nil
     ) {
         self.gatewayID = gatewayID
         self.strategy = strategy
@@ -54,6 +66,7 @@ public struct GatewayAuthenticator: AuthenticationProviding {
         self.credentialStore = credentialStore
         self.baseURL = baseURL
         self.urlSession = urlSession
+        self.sessionStore = sessionStore
     }
 
     public func authenticate() async throws -> ConnectionAuthentication {
@@ -97,19 +110,39 @@ public struct GatewayAuthenticator: AuthenticationProviding {
                 throw AuthenticationError.missingUsername
             }
             let loginClient = PasswordLoginClient(baseURL: baseURL, urlSession: urlSession)
-            let sessionCookie = try await loginClient.login(
-                username: username,
-                password: credential.rawValue
-            )
-            let ticket = try await WSTicketClient(
-                baseURL: baseURL,
-                sessionCookie: sessionCookie,
-                urlSession: urlSession
-            ).mintTicket()
-            guard !ticket.isExpired() else {
-                throw AuthenticationError.ticketExpired
+
+            func mint(cookie: SessionCookie) async throws -> ConnectionAuthentication {
+                let ticket = try await WSTicketClient(
+                    baseURL: baseURL,
+                    sessionCookie: cookie,
+                    urlSession: urlSession
+                ).mintTicket()
+                guard !ticket.isExpired() else { throw AuthenticationError.ticketExpired }
+                return .ticket(StoredToken(rawValue: ticket.token))
             }
-            return .ticket(StoredToken(rawValue: ticket.token))
+
+            guard let sessionStore else {
+                let cookie = try await loginClient.login(
+                    username: username, password: credential.rawValue)
+                return try await mint(cookie: cookie)
+            }
+
+            do {
+                let cookie = try await sessionStore.lease(gatewayID: gatewayID) {
+                    try await loginClient.login(username: username, password: credential.rawValue)
+                }
+                return try await mint(cookie: cookie)
+            } catch let error as AuthenticationError {
+                // The gateway's 401 no_cookie response means the ephemeral
+                // cookie expired server-side. Re-login once, then surface a
+                // second rejection rather than looping indefinitely.
+                guard case .rejected(.noCookie) = error else { throw error }
+                await sessionStore.invalidate(gatewayID: gatewayID)
+                let freshCookie = try await sessionStore.lease(gatewayID: gatewayID) {
+                    try await loginClient.login(username: username, password: credential.rawValue)
+                }
+                return try await mint(cookie: freshCookie)
+            }
         }
     }
 

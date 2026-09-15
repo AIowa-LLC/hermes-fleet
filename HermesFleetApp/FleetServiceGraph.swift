@@ -17,6 +17,9 @@ import FleetUI
 /// builds wire real Keychain + SwiftData + live transports.
 @MainActor
 enum FleetServiceGraph {
+    /// One process-wide owner for ephemeral username/password sessions. The
+    /// cookie never leaves this actor and is never persisted.
+    nonisolated static let sharedSessionStore = GatewaySessionStore()
 
     static func makeDefaultEnvironment() -> AppEnvironment {
         // FOS-4 UI-test hygiene: `HERMES_FLEET_CONTINUE_RESET=1` deletes the
@@ -134,6 +137,12 @@ enum FleetServiceGraph {
     nonisolated static var botChatLookupFails: Bool {
         ProcessInfo.processInfo.environment["HERMES_FLEET_BOT_CHAT_FAIL"] == "1"
     }
+
+    /// Bots-presence sync UI-test knob: the workstation roster starts down
+    /// and recovers only after the lifecycle connect path succeeds.
+    nonisolated static var connectSyncEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_CONNECT_SYNC"] == "1"
+    }
     #endif
 
     // MARK: Production — real stores + live transports
@@ -208,7 +217,16 @@ enum FleetServiceGraph {
             // the gateway has no client-audio upload (server.py:17334 listens
             // on the gateway's own mic), so iOS transcribes locally and
             // submits text. See docs/R10-pocket-parity-ii.md.
-            voiceEngineFactory: { SpeechVoiceIO() }
+            voiceEngineFactory: { SpeechVoiceIO() },
+            // Connection intent is deliberately non-secret, but must survive
+            // process relaunch so lifecycle restoration is real in production.
+            connectionIntentDefaults: UserDefaults.standard,
+            gatewaySessionInvalidator: { id in
+                await FleetServiceGraph.sharedSessionStore.invalidate(gatewayID: id)
+            },
+            gatewaySessionInvalidatorAll: {
+                await FleetServiceGraph.sharedSessionStore.invalidateAll()
+            }
         )
     }
 
@@ -668,6 +686,7 @@ enum FleetServiceGraph {
         credentialStore: any CredentialStoring,
         pinStore: (any SynchronousPinStoring)? = nil
     ) -> any AuthenticationProviding {
+        let sessionStore = FleetServiceGraph.sharedSessionStore
         // F2: no compiled loopback default — a nil endpoint flows through as
         // a nil baseURL and the authenticator fails closed with
         // `.notConfigured` (never a phantom loopback mint).
@@ -697,7 +716,8 @@ enum FleetServiceGraph {
                 strategy: .usernamePassword,
                 credentialStore: credentialStore,
                 baseURL: base,
-                urlSession: urlSession
+                urlSession: urlSession,
+                sessionStore: sessionStore
             )
         }
     }

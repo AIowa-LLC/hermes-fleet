@@ -88,6 +88,12 @@ public typealias FleetRoomSourceFactory = @Sendable (
 /// AVFoundation/Speech directly.
 public typealias FleetVoiceEngineFactory = @Sendable () -> (any VoiceTranscribing)?
 
+/// Injected invalidation hooks keep FleetUI independent of FleetNetworking's
+/// ephemeral session store while ensuring credential/configuration changes
+/// cannot retain an authenticated lease for old gateway state.
+public typealias FleetGatewaySessionInvalidator = @Sendable (_ gatewayID: GatewayID) async -> Void
+public typealias FleetGatewaySessionInvalidatorAll = @Sendable () async -> Void
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -290,6 +296,15 @@ public final class AppEnvironment {
     /// error state. Absent until a fetch fails.
     public private(set) var sessionReadErrors: [Route: String] = [:]
 
+    /// When each route's sessions were last successfully observed. This is
+    /// in-process freshness metadata only; a failed read never stamps a
+    /// route fresh and never removes its cached sessions.
+    @ObservationIgnored private var sessionsObservedAt: [Route: Date] = [:]
+    @ObservationIgnored private var sessionReadGenerations: [Route: Int] = [:]
+
+    /// Chats session-list freshness window.
+    public static let sessionFreshnessTTL: TimeInterval = 30
+
     // MARK: Injected seams (composition root)
 
     private let registry: any GatewayRegistryManaging
@@ -369,6 +384,13 @@ public final class AppEnvironment {
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
 
+    /// Desired connection intent is deliberately distinct from live transport
+    /// state. The store contains gateway IDs only; production backs it with
+    /// UserDefaults and tests/simulator may keep it in-process.
+    private let connectionIntent: ConnectionIntentStore
+    private let gatewaySessionInvalidator: FleetGatewaySessionInvalidator?
+    private let gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll?
+
     /// Lazily-built U3 conversation sessions per gateway (one per gateway;
     /// created on first conversation screen use).
     private var conversationSessions: [GatewayID: any ConversationSessionProviding] = [:]
@@ -398,6 +420,12 @@ public final class AppEnvironment {
     /// `OnboardingViewModel.beginOperation()` fencing pattern).
     @ObservationIgnored private var rosterGeneration = 0
 
+    /// A successful connection repairs the roster source, but its probe may
+    /// race an already-running refresh. Coalesce that repair into one
+    /// trailing observation instead of starting a refresh storm.
+    @ObservationIgnored private var needsPostConnectRosterSync = false
+    @ObservationIgnored private var postConnectSyncQueued = false
+
     public init(
         registry: any GatewayRegistryManaging,
         roster: any FleetRosterProviding,
@@ -422,7 +450,10 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
-        voiceEngineFactory: FleetVoiceEngineFactory? = nil
+        voiceEngineFactory: FleetVoiceEngineFactory? = nil,
+        connectionIntentDefaults: UserDefaults? = nil,
+        gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
+        gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -443,6 +474,9 @@ public final class AppEnvironment {
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
         self.voiceEngineFactory = voiceEngineFactory
+        self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
+        self.gatewaySessionInvalidator = gatewaySessionInvalidator
+        self.gatewaySessionInvalidatorAll = gatewaySessionInvalidatorAll
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -503,10 +537,12 @@ public final class AppEnvironment {
         didHydrateEnvironment = true
         await load()
         await refreshRoster()
+        await restoreIntendedConnections()
     }
 
     private func reloadGateways() async {
         gateways = await registry.allGateways()
+        connectionIntent.prune(to: Set(gateways.map(\.id)))
         for gateway in gateways where connectionStates[gateway.id] == nil {
             connectionStates[gateway.id] = .idle
         }
@@ -537,8 +573,13 @@ public final class AppEnvironment {
     /// completion is silently dropped so observable state always reflects
     /// only the most recent refresh.
     public func refreshRoster() async {
+        // A refresh beginning now probes every registered gateway. Clear the
+        // pending repair before awaiting so a connect that lands during this
+        // wave can re-arm the trailing refresh below.
+        needsPostConnectRosterSync = false
         let token = beginRosterRefresh()
         isRefreshing = true
+        let previousOutcomes = rosterSnapshot?.gatewayOutcomes ?? [:]
         let snapshot = await roster.refreshRoster()
         // Stale completion: a newer refresh owns settlement — silently drop
         // the result (observable state stays what the newest refresh set).
@@ -570,6 +611,12 @@ public final class AppEnvironment {
         // when the gateway answered.
         for gateway in snapshot.roster.allGateways {
             if case .loaded = snapshot.outcome(for: gateway.id) {
+                // A recovered gateway may have changed session state while it
+                // was unreachable. Invalidate only that gateway's cached
+                // observations; unrelated gateways remain fresh.
+                if case .failed = previousOutcomes[gateway.id] {
+                    invalidateSessions(on: gateway.id)
+                }
                 let bots = snapshot.bots(on: gateway.id)
                 if !bots.isEmpty {
                     cachedBotsByGateway[gateway.id] = bots
@@ -582,6 +629,34 @@ public final class AppEnvironment {
         // refresh (observational, never blocks the roster).
         await loadRooms()
         await loadAllSections()
+
+        if needsPostConnectRosterSync {
+            needsPostConnectRosterSync = false
+            queuePostConnectRosterSync()
+        }
+    }
+
+    /// Re-observe the authoritative roster after a gateway transport repair.
+    /// Presence still comes only from a successful `profiles.list` outcome;
+    /// connection state alone never fabricates an online bot.
+    private func scheduleRosterSyncAfterConnectionRepair(for id: GatewayID) {
+        // Reset the documented per-gateway summary backoff after an explicit
+        // connection repair so the next Bots/Home observation is due now.
+        summarySourceStates[id] = nil
+        if isRefreshing {
+            needsPostConnectRosterSync = true
+        } else {
+            queuePostConnectRosterSync()
+        }
+    }
+
+    private func queuePostConnectRosterSync() {
+        guard !postConnectSyncQueued else { return }
+        postConnectSyncQueued = true
+        Task {
+            postConnectSyncQueued = false
+            await refreshRoster()
+        }
     }
 
     // MARK: FOS-4 — bounded Home summary observation (SPEC §17)
@@ -911,6 +986,8 @@ public final class AppEnvironment {
         // Stop any live session before deleting its persisted history. The
         // in-memory session objects are then discarded so stale transcript
         // rows cannot reappear in the UI after the user confirms deletion.
+        connectionIntent.removeAll()
+        await gatewaySessionInvalidatorAll?()
         await disconnectAll()
         try await cache.clearCachedData()
         activeConnections.removeAll()
@@ -931,6 +1008,8 @@ public final class AppEnvironment {
         cachedWatermarkCount = 0
         healthStats = [:]
         cachedBotsByGateway = [:]
+        sessionsObservedAt = [:]
+        sessionReadGenerations = [:]
         roomsByGateway = [:]
         canCreateRoomsByGateway = [:]
         observedRoomAttention = [:]
@@ -950,14 +1029,25 @@ public final class AppEnvironment {
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
         guard let gateway = gateways.first(where: { $0.id == id }) else { return }
+        connectionIntent.record(id)
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
         activeConnections[id] = connection
         do {
             try await connection.connect()
             connectionStates[id] = GatewayConnectionState(status: connection.status)
+            if connectionStates[id] == .connected {
+                scheduleRosterSyncAfterConnectionRepair(for: id)
+            }
         } catch let error as GatewayConnectivityError {
-            connectionStates[id] = .failed(GatewayStatus(connectivityError: error))
+            let status = GatewayStatus(connectivityError: error)
+            connectionStates[id] = .failed(status)
+            switch status {
+            case .authenticationRequired, .unsupported:
+                connectionIntent.clear(id)
+            default:
+                break
+            }
         } catch {
             connectionStates[id] = .failed(.offline)
         }
@@ -965,6 +1055,10 @@ public final class AppEnvironment {
 
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
+        connectionIntent.clear(id)
+        // Manual Disconnect is transport control, not sign-out. Keep the
+        // in-memory authenticated lease so an explicit later Connect mints a
+        // fresh single-use ticket without another password-login burst.
         guard let connection = activeConnections[id] else {
             connectionStates[id] = .disconnected
             return
@@ -1049,6 +1143,32 @@ public final class AppEnvironment {
         await connect(to: id)
     }
 
+    /// Reconnect only gateways the user explicitly chose to keep connected.
+    /// Transport teardown caused by suspension, backgrounding, or app lock
+    /// never clears this intent. Each gateway is restored independently;
+    /// auth/unsupported failures clear only that gateway's intent, while
+    /// transient failures remain retryable.
+    public func restoreIntendedConnections() async {
+        guard !gateways.isEmpty else {
+            connectionIntent.prune(to: [])
+            return
+        }
+        for gateway in gateways where connectionIntent.isIntended(gateway.id) {
+            if connectionStates[gateway.id] == .connected || connectionStates[gateway.id] == .connecting {
+                continue
+            }
+            if let connection = activeConnections[gateway.id], !connection.status.isReachable {
+                await connection.disconnect()
+                activeConnections[gateway.id] = nil
+            }
+            await connect(to: gateway.id)
+        }
+    }
+
+    public func isConnectionIntended(_ id: GatewayID) -> Bool {
+        connectionIntent.isIntended(id)
+    }
+
     // MARK: Roster accessors (for the Bots / Sessions screens)
 
     /// Bots owned by a gateway from the latest roster snapshot (fail closed:
@@ -1123,13 +1243,20 @@ public final class AppEnvironment {
     /// Apply a partial edit to a gateway's display name / endpoint / auth
     /// config. Throws `.notFound` / `.invalidEndpoint` from the registry seam.
     public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
+        let previous = gateways.first(where: { $0.id == id })
         let gateway = try await registry.updateGateway(id, edits: edits)
+        if previous?.endpoint != gateway.endpoint
+            || previous?.authConfiguration != gateway.authConfiguration {
+            await gatewaySessionInvalidator?(id)
+        }
         await reloadGateways()
         return gateway
     }
 
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
+        connectionIntent.clear(id)
+        await gatewaySessionInvalidator?(id)
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
         // conversation session, and clear observable lifecycle state.
@@ -1181,6 +1308,10 @@ public final class AppEnvironment {
         continueIndex.prune(gatewayID: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
+        let removedRoutes = sessionRoutes(on: id)
+        for route in removedRoutes {
+            invalidateSessions(for: route)
+        }
         // H2: drop the gateway's accumulated + persisted health stats.
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
@@ -1197,6 +1328,8 @@ public final class AppEnvironment {
         continueIndex.recordConversationOpen(
             route: route, sessionID: sessionID, canonical: canonical,
             title: title, subtitle: subtitle)
+        // Opening can mint a new session; stale only the owning route.
+        sessionsObservedAt[route] = nil
     }
 
     /// Record an open of an exact room (called by RoomChatView).
@@ -1210,12 +1343,14 @@ public final class AppEnvironment {
     /// secret never transits the UI model or logs). Marks auth configured.
     public func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
         try await registry.saveCredential(credential, for: id)
+        await gatewaySessionInvalidator?(id)
         await reloadGateways()
     }
 
     /// Clear the stored credential for a gateway (no-op when absent).
     public func clearCredential(for id: GatewayID) async throws {
         try await registry.clearCredential(for: id)
+        await gatewaySessionInvalidator?(id)
         await reloadGateways()
     }
 
@@ -1283,16 +1418,108 @@ public final class AppEnvironment {
     /// crash.
     public func loadSessions(for route: Route) async {
         guard !loadingRoutes.contains(route) else { return }
+        let generation = sessionReadGenerations[route, default: 0]
         loadingRoutes.insert(route)
         defer { loadingRoutes.remove(route) }
         do {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
+            guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionsByRoute[route] = sessions
             sessionReadErrors[route] = nil
+            sessionsObservedAt[route] = Date()
         } catch let error as RosterError {
+            guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         } catch {
+            guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
+        }
+    }
+
+    // MARK: Chats session freshness
+
+    /// When this route's sessions were last successfully observed.
+    public func sessionsLastObserved(_ route: Route) -> Date? {
+        sessionsObservedAt[route]
+    }
+
+    /// Missing or never-successfully-read routes are stale. A failed read
+    /// retains the old timestamp (or nil), so stale data cannot be laundered
+    /// as fresh.
+    public func needsSessionRefresh(_ route: Route, now: Date = Date()) -> Bool {
+        guard sessionsByRoute[route] != nil else { return true }
+        guard let observed = sessionsObservedAt[route] else { return true }
+        return now.timeIntervalSince(observed) >= Self.sessionFreshnessTTL
+    }
+
+    /// Narrowly invalidate one route's cached observation.
+    public func invalidateSessions(for route: Route) {
+        sessionReadGenerations[route, default: 0] += 1
+        sessionsObservedAt[route] = nil
+    }
+
+    /// Narrowly invalidate observations owned by one gateway.
+    public func invalidateSessions(on gatewayID: GatewayID) {
+        let routes = sessionRoutes(on: gatewayID)
+        for route in routes {
+            invalidateSessions(for: route)
+        }
+    }
+
+    /// All session routes with any retained cache, freshness, or generation
+    /// state. A successful first read may have freshness state without a
+    /// generation entry, so gateway-scoped invalidation must include all
+    /// three stores.
+    private func sessionRoutes(on gatewayID: GatewayID) -> Set<Route> {
+        Set(sessionReadGenerations.keys)
+            .union(sessionsObservedAt.keys)
+            .union(sessionsByRoute.keys)
+            .filter { $0.gatewayID == gatewayID }
+    }
+
+    /// Refresh missing/stale routes with an explicit bounded concurrency
+    /// window. `force` is reserved for explicit pull-to-refresh behavior.
+    public func refreshSessions(
+        routes: [Route],
+        force: Bool = false,
+        concurrencyLimit: Int = 4,
+        now: Date = Date()
+    ) async {
+        var byGateway: [GatewayID: [Route]] = [:]
+        var gatewayOrder: [GatewayID] = []
+        for route in routes where force || needsSessionRefresh(route, now: now) {
+            if byGateway[route.gatewayID] == nil { gatewayOrder.append(route.gatewayID) }
+            byGateway[route.gatewayID, default: []].append(route)
+        }
+
+        var ordered: [Route] = []
+        var remaining = !gatewayOrder.isEmpty
+        while remaining {
+            remaining = false
+            for gateway in gatewayOrder {
+                guard var list = byGateway[gateway], !list.isEmpty else { continue }
+                ordered.append(list.removeFirst())
+                byGateway[gateway] = list
+                remaining = true
+            }
+        }
+        guard !ordered.isEmpty else { return }
+
+        let bound = max(1, concurrencyLimit)
+        await withTaskGroup(of: Void.self) { group in
+            var iterator = ordered.makeIterator()
+            var inFlight = 0
+            func addNext() {
+                while inFlight < bound, let route = iterator.next() {
+                    inFlight += 1
+                    group.addTask { await self.loadSessions(for: route) }
+                }
+            }
+            addNext()
+            for await _ in group {
+                inFlight -= 1
+                addNext()
+            }
         }
     }
 
