@@ -60,6 +60,15 @@ jobs:
       - name: Unit phase
         run: bash scripts/c1_units.sh
 
+      - name: Upload xcresults (unit failure diagnostics)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresults-units
+          path: /tmp/hermes-c1-unit-*.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
+
   ui-shard:
     name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
     # Dev Loop v2: the complete five-shard matrix is the authoritative
