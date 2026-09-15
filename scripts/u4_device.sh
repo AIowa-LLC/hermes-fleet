@@ -35,6 +35,7 @@ note "Build Debug-iphoneos (free team 3JS22HX92T, automatic signing)"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -sdk iphoneos -destination 'generic/platform=iOS' \
     -derivedDataPath "$DD" \
+    -skipMacroValidation \
     -allowProvisioningUpdates \
     CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=3JS22HX92T \
     build >/tmp/u4_device_build.log 2>&1; then
