@@ -57,6 +57,45 @@ final class ChatsSessionFreshnessTests: XCTestCase {
         }
     }
 
+    private final class GatedSessionList: SessionListProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var started = false
+        private var release: CheckedContinuation<Void, Never>?
+
+        private func markStarted(_ continuation: CheckedContinuation<Void, Never>) {
+            lock.lock()
+            started = true
+            release = continuation
+            lock.unlock()
+        }
+
+        private var hasStarted: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return started
+        }
+
+        func waitUntilStarted() async {
+            while !hasStarted {
+                await Task.yield()
+            }
+        }
+
+        func releaseFetch() {
+            lock.lock()
+            let continuation = release
+            release = nil
+            lock.unlock()
+            continuation?.resume()
+        }
+
+        func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
+            await withCheckedContinuation { markStarted($0) }
+            return [SessionSummary(
+                id: "old.\(route.id)", title: "Old", preview: "stale",
+                startedAt: 1_755_000_000, messageCount: 1, source: "test")]
+        }
+    }
+
     private final class EmptyHealth: ConnectionHealthAccumulating, @unchecked Sendable {
         func record(_ event: ConnectionHealthEvent, for gatewayID: GatewayID) async {}
         func snapshot() async -> [GatewayID: GatewayHealthStats] { [:] }
@@ -220,6 +259,22 @@ final class ChatsSessionFreshnessTests: XCTestCase {
         XCTAssertNotNil(environment.sessionReadErrors[failed])
         XCTAssertNotNil(environment.sessions(for: healthy))
         XCTAssertNil(environment.sessionReadErrors[healthy])
+    }
+
+    func testInvalidationFencesAnInFlightReadFromOverwritingFreshness() async {
+        let seam = GatedSessionList()
+        let (environment, _) = await makeEnvironment(sessionList: seam)
+        let route = route("workstation", "default")
+        let read = Task { await environment.loadSessions(for: route) }
+        await seam.waitUntilStarted()
+
+        environment.invalidateSessions(for: route)
+        seam.releaseFetch()
+        await read.value
+
+        XCTAssertNil(environment.sessions(for: route))
+        XCTAssertNil(environment.sessionsLastObserved(route))
+        XCTAssertTrue(environment.needsSessionRefresh(route))
     }
 
     func testConversationOpenInvalidatesOnlyItsRoute() async {

@@ -28,7 +28,6 @@ final class GatewaySessionReuseTests: XCTestCase {
                 Self.lock.lock()
                 let status = Self.loginStatus ?? 200
                 if status == 200 { Self.logins += 1 }
-                let cookie = "session-(Self.logins)"
                 Self.lock.unlock()
                 if status == 200 {
                     respond(status: 200, json: ["ok": true], headers: ["Set-Cookie": "hermes_session_at=(cookie); Path=/"])
@@ -72,6 +71,56 @@ final class GatewaySessionReuseTests: XCTestCase {
         func saveCredential(_ credential: GatewayCredential, for gatewayID: GatewayID) async throws {}
         func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? { credential }
         func deleteCredential(for gatewayID: GatewayID) async throws {}
+    }
+
+    private final class GatedLogin: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        private var started = false
+        private var release: CheckedContinuation<Void, Never>?
+
+        private func reserveCall() -> Int {
+            lock.lock()
+            calls += 1
+            let call = calls
+            lock.unlock()
+            return call
+        }
+
+        private var hasStarted: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return started
+        }
+
+        func waitUntilStarted() async {
+            while !hasStarted {
+                await Task.yield()
+            }
+        }
+
+        func releaseFirstLogin() {
+            lock.lock()
+            let continuation = release
+            release = nil
+            lock.unlock()
+            continuation?.resume()
+        }
+
+        func login() async throws -> SessionCookie {
+            let call = reserveCall()
+            if call == 1 {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    lock.lock()
+                    started = true
+                    release = continuation
+                    lock.unlock()
+                }
+            }
+            if call == 1 {
+                return SessionCookie(name: "hermes_session_at", value: "old-cookie")
+            }
+            return SessionCookie(name: "hermes_session_at", value: "new-cookie")
+        }
     }
 
     private let gateway = GatewayID(rawValue: "workstation")
@@ -171,5 +220,20 @@ final class GatewaySessionReuseTests: XCTestCase {
         XCTAssertFalse(cookie.description.contains("secret-cookie"))
         XCTAssertFalse(String(describing: store).contains("secret-cookie"))
         XCTAssertFalse(String(describing: store).contains("pw-123"))
+    }
+
+    func testInvalidatedInFlightLoginCannotReturnOldCookie() async throws {
+        let store = GatewaySessionStore()
+        let login = GatedLogin()
+        let gatewayID = gateway
+        let lease = Task<SessionCookie, Error> {
+            try await store.lease(gatewayID: gatewayID) { try await login.login() }
+        }
+        await login.waitUntilStarted()
+        await store.invalidate(gatewayID: gatewayID)
+        login.releaseFirstLogin()
+
+        let cookie = try await lease.value
+        XCTAssertEqual(cookie.value, "new-cookie")
     }
 }

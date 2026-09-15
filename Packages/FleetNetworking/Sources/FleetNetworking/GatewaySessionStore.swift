@@ -32,13 +32,23 @@ public actor GatewaySessionStore {
             }
         }
 
-        let cookie = try await task.value
-        // A credential/configuration change may have invalidated this login
-        // while the network request was in flight. Never repopulate the
-        // session cache with that old credential's cookie.
-        if generations[gatewayID, default: 0] == generation {
-            sessions[gatewayID] = cookie
+        let cookie: SessionCookie
+        do {
+            cookie = try await task.value
+        } catch {
+            // Invalidation cancels best-effort. If the underlying request
+            // honored cancellation, retry against the newer generation rather
+            // than leaking cancellation from an obsolete lease to callers.
+            guard generations[gatewayID, default: 0] != generation else { throw error }
+            return try await lease(gatewayID: gatewayID, login: login)
         }
+        // A credential/configuration change may have invalidated this login
+        // while the network request was in flight. Never cache OR return the
+        // old credential's cookie; retry against the current generation.
+        guard generations[gatewayID, default: 0] == generation else {
+            return try await lease(gatewayID: gatewayID, login: login)
+        }
+        sessions[gatewayID] = cookie
         return cookie
     }
 

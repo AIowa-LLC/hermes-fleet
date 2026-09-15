@@ -189,4 +189,15 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertTrue(source.contains("restoreIntendedConnections()"))
         XCTAssertTrue(source.contains("phase == .active"))
     }
+
+    func testProductionGraphPersistsConnectionIntentAcrossRelaunch() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("HermesFleetApp/FleetServiceGraph.swift"),
+            encoding: .utf8)
+        XCTAssertTrue(
+            source.contains("connectionIntentDefaults: UserDefaults.standard"),
+            "production composition must provide the durable non-secret intent store")
+    }
 }

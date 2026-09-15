@@ -300,6 +300,7 @@ public final class AppEnvironment {
     /// in-process freshness metadata only; a failed read never stamps a
     /// route fresh and never removes its cached sessions.
     @ObservationIgnored private var sessionsObservedAt: [Route: Date] = [:]
+    @ObservationIgnored private var sessionReadGenerations: [Route: Int] = [:]
 
     /// Chats session-list freshness window.
     public static let sessionFreshnessTTL: TimeInterval = 30
@@ -1008,6 +1009,7 @@ public final class AppEnvironment {
         healthStats = [:]
         cachedBotsByGateway = [:]
         sessionsObservedAt = [:]
+        sessionReadGenerations = [:]
         roomsByGateway = [:]
         canCreateRoomsByGateway = [:]
         observedRoomAttention = [:]
@@ -1306,8 +1308,9 @@ public final class AppEnvironment {
         continueIndex.prune(gatewayID: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
-        for route in sessionsObservedAt.keys where route.gatewayID == id {
-            sessionsObservedAt[route] = nil
+        let removedRoutes = sessionReadGenerations.keys.filter { $0.gatewayID == id }
+        for route in removedRoutes {
+            invalidateSessions(for: route)
         }
         // H2: drop the gateway's accumulated + persisted health stats.
         await health.forget(gatewayID: id)
@@ -1415,16 +1418,20 @@ public final class AppEnvironment {
     /// crash.
     public func loadSessions(for route: Route) async {
         guard !loadingRoutes.contains(route) else { return }
+        let generation = sessionReadGenerations[route, default: 0]
         loadingRoutes.insert(route)
         defer { loadingRoutes.remove(route) }
         do {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
+            guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionsByRoute[route] = sessions
             sessionReadErrors[route] = nil
             sessionsObservedAt[route] = Date()
         } catch let error as RosterError {
+            guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         } catch {
+            guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         }
     }
@@ -1447,13 +1454,15 @@ public final class AppEnvironment {
 
     /// Narrowly invalidate one route's cached observation.
     public func invalidateSessions(for route: Route) {
+        sessionReadGenerations[route, default: 0] += 1
         sessionsObservedAt[route] = nil
     }
 
     /// Narrowly invalidate observations owned by one gateway.
     public func invalidateSessions(on gatewayID: GatewayID) {
-        for route in sessionsObservedAt.keys where route.gatewayID == gatewayID {
-            sessionsObservedAt[route] = nil
+        let routes = sessionReadGenerations.keys.filter { $0.gatewayID == gatewayID }
+        for route in routes {
+            invalidateSessions(for: route)
         }
     }
 

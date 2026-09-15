@@ -218,6 +218,9 @@ enum FleetServiceGraph {
             // on the gateway's own mic), so iOS transcribes locally and
             // submits text. See docs/R10-pocket-parity-ii.md.
             voiceEngineFactory: { SpeechVoiceIO() },
+            // Connection intent is deliberately non-secret, but must survive
+            // process relaunch so lifecycle restoration is real in production.
+            connectionIntentDefaults: UserDefaults.standard,
             gatewaySessionInvalidator: { id in
                 await FleetServiceGraph.sharedSessionStore.invalidate(gatewayID: id)
             },
