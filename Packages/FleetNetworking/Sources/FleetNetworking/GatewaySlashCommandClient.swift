@@ -31,14 +31,13 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
 
     public func complete(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
         guard text.hasPrefix("/") else { return [] }
-        var params: [String: JSONValue] = ["text": .string(text)]
-        if let sessionID {
-            guard RoutingGuard.isValidSessionKey(sessionID) else {
-                throw SlashCommandError.invalidRequest("session_id is not a safe session key")
-            }
-            params["session_id"] = .string(sessionID)
-        }
-        let result = try await request(method: "complete.slash", params: .object(params))
+        // Wire-verified against hermes-agent 0.21.3: complete.slash's params
+        // model accepts ONLY {text} — a session_id key is rejected with
+        // "Extra inputs are not permitted". The seam keeps the sessionID
+        // parameter for caller symmetry; it is not sent on this method.
+        let result = try await request(
+            method: "complete.slash",
+            params: .object(["text": .string(text)]))
         return try Self.decodeCompletions(result)
     }
 
