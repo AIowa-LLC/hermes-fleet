@@ -18,6 +18,7 @@ from typing import Any
 
 
 PASS_RESULTS = {"Passed", "Expected Failure"}
+SKIP_RESULTS = {"Skipped", "Skip"}
 ATTEMPT_KEYS = (
     "attempt",
     "attemptIndex",
@@ -84,7 +85,13 @@ def attempt_rank(node: dict[str, Any]) -> int | None:
     return None
 
 
-def parse(summary: Any, tests: Any, requested: str) -> tuple[int, int, int, int, int]:
+def parse(
+    summary: Any,
+    tests: Any,
+    requested: str,
+    allowed_skips: set[str] | None = None,
+) -> tuple[int, int, int, int, int]:
+    allowed_skips = allowed_skips or set()
     cases: OrderedDict[str, list[tuple[int, int | None, str]]] = OrderedDict()
     order = 0
     for node in walk(tests):
@@ -98,8 +105,9 @@ def parse(summary: Any, tests: Any, requested: str) -> tuple[int, int, int, int,
         order += 1
 
     failures = 0
+    executed = 0
     recovered = 0
-    for attempts in cases.values():
+    for key, attempts in cases.items():
         # Prefer Xcode's explicit attempt index.  When the report omits it,
         # traversal order is the only stable signal available in the JSON.
         if all(item[1] is not None for item in attempts):
@@ -107,6 +115,15 @@ def parse(summary: Any, tests: Any, requested: str) -> tuple[int, int, int, int,
         else:
             ordered = sorted(attempts, key=lambda item: item[0])
         final_result = ordered[-1][2]
+        case_name = case_key_from_result_key(key)
+        if final_result in SKIP_RESULTS:
+            if case_name not in allowed_skips or any(
+                result not in PASS_RESULTS | SKIP_RESULTS
+                for _, _, result in ordered
+            ):
+                failures += 1
+            continue
+        executed += 1
         if final_result not in PASS_RESULTS:
             failures += 1
         elif any(result not in PASS_RESULTS for _, _, result in ordered[:-1]):
@@ -121,7 +138,13 @@ def parse(summary: Any, tests: Any, requested: str) -> tuple[int, int, int, int,
                 total = max(total, value)
     complete = int(summary_result == "Passed" and total > 0)
     present = int(bool(cases))
-    return len(cases), failures, complete, present, recovered
+    return executed, failures, complete, present, recovered
+
+
+def case_key_from_result_key(key: str) -> str:
+    """Return the stable test-case name from a requested/name key."""
+
+    return key.split("/", 1)[-1] if "/" in key else key
 
 
 def main() -> int:
@@ -129,12 +152,18 @@ def main() -> int:
     parser.add_argument("--summary", required=True)
     parser.add_argument("--tests", required=True)
     parser.add_argument("--requested", required=True)
+    parser.add_argument(
+        "--allow-skipped",
+        action="append",
+        default=[],
+        help="stable test-case name that may be skipped on this destination",
+    )
     args = parser.parse_args()
 
     try:
         summary = load_json(args.summary)
         tests = load_json(args.tests)
-        values = parse(summary, tests, args.requested)
+        values = parse(summary, tests, args.requested, set(args.allow_skipped))
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as error:
         print(f"xcresult parse failure: {error}", file=sys.stderr)
         print("0 0 0 0 0")

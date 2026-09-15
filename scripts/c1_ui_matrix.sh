@@ -177,8 +177,18 @@ for cls in "${SELECTED[@]}"; do
   fi
   xcrun xcresulttool get test-results summary --path "$bundle" --compact >"$summary_file" 2>/dev/null || true
   xcrun xcresulttool get test-results tests --path "$bundle" --compact >"$tests_file" 2>/dev/null || true
-  parsed=$(python3 scripts/c1_xcresult_parse.py \
-    --summary "$summary_file" --tests "$tests_file" --requested "${cls}UITests")
+  parser_args=(
+    --summary "$summary_file"
+    --tests "$tests_file"
+    --requested "${cls}UITests"
+  )
+  # The iPad orientation smoke is intentionally skipped by the iPhone CI
+  # destination. Keep that exception explicit: any other skipped test still
+  # fails closed in the parser.
+  if [ "$cls" = "U3TabNavigation" ]; then
+    parser_args+=(--allow-skipped "testIPadLandscapePreservesRootNavigation()")
+  fi
+  parsed=$(python3 scripts/c1_xcresult_parse.py "${parser_args[@]}")
   read -r count failures complete present recovered <<EOF
 $parsed
 EOF

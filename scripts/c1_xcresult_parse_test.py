@@ -15,24 +15,31 @@ PARSER = ROOT / "scripts" / "c1_xcresult_parse.py"
 REQUESTED = "ExampleUITests"
 
 
-def run(summary: dict, tests: dict) -> tuple[int, int, int, int, int]:
+def run(
+    summary: dict,
+    tests: dict,
+    allowed_skips: tuple[str, ...] = (),
+) -> tuple[int, int, int, int, int]:
     with tempfile.TemporaryDirectory(prefix="c1-xcresult-parse-") as directory:
         root = Path(directory)
         summary_path = root / "summary.json"
         tests_path = root / "tests.json"
         summary_path.write_text(json.dumps(summary), encoding="utf-8")
         tests_path.write_text(json.dumps(tests), encoding="utf-8")
+        command = [
+            sys.executable,
+            str(PARSER),
+            "--summary",
+            str(summary_path),
+            "--tests",
+            str(tests_path),
+            "--requested",
+            REQUESTED,
+        ]
+        for allowed_skip in allowed_skips:
+            command.extend(["--allow-skipped", allowed_skip])
         output = subprocess.check_output(
-            [
-                sys.executable,
-                str(PARSER),
-                "--summary",
-                str(summary_path),
-                "--tests",
-                str(tests_path),
-                "--requested",
-                REQUESTED,
-            ],
+            command,
             text=True,
         )
         return tuple(int(value) for value in output.split())  # type: ignore[return-value]
@@ -65,6 +72,23 @@ def check(label: str, actual: tuple[int, int, int, int, int], expected: tuple[in
 check(
     "ordinary pass",
     run(summary(), tests(case("testPass()", "Passed"))),
+    (1, 0, 1, 1, 0),
+)
+check(
+    "unlisted skip fails closed",
+    run(summary(), tests(case("testSkipped()", "Skipped"))),
+    (0, 1, 1, 1, 0),
+)
+check(
+    "explicit platform skip is allowed",
+    run(
+        summary(),
+        tests(
+            case("testPass()", "Passed"),
+            case("testSkipped()", "Skipped"),
+        ),
+        ("testSkipped()",),
+    ),
     (1, 0, 1, 1, 0),
 )
 check(
