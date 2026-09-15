@@ -704,7 +704,7 @@ struct BotRowView: View {
                             .opacity(dim == .portrait ? 0.4 : (dim == .row ? 0.4 : 1))
                         VStack(alignment: .leading, spacing: 2) {
                             nameLine
-                            if let preview = anchor.preview, !preview.isEmpty {
+                            if let preview = displayPreview {
                                 Text(preview)
                                     .font(FleetTheme.secondaryFont)
                                     .foregroundStyle(theme.textSecondary)
@@ -741,9 +741,20 @@ struct BotRowView: View {
             duplicateLabel: duplicateLabel,
             hidden: bot.botModeMetadata?.hidden == true,
             status: FleetStatus(activity: bot.activity, presence: presence).label,
-            preview: anchor.preview,
+            preview: displayPreview,
             routeID: bot.route.id,
             lastActive: anchor.lastActive))
+    }
+
+    /// F1 (dogfood corrective pass): the roster's latest-session preview is a
+    /// user-facing surface in BOTH the visible line and the composite
+    /// VoiceOver label, so both render through the shared presentation-only
+    /// sanitizer. The stored `SessionSummary.preview` is never mutated and
+    /// never shown raw; `nil` means there is nothing readable to render.
+    private var displayPreview: String? {
+        guard let preview = anchor.preview, !preview.isEmpty else { return nil }
+        let readable = SessionPreviewText.humanReadable(preview)
+        return readable.isEmpty ? nil : readable
     }
 
     /// Identity line: title + duplicate qualifier + hidden marker.

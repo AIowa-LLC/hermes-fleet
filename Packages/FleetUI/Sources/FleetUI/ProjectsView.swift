@@ -445,8 +445,9 @@ public struct ProjectDrillView: View {
                     if !session.gitBranch.isEmpty {
                         Text(session.gitBranch)
                     }
-                    if !session.preview.isEmpty {
-                        Text("· " + session.preview)
+                    let preview = SessionPreviewText.humanReadable(session.preview)
+                    if !preview.isEmpty {
+                        Text("· " + preview)
                     }
                 }
                 .font(FleetTheme.monoCaptionFont)

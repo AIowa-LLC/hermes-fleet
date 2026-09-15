@@ -106,6 +106,45 @@ struct FleetChatsView: View {
         environment.bot(for: entry.route) == nil
     }
 
+    /// Dogfood finding 1: cached/retained conversations this screen can still
+    /// render — every non-canonical session on a route whose gateway is known
+    /// (a session retained from a bot that dropped out of the live roster still
+    /// counts: FOS-5 outage retention must not regress).
+    private var usableSessionCount: Int {
+        environment.sessionsByRoute.reduce(0) { count, pair in
+            guard environment.gateway(for: pair.key.gatewayID) != nil else { return count }
+            return count + pair.value.filter {
+                !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
+            }.count
+        }
+    }
+
+    /// Routes currently in the roster — exactly the routes `refresh()`
+    /// re-reads, so they are the only failures this screen can still retry.
+    private var currentRosterRoutes: Set<Route> {
+        Set((environment.rosterSnapshot?.roster.allBots ?? []).map(\.route))
+    }
+
+    /// Failed routes that are STILL in the current roster. A route that has
+    /// left the roster can no longer be re-read by `Retry` from this screen, so
+    /// its error is stale here (it stays visible on the owner surface — Bot
+    /// detail — which can retry it).
+    private var reportedFailureRouteCount: Int {
+        FleetChatsPresentation.currentFailureRoutes(
+            failedRoutes: Set(environment.sessionReadErrors.keys),
+            rosterRoutes: currentRosterRoutes
+        ).count
+    }
+
+    /// Dogfood finding 1: truthful partial-failure reporting, compact when the
+    /// user still has conversations to look at.
+    private var refreshFailure: RefreshFailureSurface {
+        FleetChatsPresentation.refreshFailureSurface(
+            failedRouteCount: reportedFailureRouteCount,
+            hasUsableSessions: usableSessionCount > 0
+        )
+    }
+
     var body: some View {
         List {
             Section {
@@ -126,12 +165,17 @@ struct FleetChatsView: View {
             if !environment.loadingRoutes.isEmpty {
                 ProgressView("Refreshing conversations…")
             }
-            if !environment.sessionReadErrors.isEmpty {
-                Section {
-                    Label("Some conversations could not refresh. Previously loaded chats may be out of date.", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                        .font(.footnote).foregroundStyle(theme.textSecondary)
-                    Button("Retry") { Task { await refresh() } }
-                }
+            // Dogfood finding 1: truthful failure reporting, scoped to routes
+            // this screen can actually retry. Compact/inline while usable
+            // conversations remain; the stronger empty/error surface only when
+            // there is nothing honest to show.
+            switch refreshFailure {
+            case .none:
+                EmptyView()
+            case .inline:
+                inlineRefreshFailure
+            case .prominent:
+                prominentRefreshFailure
             }
             // FOS-5 (SPEC §10): heading stays "Newest sessions" — honest
             // startedAt ordering; not renamed to "Recent" (no last-activity
@@ -143,8 +187,9 @@ struct FleetChatsView: View {
                         VStack(alignment: .leading, spacing: 7) {
                             Text(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)
                                 .font(.headline).foregroundStyle(theme.textPrimary).lineLimit(2)
-                            if !entry.session.preview.isEmpty {
-                                Text(entry.session.preview).font(.subheadline)
+                            let preview = SessionPreviewText.humanReadable(entry.session.preview)
+                            if !preview.isEmpty {
+                                Text(preview).font(.subheadline)
                                     .foregroundStyle(theme.textSecondary).lineLimit(2)
                             }
                             Text("\(botDisplayName(entry.route)) · \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? entry.route.gatewayID.rawValue)")
@@ -157,8 +202,15 @@ struct FleetChatsView: View {
                         }.padding(.vertical, 6)
                     }.accessibilityIdentifier("fleet.chats.session.\(entry.id)")
                 }
-                if entries.isEmpty && environment.loadingRoutes.isEmpty {
-                    ContentUnavailableView(query.isEmpty ? "Your next idea starts here" : "No matching conversations", systemImage: "bubble.left.and.bubble.right", description: Text(query.isEmpty ? "Choose a bot to begin, or refresh to load its conversations." : "Try a different title or bot name."))
+                if entries.isEmpty && environment.loadingRoutes.isEmpty && refreshFailure != .prominent {
+                    // F4 (dogfood corrective pass): the empty state is
+                    // filter-aware and never claims the user has no data when
+                    // a filter merely hid usable conversations.
+                    let empty = FleetChatsPresentation.emptyState(
+                        hasQuery: !query.isEmpty,
+                        hasGatewayFilter: gatewayID != nil,
+                        hasUsableSessions: usableSessionCount > 0)
+                    ContentUnavailableView(empty.title, systemImage: "bubble.left.and.bubble.right", description: Text(empty.description))
                 }
             }
             if !query.isEmpty {
@@ -172,9 +224,91 @@ struct FleetChatsView: View {
             ComposeBotPickerSheet(environment: environment)
         }
         .scrollContentBackground(.hidden).background(theme.background)
+        // Dogfood finding 3: reserve bottom breathing room with a SwiftUI
+        // safe-area API (design-token value) so the final card comes to rest
+        // clear of the iOS 26 floating tab bar instead of tucking under it.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: FleetChatsListLayout.bottomBreathingRoom)
+                .accessibilityHidden(true)
+        }
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")
         .refreshable { await refresh() }.task { await refresh() }
         .accessibilityIdentifier("fleet.chats")
+    }
+
+    // MARK: - Refresh failure surfaces (dogfood finding 1)
+
+    /// Compact, inline partial-failure line: the truthful last-refresh caveat
+    /// plus `Retry`, without displacing the conversations below it.
+    private var inlineRefreshFailure: some View {
+        HStack(alignment: .center, spacing: FleetTheme.spacingSm) {
+            Image(systemName: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+                .accessibilityHidden(true)
+            // F2 (dogfood corrective pass): the surface id rides this LEAF. A
+            // container `accessibilityIdentifier` overrides every descendant
+            // id, which erased the Retry control's own id from the
+            // accessibility tree (QA: `fleet.chats.refresh.retry` = 0 matches).
+            Text("Some conversations could not refresh. Previously loaded chats may be out of date.")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("fleet.chats.refresh.inline")
+            Spacer(minLength: FleetTheme.spacingSm)
+            Button("Retry") { Task { await refresh() } }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(theme.highlight)
+                .buttonStyle(.borderless)
+                // F3 (dogfood corrective pass): the shared 44pt control
+                // pattern (FleetListRow's rule). A bare `.frame(minHeight:)`
+                // leaves the accessibility frame at the label's intrinsic
+                // size; the explicit hit shape makes the padded area the real
+                // tap target without changing compact visual density.
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("fleet.chats.refresh.retry")
+        }
+        .padding(.vertical, FleetTheme.spacingXs)
+    }
+
+    /// The stronger empty/error surface: no conversations could be loaded and
+    /// none were retained. Replaces the first-run empty state when that would
+    /// lie.
+    private var prominentRefreshFailure: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            HStack(spacing: FleetTheme.spacingSm) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
+                    .accessibilityHidden(true)
+                // F2: heading id rides this LEAF, never the wrapping container.
+                Text("Could not load conversations")
+                    .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
+                    .accessibilityIdentifier("fleet.chats.refresh.error")
+            }
+            Text(FleetChatsPresentation.prominentFailureDetail(
+                failedRouteCount: reportedFailureRouteCount,
+                totalRouteCount: currentRosterRoutes.count,
+                // F5 (dogfood corrective pass): while the refresh is still
+                // running, other routes have not returned yet — the surface
+                // must not claim the rest returned no conversations.
+                isRefreshing: !environment.loadingRoutes.isEmpty))
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Retry") { Task { await refresh() } }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(theme.highlight)
+                .buttonStyle(.borderless)
+                // F3: same shared 44pt control pattern as the inline surface.
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("fleet.chats.refresh.retry")
+        }
+        .padding(.vertical, FleetTheme.spacingXs)
     }
 
     private func refresh() async {

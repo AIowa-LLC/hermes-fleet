@@ -367,9 +367,16 @@ public struct FleetDashboardView: View {
         case .usingTool: state = "Using tool"
         default: state = "Activity unknown"
         }
-        let preview = bot.latestSession?.preview ?? bot.latestSession?.title
-        if let preview, !preview.isEmpty {
-            return "\(state) · \(gatewayName) · \(preview)"
+        // F1 (dogfood corrective pass): the Active Now subtitle is a
+        // user-facing latest-session surface — derive it through the shared
+        // presentation-only sanitizer. The stored `SessionSummary.preview` is
+        // never mutated and never rendered raw.
+        if let raw = bot.latestSession?.preview ?? bot.latestSession?.title,
+           !raw.isEmpty {
+            let readable = SessionPreviewText.humanReadable(raw)
+            if !readable.isEmpty {
+                return "\(state) · \(gatewayName) · \(readable)"
+            }
         }
         return "\(state) · \(gatewayName)"
     }

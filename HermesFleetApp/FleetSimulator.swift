@@ -351,9 +351,27 @@ private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Senda
 
 /// Scripted read-only `session.list` for Bot detail (DEBUG only).
 /// Returns the scripted fleet's sessions for a route; never mutates.
+///
+/// UI-test knob: `HERMES_FLEET_SESSIONS_FAIL=<gateway-id>[,<gateway-id>…]`
+/// makes the read FAIL for the listed gateways (a classified `RosterError`),
+/// so the Chats refresh-failure surfaces (dogfood finding 1) are reachable in
+/// a deterministic UI test — one gateway fails while another still holds
+/// usable sessions (the compact inline surface).
 private struct ScriptedSessionListService: SessionListProviding {
+    static var failingGatewayIDs: Set<String> {
+        let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_SESSIONS_FAIL"] ?? ""
+        return Set(
+            raw.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+    }
+
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
-        ScriptedFleet.sessions(on: route)
+        if Self.failingGatewayIDs.contains(route.gatewayID.rawValue) {
+            throw RosterError.notConnected
+        }
+        return ScriptedFleet.sessions(on: route)
     }
 }
 
