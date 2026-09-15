@@ -72,6 +72,20 @@ final class FOS8AccessibilityUITests: XCTestCase {
         return element.isHittable
     }
 
+    /// Open the hosted room with one bounded activation retry. The iPad
+    /// adaptive NavigationStack can accept the row tap while its destination
+    /// transition is still settling; retry only when the destination remains
+    /// absent, never when a room is already open.
+    private func openHostedRoom(_ app: XCUIApplication) {
+        let roomRow = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
+        let room = firstMatch(in: app, identifier: "fleet.room.chat")
+        roomRow.tap()
+        if !room.waitForExistence(timeout: 3) {
+            roomRow.tap()
+        }
+        XCTAssertTrue(room.waitForExistence(timeout: 10), "hosted room opens")
+    }
+
     // MARK: 1+2. VoiceOver composite labels
 
     func testBotRowVoiceOverLabelReadsMandatedOrder() throws {
@@ -130,8 +144,7 @@ final class FOS8AccessibilityUITests: XCTestCase {
 
         // The room chat send button (compact circular icon) is held to the
         // 44pt bar by the shared pressable style minimum.
-        let roomRow = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
-        roomRow.tap()
+        openHostedRoom(app)
         let composer = app.textFields["fleet.room.composer.field"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         composer.tap()
@@ -195,9 +208,7 @@ final class FOS8AccessibilityUITests: XCTestCase {
     // MARK: 5. RoomLink recovery inspector
 
     private func openRoomLinkRecovery(_ app: XCUIApplication) {
-        let roomRow = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
-        roomRow.tap()
-        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.room.chat").waitForExistence(timeout: 10))
+        openHostedRoom(app)
         app.buttons["fleet.room.roomlink"].tap()
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.roomlink.screen").waitForExistence(timeout: 10),
                       "RoomLink inspector renders")
@@ -261,9 +272,7 @@ final class FOS8AccessibilityUITests: XCTestCase {
 
     func testGroupConversationShowsLatestControlWhenReadingHistory() throws {
         let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "roster"])
-        let roomRow = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
-        roomRow.tap()
-        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.room.chat").waitForExistence(timeout: 10))
+        openHostedRoom(app)
 
         // Send messages long enough to make the transcript overflow the
         // viewport so upward scrolling is possible.
@@ -276,6 +285,16 @@ final class FOS8AccessibilityUITests: XCTestCase {
             app.buttons["fleet.room.send"].tap()
             usleep(500_000)
         }
+
+        // Do not start the gesture while the last durable-log projection is
+        // still being laid out. On iPad the adaptive navigation stack can
+        // otherwise accept the drag before the transcript has its final
+        // content height, which leaves the viewport at the bottom and makes
+        // this test exercise layout timing instead of scroll behavior.
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.entry.6"]
+                .waitForExistence(timeout: 10),
+            "final history entry renders before scrolling")
 
         // Dismiss the keyboard by tapping a neutral transcript area (the
         // nav bar tap can disturb scroll state).

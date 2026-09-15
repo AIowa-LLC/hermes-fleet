@@ -506,15 +506,29 @@ public struct RoomChatView: View {
                     HStack {
                         Spacer()
                         Button {
-                            followingLatest = true
                             if let last = viewModel.transcript.last {
+                                // Mark the follow as programmatic before
+                                // changing visibility. Adaptive iPad scroll
+                                // containers can emit one more interaction
+                                // phase while the inset is being removed;
+                                // setting the guard first prevents that late
+                                // geometry callback from immediately
+                                // re-opening Latest.
                                 isProgrammaticFollow = true
-                                proxy.scrollTo(last.id, anchor: .bottom)
-                                // Bounded settle window: if the geometry
-                                // observer never confirms (edge layouts),
-                                // stop suppressing after 1.5s (test load
-                                // slows scroll settling).
+                                isUserInteractingWithScroll = false
+                                followingLatest = true
+                                // Let the inset removal commit before asking
+                                // the adaptive scroll container to move. A
+                                // same-turn scroll can deliver a stale
+                                // non-bottom geometry callback and re-open
+                                // Latest immediately.
                                 Task { @MainActor in
+                                    await Task.yield()
+                                    proxy.scrollTo(last.id, anchor: .bottom)
+                                    // Bounded settle window: if the geometry
+                                    // observer never confirms (edge layouts),
+                                    // stop suppressing after 1.5s (test load
+                                    // slows scroll settling).
                                     try? await Task.sleep(for: .milliseconds(1500))
                                     isProgrammaticFollow = false
                                 }
@@ -524,6 +538,8 @@ public struct RoomChatView: View {
                                 .font(.caption.weight(.semibold))
                         }
                         .buttonStyle(.fleetPressable)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                         .accessibilityIdentifier("fleet.room.timeline.latest")
                     }
                     .padding(.horizontal, FleetTheme.spacingLg)

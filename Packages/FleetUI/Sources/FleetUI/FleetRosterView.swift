@@ -483,11 +483,18 @@ public struct FleetRosterView: View {
             SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
             ForEach(visible) { room in
-                NavigationLink(value: FleetScreen.room(room.id)) {
+                // An explicit destination keeps room opening reliable in
+                // iPad's adaptive NavigationStack. The value-link path is
+                // retained for the other roster destinations, but this
+                // custom room row was being exposed as a tappable control
+                // without activating its value destination.
+                NavigationLink {
+                    RoomChatView(room: room, environment: environment)
+                } label: {
                     RoomRowView(room: room)
                 }
                 .buttonStyle(.fleetPressable)
-                .accessibilityElement(children: .combine)
+                .accessibilityLabel(room.voiceOverLabel)
                 .accessibilityIdentifier("fleet.room.row.\(room.id.key)")
             }
         }
@@ -850,11 +857,8 @@ struct RoomRowView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        // FOS-8 (SPEC §16 VoiceOver): the Group composite announces name,
-        // member count, authority, and member names in its details — the
-        // decorative 2×2 face grid stays hidden.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(room.voiceOverLabel)
+        // The containing NavigationLink owns the composite accessibility
+        // element so activation remains reliable in adaptive iPad navigation.
     }
 }
 
