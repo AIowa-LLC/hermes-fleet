@@ -1308,7 +1308,7 @@ public final class AppEnvironment {
         continueIndex.prune(gatewayID: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
-        let removedRoutes = sessionReadGenerations.keys.filter { $0.gatewayID == id }
+        let removedRoutes = sessionRoutes(on: id)
         for route in removedRoutes {
             invalidateSessions(for: route)
         }
@@ -1460,10 +1460,21 @@ public final class AppEnvironment {
 
     /// Narrowly invalidate observations owned by one gateway.
     public func invalidateSessions(on gatewayID: GatewayID) {
-        let routes = sessionReadGenerations.keys.filter { $0.gatewayID == gatewayID }
+        let routes = sessionRoutes(on: gatewayID)
         for route in routes {
             invalidateSessions(for: route)
         }
+    }
+
+    /// All session routes with any retained cache, freshness, or generation
+    /// state. A successful first read may have freshness state without a
+    /// generation entry, so gateway-scoped invalidation must include all
+    /// three stores.
+    private func sessionRoutes(on gatewayID: GatewayID) -> Set<Route> {
+        Set(sessionReadGenerations.keys)
+            .union(sessionsObservedAt.keys)
+            .union(sessionsByRoute.keys)
+            .filter { $0.gatewayID == gatewayID }
     }
 
     /// Refresh missing/stale routes with an explicit bounded concurrency
