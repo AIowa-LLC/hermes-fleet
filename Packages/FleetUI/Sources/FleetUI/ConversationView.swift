@@ -872,7 +872,7 @@ public struct ConversationView: View {
                     .accessibilityIdentifier("fleet.conversation.command.empty")
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
                         let commandRows = model.commandSuggestions.filter { $0.kind != .skill }
                         let skillRows = model.commandSuggestions.filter { $0.kind == .skill }
                         if !commandRows.isEmpty {
