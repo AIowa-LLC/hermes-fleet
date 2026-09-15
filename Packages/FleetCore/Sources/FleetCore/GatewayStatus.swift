@@ -54,6 +54,11 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
             self = .authenticationRequired
         case .authSurfaceHTTP(let code) where code == 401 || code == 403:
             self = .authenticationRequired
+        case .authSurfaceHTTP(429):
+            // Authentication throttling is transient: retain connection
+            // intent and allow a later retry instead of calling it an
+            // unsupported gateway surface.
+            self = .offline
         case .authSurfaceHTTP:
             // The endpoint ANSWERED — it is reachable — but it is not the
             // gateway API surface (wrong port; the F1 8642-vs-9119 case).

@@ -88,6 +88,12 @@ public typealias FleetRoomSourceFactory = @Sendable (
 /// AVFoundation/Speech directly.
 public typealias FleetVoiceEngineFactory = @Sendable () -> (any VoiceTranscribing)?
 
+/// Injected invalidation hooks keep FleetUI independent of FleetNetworking's
+/// ephemeral session store while ensuring credential/configuration changes
+/// cannot retain an authenticated lease for old gateway state.
+public typealias FleetGatewaySessionInvalidator = @Sendable (_ gatewayID: GatewayID) async -> Void
+public typealias FleetGatewaySessionInvalidatorAll = @Sendable () async -> Void
+
 /// Observable, per-gateway connection lifecycle (spec §13 states; §31
 /// "disconnect does not crash").
 ///
@@ -373,6 +379,8 @@ public final class AppEnvironment {
     /// state. The store contains gateway IDs only; production backs it with
     /// UserDefaults and tests/simulator may keep it in-process.
     private let connectionIntent: ConnectionIntentStore
+    private let gatewaySessionInvalidator: FleetGatewaySessionInvalidator?
+    private let gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll?
 
     /// Lazily-built U3 conversation sessions per gateway (one per gateway;
     /// created on first conversation screen use).
@@ -434,7 +442,9 @@ public final class AppEnvironment {
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
-        connectionIntentDefaults: UserDefaults? = nil
+        connectionIntentDefaults: UserDefaults? = nil,
+        gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
+        gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -456,6 +466,8 @@ public final class AppEnvironment {
         self.seedRegistrations = seedRegistrations
         self.voiceEngineFactory = voiceEngineFactory
         self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
+        self.gatewaySessionInvalidator = gatewaySessionInvalidator
+        self.gatewaySessionInvalidatorAll = gatewaySessionInvalidatorAll
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -959,6 +971,7 @@ public final class AppEnvironment {
         // in-memory session objects are then discarded so stale transcript
         // rows cannot reappear in the UI after the user confirms deletion.
         connectionIntent.removeAll()
+        await gatewaySessionInvalidatorAll?()
         await disconnectAll()
         try await cache.clearCachedData()
         activeConnections.removeAll()
@@ -1025,6 +1038,9 @@ public final class AppEnvironment {
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
         connectionIntent.clear(id)
+        // Manual Disconnect is transport control, not sign-out. Keep the
+        // in-memory authenticated lease so an explicit later Connect mints a
+        // fresh single-use ticket without another password-login burst.
         guard let connection = activeConnections[id] else {
             connectionStates[id] = .disconnected
             return
@@ -1209,7 +1225,12 @@ public final class AppEnvironment {
     /// Apply a partial edit to a gateway's display name / endpoint / auth
     /// config. Throws `.notFound` / `.invalidEndpoint` from the registry seam.
     public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
+        let previous = gateways.first(where: { $0.id == id })
         let gateway = try await registry.updateGateway(id, edits: edits)
+        if previous?.endpoint != gateway.endpoint
+            || previous?.authConfiguration != gateway.authConfiguration {
+            await gatewaySessionInvalidator?(id)
+        }
         await reloadGateways()
         return gateway
     }
@@ -1217,6 +1238,7 @@ public final class AppEnvironment {
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
         connectionIntent.clear(id)
+        await gatewaySessionInvalidator?(id)
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
         // conversation session, and clear observable lifecycle state.
@@ -1297,12 +1319,14 @@ public final class AppEnvironment {
     /// secret never transits the UI model or logs). Marks auth configured.
     public func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
         try await registry.saveCredential(credential, for: id)
+        await gatewaySessionInvalidator?(id)
         await reloadGateways()
     }
 
     /// Clear the stored credential for a gateway (no-op when absent).
     public func clearCredential(for id: GatewayID) async throws {
         try await registry.clearCredential(for: id)
+        await gatewaySessionInvalidator?(id)
         await reloadGateways()
     }
 

@@ -138,6 +138,7 @@
 		F15AFD9E9FD86C2FEBD2747F /* BotsPresenceSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB6E5C03C9C964E31771BA70 /* BotsPresenceSyncUITests.swift */; };
 		F28C26E53888FB9210E67B8A /* KanbanBoardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C9936C1305F593BCAEC3276 /* KanbanBoardUITests.swift */; };
 		F37E76F893963CDB1E25D544 /* FleetServiceGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */; };
+		FF65A800E51BFB978AB9E01E /* GatewaySessionInvalidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A379F56088FBE836601ECB7 /* GatewaySessionInvalidationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -194,6 +195,7 @@
 		36A4B24E61526D2294992BD2 /* U3TabNavigationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U3TabNavigationUITests.swift; sourceTree = "<group>"; };
 		36FAEE832413ACBA6AF7F206 /* VoiceIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceIO.swift; sourceTree = "<group>"; };
 		3859B6C20A589CAB18C8B040 /* FleetChatsWiringGuardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetChatsWiringGuardTests.swift; sourceTree = "<group>"; };
+		3A379F56088FBE836601ECB7 /* GatewaySessionInvalidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewaySessionInvalidationTests.swift; sourceTree = "<group>"; };
 		3B326FB606E259B0116F2F6D /* R10AttachmentTrayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R10AttachmentTrayUITests.swift; sourceTree = "<group>"; };
 		3C448C88190523F3B23998EC /* BotRoutinesViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotRoutinesViewModelTests.swift; sourceTree = "<group>"; };
 		3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT4LogicRegressionTests.swift; sourceTree = "<group>"; };
@@ -362,6 +364,7 @@
 				E355C0C291D253CB607D22B0 /* FOS8RoomLinkRecoveryTests.swift */,
 				CE6BC2110F398CBC54DBCF8A /* GatewayFormDraftStoreTests.swift */,
 				BD81D83119A185906F3FABB8 /* GatewayPersistenceRelaunchTests.swift */,
+				3A379F56088FBE836601ECB7 /* GatewaySessionInvalidationTests.swift */,
 				AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */,
 				87630C3BE4D4DB8BDDE8C7A5 /* KanbanBoardSelectorViewModelTests.swift */,
 				13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */,
@@ -700,6 +703,7 @@
 				230ED173C2D04A96779776A2 /* FleetThemeTests.swift in Sources */,
 				0C26BBF27EF90EACF7C2DB65 /* GatewayFormDraftStoreTests.swift in Sources */,
 				568D3FC18BC8530AE3E7DA34 /* GatewayPersistenceRelaunchTests.swift in Sources */,
+				FF65A800E51BFB978AB9E01E /* GatewaySessionInvalidationTests.swift in Sources */,
 				8B7BDB1F494E240EFD8C697F /* H2SurfaceDoctorDeviceTests.swift in Sources */,
 				1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */,
 				4F757B94E834A86C50D51FE3 /* KanbanBoardSelectorViewModelTests.swift in Sources */,
