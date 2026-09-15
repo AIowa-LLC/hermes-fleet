@@ -2511,13 +2511,13 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         _pendingApproval = nil
     }
 
-    func createRoom(name: String, members: [[String: String]]) async throws -> String {
-        let roomID = "room-\(_createdRooms.count + 1)"
-        _createdRooms.append(roomID)
-        _createdRoomNames[roomID] = name
+    func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
+        let roomKey = roomID.isEmpty ? "room-\(_createdRooms.count + 1)" : roomID
+        _createdRooms.append(roomKey)
+        _createdRoomNames[roomKey] = name
         _lastCreatedMembers = members
         append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
-        return roomID
+        return roomKey
     }
 
     /// FleetRoom rows for created rooms (fresh log per room; frozen roster

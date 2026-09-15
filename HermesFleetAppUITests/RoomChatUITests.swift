@@ -193,6 +193,39 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertFalse(app.buttons["fleet.room.stop"].exists, "no stop on legacy room")
     }
 
+    // MARK: - Continue as Interactive Group (diagnostic 2026-09-15, fix B)
+
+    func testLegacyRoomContinueActionExplainsWhenNoDurableBridge() throws {
+        let app = launch()
+
+        let legacy = scrollToFind(app, identifier: "fleet.room.row.name:Research Crew")
+        XCTAssertTrue(legacy.exists, "legacy room row renders")
+        legacy.tap()
+
+        // The banner carries the Continue action (fix B affordance).
+        let continueButton = app.buttons["fleet.room.legacy.continue"]
+        XCTAssertTrue(
+            continueButton.waitForExistence(timeout: 10),
+            "Continue action renders on the legacy banner")
+
+        // Confirmation copy is explicit about identity + history retention.
+        continueButton.tap()
+        let confirm = app.buttons["Continue as Interactive Group"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation dialog renders")
+        confirm.tap()
+
+        // The simulator's legacy room is NAME-KEYED (older projection
+        // generation): the flow fails closed with the honest no-durable-
+        // bridge explanation — never a silent success.
+        let errorNotice = app.descendants(matching: .any)["fleet.room.legacy.continue.error"]
+        XCTAssertTrue(
+            errorNotice.waitForExistence(timeout: 10),
+            "typed fail-closed explanation renders")
+        XCTAssertTrue(
+            errorNotice.label.localizedCaseInsensitiveContains("durable"),
+            "explanation names the missing durable identity bridge")
+    }
+
     // MARK: - D16 retryable failure
 
     func testFailureSurfaceWithRetry() throws {
@@ -274,10 +307,14 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         submit.tap()
 
-        // The created room reveals in the roster rows.
+        // The created room reveals in the roster rows. The room id is a
+        // client-minted UUID (upstream groups.create requires a
+        // client-supplied room_id), so the row is found by its name.
+        let createdRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Fresh Crew"))
+            .firstMatch
         XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.row.room-1"]
-                .waitForExistence(timeout: 10),
+            createdRow.waitForExistence(timeout: 10),
             "created room appears in roster")
     }
 }

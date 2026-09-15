@@ -890,7 +890,10 @@ public final class AppEnvironment {
             throw RoomCommandFailure.notConnected
         }
         let wireMembers = HostedRoomMemberCodec.wireMembers(members, gatewayID: gatewayID)
-        let roomID = try await seam.createRoom(name: name, members: wireMembers)
+        // Plain creates mint a Fleet room id (upstream requires a
+        // client-supplied room_id; RoomLink setups already pass setupID).
+        let mintedRoomID = "fleet-" + UUID().uuidString.lowercased()
+        let roomID = try await seam.createRoom(roomID: mintedRoomID, name: name, members: wireMembers)
         // F1: a successful create is definitive gateway-level truth — the
         // entry must not regress if a later probe fails (.unknown).
         canCreateRoomsByGateway[gatewayID] = true
@@ -908,6 +911,87 @@ public final class AppEnvironment {
                 driverAvailable: false))
         Task { await loadRooms() }
         return room
+    }
+
+    /// "Continue as Interactive Group" (diagnostic 2026-09-15, fix B).
+    ///
+    /// Continues a Desktop legacy-projection room into an authoritative
+    /// hosted room on its gateway by reusing the projection's durable room
+    /// id: `groups.create` with that exact id makes Desktop ↔ hosted
+    /// identity equality-by-construction. The legacy room itself is NEVER
+    /// mutated or deleted — it remains the read-only historical record.
+    ///
+    /// Fail-closed gates (all typed `RoomCommandFailure`s):
+    /// - name-keyed (pre-id) projection → no durable id, no continuation;
+    /// - projected members are verified against the LIVE roster by profile
+    ///   slug only (display names are not identity); unverified members
+    ///   abort with an explanation naming them;
+    /// - the hosted 2-member minimum must be met by verified locals.
+    public func continueLegacyRoomAsInteractive(_ room: FleetRoom) async throws -> FleetRoom {
+        let gatewayID = room.id.gatewayID
+        // Roster candidates for THIS gateway (durable per-gateway identity).
+        let roster = bots(on: gatewayID).map {
+            RoomMemberCandidate(route: $0.route, displayName: $0.displayName)
+        }
+        let plan = LegacyRoomContinuation.plan(for: room, roster: roster)
+        switch plan.status {
+        case .missingDurableID:
+            // Rich user copy rides rpcFailed (repo precedent: the RoomLink
+            // partial-setup message) — unsupportedMethod's explanation is
+            // generic gateway copy and would discard the specifics.
+            throw RoomCommandFailure.rpcFailed(
+                "This room has no durable identity bridge (older Desktop projection). "
+                    + "Create a new Group and pick its members instead.", 0)
+        case .insufficientMembers(let resolved, let minimum):
+            let missing = plan.unresolvedMembers.isEmpty
+                ? "fewer than \(minimum) projected members"
+                : "members not on this gateway: \(plan.unresolvedMembers.joined(separator: ", "))"
+            throw RoomCommandFailure.rpcFailed(
+                "Cannot verify \(resolved) of at least \(minimum) members (\(missing)). "
+                    + "Add the missing profiles to this gateway, then retry.", 0)
+        case .ready:
+            guard let roomID = plan.roomID else {
+                throw RoomCommandFailure.unsupportedMethod("No durable room id.")
+            }
+            guard let seam = roomCommandSeam(for: gatewayID) else {
+                throw RoomCommandFailure.notConnected
+            }
+            let wireMembers = HostedRoomMemberCodec.wireMembers(plan.candidates, gatewayID: gatewayID)
+            _ = try await seam.createRoom(roomID: roomID, name: room.name, members: wireMembers)
+            canCreateRoomsByGateway[gatewayID] = true
+            // Reveal from the authoritative reload when it knows the room;
+            // otherwise reveal from the create result itself (same shape the
+            // plain create flow returns) so the roster shows the hosted room
+            // immediately. The legacy projection row is retained untouched.
+            let revealed: FleetRoom
+            if let hosted = rooms(for: gatewayID).first(where: {
+                $0.id.provenance == .hosted && $0.id.key == roomID
+            }) {
+                revealed = hosted
+            } else {
+                revealed = FleetRoom(
+                    id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+                    name: room.name,
+                    members: plan.candidates.map {
+                        FleetRoomMember(name: $0.displayName, handle: $0.route.profileSlug.rawValue)
+                    },
+                    hosted: HostedRoomState(
+                        authorityGatewayID: gatewayID.rawValue,
+                        authorityEpoch: 1,
+                        advertisedMethods: nil,
+                        driverAvailable: false))
+                var updated = rooms(for: gatewayID).filter {
+                    !($0.id.provenance == .hosted && $0.id.key == roomID)
+                }
+                updated.append(revealed)
+                roomsByGateway[gatewayID] = updated
+            }
+            // No eager loadRooms here: a reload racing the synchronous
+            // reveal could erase the hosted row before the UI reads it.
+            // The room is authoritative on the gateway — the next roster
+            // refresh lists it via groups.list.
+            return revealed
+        }
     }
 
     public func compatibleRoomGateways(homeID: GatewayID) async -> Set<GatewayID> {

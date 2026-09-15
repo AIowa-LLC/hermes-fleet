@@ -289,6 +289,89 @@ final class BotModeNetworkingTests: XCTestCase {
     {"room_id":"room-1","name":"Research Crew","members":"[{\"name\":\"researcher\"},{\"name\":\"writer\"}]","authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
     """#
 
+    // MARK: - groups.create wire contract (legacy continuation + create)
+
+    /// The create wire path must carry a client-supplied room_id (upstream
+    /// contract GroupsCreateParams.room_id is REQUIRED — no server-side
+    /// minting; Pydantic rejects an omitted key). Pins both the Continue
+    /// flow's identity reuse and the plain create path.
+    func testCreateRoomSendsClientRoomID() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "groups.create" {
+                    return [Self.responseFrame(id: id, resultObject: "{\"room\":\(Self.roomRow)}")]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayGroupsClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let members: [JSONValue] = [
+            .object(["member_id": .string("fleet-ws-default"), "profile": .string("default"), "handle": .string("default")]),
+            .object(["member_id": .string("fleet-ws-apple"), "profile": .string("apple"), "handle": .string("apple")]),
+        ]
+        let row = try await client.createRoom(
+            roomID: "rmtxtyapg-nsd4n", name: "iOS App Brainstorming Crew",
+            members: members, profile: nil)
+
+        let params = log.params(of: "groups.create").first
+        XCTAssertEqual(params?["room_id"] as? String, "rmtxtyapg-nsd4n")
+        XCTAssertEqual(params?["name"] as? String, "iOS App Brainstorming Crew")
+        XCTAssertEqual(row.roomID, "room-1")
+    }
+
+    /// A conflicting pre-existing hosted row (4110 RoomConflictError) must
+    /// surface as the typed rpcFailed error carrying the code — the
+    /// Continue flow renders it as an explanation, never a silent retry.
+    func testCreateRoomConflictMapsToTypedError() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "groups.create" {
+                    return [Self.errorFrame(id: id, code: 4110, message: "room_id already exists with different state")]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayGroupsClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let members: [JSONValue] = [
+            .object(["profile": .string("default")]),
+            .object(["profile": .string("apple")]),
+        ]
+        do {
+            _ = try await client.createRoom(
+                roomID: "r1", name: "Crew", members: members, profile: nil)
+            XCTFail("expected a thrown error")
+        } catch let error as GroupsError {
+            guard case .rpcFailed(let message) = error else {
+                return XCTFail("expected rpcFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("different state"))
+        }
+    }
+
     func testGroupsCapabilitiesDecode() throws {
         let json = try JSONDecoder().decode(JSONValue.self,
                                             from: Data(Self.capabilitiesResult.utf8))
