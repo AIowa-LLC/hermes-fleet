@@ -52,7 +52,6 @@ public struct ConversationView: View {
     @State private var forkTargetSessionID: String?
     /// Slash parity: pending command-driven navigation (new chat / model
     /// picker / sessions list) and composer prefill adoption, each fired once.
-    @State private var consumedCommandNavigation: ConversationViewModel.CommandNavigation?
     @State private var newChatTargetSessionID: String?
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
@@ -167,10 +166,11 @@ public struct ConversationView: View {
         // Slash parity: command-driven navigation. /new pushes a fresh
         // conversation on the SAME route (gateway/profile preserved);
         // /model opens the native picker; /resume,/sessions,/switch pop to
-        // the Chats list (Fleet's native session UX).
+        // the Chats list (Fleet's native session UX). Each navigation is
+        // CONSUMED after handling (the consumeForkedSession pattern) so a
+        // second identical command re-fires.
         .onChange(of: model.commandNavigation) { _, navigation in
-            guard let navigation, navigation != consumedCommandNavigation else { return }
-            consumedCommandNavigation = navigation
+            guard let navigation else { return }
             switch navigation {
             case .newConversation(let sessionID):
                 newChatTargetSessionID = sessionID
@@ -179,6 +179,7 @@ public struct ConversationView: View {
             case .sessionsList:
                 dismiss()
             }
+            model.consumeCommandNavigation()
         }
         .navigationDestination(isPresented: newChatBinding) {
             ConversationView(
@@ -190,9 +191,10 @@ public struct ConversationView: View {
         // Slash parity: a prefill directive REPLACES the composer draft
         // (never auto-submits) and returns focus for editing.
         .onChange(of: model.prefillText) { _, prefill in
-            guard let prefill, !prefill.isEmpty, prefill != composerText else { return }
+            guard let prefill, !prefill.isEmpty else { return }
             composerText = prefill
             composerFocused = true
+            model.consumePrefill()
         }
     }
 

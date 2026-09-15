@@ -1488,6 +1488,17 @@ public final class ConversationViewModel {
         forkedSession = nil
     }
 
+    /// Clear the pending command navigation (view consumed it). Resetting to
+    /// nil lets a SECOND identical command (/model twice) re-fire onChange.
+    public func consumeCommandNavigation() {
+        commandNavigation = nil
+    }
+
+    /// Clear the adopted prefill (view consumed it). Same re-fire rationale.
+    public func consumePrefill() {
+        prefillText = nil
+    }
+
     /// Refresh the context meter after a completed turn (the streamed ticks
     /// stop at message.complete; the RPC read is the settling figure).
     public func refreshUsageSnapshot() async {
