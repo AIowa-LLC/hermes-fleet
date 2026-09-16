@@ -195,9 +195,21 @@ struct GatewayDetailView: View {
         }
     }
 
+    @ViewBuilder
     private func resource(_ title: String, _ icon: String, _ screen: FleetScreen, _ key: String) -> some View {
-        NavigationLink(value: screen) { Label(title, systemImage: icon) }
+        // Build 41 §6: Kanban routes through the owning tab (not a local
+        // push) — Kanban owns the Kanban experience.
+        if case .gatewayKanban = screen {
+            Button {
+                environment.requestScreen(screen)
+            } label: {
+                Label(title, systemImage: icon)
+            }
             .accessibilityIdentifier("fleet.gateway-detail.\(gatewayID.rawValue).\(key)")
+        } else {
+            NavigationLink(value: screen) { Label(title, systemImage: icon) }
+                .accessibilityIdentifier("fleet.gateway-detail.\(gatewayID.rawValue).\(key)")
+        }
     }
 }
 

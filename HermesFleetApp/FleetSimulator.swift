@@ -222,7 +222,7 @@ final class ScriptedVoiceEngine: VoiceTranscribing, @unchecked Sendable {
 /// t_624b81cd: also scripts the board LIST + client-side pinning so the
 /// board selector is walkable deterministically (two boards, "R10
 /// Maintenance" active).
-private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Sendable {
+private final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
     private let lock = NSLock()
     private var continuations: [UUID: AsyncStream<KanbanEventBatch>.Continuation] = [:]
     private var pinned: String?
@@ -251,50 +251,7 @@ private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Senda
     }
 
     func snapshot() async throws -> KanbanBoardSnapshot {
-        let board: String? = unlocked { pinned }
-        // Side Quests (the non-active scripted board) gets a distinct,
-        // smaller snapshot so switching visibly changes the board content.
-        if board == "side-quests" {
-            return KanbanBoardSnapshot(
-                columns: ["todo", "done"],
-                cardsByColumn: [
-                    "todo": [
-                        KanbanCard(
-                            id: "t_side01", title: "Scripted: side quest one",
-                            status: "todo", assignee: "apple-dev",
-                            priority: 1, createdAt: 1_780_003_600, latestSummary: nil),
-                    ],
-                    "done": [
-                        KanbanCard(
-                            id: "t_side02", title: "Scripted: side quest two",
-                            status: "done", assignee: "apple-design",
-                            priority: 1, createdAt: 1_779_996_400, latestSummary: nil),
-                    ],
-                ],
-                latestEventID: 2,
-                now: 1_780_014_400
-            )
-        }
-        return KanbanBoardSnapshot(
-            columns: ["triage", "todo", "ready", "running", "blocked", "review", "done"],
-            cardsByColumn: [
-                "todo": [
-                    KanbanCard(id: "t_script01", title: "Scripted: port kanban stream client", status: "todo", assignee: "apple-dev", priority: 2, createdAt: 1_780_000_000, latestSummary: "Event-stream client pattern ported from the dashboard plugin contract."),
-                    KanbanCard(id: "t_script02", title: "Scripted: read-only board view", status: "todo", assignee: "apple-design", priority: 1, createdAt: 1_780_003_600, latestSummary: nil)
-                ],
-                "running": [
-                    KanbanCard(id: "t_script03", title: "Scripted: live reconnect coverage", status: "running", assignee: "apple-qa", priority: 3, createdAt: 1_780_007_200, latestSummary: "Reconnect resumes from the cursor — no events lost across the gap.")
-                ],
-                "review": [
-                    KanbanCard(id: "t_script04", title: "Scripted: design review pass", status: "review", assignee: "apple-design", priority: 2, createdAt: 1_780_010_800, latestSummary: "Gold Fleet tokens applied; columns as horizontal lanes.")
-                ],
-                "done": [
-                    KanbanCard(id: "t_script05", title: "Scripted: domain models", status: "done", assignee: "apple-dev", priority: 1, createdAt: 1_779_996_400, latestSummary: nil)
-                ]
-            ],
-            latestEventID: 41,
-            now: 1_780_014_400
-        )
+        snapshotFromState()
     }
 
     func changeEvents() async -> AsyncStream<KanbanEventBatch> {
@@ -338,6 +295,265 @@ private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Senda
             return targets
         }
         for target in targets { target.finish() }
+    }
+
+    // MARK: Build 41 — scripted mutations (in-memory board state)
+
+    /// Mutable scripted board state (create/move/comment/link/etc).
+    private var tasks: [String: (title: String, status: String, assignee: String?, priority: Int)] = [
+        "t_script01": ("Scripted: port kanban stream client", "todo", "apple-dev", 2),
+        "t_script02": ("Scripted: read-only board view", "todo", "apple-design", 1),
+        "t_script03": ("Scripted: live reconnect coverage", "running", "apple-qa", 3),
+        "t_script04": ("Scripted: design review pass", "review", "apple-design", 2),
+        "t_script05": ("Scripted: domain models", "done", "apple-dev", 1),
+    ]
+    private var comments: [String: [KanbanComment]] = [:]
+    private var links: [String: KanbanTaskLinks] = [:]
+    private var scriptedEvents: [KanbanTaskEventRecord] = []
+    private var nextEventID = 200
+    private var orchestration = KanbanOrchestrationSettings(
+        orchestratorProfile: "apple-dev", defaultAssignee: "apple-dev",
+        autoDecompose: true, autoPromoteChildren: true,
+        resolvedOrchestratorProfile: "apple-dev", resolvedDefaultAssignee: "apple-dev",
+        activeProfile: "apple-dev")
+
+    private func recordEvent(_ taskID: String, _ kind: String) {
+        nextEventID += 1
+        scriptedEvents.append(KanbanTaskEventRecord(
+            id: nextEventID, taskID: taskID, runID: nil, kind: kind, createdAt: Date().timeIntervalSince1970))
+    }
+
+    private func notifyChange(_ taskID: String, _ kind: String) {
+        recordEvent(taskID, kind)
+        let batch = KanbanEventBatch(
+            events: [KanbanChangeEvent(id: nextEventID, taskID: taskID, kind: kind, createdAt: nil)],
+            cursor: nextEventID)
+        let targets = unlocked { Array(continuations.values) }
+        for target in targets { target.yield(batch) }
+    }
+
+    private func snapshotFromState() -> KanbanBoardSnapshot {
+        let board = unlocked { pinned }
+        var byColumn: [String: [KanbanCard]] = [:]
+        if board == "side-quests" {
+            byColumn["todo"] = [
+                KanbanCard(id: "t_side01", title: "Scripted: side quest one", status: "todo", assignee: "apple-dev", priority: 1, createdAt: 1_780_003_600, latestSummary: nil),
+            ]
+            byColumn["done"] = [
+                KanbanCard(id: "t_side02", title: "Scripted: side quest two", status: "done", assignee: "apple-design", priority: 1, createdAt: 1_779_996_400, latestSummary: nil),
+            ]
+            return KanbanBoardSnapshot(columns: ["todo", "done"], cardsByColumn: byColumn, latestEventID: 2, now: 1_780_014_400)
+        }
+        let order = ["triage", "todo", "ready", "running", "blocked", "review", "done"]
+        for column in order { byColumn[column] = [] }
+        for (id, task) in tasks.sorted(by: { $0.value.priority > $1.value.priority }) {
+            let column = order.contains(task.status) ? task.status : "todo"
+            byColumn[column]?.append(KanbanCard(
+                id: id, title: task.title, status: task.status, assignee: task.assignee,
+                priority: task.priority, createdAt: 1_780_000_000, latestSummary: nil))
+        }
+        return KanbanBoardSnapshot(columns: order, cardsByColumn: byColumn, latestEventID: nextEventID, now: Date().timeIntervalSince1970)
+    }
+
+    func snapshot(includeArchived: Bool) async throws -> KanbanBoardSnapshot {
+        var snapshot = snapshotFromState()
+        if includeArchived {
+            snapshot = KanbanBoardSnapshot(
+                columns: snapshot.columns + ["archived"],
+                cardsByColumn: snapshot.cardsByColumn,
+                latestEventID: snapshot.latestEventID, now: snapshot.now)
+        }
+        return snapshot
+    }
+
+    func createTask(_ draft: KanbanTaskDraft) async throws -> KanbanCard {
+        let id = "t_script\(String(format: "%02d", tasks.count + 1))"
+        let status = draft.triage ? "triage" : "todo"
+        tasks[id] = (draft.title, status, draft.assignee, draft.priority)
+        for parent in draft.parents {
+            var parentLinks = links[parent] ?? KanbanTaskLinks(parents: [], children: [])
+            parentLinks = KanbanTaskLinks(
+                parents: parentLinks.parents, children: parentLinks.children + [id])
+            links[parent] = parentLinks
+        }
+        notifyChange(id, "created")
+        return KanbanCard(id: id, title: draft.title, status: status, assignee: draft.assignee, priority: draft.priority, createdAt: Date().timeIntervalSince1970, latestSummary: nil)
+    }
+
+    func updateTask(id: String, patch: KanbanTaskPatch) async throws -> KanbanCard {
+        guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+        if let status = patch.status {
+            if status == "running" {
+                throw KanbanMutationError.rejected("Cannot set status to 'running' directly; use the dispatcher/claim path")
+            }
+            tasks[id]?.status = status == "archived" ? "archived" : status
+            notifyChange(id, "status_changed")
+        }
+        if let assignee = patch.assignee {
+            tasks[id]?.assignee = assignee.isEmpty ? nil : assignee
+            notifyChange(id, "assigned")
+        }
+        if let priority = patch.priority {
+            tasks[id]?.priority = priority
+            notifyChange(id, "reprioritized")
+        }
+        if let title = patch.title { tasks[id]?.title = title; notifyChange(id, "edited") }
+        if let body = patch.body { _ = body; notifyChange(id, "edited") }
+        let task = tasks[id]!
+        return KanbanCard(id: id, title: task.title, status: task.status, assignee: task.assignee, priority: task.priority, createdAt: 1_780_000_000, latestSummary: nil)
+    }
+
+    func deleteTask(id: String) async throws {
+        tasks.removeValue(forKey: id)
+        notifyChange(id, "deleted")
+    }
+
+    func fetchTaskDetail(id: String) async throws -> KanbanTaskDetail {
+        guard let task = tasks[id] else { throw KanbanMutationError.rejected("task \(id) not found") }
+        let taskLinks = links[id] ?? KanbanTaskLinks(parents: [], children: [])
+        let children = taskLinks.children.compactMap { childID -> KanbanChildResult? in
+            guard let child = tasks[childID] else { return nil }
+            return KanbanChildResult(id: childID, title: child.title, status: child.status, latestSummary: nil, result: nil)
+        }
+        return KanbanTaskDetail(
+            task: KanbanTaskRecord(
+                id: id, title: task.title, body: "Scripted task body for the walkthrough.",
+                assignee: task.assignee, status: task.status, priority: task.priority,
+                createdAt: 1_780_000_000, workspaceKind: "scratch"),
+            comments: comments[id] ?? [],
+            events: scriptedEvents.filter { $0.taskID == id }.suffix(10).map { $0 },
+            links: taskLinks,
+            childResults: children,
+            runs: [])
+    }
+
+    func addComment(taskID: String, body: String, author: String?) async throws {
+        guard tasks[taskID] != nil else { throw KanbanMutationError.rejected("task \(taskID) not found") }
+        var list = comments[taskID] ?? []
+        list.append(KanbanComment(id: list.count + 1, taskID: taskID, author: author ?? "dashboard", body: body, createdAt: Date().timeIntervalSince1970))
+        comments[taskID] = list
+        notifyChange(taskID, "commented")
+    }
+
+    func linkTasks(parentID: String, childID: String) async throws -> Bool {
+        guard tasks[parentID] != nil, tasks[childID] != nil else {
+            throw KanbanMutationError.rejected("unknown task id")
+        }
+        var parentLinks = links[parentID] ?? KanbanTaskLinks(parents: [], children: [])
+        parentLinks = KanbanTaskLinks(parents: parentLinks.parents, children: parentLinks.children + [childID])
+        links[parentID] = parentLinks
+        notifyChange(childID, "linked")
+        return true
+    }
+
+    func unlinkTasks(parentID: String, childID: String) async throws {
+        var parentLinks = links[parentID] ?? KanbanTaskLinks(parents: [], children: [])
+        parentLinks = KanbanTaskLinks(parents: parentLinks.parents, children: parentLinks.children.filter { $0 != childID })
+        links[parentID] = parentLinks
+        notifyChange(childID, "unlinked")
+        return
+    }
+
+    func bulkUpdate(_ patch: KanbanBulkPatch) async throws -> [KanbanBulkOutcome] {
+        var outcomes: [KanbanBulkOutcome] = []
+        for id in patch.ids {
+            do {
+                try await updateTask(id: id, patch: KanbanTaskPatch(
+                    status: patch.status, assignee: patch.assignee, priority: patch.priority))
+                outcomes.append(KanbanBulkOutcome(id: id, ok: true))
+            } catch {
+                outcomes.append(KanbanBulkOutcome(
+                    id: id, ok: false, error: Redaction.safeErrorDescription(error)))
+            }
+        }
+        return outcomes
+    }
+
+    func reclaimTask(id: String, reason: String?) async throws {
+        guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+        if tasks[id]?.status != "running" {
+            throw KanbanMutationError.rejected("cannot reclaim \(id): not in a claimable state (not running, or unknown id)")
+        }
+        tasks[id]?.status = "ready"
+        notifyChange(id, "reclaimed")
+    }
+
+    func specifyTask(id: String, author: String?) async throws -> KanbanSpecifyOutcome {
+        guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+        recordEvent(id, "specified")
+        return KanbanSpecifyOutcome(ok: true, taskID: id, reason: nil, newTitle: tasks[id]?.title)
+    }
+
+    func decomposeTask(id: String, author: String?) async throws -> KanbanDecomposeOutcome {
+        guard let task = tasks[id] else { throw KanbanMutationError.rejected("task \(id) not found") }
+        let child1 = "t_dec\(nextEventID)a"
+        let child2 = "t_dec\(nextEventID)b"
+        tasks[child1] = ("\(task.title) — part 1", "todo", task.assignee, task.priority)
+        tasks[child2] = ("\(task.title) — part 2", "todo", task.assignee, task.priority)
+        var taskLinks = links[id] ?? KanbanTaskLinks(parents: [], children: [])
+        taskLinks = KanbanTaskLinks(parents: taskLinks.parents, children: taskLinks.children + [child1, child2])
+        links[id] = taskLinks
+        notifyChange(id, "decomposed")
+        return KanbanDecomposeOutcome(ok: true, taskID: id, reason: nil, fanout: true, childIDs: [child1, child2], newTitle: task.title)
+    }
+
+    func reassignTask(id: String, profile: String?, reclaimFirst: Bool, reason: String?) async throws {
+        guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+        if reclaimFirst, tasks[id]?.status == "running" {
+            tasks[id]?.status = "ready"
+        }
+        tasks[id]?.assignee = profile
+        notifyChange(id, "reassigned")
+    }
+
+    func fetchAssignees() async throws -> [String] {
+        ["apple-dev", "apple-design", "apple-qa", "default"]
+    }
+
+    func orchestrationSettings() async throws -> KanbanOrchestrationSettings {
+        unlocked { orchestration }
+    }
+
+    func updateOrchestrationSettings(_ patch: KanbanOrchestrationPatch) async throws -> KanbanOrchestrationSettings {
+        unlocked {
+            if let p = patch.orchestratorProfile {
+                orchestration = KanbanOrchestrationSettings(
+                    orchestratorProfile: p,
+                    defaultAssignee: orchestration.defaultAssignee,
+                    autoDecompose: orchestration.autoDecompose,
+                    autoPromoteChildren: orchestration.autoPromoteChildren,
+                    resolvedOrchestratorProfile: p,
+                    resolvedDefaultAssignee: orchestration.resolvedDefaultAssignee,
+                    activeProfile: orchestration.activeProfile)
+            }
+            if let d = patch.defaultAssignee {
+                orchestration = KanbanOrchestrationSettings(
+                    orchestratorProfile: orchestration.orchestratorProfile,
+                    defaultAssignee: d,
+                    autoDecompose: orchestration.autoDecompose,
+                    autoPromoteChildren: orchestration.autoPromoteChildren,
+                    resolvedOrchestratorProfile: orchestration.resolvedOrchestratorProfile,
+                    resolvedDefaultAssignee: d,
+                    activeProfile: orchestration.activeProfile)
+            }
+            return orchestration
+        }
+    }
+
+    func dispatchNudge(dryRun: Bool, max: Int) async throws -> KanbanDispatchResult {
+        var spawned: [KanbanDispatchResult.Spawned] = []
+        if !dryRun {
+            for (id, task) in tasks where task.status == "ready" {
+                tasks[id]?.status = "running"
+                spawned.append(KanbanDispatchResult.Spawned(taskID: id, assignee: task.assignee ?? "default", workspacePath: "/tmp/kanban-\(id)"))
+                notifyChange(id, "claimed")
+            }
+        }
+        return KanbanDispatchResult(
+            reclaimed: 0, promoted: 0, spawned: spawned,
+            skippedUnassigned: [], skippedPerProfileCapped: [],
+            crashed: [], autoBlocked: [], timedOut: [], stale: [],
+            rateLimited: [], skippedLocked: false, memoryPressure: nil)
     }
 
     /// Async-safe scoped lock helper (NSLock is unavailable in async

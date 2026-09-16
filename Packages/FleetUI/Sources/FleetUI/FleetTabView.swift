@@ -2,21 +2,25 @@ import SwiftUI
 import FleetCore
 
 public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Codable {
-    case fleet, chats, bots, gateways
+    /// Build 41 order: Bots / Chats / Kanban / Fleet / Gateways — Bots is the
+    /// normal launch tab; Kanban is a first-class owning surface.
+    case bots, chats, kanban, fleet, gateways
     public var id: String { rawValue }
     public var label: String {
         switch self {
-        case .fleet: "Fleet"
-        case .chats: "Chats"
         case .bots: "Bots"
+        case .chats: "Chats"
+        case .kanban: "Kanban"
+        case .fleet: "Fleet"
         case .gateways: "Gateways"
         }
     }
     public var systemImage: String {
         switch self {
-        case .fleet: "square.grid.2x2"
-        case .chats: "bubble.left.and.bubble.right"
         case .bots: "cpu"
+        case .chats: "bubble.left.and.bubble.right"
+        case .kanban: "rectangle.split.3x1"
+        case .fleet: "square.grid.2x2"
         case .gateways: "server.rack"
         }
     }
@@ -106,6 +110,13 @@ public struct FleetTabView: View {
             if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
                 GatewayResourceView.resetStoredSelections()
             }
+            // Build 41: KANBAN_BOARD_RESET (deliberately separate from
+            // NAV_RESET — board-selection persistence is product behavior
+            // the B1 suite asserts) clears board selections for
+            // board-content determinism.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_BOARD_RESET"] == "1" {
+                KanbanBoardSelectionStore.clearAllPersistedSelections()
+            }
             await performAutoNavIfNeeded()
         }
     }
@@ -156,6 +167,7 @@ public struct FleetTabView: View {
         case .fleet: FleetDashboardView(environment: environment)
         case .chats: FleetChatsView(environment: environment)
         case .bots: FleetRosterView(environment: environment)
+        case .kanban: KanbanHomeView(environment: environment)
         case .gateways: GatewaysView(environment: environment)
         }
     }
@@ -197,10 +209,9 @@ public struct FleetTabView: View {
         case .gatewayHealth(let id):
             HealthDashboardView(environment: environment, gatewayID: id)
         case .kanban:
-            List(environment.gateways) { gateway in
-                NavigationLink(gateway.displayName, value: FleetScreen.gatewayKanban(gateway.id))
-                    .accessibilityIdentifier("fleet.kanban.gateway.\(gateway.id.rawValue)")
-            }.navigationTitle("Choose gateway")
+            // Legacy unscoped entry: land on the Kanban tab's chooser root
+            // (the tab is the authoritative Kanban surface now).
+            KanbanHomeView(environment: environment)
         case .gatewayKanban(let id, let board):
             KanbanBoardView(environment: environment, gatewayID: id, board: board)
         case .cron(let id, let profile), .skills(let id, let profile), .memoryGraph(let id, let profile), .projects(let id, let profile, _):

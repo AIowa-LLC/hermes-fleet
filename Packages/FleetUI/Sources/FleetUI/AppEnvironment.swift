@@ -1656,14 +1656,20 @@ public final class AppEnvironment {
 
     // MARK: Kanban board (t_3b321b7b)
 
-    /// Build the read-only kanban board watcher for a gateway. Nil when no
-    /// factory is wired (the screen renders its unavailable state, fail
-    /// closed).
+    /// Build a kanban board watcher for a gateway. Nil when no factory is
+    /// wired (the screen renders its unavailable state, fail closed).
     public func makeKanbanWatcher(for gateway: FleetGateway) -> (any KanbanBoardWatching)? {
         if let existing = kanbanWatchers[gateway.id] { return existing }
         guard let watcher = kanbanWatcherFactory?(gateway) else { return nil }
         kanbanWatchers[gateway.id] = watcher
         return watcher
+    }
+
+    /// Build 41: the mutation-capable board operator for a gateway. Nil
+    /// when the watcher does not conform to `KanbanBoardOperating` (the
+    /// board renders read-only, fail closed).
+    public func makeKanbanOperator(for gateway: FleetGateway) -> (any KanbanBoardOperating)? {
+        makeKanbanWatcher(for: gateway) as? any KanbanBoardOperating
     }
 
     // MARK: Management panes (R9-T5/T6 — cron + skills)

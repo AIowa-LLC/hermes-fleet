@@ -21,6 +21,7 @@ final class KanbanBoardUITests: XCTestCase {
     func testBoardEntryPushesReadOnlyBoard() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_KANBAN_BOARD_RESET"] = "1"
         app.launch()
 
         // FOS-4: open the board via Gateways → workstation cockpit (the Home
@@ -36,19 +37,20 @@ final class KanbanBoardUITests: XCTestCase {
         let todoHeader = app.staticTexts["Todo"]
         XCTAssertTrue(todoHeader.waitForExistence(timeout: 10), "the Todo column must render")
 
-        // Read-only: no card-create affordance anywhere on the board.
-        XCTAssertFalse(
-            app.buttons["Add Card"].exists,
-            "the board must not offer card creation (strictly read-only)"
+        // Build 41: the board is INTERACTIVE — creation is offered.
+        XCTAssertTrue(
+            app.buttons["kanban.board.add"].waitForExistence(timeout: 10),
+            "the board must offer card creation"
         )
 
-        attachScreenshot(of: app, name: "kanban-board-readonly")
+        attachScreenshot(of: app, name: "kanban-board-interactive")
     }
 
     func testLiveEventsUpdateBoardWithoutManualRefresh() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] = "1"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_KANBAN_BOARD_RESET"] = "1"
         app.launch()
 
         openKanbanEntry(app)
@@ -163,24 +165,21 @@ final class KanbanBoardUITests: XCTestCase {
     /// Kanban lives under Gateway Detail per FOS-2). Open the board via the
     /// canonical route: Gateways tab → gateway row → cockpit Kanban row,
     /// which pushes the GATEWAY-SCOPED route directly (no gateway picker).
+    /// Build 41: the canonical route is the Kanban TAB. The scripted fleet
+    /// has three gateways → the tab root renders the explicit chooser; pick
+    /// the workstation gateway to open its board.
     private func openKanbanEntry(_ app: XCUIApplication) {
-        let gatewaysTab = app.tabBars.firstMatch.buttons["Gateways"]
-        XCTAssertTrue(gatewaysTab.waitForExistence(timeout: 15), "the Gateways tab must exist")
-        gatewaysTab.tap()
-        let gatewayRow = firstMatch(in: app, identifier: "fleet.gateways.row.workstation")
+        let kanbanTab = app.tabBars.firstMatch.buttons["Kanban"]
+        XCTAssertTrue(kanbanTab.waitForExistence(timeout: 15), "the Kanban tab must exist")
+        kanbanTab.tap()
+        let gatewayRow = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
         if !gatewayRow.waitForExistence(timeout: 5) {
-            for _ in 0..<8 where !gatewayRow.exists { app.swipeUp(velocity: .slow) }
+            for _ in 0..<6 where !gatewayRow.exists { app.swipeUp(velocity: .slow) }
         }
-        XCTAssertTrue(gatewayRow.waitForExistence(timeout: 15), "the workstation gateway row must render")
+        XCTAssertTrue(
+            gatewayRow.waitForExistence(timeout: 15),
+            "the Kanban chooser must list the workstation gateway")
         gatewayRow.tap()
-        let cockpitRow = firstMatch(in: app, identifier: "fleet.gateway-detail.workstation.kanban")
-        if !cockpitRow.waitForExistence(timeout: 5) {
-            for _ in 0..<10 where !(cockpitRow.exists && cockpitRow.isHittable) {
-                app.swipeUp(velocity: .fast)
-            }
-        }
-        XCTAssertTrue(cockpitRow.waitForExistence(timeout: 15), "the cockpit Kanban row must render")
-        cockpitRow.tap()
     }
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {

@@ -6,14 +6,21 @@ import FleetCore
 /// Composition smoke tests: the app starts with a clean, inert fleet model.
 @MainActor
 final class AppCompositionTests: XCTestCase {
-    func testAppTabModelCoversFourOwningDomains() {
-        // U3: the root shell exposes exactly the five plan-of-record tabs, in
-        // order (Home / Bots / Gateways / Activity / Settings).
+    func testAppTabModelCoversFiveOwningDomains() {
+        // Build 41: the root shell exposes exactly the five plan-of-record
+        // tabs, in order (Bots / Chats / Kanban / Fleet / Gateways).
         XCTAssertEqual(
             FleetTab.allCases.map(\.label),
-            ["Fleet", "Chats", "Bots", "Gateways"],
-            "the tab bar must match the four approved domains in order"
+            ["Bots", "Chats", "Kanban", "Fleet", "Gateways"],
+            "the tab bar must match the five approved domains in order"
         )
+    }
+
+    func testBotsIsDefaultLaunchTab() {
+        XCTAssertEqual(
+            FleetNavigationState().selection,
+            .bots,
+            "Bots must be the normal launch tab (Build 41 navigation)")
     }
 
     func testEveryTabHasDistinctSymbolAndLabel() {
@@ -82,10 +89,13 @@ extension AppCompositionTests {
     }
 
     func testLegacyRootsResolveToOwningDomains() {
+        let id = GatewayID(rawValue: "a")
         XCTAssertEqual(FleetNavigationState.legacyTab("home"), .fleet)
         XCTAssertEqual(FleetNavigationState.legacyTab("control"), .gateways)
         XCTAssertEqual(FleetNavigationState.legacyTab("workspace"), .gateways)
-        XCTAssertEqual(FleetScreen.kanban.owner, .gateways)
+        // Build 41: the Kanban tab owns the Kanban experience.
+        XCTAssertEqual(FleetScreen.kanban.owner, .kanban)
+        XCTAssertEqual(FleetScreen.gatewayKanban(id).owner, .kanban)
     }
 }
 

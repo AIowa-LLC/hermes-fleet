@@ -30,6 +30,9 @@ public enum FleetScreen: Hashable, Sendable, Codable {
         case .roster, .bots, .botDetail, .botRoutines, .room, .gatewayGroups: .bots
         case .conversation(_, _, let canonical): canonical ? .bots : .chats
         case .activity: .fleet
+        // Build 41: Kanban owns the Kanban experience (from Gateway Detail
+        // too — routing into the tab with the gateway context selected).
+        case .kanban, .gatewayKanban: .kanban
         default: .gateways
         }
     }
@@ -57,7 +60,8 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
     /// Identifier for the UserDefaults-backed navigation-state store — not a secret.
     public static let storageKey = "fleet.navigation.v1" // gitleaks:allow
     public private(set) var version = 1
-    public var selection: FleetTab = .fleet
+    /// Build 41: Bots is the normal launch tab.
+    public var selection: FleetTab = .bots
     public var paths: [FleetTab: [FleetScreen]] = [:]
     public init() {}
 
@@ -83,7 +87,8 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
         case "home", "command", "fleet": .fleet
         case "chats": .chats
         case "bots", "roster": .bots
-        case "control", "gateways", "workspace", "projects", "kanban": .gateways
+        case "kanban", "board": .kanban
+        case "control", "gateways", "workspace", "projects": .gateways
         default: nil
         }
     }

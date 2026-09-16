@@ -29,25 +29,27 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     // MARK: 1. Four exact tabs + inline titles
 
-    func testFourExactTabsWithInlineTitles() throws {
+    func testFiveExactTabsWithInlineTitles() throws {
         let app = launch()
 
         let tabBar = app.tabBars.firstMatch
-        let labels = ["Fleet", "Chats", "Bots", "Gateways"]
+        let labels = ["Bots", "Chats", "Kanban", "Fleet", "Gateways"]
         for label in labels {
             XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
         }
         // EXACTLY four tabs (Control/Workspace retired).
         let tabLabels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
-        XCTAssertEqual(tabLabels.count, 4,
-                       "the tab bar must expose exactly four tabs (got \(tabLabels))")
+        XCTAssertEqual(tabLabels.count, 5,
+                       "the tab bar must expose exactly five tabs (got \(tabLabels))")
 
         // Inline navigation titles on all four roots (§6).
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Chats"].tap()
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Bots"].tap()
-        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Kanban"].tap()
+        XCTAssertTrue(app.navigationBars["Kanban"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Fleet"].tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Gateways"].tap()
         XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 10))
     }
@@ -56,6 +58,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     func testFleetToolbarHostsSettingsLeadingAndCommandCenterTrailing() throws {
         let app = launch()
+        app.tabBars.buttons["Fleet"].tap()
 
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.settings.open"].waitForExistence(timeout: 10),
@@ -96,7 +99,8 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     func testSettingsSheetOwnStackAndDone() throws {
         let app = launch()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Fleet"].tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10), "the Fleet tab must host its screen")
 
         app.buttons["fleet.settings.open"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
@@ -120,7 +124,8 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     func testCommandCenterShowsGatewayObjectsAndRoutesToOwningTabs() throws {
         let app = launch()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Fleet"].tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10), "the Fleet tab must host its screen")
 
         app.buttons["fleet.command-center.open"].tap()
         XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
@@ -150,7 +155,8 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     func testCommandCenterBotResultRoutesToBotsTab() throws {
         let app = launch()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Fleet"].tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10), "the Fleet tab must host its screen")
 
         app.buttons["fleet.command-center.open"].tap()
         XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
@@ -177,7 +183,8 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     func testCommandCenterSettingsEntryOpensSheet() throws {
         let app = launch()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Fleet"].tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10), "the Fleet tab must host its screen")
 
         app.buttons["fleet.command-center.open"].tap()
         XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
@@ -267,6 +274,8 @@ final class FOS3FourRootShellUITests: XCTestCase {
     // MARK: 6. Retired roots leave no residue
     func testRetiredControlAndWorkspaceRootsAreGone() throws {
         let app = launch()
+        app.tabBars.buttons["Fleet"].tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10), "the Fleet tab must host its screen")
 
         XCTAssertFalse(app.navigationBars["Control"].exists,
                        "the Control root must be retired")

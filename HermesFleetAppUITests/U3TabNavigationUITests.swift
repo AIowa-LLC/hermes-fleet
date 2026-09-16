@@ -19,24 +19,24 @@ final class U3TabNavigationUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testColdLaunchShowsFourTabsOnFleet() throws {
+    func testColdLaunchShowsFiveTabsOnBots() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
         // The root shell exposes four semantic destinations. On iPhone these
         // are a tab bar; on iPad the adaptive style renders another control.
-        for label in ["Fleet", "Chats", "Bots", "Gateways"] {
+        for label in ["Bots", "Chats", "Kanban", "Fleet", "Gateways"] {
             XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                 .waitForExistence(timeout: 15),
                 "root shell must include \(label)")
         }
 
-        // Fleet is the initial tab and shows the real dashboard (the scripted
-        // fleet's gateways render in the summary section — real data only).
+        // Build 41: Bots is the initial tab and shows the real roster (the
+        // scripted fleet's gateways render in the sections — real data only).
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 15),
-                      "Fleet should render the fleet dashboard with real scripted-fleet data")
-        XCTAssertTrue(app.navigationBars["Fleet"].exists, "Fleet tab is initially selected")
+                      "Bots should render the roster with real scripted-fleet data")
+        XCTAssertTrue(app.navigationBars["Bots"].exists, "Bots tab is initially selected")
         attachScreenshot(of: app, name: "u3-fleet-four-tabs")
     }
 

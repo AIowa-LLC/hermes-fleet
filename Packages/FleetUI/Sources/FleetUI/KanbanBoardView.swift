@@ -1,26 +1,29 @@
 import SwiftUI
 import FleetCore
 
-/// t_3b321b7b — the live read-only Kanban board (Gold Fleet design).
+/// Build 41 — the INTERACTIVE Kanban board.
 ///
 /// Renders the board snapshot as vertically scrolling sections (one per
 /// status column), each a horizontal lane of cards. Updates land live: the
 /// view model refetches the snapshot when stream events arrive — no manual
-/// refresh needed (pull-to-refresh exists as a recovery path, not the
-/// primary update mechanism).
+/// refresh needed (pull-to-refresh exists as a recovery path).
 ///
-/// READ-ONLY by construction: no create/edit/move/delete affordances, no
-/// drag-and-drop, no mutating context menus. Cards are informational
-/// surfaces only.
-///
-/// Empty/error states are honest: no gateways → onboarding hint; fetch
-/// failed → the error with a Retry; empty board → says so.
+/// Build 41: cards are actionable — tap opens full detail; context menu
+/// offers status moves; toolbar hosts create + filters + multi-select bulk
+/// mode + orchestration. When the gateway has no board operator the board
+/// degrades to the honest read-only presentation (fail closed).
 public struct KanbanBoardView: View {
     @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let initialBoard: String?
     @State private var model: KanbanBoardViewModel?
+    @State private var showingCreate = false
+    @State private var showingFilters = false
+    @State private var showingOrchestration = false
+    @State private var selectedTaskIDs: Set<String> = []
+    @State private var selectMode = false
+    @State private var detailCard: KanbanDetailPresentation?
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, board: String? = nil) {
         self.environment = environment
@@ -39,13 +42,22 @@ public struct KanbanBoardView: View {
         .background(theme.background)
         .navigationTitle("Kanban")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            // t_624b81cd (B1): board picker — client-side selection only.
-            // Switching re-targets snapshot + WS; the gateway operator's
-            // active-board pointer is never touched (no /boards/{slug}/switch).
-            ToolbarItem(placement: .navigationBarTrailing) {
-                boardPickerMenu(model: model)
-            }
+        .toolbar { kanbanToolbar }
+        .sheet(isPresented: $showingCreate) {
+            KanbanTaskCreateView(model: model)
+        }
+        .sheet(isPresented: $showingFilters) {
+            KanbanFilterView(model: model)
+        }
+        .sheet(isPresented: $showingOrchestration) {
+            KanbanOrchestrationView(model: model)
+        }
+        .sheet(item: $detailCard) { presentation in
+            KanbanTaskDetailView(
+                environment: environment,
+                gatewayID: gatewayID,
+                taskID: presentation.taskID,
+                model: model)
         }
         .task(id: boardGatewayID) {
             // (Re)bind the model whenever the board's source gateway changes
@@ -60,7 +72,11 @@ public struct KanbanBoardView: View {
                 model = nil
                 return
             }
-            let next = KanbanBoardViewModel(watcher: watcher, selectionStore: KanbanBoardSelectionStore(gatewayID: gatewayID))
+            let boardOperator = environment.makeKanbanOperator(for: gateway)
+            let next = KanbanBoardViewModel(
+                watcher: watcher,
+                boardOperator: boardOperator,
+                selectionStore: KanbanBoardSelectionStore(gatewayID: gatewayID))
             await model?.stop()
             model = next
             await next.start(board: initialBoard)
@@ -75,13 +91,74 @@ public struct KanbanBoardView: View {
     }
     private var boardGatewayID: GatewayID? { boardGateway?.id }
 
-    // MARK: Board picker (t_624b81cd — B1)
+    // MARK: Toolbar (board picker + select + add + menu)
+
+    @ToolbarContentBuilder
+    private var kanbanToolbar: some ToolbarContent {
+        // t_624b81cd (B1): board picker — client-side selection only.
+        ToolbarItem(placement: .navigationBarTrailing) {
+            boardPickerMenu
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if let model, model.canMutate, !selectMode {
+                Button {
+                    showingCreate = true
+                } label: {
+                    Label("Add Card", systemImage: "plus")
+                }
+                .accessibilityIdentifier("kanban.board.add")
+            }
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Menu {
+                if let model, model.canMutate {
+                    if selectMode {
+                        Button {
+                            selectedTaskIDs.removeAll()
+                            selectMode = false
+                        } label: {
+                            Label("Done Selecting", systemImage: "checkmark.circle")
+                        }
+                        .accessibilityIdentifier("kanban.board.select.done")
+                    } else {
+                        Button {
+                            selectMode = true
+                        } label: {
+                            Label("Select Cards", systemImage: "checkmark.circle.circle")
+                        }
+                        .accessibilityIdentifier("kanban.board.select.start")
+                    }
+                    Button {
+                        Task { await model.dispatchNudge() }
+                    } label: {
+                        Label("Dispatch now", systemImage: "bolt")
+                    }
+                    .accessibilityIdentifier("kanban.board.dispatch")
+                    Button {
+                        showingOrchestration = true
+                    } label: {
+                        Label("Orchestration", systemImage: "slider.horizontal.3")
+                    }
+                    .accessibilityIdentifier("kanban.board.orchestration")
+                }
+                Button {
+                    showingFilters = true
+                } label: {
+                    Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                .accessibilityIdentifier("kanban.board.filters")
+            } label: {
+                Label("Board menu", systemImage: "ellipsis.circle")
+            }
+            .accessibilityIdentifier("kanban.board.menu")
+        }
+    }
 
     /// Toolbar menu listing gateway boards: checkmark on the displayed
-    /// board, "active" note on the operator's current board. Hidden until
+    /// board, "(active)" note on the operator's current board. Hidden until
     /// the boards list loads (single-board gateways look unchanged).
     @ViewBuilder
-    private func boardPickerMenu(model: KanbanBoardViewModel?) -> some View {
+    private var boardPickerMenu: some View {
         if let model, !model.boards.isEmpty {
             Menu {
                 ForEach(model.boards) { board in
@@ -91,12 +168,12 @@ public struct KanbanBoardView: View {
                                 board.slug == model.selectedBoard ? nil : board.slug)
                         }
                     } label: {
-                        HStack {
-                            if board.slug == model.selectedBoard {
-                                Label(board.name, systemImage: "checkmark")
-                            } else {
-                                Text(board.name)
-                            }
+                        if board.slug == model.selectedBoard {
+                            Label(board.name, systemImage: "checkmark")
+                        } else if board.isCurrent {
+                            Text("\(board.name) (active)")
+                        } else {
+                            Text(board.name)
                         }
                     }
                 }
@@ -116,40 +193,138 @@ public struct KanbanBoardView: View {
         }
     }
 
-    // MARK: Board
+    // MARK: Board content
 
     @ViewBuilder
     private var boardContent: some View {
         if let model {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
-                    if model.isLoading && model.snapshot == nil {
-                        loadingContent
-                    } else if let snapshot = model.snapshot {
-                        streamBanner(model)
-                        if snapshot.totalCards == 0 {
-                            emptyBoardContent
-                        } else {
-                            ForEach(snapshot.columns, id: \.self) { column in
-                                KanbanColumnSection(
-                                    title: column,
-                                    cards: snapshot.cards(in: column)
-                                )
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
+                        if model.isLoading && model.snapshot == nil {
+                            loadingContent
+                        } else if let snapshot = model.filteredSnapshot {
+                            streamBanner(model)
+                            noticeBars(model)
+                            if snapshot.totalCards == 0 {
+                                emptyBoardContent(model)
+                            } else {
+                                // ONE branch (not an if/else fork): a
+                                // LazyVStack keeps its cached children when
+                                // the branch STRUCTURE changes — a single
+                                // ForEach whose parameters carry the mode
+                                // re-diffs correctly.
+                                ForEach(snapshot.columns, id: \.self) { column in
+                                    KanbanColumnSection(
+                                        title: column,
+                                        cards: snapshot.cards(in: column),
+                                        selectMode: selectMode,
+                                        isSelected: { selectedTaskIDs.contains($0) },
+                                        onToggleSelect: { id in
+                                            if selectedTaskIDs.contains(id) {
+                                                selectedTaskIDs.remove(id)
+                                            } else {
+                                                selectedTaskIDs.insert(id)
+                                            }
+                                        },
+                                        onMove: selectMode ? nil : { id, status in
+                                            Task { await model.moveTask(id: id, to: status) }
+                                        },
+                                        onCardTap: selectMode ? nil : { card in
+                                            detailCard = KanbanDetailPresentation(taskID: card.id)
+                                        })
+                                }
                             }
+                        } else if let error = model.errorMessage {
+                            errorContent(error, model: model)
                         }
-                    } else if let error = model.errorMessage {
-                        errorContent(error, model: model)
+                        if !model.recentEvents.isEmpty && !selectMode {
+                            activityStrip(model)
+                        }
                     }
-                    if !model.recentEvents.isEmpty {
-                        activityStrip(model)
-                    }
+                    .padding(FleetTheme.spacingLg)
                 }
-                .padding(FleetTheme.spacingLg)
+                .refreshable { await model.refresh() }
+                if selectMode && !selectedTaskIDs.isEmpty {
+                    bulkActionBar(model)
+                        .padding(.horizontal, FleetTheme.spacingLg)
+                        .padding(.bottom, FleetTheme.spacingMd)
+                }
             }
-            .refreshable { await model.refresh() }
         } else {
             loadingContent
         }
+    }
+
+    /// Mutation/auxiliary outcome banners (hidden in select mode).
+    @ViewBuilder
+    private func noticeBars(_ model: KanbanBoardViewModel) -> some View {
+        if let message = model.mutationErrorMessage {
+            FleetNoticeBar(
+                message,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .error,
+                id: "kanban.board.mutation-error",
+                actionTitle: "Dismiss",
+                actionID: "kanban.board.mutation-error.dismiss",
+                action: { model.mutationErrorMessage = nil })
+        }
+        if let message = model.auxOutcomeMessage {
+            FleetNoticeBar(
+                message,
+                systemImage: "sparkles",
+                id: "kanban.board.aux-note",
+                actionTitle: "Dismiss",
+                actionID: "kanban.board.aux.dismiss",
+                action: { model.auxOutcomeMessage = nil })
+        }
+    }
+
+    /// Bulk action bar: move/unassign/archive the selected set.
+    private func bulkActionBar(_ model: KanbanBoardViewModel) -> some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Menu {
+                ForEach(KanbanStatus.settable, id: \.self) { status in
+                    Button(status.capitalized) {
+                        Task {
+                            await model.bulkUpdate(
+                                KanbanBulkPatch(ids: Array(selectedTaskIDs), status: status))
+                            selectedTaskIDs.removeAll()
+                        }
+                    }
+                }
+                Button("Unassign") {
+                    Task {
+                        await model.bulkUpdate(
+                            KanbanBulkPatch(ids: Array(selectedTaskIDs), assignee: ""))
+                        selectedTaskIDs.removeAll()
+                    }
+                }
+                Button("Archive", role: .destructive) {
+                    Task {
+                        await model.bulkUpdate(
+                            KanbanBulkPatch(ids: Array(selectedTaskIDs), archive: true))
+                        selectedTaskIDs.removeAll()
+                    }
+                }
+            } label: {
+                Label("Move", systemImage: "arrow.right.circle")
+            }
+            .accessibilityIdentifier("kanban.board.bulk.move")
+            Text("\(selectedTaskIDs.count) selected")
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+            Button {
+                selectedTaskIDs.removeAll()
+            } label: {
+                Label("Clear", systemImage: "xmark.circle")
+            }
+            .accessibilityIdentifier("kanban.board.bulk.clear")
+        }
+        .padding(FleetTheme.spacingMd)
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusRow, style: .continuous))
     }
 
     private func streamBanner(_ model: KanbanBoardViewModel) -> some View {
@@ -198,12 +373,22 @@ public struct KanbanBoardView: View {
         .accessibilityIdentifier("kanban.board.loading")
     }
 
-    private var emptyBoardContent: some View {
-        FleetNoticeBar(
-            "No cards on this board yet.",
-            systemImage: "rectangle.stack",
-            id: "kanban.board.empty"
-        )
+    private func emptyBoardContent(_ model: KanbanBoardViewModel) -> some View {
+        VStack(spacing: FleetTheme.spacingMd) {
+            FleetNoticeBar(
+                "No cards on this board yet.",
+                systemImage: "rectangle.stack",
+                id: "kanban.board.empty")
+            if model.canMutate {
+                Button {
+                    showingCreate = true
+                } label: {
+                    Label("Add Card", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("kanban.board.empty.add")
+            }
+        }
     }
 
     private func errorContent(_ message: String, model: KanbanBoardViewModel) -> some View {
@@ -214,8 +399,7 @@ public struct KanbanBoardView: View {
             id: "kanban.board.error",
             actionTitle: "Retry",
             actionID: "kanban.board.retry",
-            action: { Task { await model.refresh() } }
-        )
+            action: { Task { await model.refresh() } })
     }
 
     private var emptyGatewaysContent: some View {
@@ -259,125 +443,11 @@ public struct KanbanBoardView: View {
     }
 }
 
-// MARK: - Column section
-
-/// One status column: header (name + count) + horizontal lane of cards.
-struct KanbanColumnSection: View {
-    @Environment(\.fleetTheme) private var theme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    let title: String
-    let cards: [KanbanCard]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            // FOS-7 (SPEC §14): sentence-case column label + mono count
-            // chip + a hairline divider structuring the lane. The column
-            // title itself is DATA (UI-test landmark).
-            HStack(spacing: FleetTheme.spacingSm) {
-                Text(title.capitalized)
-                    .font(FleetTheme.sectionHeaderFont)
-                    .foregroundStyle(theme.textSecondary)
-                Text("\(cards.count)")
-                    .font(FleetTheme.monoCaptionFont.monospacedDigit())
-                    .foregroundStyle(theme.textSecondary)
-                    // V4 motion: live board counts settle instead of swap.
-                    .contentTransition(.numericText())
-                    .padding(.horizontal, FleetTheme.spacingSm)
-                    .padding(.vertical, 2)
-                    .background(theme.surface)
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(title.capitalized), \(cards.count) cards")
-            // V4 motion: animation context for the count chip's numeric
-            // transition (fires when the live snapshot re-counts the lane).
-            .animation(.easeOut(duration: 0.18), value: cards.count)
-            Rectangle()
-                .fill(theme.border)
-                .frame(height: 0.5)
-
-            if cards.isEmpty {
-                Text("No cards")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(theme.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(FleetTheme.spacingSm)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: FleetTheme.spacingMd) {
-                        ForEach(cards) { card in
-                            KanbanCardView(card: card)
-                        }
-                    }
-                    .padding(.vertical, 1)
-                }
-                .accessibilityElement(children: .contain)
-            }
-        }
-    }
-}
-
-// MARK: - Card
-
-/// One read-only task card — a plain informational surface.
-struct KanbanCardView: View {
-    @Environment(\.fleetTheme) private var theme
-    let card: KanbanCard
-
-    var body: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                Text(card.title)
-                    .font(FleetTheme.sectionHeaderFont)
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(2)
-                if let assignee = card.assignee {
-                    Label(assignee, systemImage: "person.crop.circle")
-                        .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
-                }
-                if let summary = card.latestSummary, !summary.isEmpty {
-                    Text(summary)
-                        .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(3)
-                }
-                HStack(spacing: FleetTheme.spacingSm) {
-                    if let createdAt = card.createdAt {
-                        // V3: relative age is telemetry — mono caption.
-                        Text(Self.relativeAge(createdAt))
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    Spacer()
-                    // V3: the card ID is machine data — mono, muted.
-                    Text(card.id)
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(theme.textMuted)
-                        .lineLimit(1)
-                }
-            }
-            .frame(width: 220, alignment: .leading)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityDescription)
-    }
-
-    private var accessibilityDescription: String {
-        var parts = [card.title]
-        parts.append("status \(card.status)")
-        if let assignee = card.assignee { parts.append("assigned to \(assignee)") }
-        return parts.joined(separator: ", ")
-    }
-
-    /// Short relative age from the card's creation epoch seconds.
-    static func relativeAge(_ createdAt: Double) -> String {
-        let interval = Date().timeIntervalSince1970 - createdAt
-        if interval < 60 { return "just now" }
-        if interval < 3_600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86_400 { return "\(Int(interval / 3_600))h ago" }
-        return "\(Int(interval / 86_400))d ago"
+/// Identifiable task-id wrapper for `.sheet(item:)` card detail presentation.
+public struct KanbanDetailPresentation: Identifiable, Sendable {
+    public let taskID: String
+    public var id: String { taskID }
+    public init(taskID: String) {
+        self.taskID = taskID
     }
 }
