@@ -188,14 +188,6 @@ public struct ConversationView: View {
                 sessionID: newChatTargetSessionID
             )
         }
-        // Slash parity: a prefill directive REPLACES the composer draft
-        // (never auto-submits) and returns focus for editing.
-        .onChange(of: model.prefillText) { _, prefill in
-            guard let prefill, !prefill.isEmpty else { return }
-            composerText = prefill
-            composerFocused = true
-            model.consumePrefill()
-        }
     }
 
     /// Two-way binding for the /new push: entering pushes the fresh
@@ -1241,7 +1233,15 @@ public struct ConversationView: View {
         let text = composerText
         sendPulse += 1
         if await model.send(text) {
-            composerText = ""
+            // A prefill directive (e.g. /undo) REPLACES the draft instead of
+            // clearing: adopted synchronously here so the composer's clear
+            // can never race the onChange path.
+            if let prefill = model.consumePrefill() {
+                composerText = prefill
+                composerFocused = true
+            } else {
+                composerText = ""
+            }
         }
     }
 

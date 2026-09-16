@@ -1494,9 +1494,13 @@ public final class ConversationViewModel {
         commandNavigation = nil
     }
 
-    /// Clear the adopted prefill (view consumed it). Same re-fire rationale.
-    public func consumePrefill() {
-        prefillText = nil
+    /// Hand the pending prefill to the view and clear it. Called synchronously
+    /// by the composer's submit path AFTER send() returns, so the composer
+    /// adopts the draft deterministically instead of racing an onChange
+    /// against its own post-submit clear.
+    public func consumePrefill() -> String? {
+        defer { prefillText = nil }
+        return prefillText
     }
 
     /// Refresh the context meter after a completed turn (the streamed ticks

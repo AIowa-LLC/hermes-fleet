@@ -144,7 +144,7 @@ final class Issue4SlashSkillUITests: XCTestCase {
 
         let error = element(in: app, identifier: "fleet.conversation.command.error")
         XCTAssertTrue(error.waitForExistence(timeout: 10), "stale dispatch should show an inline error")
-        XCTAssertTrue(error.label.contains("no longer an available skill"), "stale error should be actionable: \(error.label)")
+        XCTAssertTrue(error.label.contains("no longer available"), "stale error should be actionable: \(error.label)")
         XCTAssertEqual(composerValue(composer), invocation, "failed dispatch should leave slash text editable")
         XCTAssertFalse(
             conversationRow(in: app, containing: "stale invocation", timeout: 2) != nil,
