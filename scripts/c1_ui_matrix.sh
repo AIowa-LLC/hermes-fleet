@@ -40,6 +40,7 @@ UI_CLASSES=(
   R9ConversationTooling R9ManagementPanes R9MemoryGraph R10AttachmentTray
   R10MessageReactions R10ProjectsBrowser R10Voice R10MemoryGraphEdit
   Issue4SlashSkill Issue5StreamingRichText
+  ConversationCompactChrome
   FleetSettingsAccent BotRoutines RoomChat RoomLinkMentions
   FOS2GatewayDetail FOS3FourRootShell FOS4TruthfulHome
   FOS5BotsGroupsChats FOS6ComponentDensity

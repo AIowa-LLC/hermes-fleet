@@ -25,6 +25,8 @@ final class SecondGenerationUITests: XCTestCase {
         composer.typeText("Show the timeline")
         app.buttons["fleet.conversation.send"].tap()
         capture("revamp-conversation")
+        // Dogfood top-space fix: the timeline affordance moved from the
+        // permanent transcript inset into the navigation toolbar.
         let timeline = app.buttons["fleet.conversation.timeline.open"]
         XCTAssertTrue(timeline.waitForExistence(timeout: 10))
         timeline.tap()

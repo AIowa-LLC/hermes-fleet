@@ -81,7 +81,9 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // for jumping to a loaded turn and avoids gesture/keyboard timing
         // variance when the rich assistant row is much taller than the
         // viewport.
-        let timeline = app.descendants(matching: .any)["fleet.conversation.timeline.open"]
+        // Dogfood top-space fix: the timeline affordance moved from the
+        // permanent transcript inset into the navigation toolbar.
+        let timeline = app.buttons["fleet.conversation.timeline.open"]
         XCTAssertTrue(timeline.waitForExistence(timeout: 10),
                       "conversation timeline should expose loaded turns")
         timeline.tap()

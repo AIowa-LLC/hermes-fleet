@@ -21,8 +21,13 @@ public struct ConversationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showingTimeline = false
     @State private var followingLatest = true
+    /// Dogfood top-space fix: bumped by the toolbar/menu "Latest" action;
+    /// the transcript scrolls to the live bottom on change (the toolbar
+    /// cannot reach the ScrollViewReader proxy directly).
+    @State private var scrollPulse = 0
     private let environment: AppEnvironment
     private let route: Route
     private let sessionID: String?
@@ -76,6 +81,10 @@ public struct ConversationView: View {
             }
         }
         .navigationTitle(screenTitle)
+        // Dogfood top-space fix: the conversation is a compact chat surface,
+        // never a large-title screen — the transcript must begin high. The
+        // bot identity/status move into the nav bar + one compact header row.
+        .navigationBarTitleDisplayMode(.inline)
         .task {
             if viewModel == nil {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
@@ -122,7 +131,9 @@ public struct ConversationView: View {
         VStack(spacing: 0) {
             botHeader(model)
             bannerArea(model)
-            // R9-T4: transient tooling notices (fork/rename failures).
+            // R9-T4: transient tooling notices (fork/rename failures) —
+            // renders nothing when clear, so the steady-state chrome stays
+            // one banner; failures are never silenced.
             if let toolingModel = model.toolingViewModel {
                 ToolingNoticeBanner(model: toolingModel)
             }
@@ -188,6 +199,95 @@ public struct ConversationView: View {
                 sessionID: newChatTargetSessionID
             )
         }
+        // Dogfood top-space fix: status + timeline actions live in the inline
+        // navigation bar. The pill keeps its live activity/presence
+        // semantics (`headerPillStatus`); the timeline surfaces move OFF the
+        // transcript's permanent 44pt top inset into toolbar items.
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                StatusPill(status: headerPillStatus(bot: environment.bot(for: route), model: model))
+                    .accessibilityIdentifier("fleet.conversation.status")
+            }
+            // Distinct tap targets per action (a bare HStack in one
+            // ToolbarItem can merge hit areas on iOS 26).
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    timelineCollapsibleMenu
+                } else {
+                    timelineOpenButton
+                    latestButton
+                }
+            }
+        }
+    }
+
+    /// Opens the loaded-turns timeline sheet directly (default sizes).
+    @ViewBuilder
+    private var timelineOpenButton: some View {
+        if hasUserTurns {
+            Button {
+                showingTimeline = true
+            } label: {
+                Image(systemName: "list.bullet.indent")
+            }
+            .accessibilityLabel("Timeline")
+            .accessibilityIdentifier("fleet.conversation.timeline.open")
+        }
+    }
+
+    /// Jump-to-latest — rendered only when the user has scrolled away from
+    /// the live bottom (same condition as the removed permanent row).
+    @ViewBuilder
+    private var latestButton: some View {
+        if showingJumpToLatest {
+            Button {
+                followingLatest = true
+                scrollPulse += 1
+            } label: {
+                Image(systemName: "arrow.down.to.line")
+            }
+            .accessibilityLabel("Latest")
+            .accessibilityIdentifier("fleet.conversation.timeline.latest")
+        }
+    }
+
+    /// Accessibility-size collapse: one menu carrying both actions.
+    @ViewBuilder
+    private var timelineCollapsibleMenu: some View {
+        if hasUserTurns {
+            Menu {
+                Button {
+                    showingTimeline = true
+                } label: {
+                    Label("Timeline", systemImage: "list.bullet.indent")
+                }
+                .accessibilityIdentifier("fleet.conversation.timeline.open")
+                Button {
+                    followingLatest = true
+                    scrollPulse += 1
+                } label: {
+                    Label("Latest", systemImage: "arrow.down.to.line")
+                }
+                .accessibilityIdentifier("fleet.conversation.timeline.latest")
+            } label: {
+                Image(systemName: "list.bullet.indent")
+            }
+            .accessibilityLabel("Timeline")
+            .accessibilityIdentifier("fleet.conversation.timeline.menu")
+        }
+    }
+
+    /// Whether any loaded user turn exists (same condition the removed
+    /// permanent row used to gate its rendering).
+    private var hasUserTurns: Bool {
+        viewModel?.transcript.contains(where: { $0.kind == .user }) ?? false
+    }
+
+    /// The transcript follows the live bottom until the user scrolls away;
+    /// this drives the "Latest" affordance (same semantics as the removed
+    /// inset row — manual scroll-off cancels following).
+    private var showingJumpToLatest: Bool {
+        hasUserTurns && !followingLatest
     }
 
     /// Two-way binding for the /new push: entering pushes the fresh
@@ -214,103 +314,104 @@ public struct ConversationView: View {
         )
     }
 
-    // MARK: Bot header (U6 — hero mock screen 2)
+    // MARK: Bot header (dogfood top-space fix — one compact row)
 
-    /// Bot identity header: avatar, display name, canonical route, and a
-    /// status pill, on the surface color with a hairline bottom border.
-    /// The pill shows the roster bot's live activity when the route resolves;
-    /// otherwise it projects the conversation phase onto the four pill states
-    /// (never fabricates a livelier state than the connection has).
+    /// Compact single-row bot header: avatar + identity + session context
+    /// leading; steer/yolo controls, model chip, and context meter trailing.
+    /// The StatusPill moved into the INLINE navigation bar (beside the
+    /// title), so no permanent row is spent on status. At accessibility
+    /// Dynamic Type sizes the secondary metadata (chip/meter) drops out
+    /// instead of squeezing the bot name; the chip stays reachable via the
+    /// session-actions menu.
     private func botHeader(_ model: ConversationViewModel) -> some View {
         let bot = environment.bot(for: route)
         let name = bot?.displayName ?? route.profileSlug.rawValue
-        return VStack(spacing: 0) {
-            HStack(spacing: FleetTheme.spacingMd) {
-                BotAvatar(bot: bot, management: environment.botManagement)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .lineLimit(1)
-                    Text(model.sessionTitle ?? route.id)
-                        .font(FleetTheme.monoCaptionFont)
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer()
-                // R9-T4: steer/rename/fork menu.
-                if let toolingModel = model.toolingViewModel {
-                    SessionSteerControls(
-                        model: toolingModel,
-                        isStreaming: model.isStreaming,
-                        sessionTitle: model.sessionTitle
-                    ) { forked in
-                        // The fork result lands on the conversation VM
-                        // (forkedSession) — navigated by the canvas binding.
-                    }
-                }
-                // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
-                // on enable). Hidden when the session has no approvals seam.
-                if let approvalModel = model.approvalViewModel {
-                    SessionYoloToggle(model: approvalModel)
-                }
-                StatusPill(status: headerPillStatus(bot: bot, model: model))
+        return HStack(spacing: FleetTheme.spacingMd) {
+            BotAvatar(bot: bot, management: environment.botManagement)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("fleet.conversation.header.name")
+                Text(model.sessionTitle ?? route.id)
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .padding(.horizontal, FleetTheme.spacingLg)
-            .padding(.vertical, FleetTheme.spacingSm)
-            // R9-T2/T3: model chip + live context meter sub-row. The chip
-            // shows the sticky pick (or the session's model readback); the
-            // meter renders only with tooling (absent data → hidden).
-            if model.toolingViewModel != nil {
-                HStack(spacing: FleetTheme.spacingSm) {
-                    Button {
-                        showingModelPicker = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "cpu")
-                                .font(.caption2)
-                                .foregroundStyle(theme.textSecondary)
-                            Text(model.toolingViewModel?.selectedModel?.shortName
-                                 ?? model.sessionModel?.split(separator: "·").first.map(String.init)?.trimmingCharacters(in: .whitespaces)
-                                 ?? "model")
-                                .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(
-                                    model.toolingViewModel?.selectedModel != nil
-                                        ? theme.highlight
-                                        : theme.textSecondary
-                                )
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(theme.background, in: Capsule())
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Model picker")
-                    .accessibilityValue(model.toolingViewModel?.selectedModel?.model ?? "profile default")
-                    .accessibilityHint("Choose the model for new chats on this device")
-                    .accessibilityIdentifier("model.chip")
-                    Spacer()
-                    if let toolingModel = model.toolingViewModel {
-                        ContextMeterView(model: toolingModel) {
-                            showingContextBreakdown = true
-                        }
+            Spacer(minLength: FleetTheme.spacingSm)
+            // Accessibility sizes: primary identity gets the row; secondary
+            // metadata hides (chip + meter remain reachable via the menu).
+            if !dynamicTypeSize.isAccessibilitySize {
+                modelChipButton(model)
+                if let toolingModel = model.toolingViewModel {
+                    ContextMeterView(model: toolingModel) {
+                        showingContextBreakdown = true
                     }
                 }
-                .padding(.horizontal, FleetTheme.spacingLg)
-                .padding(.vertical, 6)
+            }
+            // R9-T4: steer/rename/fork menu.
+            if let toolingModel = model.toolingViewModel {
+                SessionSteerControls(
+                    model: toolingModel,
+                    isStreaming: model.isStreaming,
+                    sessionTitle: model.sessionTitle
+                ) { _ in
+                    // The fork result lands on the conversation VM
+                    // (forkedSession) — navigated by the canvas binding.
+                }
+            }
+            // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
+            // on enable). Hidden when the session has no approvals seam.
+            if let approvalModel = model.approvalViewModel {
+                SessionYoloToggle(model: approvalModel)
             }
         }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, FleetTheme.spacingSm)
         .background(theme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(theme.border)
                 .frame(height: 1)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.conversation.header")
+    }
+
+    /// The compact model chip (no longer its own dedicated full-width row).
+    /// The chip shows the sticky pick (or the session's model readback);
+    /// tap opens the picker. Same identifiers and semantics as before.
+    private func modelChipButton(_ model: ConversationViewModel) -> some View {
+        Button {
+            showingModelPicker = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "cpu")
+                    .font(.caption2)
+                    .foregroundStyle(theme.textSecondary)
+                Text(model.toolingViewModel?.selectedModel?.shortName
+                     ?? model.sessionModel?.split(separator: "·").first.map(String.init)?.trimmingCharacters(in: .whitespaces)
+                     ?? "model")
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(
+                        model.toolingViewModel?.selectedModel != nil
+                            ? theme.highlight
+                            : theme.textSecondary
+                    )
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(theme.background, in: Capsule())
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityLabel("Model picker")
+        .accessibilityValue(model.toolingViewModel?.selectedModel?.model ?? "profile default")
+        .accessibilityHint("Choose the model for new chats on this device")
+        .accessibilityIdentifier("model.chip")
     }
 
     private func headerPillStatus(bot: FleetBot?, model: ConversationViewModel) -> FleetStatus {
@@ -340,37 +441,32 @@ public struct ConversationView: View {
 
     // MARK: Status / reconnect / replay / auth banners
 
+    /// Compact banner chrome (dogfood top-space fix): exactly ONE banner —
+    /// the highest-priority surface for the current state (see
+    /// `ConversationBannerSelector`). Actionable failure states keep their
+    /// Reconnect / Re-authenticate buttons and identifiers; networking and
+    /// session semantics are untouched.
     @ViewBuilder
     private func bannerArea(_ model: ConversationViewModel) -> some View {
-        VStack(spacing: 0) {
-            if let integrityNotice = model.integrityNotice, model.phase != .streaming {
-                banner(text: integrityNotice, symbol: "checkmark.shield", tint: FleetTheme.statusDestructive)
-            }
-            if let replayNotice = model.replayNotice, model.phase != .streaming {
-                banner(text: replayNotice, symbol: "arrow.triangle.2.circlepath", tint: theme.highlight)
-            }
-            switch model.phase {
-            case .idle, .opening:
-                banner(text: "Opening conversation…", symbol: "hourglass", tint: theme.textSecondary, spinner: true)
-            case .connecting:
-                banner(text: "Connecting…", symbol: "bolt.horizontal", tint: theme.textSecondary, spinner: true)
-            case .reconnecting:
-                banner(text: "Reconnecting…", symbol: "arrow.clockwise", tint: theme.textSecondary, spinner: true)
-            case .disconnected:
-                HStack(spacing: 12) {
-                    banner(text: "Connection lost — replayed history is shown. Reconnect to continue.",
-                           symbol: "wifi.slash", tint: FleetTheme.statusDestructive)
+        if let banner = ConversationBannerSelector.select(
+            phase: model.phase,
+            integrityNotice: model.integrityNotice,
+            replayNotice: model.replayNotice,
+            hydratedFromCache: model.hydratedFromCache,
+            historyLoadError: model.historyLoadError,
+            errorMessage: model.errorMessage
+        ) {
+            HStack(spacing: 12) {
+                bannerBody(banner)
+                switch banner.kind {
+                case .disconnected:
                     Button("Reconnect") {
                         Task { await model.reconnect() }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reconnect")
-                }
-            case .authRequired:
-                HStack(spacing: 12) {
-                    banner(text: model.errorMessage ?? "Authentication required.",
-                           symbol: "exclamationmark.lock", tint: FleetTheme.statusDestructive)
+                case .authRequired:
                     Button("Re-authenticate") {
                         Task { await model.reauthenticate() }
                     }
@@ -378,48 +474,41 @@ public struct ConversationView: View {
                     .tint(theme.highlight)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
-                }
-            case .failed(let detail):
-                banner(text: detail, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDestructive)
-            case .ready, .streaming:
-                if model.hydratedFromCache {
-                    banner(text: "Showing saved history — connecting for live updates.",
-                           symbol: "internaldrive", tint: theme.textSecondary)
-                } else if let historyError = model.historyLoadError {
-                    // H1: the authoritative fetch failed — cached rows (if
-                    // any) stay rendered; honest, non-secret notice.
-                    banner(text: historyError, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDestructive)
-                } else if let errorMessage = model.errorMessage {
-                    banner(text: errorMessage, symbol: "exclamationmark.triangle", tint: FleetTheme.statusDestructive)
+                default:
+                    EmptyView()
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(theme.surface)
         }
-        .animation(.default, value: model.phase)
     }
 
-    private func banner(
-        text: String,
-        symbol: String,
-        tint: Color,
-        spinner: Bool = false
-    ) -> some View {
+    /// One banner row: spinner (progress states) or glyph + text.
+    private func bannerBody(_ banner: ConversationBanner) -> some View {
         HStack(spacing: 8) {
-            if spinner {
+            if banner.kind.showsSpinner {
                 ProgressView().controlSize(.small)
             } else {
-                Image(systemName: symbol)
-                    .foregroundStyle(tint)
+                Image(systemName: banner.kind.symbolName)
+                    .foregroundStyle(bannerTint(banner.kind))
             }
-            Text(text)
+            Text(banner.text)
                 .font(.caption)
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(theme.surface)
         .accessibilityElement(children: .combine)
+    }
+
+    private func bannerTint(_ kind: ConversationBannerKind) -> Color {
+        switch kind {
+        case .integrity, .disconnected, .authRequired, .failed:
+            return FleetTheme.statusDestructive
+        default:
+            return theme.highlight
+        }
     }
 
     // MARK: Transcript
@@ -484,25 +573,11 @@ public struct ConversationView: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.transcript.last?.id)
             }
             .accessibilityIdentifier("fleet.conversation.transcript")
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if model.transcript.contains(where: { $0.kind == .user }) {
-                    HStack {
-                        Button("Conversation timeline", systemImage: "list.bullet.indent") { showingTimeline = true }
-                            .frame(minHeight: 44)
-                            .accessibilityIdentifier("fleet.conversation.timeline.open")
-                        Spacer()
-                        if !followingLatest {
-                            Button("Latest", systemImage: "arrow.down") {
-                                followingLatest = true
-                                if let last = model.transcript.last { proxy.scrollTo(last.id, anchor: .bottom) }
-                            }.accessibilityIdentifier("fleet.conversation.timeline.latest")
-                        }
-                    }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 16).frame(minHeight: 44)
-                    .background(theme.surface)
-                }
-            }
+            // Dogfood top-space fix: the permanent 44pt "Conversation
+            // timeline / Latest" top inset is GONE — the actions moved into
+            // the navigation toolbar (`timelineToolbarContents`). The
+            // transcript content now starts directly below the banner
+            // chrome.
             .sheet(isPresented: $showingTimeline) {
                 NavigationStack {
                     List {
@@ -534,6 +609,14 @@ public struct ConversationView: View {
                     if reduceMotion { proxy.scrollTo(last.id, anchor: .bottom) }
                     else { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                 }
+            }
+            // Dogfood top-space fix: the toolbar/menu "Latest" action bumps
+            // `scrollPulse` (the toolbar cannot reach this proxy); scrolling
+            // to the live bottom happens here.
+            .onChange(of: scrollPulse) { _, _ in
+                guard followingLatest, let last = model.transcript.last else { return }
+                if reduceMotion { proxy.scrollTo(last.id, anchor: .bottom) }
+                else { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
             }
         }
         .scrollDismissesKeyboard(.interactively)
