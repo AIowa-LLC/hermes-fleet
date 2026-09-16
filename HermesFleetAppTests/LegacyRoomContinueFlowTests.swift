@@ -165,7 +165,7 @@ final class LegacyRoomContinueFlowTests: XCTestCase {
             id: FleetRoomID(
                 provenance: .desktopLegacy,
                 gatewayID: GatewayID(rawValue: "workstation"),
-                key: "id:rmtxtyapg-nsd4n"),
+                key: "id:legacy-crew-77"),
             name: "iOS App Brainstorming Crew",
             members: [
                 FleetRoomMember(name: "default", handle: "default-this-device", connectionID: "local", connectionLabel: "This device", sourceScoped: true),
@@ -191,11 +191,11 @@ final class LegacyRoomContinueFlowTests: XCTestCase {
 
         // Identity: the hosted room reuses the projection's durable id.
         XCTAssertEqual(room.id.provenance, .hosted)
-        XCTAssertEqual(room.id.key, "rmtxtyapg-nsd4n")
+        XCTAssertEqual(room.id.key, "legacy-crew-77")
 
         // The wire create carried the SAME id (equality-by-construction).
         let wireRoomID = await commands.createdRoomIDs.first
-        XCTAssertEqual(wireRoomID, "rmtxtyapg-nsd4n")
+        XCTAssertEqual(wireRoomID, "legacy-crew-77")
         let wireName = await commands.createdNames.first
         XCTAssertEqual(wireName, "iOS App Brainstorming Crew")
 
@@ -207,7 +207,7 @@ final class LegacyRoomContinueFlowTests: XCTestCase {
 
         // The created hosted room is resolvable in the environment.
         let hostedRooms = environment.rooms(for: room.id.gatewayID)
-            .filter { $0.id.provenance == .hosted && $0.id.key == "rmtxtyapg-nsd4n" }
+            .filter { $0.id.provenance == .hosted && $0.id.key == "legacy-crew-77" }
         XCTAssertEqual(hostedRooms.count, 1)
     }
 
