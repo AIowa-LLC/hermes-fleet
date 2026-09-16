@@ -178,10 +178,27 @@ final class RoomChatUITests: XCTestCase {
         legacy.tap()
 
         // Observational banner + read-only composer placeholder.
+        let banner = app.descendants(matching: .any)["fleet.room.legacy.banner"]
         XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.legacy.banner"]
-                .waitForExistence(timeout: 10),
+            banner.waitForExistence(timeout: 10),
             "Managed by Hermes Desktop banner renders")
+        // Build-41 honesty contract (SPEC: legacy read-only state): the
+        // banner must state read-only + Desktop management + BOUNDED recent
+        // history — never imply the full transcript is available.
+        XCTAssertTrue(
+            banner.label.localizedCaseInsensitiveContains("Read only"),
+            "banner states read-only")
+        XCTAssertTrue(
+            banner.label.localizedCaseInsensitiveContains("Managed by Hermes Desktop"),
+            "banner names Hermes Desktop as the managing authority")
+        XCTAssertTrue(
+            banner.label.localizedCaseInsensitiveContains("Recent history only"),
+            "banner is honest about the bounded history window")
+        // The promotion affordance is prominent and fully named.
+        XCTAssertEqual(
+            app.buttons["fleet.room.legacy.continue"].label,
+            "Continue as Interactive Group",
+            "banner action is the full Continue-as-Interactive-Group label")
         // Composer disabled for legacy room (field itself is disabled).
         let composer = app.textFields["fleet.room.composer.field"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))

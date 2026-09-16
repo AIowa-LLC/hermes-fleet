@@ -624,10 +624,10 @@ public struct RoomChatView: View {
             )
         } else {
             FleetNoticeBar(
-                "Managed by Hermes Desktop — read only. Fields update when Desktop syncs.",
+                "Read only · Managed by Hermes Desktop. Recent history only — the full transcript stays on Desktop.",
                 systemImage: "lock.fill",
                 id: "fleet.room.legacy.banner",
-                actionTitle: "Continue",
+                actionTitle: "Continue as Interactive Group",
                 actionID: "fleet.room.legacy.continue",
                 action: { showingContinueConfirm = true }
             )
