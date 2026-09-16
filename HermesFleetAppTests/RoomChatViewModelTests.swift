@@ -58,7 +58,7 @@ final class RoomChatViewModelTests: XCTestCase {
             approveChoices.append(choice)
         }
 
-        func createRoom(name: String, members: [[String: String]]) async throws -> String {
+        func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
             "room-new"
         }
     }

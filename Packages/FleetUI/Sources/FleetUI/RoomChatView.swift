@@ -370,6 +370,12 @@ public struct RoomChatView: View {
     @State private var renameDraft = ""
     @State private var showingDisbandConfirm = false
     @State private var showingRoomLink = false
+    /// "Continue as Interactive Group": confirmation + in-flight state for
+    /// promoting a legacy projection room into a hosted room (fix B).
+    @State private var showingContinueConfirm = false
+    @State private var isContinuing = false
+    @State private var continueError: String?
+    @State private var continuedRoom: FleetRoom?
     // FOS-8 (SPEC §16 Focus / §9 Groups): no auto-scroll away from history
     // reading — new events only follow when the user is already at the
     // bottom; an explicit Latest control returns them there.
@@ -450,6 +456,21 @@ public struct RoomChatView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("The gateway tombstones the room permanently. This can't be undone.")
+            }
+            .confirmationDialog(
+                "Continue this room as an interactive Group?",
+                isPresented: $showingContinueConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Continue as Interactive Group") {
+                    Task { await continueAsInteractive() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("A new hosted room reuses this room's durable identity — verified members continue on the gateway; this read-only history stays untouched.")
+            }
+            .navigationDestination(item: $continuedRoom) { room in
+                RoomChatView(room: room, environment: environment)
             }
             .onChange(of: viewModel.transcript.count) { _, _ in
                 // FOS-8 (SPEC §16 Focus): new events never steal the user's
@@ -590,13 +611,35 @@ public struct RoomChatView: View {
         .padding(.bottom, FleetTheme.spacingXs)
     }
 
+    @ViewBuilder
     private var managedByDesktopBanner: some View {
-        // FOS-6: bounded banner (SPEC §18 legacy/tombstone banners).
-        FleetNoticeBar(
-            "Managed by Hermes Desktop — read only. Fields update when Desktop syncs.",
-            systemImage: "lock.fill",
-            id: "fleet.room.legacy.banner"
-        )
+        // FOS-6: bounded banner (SPEC §18 legacy/tombstone banners). The
+        // Continue action (diagnostic 2026-09-15 fix B) offers promotion
+        // into a hosted room; it disappears while the flow is in flight.
+        if isContinuing {
+            FleetNoticeBar(
+                "Continuing this room as an interactive Group…",
+                systemImage: "arrow.triangle.2.circlepath",
+                id: "fleet.room.legacy.banner"
+            )
+        } else {
+            FleetNoticeBar(
+                "Managed by Hermes Desktop — read only. Fields update when Desktop syncs.",
+                systemImage: "lock.fill",
+                id: "fleet.room.legacy.banner",
+                actionTitle: "Continue",
+                actionID: "fleet.room.legacy.continue",
+                action: { showingContinueConfirm = true }
+            )
+        }
+        if let continueError {
+            FleetNoticeBar(
+                continueError,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .warning,
+                id: "fleet.room.legacy.continue.error"
+            )
+        }
     }
 
     private var disbandedBanner: some View {
@@ -605,6 +648,21 @@ public struct RoomChatView: View {
             systemImage: "trash",
             id: "fleet.room.disbanded.banner"
         )
+    }
+
+    /// Fix B flow: continue this legacy room into a hosted room on its
+    /// gateway (durable-id reuse). Typed failures render in the banner;
+    /// success navigates to the revealed hosted room.
+    private func continueAsInteractive() async {
+        isContinuing = true
+        continueError = nil
+        defer { isContinuing = false }
+        do {
+            continuedRoom = try await environment.continueLegacyRoomAsInteractive(
+                viewModel.room)
+        } catch {
+            continueError = RoomChatViewModel.explain(error)
+        }
     }
 
     // MARK: D16 failure / attention surfaces

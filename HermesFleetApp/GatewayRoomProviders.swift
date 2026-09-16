@@ -252,14 +252,15 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
         }
     }
 
-    func createRoom(name: String, members: [[String: String]]) async throws -> String {
+    func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
         let wireMembers: [JSONValue] = members.map { member in
             var object: [String: JSONValue] = [:]
             for (key, value) in member { object[key] = .string(value) }
             return JSONValue.object(object)
         }
         do {
-            return try await client.createRoom(name: name, members: wireMembers, profile: nil).roomID
+            return try await client.createRoom(
+                roomID: roomID, name: name, members: wireMembers, profile: nil).roomID
         } catch {
             throw Self.map(error)
         }

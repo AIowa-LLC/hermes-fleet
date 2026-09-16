@@ -136,9 +136,17 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         return try Self.decodeRoomList(result)
     }
 
-    /// `groups.create` — idempotent on (id, name, members).
-    public func createRoom(name: String, members: [JSONValue], profile: String?) async throws -> HostedRoomRow {
+    /// `groups.create` — idempotent on (id, name, members). The upstream
+    /// contract (contracts/groups_bot_relay.py GroupsCreateParams) REQUIRES
+    /// a client-supplied `room_id` — there is no server-side minting — so
+    /// every Fleet create path passes one explicitly: the legacy-continuation
+    /// flow reuses the projection's durable room id (identity
+    /// equality-by-construction), plain creates mint a Fleet id.
+    public func createRoom(
+        roomID: String, name: String, members: [JSONValue], profile: String?
+    ) async throws -> HostedRoomRow {
         var params: [String: JSONValue] = [
+            "room_id": .string(roomID),
             "name": .string(name),
             "members": .array(members),
         ]
