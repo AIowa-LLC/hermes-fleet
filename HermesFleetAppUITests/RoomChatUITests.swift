@@ -184,15 +184,22 @@ final class RoomChatUITests: XCTestCase {
             "Managed by Hermes Desktop banner renders")
         // Build-41 honesty contract (SPEC: legacy read-only state): the
         // banner must state read-only + Desktop management + BOUNDED recent
-        // history — never imply the full transcript is available.
+        // history — never imply the full transcript is available. The notice
+        // bar uses .contain (container label is empty — repo lesson), so the
+        // copy is asserted on the static text it renders.
+        func bannerCopy(_ phrase: String) -> XCUIElement {
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", phrase)
+            ).firstMatch
+        }
         XCTAssertTrue(
-            banner.label.localizedCaseInsensitiveContains("Read only"),
+            bannerCopy("Read only").waitForExistence(timeout: 5),
             "banner states read-only")
         XCTAssertTrue(
-            banner.label.localizedCaseInsensitiveContains("Managed by Hermes Desktop"),
+            bannerCopy("Managed by Hermes Desktop").exists,
             "banner names Hermes Desktop as the managing authority")
         XCTAssertTrue(
-            banner.label.localizedCaseInsensitiveContains("Recent history only"),
+            bannerCopy("Recent history only").exists,
             "banner is honest about the bounded history window")
         // The promotion affordance is prominent and fully named.
         XCTAssertEqual(
@@ -226,10 +233,19 @@ final class RoomChatUITests: XCTestCase {
             "Continue action renders on the legacy banner")
 
         // Confirmation copy is explicit about identity + history retention.
+        // Scope to the sheet: the banner action now carries the same full
+        // "Continue as Interactive Group" label, so an unscoped query
+        // matches BOTH the banner button and the dialog confirm.
         continueButton.tap()
-        let confirm = app.buttons["Continue as Interactive Group"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation dialog renders")
-        confirm.tap()
+        // The dialog confirm may surface as a sheet (compact confirmation
+        // dialog) or an alert-style action sheet; accept either surface but
+        // REQUIRE it to present (never silently tap the banner button again).
+        let confirm = app.sheets.buttons["Continue as Interactive Group"]
+        let alertConfirm = app.alerts.buttons["Continue as Interactive Group"]
+        XCTAssertTrue(
+            confirm.waitForExistence(timeout: 5) || alertConfirm.waitForExistence(timeout: 1),
+            "confirmation dialog renders")
+        (confirm.exists ? confirm : alertConfirm).tap()
 
         // The simulator's legacy room is NAME-KEYED (older projection
         // generation): the flow fails closed with the honest no-durable-
