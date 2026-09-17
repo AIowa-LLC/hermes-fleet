@@ -155,13 +155,18 @@ final class AppEnvironmentTests: XCTestCase {
     private func makeEnvironment(
         gateways: [GatewayRegistration],
         profiles: [ProfileDescriptor] = [],
-        sessionList: any SessionListProviding = TestSessionList()
+        sessionList: any SessionListProviding = TestSessionList(),
+        conversationPinStore: any ConversationPinStoring = InMemoryConversationPinStore(),
+        connectionResults: [GatewayID: Result<Void, GatewayConnectivityError>] = [:],
+        connectionIntentDefaults: UserDefaults? = nil
     ) async -> (AppEnvironment, GatewayRegistryService) {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { gateway, _ in
-                TestConnection(gatewayID: gateway.id, result: .success(()))
+                TestConnection(
+                    gatewayID: gateway.id,
+                    result: connectionResults[gateway.id] ?? .success(()))
             }
         )
         let roster = FleetRosterService(
@@ -178,10 +183,14 @@ final class AppEnvironmentTests: XCTestCase {
             cache: cache,
             sessionList: sessionList,
             connectionFactory: { gateway, _ in
-                TestConnection(gatewayID: gateway.id, result: .success(()))
+                TestConnection(
+                    gatewayID: gateway.id,
+                    result: connectionResults[gateway.id] ?? .success(()))
             },
             health: TestHealthAccumulator(),
-            seedRegistrations: gateways
+            seedRegistrations: gateways,
+            connectionIntentDefaults: connectionIntentDefaults,
+            conversationPinStore: conversationPinStore
         )
         await environment.load()
         return (environment, registry)
@@ -1039,4 +1048,100 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertTrue(environment.canCreateRooms(on: gatewayID),
                       "unprobed gateway with an advertising hosted room keeps the legacy path")
     }
+
+    // MARK: Build 46 recovery — connection-restore isolation
+
+    /// One unreachable gateway must not abort restore for the others
+    /// (ported from the quarantined Codex b4e5712 lineage; behavior verified
+    /// present, coverage was missing here).
+    func testOneOfflineGatewayDoesNotBlockAnotherRestore() async {
+        let offline = GatewayID(rawValue: "offline")
+        let online = GatewayID(rawValue: "online")
+        let (environment, _) = await makeEnvironment(
+            gateways: [
+                registration("offline", name: "Offline"),
+                registration("online", name: "Online"),
+            ],
+            connectionResults: [offline: .failure(.unreachable)]
+        )
+
+        await environment.connect(to: offline)
+        await environment.connect(to: online)
+        XCTAssertTrue(environment.isConnectionIntended(offline))
+        XCTAssertTrue(environment.isConnectionIntended(online))
+        await environment.disconnectAll()
+
+        await environment.restoreIntendedConnections()
+        XCTAssertEqual(environment.connectionStates[offline], .failed(.offline))
+        XCTAssertEqual(environment.connectionStates[online], .connected)
+    }
+
+    // MARK: Build 46 recovery — conversation pins across lifecycle
+
+    func testConversationPinSurvivesEnvironmentReloadAndCanBeUnpinned() async throws {
+        let pinStore = InMemoryConversationPinStore()
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        let identity = FleetConversationIdentity.individual(
+            route: route, sessionID: "session-1")
+
+        await environment.pinConversation(
+            identity: identity,
+            title: "Design review",
+            preview: "Latest",
+            authoritativeGatewayID: route.gatewayID,
+            avatarKey: route.profileSlug.rawValue)
+        XCTAssertTrue(environment.isPinned(identity))
+
+        // A fresh environment over the SAME store reloads the pin.
+        let (reloaded, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        XCTAssertTrue(reloaded.isPinned(identity))
+        XCTAssertEqual(reloaded.pinnedConversations.first?.title, "Design review")
+
+        await reloaded.unpinConversation(identity)
+        XCTAssertFalse(reloaded.isPinned(identity))
+        let (finalPass, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        XCTAssertFalse(finalPass.isPinned(identity))
+    }
+
+    func testGatewayRemovalRetainsPinnedIdentityAsUnavailable() async throws {
+        let pinStore = InMemoryConversationPinStore()
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        let identity = FleetConversationIdentity.individual(
+            route: route, sessionID: "session-1")
+        await environment.pinConversation(
+            identity: identity,
+            title: "Kept",
+            preview: "",
+            authoritativeGatewayID: route.gatewayID,
+            avatarKey: route.profileSlug.rawValue)
+
+        // Simulate gateway removal: a reload with an EMPTY registry keeps
+        // the pin (row renders unavailable; no unsafe rerouting).
+        let (afterRemoval, _) = await makeEnvironment(
+            gateways: [],
+            conversationPinStore: pinStore
+        )
+        XCTAssertTrue(afterRemoval.isPinned(identity))
+        XCTAssertEqual(afterRemoval.pinnedConversations.first?.authoritativeGatewayID,
+                       route.gatewayID)
+    }
+
 }

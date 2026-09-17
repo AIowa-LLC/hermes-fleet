@@ -8,7 +8,7 @@ Author: apple-dev profile (Hermes)
 `dogfood/build-41-integration` @ 1685b240 + 106 uncommitted mission files) was
 installed on Tony's iPhone at 12:36 on 2026-09-17. At **13:14 CDT** a **Codex
 Desktop session** (`~/.codex/sessions/2026/09/17/rollout-2026-09-17T13-14-23-01a0b093-ad01-76c2-8686-a6f314c81d47.jsonl`,
-cwd `/Users/tonysimons/code/hermes-fleet-ios`) began executing a "Build 46:
+cwd `~/code/hermes-fleet-ios`) began executing a "Build 46:
 Final Stabilization and UI Refinement" spec authored in ChatGPT.
 
 **The failure:** The spec said "Starting point: Build 45" — but Codex's cwd was
@@ -64,12 +64,12 @@ later "corrected" reinstalls) replaced the in-place b45 install of
 
 | Repo / worktree | Branch / HEAD | State | Disposition |
 |---|---|---|---|
-| ACTIVE `/Users/tonysimons/code/hermes-fleet` | `feat/continue-as-hosted` @ 293c637 | clean | integration source (merge already inside dogfood lane) |
+| ACTIVE `~/code/hermes-fleet` | `feat/continue-as-hosted` @ 293c637 | clean | integration source (merge already inside dogfood lane) |
 | ACTIVE `.worktrees/build-41` | `dogfood/build-41-integration` @ 1685b240 | 68 M + 38 ?? | **AUTHORITATIVE** — all overnight work; integration performed here |
 | ACTIVE `.worktrees/rc-363bc` | detached @ 1685b240 | 68 M (identical) | QA twin; lacks only `scripts/overnight_install_retry.sh` |
 | ACTIVE `.worktrees/slash-parity` | `feat/slash-command-parity` @ 8e477fe | clean | already merged into dogfood lane via d097b8b |
 | ACTIVE `workspace/testflight-dogfood-0.2.0/worktree` | detached @ d0f607b | clean | historical TF preflight lane |
-| MIRROR `/Users/tonysimons/code/hermes-fleet-ios` | `main` @ b8a95ff (Sep 6) | 25 M + 37 ?? (Sep-16 WIP + Codex b46 edits) | **quarantined**; superseded; preserved |
+| MIRROR `~/code/hermes-fleet-ios` | `main` @ b8a95ff (Sep 6) | 25 M + 37 ?? (Sep-16 WIP + Codex b46 edits) | **quarantined**; superseded; preserved |
 | MIRROR `.worktrees/product-readiness-integration` | `codex/product-readiness-integration` @ 08f7444 | clean | Codex b46 source; quarantined; preserved |
 
 ## 3. Session → code reconciliation ledger
@@ -118,7 +118,7 @@ Sanitizations:
 
 ## 5. Preservation record
 
-`/Users/tonysimons/fleet-recovery-20260917_162210/` (48 MB):
+`~/fleet-recovery-20260917_162210/` (48 MB):
 - `bundles/active-hermes-fleet-all-refs.bundle` — full refs of active repo
   (verified: "records a complete history")
 - `bundles/mirror-hermes-fleet-ios-all-refs.bundle` — full refs of mirror
