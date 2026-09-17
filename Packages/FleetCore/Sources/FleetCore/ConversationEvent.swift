@@ -48,8 +48,12 @@ public enum ConversationEvent: Hashable, Sendable {
     /// payload is config-gated upstream, tolerated as a typed case).
     case toolProgress(sessionID: String, toolID: String?, name: String?, text: String?, seq: Int? = nil)
     /// `tool.complete` — a tool call finished
-    /// (`{tool_id, name, args, result?, summary?, ...}`).
-    case toolComplete(sessionID: String, toolID: String, name: String, summary: String?, seq: Int? = nil)
+    /// (`{tool_id, name, args, result?, summary?, ...}`). Card D: `resultText`
+    /// carries the compact JSON of the tool RESULT (the gateway parses it
+    /// before emitting: `tui_gateway/tool_progress.py:_on_tool_complete`) —
+    /// the only live source of a generated-image artifact path
+    /// (`image_generate` summaries are nil upstream).
+    case toolComplete(sessionID: String, toolID: String, name: String, summary: String?, resultText: String? = nil, seq: Int? = nil)
     /// `background.complete` — a background turn finished (`{task_id, text}`).
     case backgroundComplete(sessionID: String, taskID: String?, text: String?, seq: Int? = nil)
     /// `session.info` — end-of-turn session metadata
@@ -90,7 +94,7 @@ extension ConversationEvent {
         case .toolStart(let sid, _, _, _, _, _): return sid
         case .toolGenerating(let sid, _, _): return sid
         case .toolProgress(let sid, _, _, _, _): return sid
-        case .toolComplete(let sid, _, _, _, _): return sid
+        case .toolComplete(let sid, _, _, _, _, _): return sid
         case .backgroundComplete(let sid, _, _, _): return sid
         case .sessionInfo(let sid, _, _, _, _, _, _, _, _): return sid
         case .approvalRequested(let sid, _, _, _, _, _): return sid
@@ -116,7 +120,7 @@ extension ConversationEvent {
              .toolStart(_, _, _, _, _, let seq),
              .toolGenerating(_, _, let seq),
              .toolProgress(_, _, _, _, let seq),
-             .toolComplete(_, _, _, _, let seq),
+             .toolComplete(_, _, _, _, _, let seq),
              .backgroundComplete(_, _, _, let seq),
              .sessionInfo(_, _, _, _, _, _, _, _, let seq),
              .approvalRequested(_, _, _, _, _, let seq),

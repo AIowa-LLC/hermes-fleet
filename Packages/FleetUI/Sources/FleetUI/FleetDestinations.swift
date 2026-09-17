@@ -73,6 +73,14 @@ struct FleetChatsView: View {
     @State private var query = ""
     @State private var gatewayID: GatewayID?
     @State private var showingCompose = false
+    @State private var showingGroupCompose = false
+
+    private var groups: [FleetRoom] {
+        environment.allRooms.filter { room in
+            (gatewayID == nil || room.id.gatewayID == gatewayID)
+                && (query.isEmpty || "\(room.name) \(room.members.map(\.name).joined(separator: " "))".localizedCaseInsensitiveContains(query))
+        }
+    }
 
     /// FOS-5 (SPEC §10): entries retained during a gateway outage even when
     /// the live roster no longer contains that Route — the ENTRY keeps its
@@ -154,6 +162,13 @@ struct FleetChatsView: View {
                     Label("Start a conversation", systemImage: "square.and.pencil")
                         .foregroundStyle(theme.highlight)
                 }.accessibilityIdentifier("fleet.chats.new")
+                Button {
+                    showingGroupCompose = true
+                } label: {
+                    Label("New Group", systemImage: "person.3")
+                        .foregroundStyle(theme.highlight)
+                }
+                .accessibilityIdentifier("fleet.chats.new-group")
                 Picker("Gateway", selection: $gatewayID) {
                     Text("All gateways").tag(Optional<GatewayID>.none)
                     ForEach(environment.gateways) { gateway in
@@ -161,6 +176,29 @@ struct FleetChatsView: View {
                     }
                 }
                 .accessibilityIdentifier("fleet.chats.gateway-filter")
+            }
+            Section("Groups") {
+                if groups.isEmpty {
+                    Text("No groups in the connected fleet yet.")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.chats.groups.empty")
+                } else {
+                    ForEach(groups, id: \.canonicalIdentity) { room in
+                        NavigationLink(value: FleetScreen.room(room.id)) {
+                            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                                RoomRowView(room: room)
+                                if environment.roomSyncWarnings[room.canonicalIdentity] != nil {
+                                    Label("History sync pending", systemImage: "arrow.triangle.2.circlepath")
+                                        .font(.caption2)
+                                        .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                                        .padding(.leading, FleetTheme.spacingMd)
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("fleet.chats.group.\(room.canonicalIdentity)")
+                    }
+                }
             }
             if !environment.loadingRoutes.isEmpty {
                 if entries.isEmpty && environment.sessionsByRoute.isEmpty {
@@ -236,6 +274,11 @@ struct FleetChatsView: View {
         }
         .sheet(isPresented: $showingCompose) {
             ComposeBotPickerSheet(environment: environment)
+        }
+        .sheet(isPresented: $showingGroupCompose) {
+            CreateRoomSheet(environment: environment) { room in
+                environment.requestScreen(.room(room.id))
+            }
         }
         .scrollContentBackground(.hidden).background(theme.background)
         // Dogfood finding 3: reserve bottom breathing room with a SwiftUI
@@ -327,6 +370,7 @@ struct FleetChatsView: View {
 
     private func refresh(force: Bool = false) async {
         if environment.rosterSnapshot == nil { await environment.refreshRoster() }
+        await environment.loadRooms()
         let routes = (environment.rosterSnapshot?.roster.allBots ?? []).map(\.route)
         guard !Task.isCancelled else { return }
         await environment.refreshSessions(routes: routes, force: force)
@@ -388,18 +432,18 @@ struct FleetCommandCenterResults {
             ))
         }
 
-        // Groups — room union (owner: Bots; room key is the identity).
-        for gateway in environment.gateways {
-            for room in environment.rooms(for: gateway.id) {
-                items.append(Item(
-                    kind: .group,
-                    title: room.name,
-                    subtitle: "Group · \(gateway.displayName)",
-                    keywords: "group room \(room.id.key) \(gateway.displayName)",
-                    id: "group:\(room.id.key)",
-                    screen: .room(room.id)
-                ))
-            }
+        // Groups — the verified unified room roster. Canonical identity, not
+        // display name, is the command-center key.
+        for room in environment.allRooms {
+            let host = environment.gateway(for: room.id.gatewayID)?.displayName ?? room.id.gatewayID.rawValue
+            items.append(Item(
+                kind: .group,
+                title: room.name,
+                subtitle: "Group · \(host)",
+                keywords: "group room \(room.id.key) \(host)",
+                id: "group:\(room.canonicalIdentity)",
+                screen: .room(room.id)
+            ))
         }
 
         // Gateways — direct object results (SPEC §13 addition).
@@ -451,9 +495,6 @@ struct FleetCommandCenter: View {
     let environment: AppEnvironment
     let navigate: (FleetScreen) -> Void
     let selectTab: (FleetTab) -> Void
-    /// FOS-3 (§12): Settings is reachable from Command Center as well as the
-    /// Fleet gear — the shell passes the sheet-presentation callback in.
-    var openSettings: (() -> Void)? = nil
     @State private var query = ""
     @Environment(\.dismiss) private var dismiss
     private func matches(_ text: String) -> Bool { query.isEmpty || text.localizedCaseInsensitiveContains(query) }
@@ -480,14 +521,19 @@ struct FleetCommandCenter: View {
                 Section("Go to") {
                     ForEach(FleetTab.allCases.filter { matches($0.label) }) { tab in
                         Button { dismiss(); selectTab(tab) } label: { Label(tab.label, systemImage: tab.systemImage) }
+                            .accessibilityIdentifier("fleet.command-center.goto.\(tab.rawValue)")
                     }
-                }
-                if let openSettings, matches("settings preferences appearance app lock") {
-                    Section {
-                        Button { dismiss(); openSettings() } label: {
-                            Label("Settings", systemImage: "gearshape")
+                    // Card D: Artifacts is a pushed Fleet-stack destination, not
+                    // a tab — the Command Center is the reachable entry on every
+                    // width (the compact drawer carries it too).
+                    if matches("Artifacts") {
+                        Button {
+                            dismiss()
+                            navigate(.artifacts)
+                        } label: {
+                            Label("Artifacts", systemImage: "photo.on.rectangle")
                         }
-                        .accessibilityIdentifier("fleet.command-center.settings")
+                        .accessibilityIdentifier("fleet.command-center.goto.artifacts")
                     }
                 }
                 resultSections(bots: results.filter { $0.kind == .bot },

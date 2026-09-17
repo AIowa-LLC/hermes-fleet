@@ -169,9 +169,7 @@ final class KanbanBoardUITests: XCTestCase {
     /// has three gateways → the tab root renders the explicit chooser; pick
     /// the workstation gateway to open its board.
     private func openKanbanEntry(_ app: XCUIApplication) {
-        let kanbanTab = app.tabBars.firstMatch.buttons["Kanban"]
-        XCTAssertTrue(kanbanTab.waitForExistence(timeout: 15), "the Kanban tab must exist")
-        kanbanTab.tap()
+        UITabNavigation.selectTab(app, label: "Kanban")
         let gatewayRow = firstMatch(in: app, identifier: "fleet.kanban.gateway.workstation")
         if !gatewayRow.waitForExistence(timeout: 5) {
             for _ in 0..<6 where !gatewayRow.exists { app.swipeUp(velocity: .slow) }

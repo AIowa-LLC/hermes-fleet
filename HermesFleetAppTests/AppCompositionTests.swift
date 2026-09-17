@@ -7,11 +7,12 @@ import FleetCore
 @MainActor
 final class AppCompositionTests: XCTestCase {
     func testAppTabModelCoversFiveOwningDomains() {
-        // Build 41: the root shell exposes exactly the five plan-of-record
-        // tabs, in order (Bots / Chats / Kanban / Fleet / Gateways).
+        // Build 43: the root shell exposes exactly the five approved tabs,
+        // in order (Bots / Chats / Kanban / Fleet / Settings). The Gateways
+        // tab is retired — gateway management is owned by Fleet.
         XCTAssertEqual(
             FleetTab.allCases.map(\.label),
-            ["Bots", "Chats", "Kanban", "Fleet", "Gateways"],
+            ["Bots", "Chats", "Kanban", "Fleet", "Settings"],
             "the tab bar must match the five approved domains in order"
         )
     }
@@ -68,11 +69,12 @@ extension AppCompositionTests {
         state.open(.botDetail(a))
         state.open(.botDetail(b))
         state.open(.projects(a.gatewayID, profile: a.profileSlug, focusPath: "src/App.swift"))
-        XCTAssertEqual(state.selection, .gateways)
+        // Build 43: gateway-resource screens are owned by Fleet.
+        XCTAssertEqual(state.selection, .fleet)
         XCTAssertEqual(state.paths[.bots], [.botDetail(a), .botDetail(b)])
         state.open(.botDetail(a))
         XCTAssertEqual(state.paths[.bots], [.botDetail(a)])
-        XCTAssertEqual(state.paths[.gateways]?.count, 1)
+        XCTAssertEqual(state.paths[.fleet]?.count, 1)
     }
 
     func testNavigationRestoresExactScopeAndMissingTargetsWithoutSubstitution() throws {
@@ -83,7 +85,8 @@ extension AppCompositionTests {
         let data = try JSONEncoder().encode(state)
         let restored = FleetNavigationState.restore(data)
         XCTAssertEqual(restored, state)
-        XCTAssertEqual(restored.paths[.gateways]?.last?.gatewayID, id)
+        // Build 43: those destinations ride the Fleet stack now.
+        XCTAssertEqual(restored.paths[.fleet]?.last?.gatewayID, id)
         XCTAssertEqual(FleetNavigationState.restore(Data("{}".utf8)), FleetNavigationState())
         XCTAssertEqual(FleetNavigationState.restore(Data("{\"version\":99}".utf8)), FleetNavigationState())
     }
@@ -91,11 +94,73 @@ extension AppCompositionTests {
     func testLegacyRootsResolveToOwningDomains() {
         let id = GatewayID(rawValue: "a")
         XCTAssertEqual(FleetNavigationState.legacyTab("home"), .fleet)
-        XCTAssertEqual(FleetNavigationState.legacyTab("control"), .gateways)
-        XCTAssertEqual(FleetNavigationState.legacyTab("workspace"), .gateways)
+        // Build 43: legacy gateway roots land on Fleet (gateway management
+        // moved under Fleet); settings resolves to the Settings tab.
+        XCTAssertEqual(FleetNavigationState.legacyTab("control"), .fleet)
+        XCTAssertEqual(FleetNavigationState.legacyTab("workspace"), .fleet)
+        XCTAssertEqual(FleetNavigationState.legacyTab("gateways"), .fleet)
+        XCTAssertEqual(FleetNavigationState.legacyTab("settings"), .settings)
         // Build 41: the Kanban tab owns the Kanban experience.
         XCTAssertEqual(FleetScreen.kanban.owner, .kanban)
         XCTAssertEqual(FleetScreen.gatewayKanban(id).owner, .kanban)
+        // Build 43: gateway-management screens are owned by Fleet.
+        XCTAssertEqual(FleetScreen.gateways.owner, .fleet)
+        XCTAssertEqual(FleetScreen.gatewayDetail(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.gatewayConnection(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.gatewayHealth(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.cron(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.skills(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.memoryGraph(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.projects(id).owner, .fleet)
+        XCTAssertEqual(FleetScreen.health.owner, .fleet)
+    }
+
+    /// Build 43 legacy restore: a persisted Build ≤42 navigation state can
+    /// carry the retired `gateways` tab as selection and as a paths entry.
+    /// Decoding must NOT discard the rest of the state — selection maps to
+    /// Fleet and the gateway screens are appended to Fleet's stack. The
+    /// legacy payloads are assembled from REAL encoders (screen fragments
+    /// encoded by JSONEncoder, paths assembled in Swift's actual wire shape:
+    /// an UNKEYED alternating key/value array) so the fixture cannot drift
+    /// from the format.
+    func testLegacyGatewaysTabRestoreMapsToFleetWithoutDiscardingState() throws {
+        func legacyJSON(selection: String, fleet: [FleetScreen], gateways: [FleetScreen]) throws -> Data {
+            let fleetFrag = try JSONSerialization.jsonObject(with: JSONEncoder().encode(fleet))
+            let gatewaysFrag = try JSONSerialization.jsonObject(with: JSONEncoder().encode(gateways))
+            // [FleetTab: [FleetScreen]] encodes as ["fleet",[…],"gateways",[…]].
+            let paths: [Any] = ["fleet", fleetFrag, "gateways", gatewaysFrag]
+            return try JSONSerialization.data(withJSONObject: [
+                "version": 1,
+                "selection": selection,
+                "paths": paths,
+            ] as [String: Any])
+        }
+
+        let restored = FleetNavigationState.restore(try legacyJSON(
+            selection: "gateways", fleet: [], gateways: [.health]))
+        XCTAssertEqual(restored.selection, .fleet,
+                       "a persisted gateways selection must restore onto Fleet")
+        XCTAssertEqual(restored.paths[.fleet], [.health],
+                       "the retired tab's stack must survive on the Fleet stack")
+        XCTAssertTrue(restored.paths[.bots]?.isEmpty ?? true)
+
+        // A FLEET path and a legacy gateways path both present: Fleet's own
+        // path stays first, the gateway screens append after it.
+        let restoredBoth = FleetNavigationState.restore(try legacyJSON(
+            selection: "gateways", fleet: [.activity], gateways: [.health]))
+        XCTAssertEqual(restoredBoth.paths[.fleet], [.activity, .health])
+
+        // Unknown selection values fall back to the launch tab without
+        // discarding the rest of the state. (Wire shape note: the paths
+        // value is an unkeyed array of alternating key,value PAIRS —
+        // ["bots",[…],"chats",[…]] — no colons.)
+        let json2 = """
+        {"version":1,"selection":"made-up",
+         "paths":["bots",[{"roster":{}}],"chats",[],"kanban",[],"fleet",[]]}
+        """
+        let restored2 = FleetNavigationState.restore(Data(json2.utf8))
+        XCTAssertEqual(restored2.selection, .bots)
+        XCTAssertEqual(restored2.paths[.bots], [.roster])
     }
 }
 

@@ -29,9 +29,7 @@ final class KanbanInteractiveUITests: XCTestCase {
     }
 
     private func openBoard(_ app: XCUIApplication) {
-        let kanbanTab = app.tabBars.firstMatch.buttons["Kanban"]
-        XCTAssertTrue(kanbanTab.waitForExistence(timeout: 15), "the Kanban tab must exist")
-        kanbanTab.tap()
+        UITabNavigation.selectTab(app, label: "Kanban")
         let gatewayRow = app.descendants(matching: .any)
             .matching(identifier: "fleet.kanban.gateway.workstation").firstMatch
         if !gatewayRow.waitForExistence(timeout: 5) {
@@ -192,14 +190,18 @@ final class KanbanInteractiveUITests: XCTestCase {
             .completed,
             "submitting must clear the composer")
 
-        // The comment lands in the section ABOVE the composer — scroll to
-        // the TOP of the list to reveal it (the section sits right under
-        // Task/Actions).
-        // The comment row is a combined AX element (author+time+body) —
-        // query by label containment, not a standalone text.
+        // A CONFIRMED write reveals the posted comment: the row lands
+        // directly above the composer and the detail scrolls it into view.
+        // WAIT for it to materialize — the previous blind swipeDown loop
+        // raced the render, then parked the list at the top where the row
+        // sits below the fold and never materializes. Only fall back to
+        // scrolling when the row genuinely has not appeared yet, and in the
+        // revealing direction (content after Actions).
         let posted = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS 'Looks good to me'")).firstMatch
-        for _ in 0..<8 where !posted.exists { app.swipeDown(velocity: .fast) }
+        if !posted.waitForExistence(timeout: 8) {
+            for _ in 0..<6 where !posted.exists { app.swipeUp(velocity: .fast) }
+        }
         XCTAssertTrue(
             posted.waitForExistence(timeout: 10),
             "the posted comment must render in the comments section")
@@ -384,15 +386,7 @@ final class KanbanInteractiveUITests: XCTestCase {
 
         // The Kanban tab becomes selected (owner routing) and the
         // gateway-scoped board renders — no chooser detour.
-        let kanbanSelected = NSPredicate(format: "isSelected == true")
-        XCTAssertEqual(
-            XCTWaiter().wait(
-                for: [XCTNSPredicateExpectation(
-                    predicate: kanbanSelected,
-                    object: app.tabBars.buttons["Kanban"])],
-                timeout: 15),
-            .completed,
-            "Gateway → Kanban must land on the Kanban tab")
+        UITabNavigation.assertSelected(app, label: "Kanban", navigationTitle: "Kanban")
         XCTAssertTrue(
             app.descendants(matching: .any)["kanban.board.streamBanner"]
                 .waitForExistence(timeout: 20),

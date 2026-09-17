@@ -261,6 +261,37 @@ public enum AttachmentStagingRules {
         return String(cleaned.prefix(120))
     }
 
+    /// Reduce a picker-provided name to a bounded, path-safe basename before
+    /// it crosses the wire (Build 46). Parent path components are discarded,
+    /// separators and control characters become underscores, and the
+    /// extension is kept when a long name must be truncated.
+    public static func pathSafeBasename(_ name: String, maxBytes: Int = 255) -> String {
+        let components = name
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .filter { $0 != "." && $0 != ".." }
+        let joined = components.isEmpty ? name : components.joined(separator: "_")
+        var safe = String.UnicodeScalarView()
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        for scalar in joined.unicodeScalars {
+            if scalar == "\\" || !allowed.contains(scalar) || scalar.properties.generalCategory == .control {
+                safe.append("_")
+            } else {
+                safe.append(scalar)
+            }
+        }
+        var result = String(safe).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if result.isEmpty { result = "attachment" }
+        guard result.utf8.count > maxBytes, maxBytes > 0 else { return result }
+
+        let ext = (result as NSString).pathExtension
+        let suffix = ext.isEmpty ? "" : ".\(ext)"
+        let stemLimit = max(1, maxBytes - suffix.utf8.count)
+        let stem = String(result.dropLast(suffix.count))
+        let truncated = String(decoding: stem.utf8.prefix(stemLimit), as: UTF8.self)
+        result = truncated + suffix
+        return result.isEmpty ? "attachment" : result
+    }
+
     /// Extensions the gateway image pipeline accepts — `cli.py`
     /// `_IMAGE_EXTENSIONS` (3954-3958): png/jpg/jpeg/gif/webp/bmp/tiff/tif/
     /// svg/ico. (svg/ico are local `image.attach` paths; keep the set

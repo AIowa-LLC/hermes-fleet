@@ -50,11 +50,23 @@ UI_CLASSES=(
   FOS5BotsGroupsChats FOS6ComponentDensity
   FOS8Accessibility
   BotsPresenceSync
+  # Build 43 (restore bot editing + consolidate navigation): new suite.
+  B43NavigationEditing
   BotAvatarAppearance BotPetAvatar BotAvatarSources
   # Re-admitted 2026-09-10 (i16): the 2026-09-10 hosted failures were a
   # proven test-harness defect (cross-suite persisted-nav leakage, H7), fixed
   # by NAV_RESET hermeticity in H1AppLockUITests — not environmental.
   H1AppLock
+  # Card D (Artifacts destination + inline chat media): deterministic
+  # scripted-fleet suite (no live gateway).
+  ArtifactsDestination
+  # Card E (image-generation animation): deterministic scripted-fleet suite
+  # (no live gateway; HERMES_FLEET_IMAGE_DEMO + …_HOLD_MS/…_FAIL knobs).
+  ImageGenerationAnimation
+  # Card B (Cron destination): deterministic scripted-fleet suite (no live
+  # gateway; HERMES_FLEET_NAV_RESET hermetic launch) — registered
+  # retroactively after the audit caught the drift.
+  CronManagement
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They

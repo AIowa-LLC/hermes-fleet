@@ -167,6 +167,73 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
             "compose row carries gateway provenance (got: \(candidate.label))")
     }
 
+    /// Fleet-wide group journey: the creation sheet is entered from Chats,
+    /// presents Bots from two distinct gateway routes, and opens the resulting
+    /// hosted conversation after the scripted peer setup completes.
+    func testChatsNewGroupCreatesAndOpensCrossGatewayRoom() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        let newGroup = app.buttons["fleet.chats.new-group"]
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 10), "Chats exposes fleet-wide New Group")
+        newGroup.tap()
+
+        let name = app.textFields["fleet.room.create.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10), "group name field renders")
+        name.tap()
+        name.typeText("Fleet Cross-Machine")
+
+        let workstation = app.descendants(matching: .any)["fleet.room.create.candidate.workstation#researcher"]
+        let renderBox = app.descendants(matching: .any)["fleet.room.create.candidate.render-box#default"]
+        XCTAssertTrue(workstation.waitForExistence(timeout: 10), "workstation Bot is listed")
+        XCTAssertTrue(renderBox.waitForExistence(timeout: 10), "render-box Bot is listed in the same picker")
+        XCTAssertTrue(workstation.label.localizedCaseInsensitiveContains("Workstation"))
+        XCTAssertTrue(renderBox.label.localizedCaseInsensitiveContains("Render Box"))
+
+        workstation.tap()
+        renderBox.tap()
+        let submit = app.buttons["fleet.room.create.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertTrue(submit.isEnabled, "two reachable Bots satisfy the frozen roster minimum")
+
+        let pickerShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        pickerShot.name = "build44-fleet-wide-group-picker"
+        pickerShot.lifetime = .keepAlways
+        add(pickerShot)
+
+        submit.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 15),
+            "successful cross-gateway creation opens the interactive hosted room")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.member.Researcher"].waitForExistence(timeout: 5),
+            "host member remains attributed")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.member.Default"].waitForExistence(timeout: 5),
+            "remote member remains attributed")
+        let composer = app.textFields["fleet.room.composer.field"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5), "hosted room exposes its composer")
+        XCTAssertTrue(composer.isEnabled, "a successfully linked hosted room remains interactive")
+        XCTAssertEqual(composer.placeholderValue, "Message the room (@ to mention)")
+        composer.tap()
+        composer.typeText("Coordinate this")
+        let send = app.buttons["fleet.room.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5), "interactive room exposes send")
+        send.tap()
+        XCTAssertTrue(
+            app.staticTexts["Coordinate this"].waitForExistence(timeout: 5),
+            "the user message is rendered in the authoritative room transcript")
+
+        let roomShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        roomShot.name = "build44-cross-gateway-group-chat"
+        roomShot.lifetime = .keepAlways
+        add(roomShot)
+    }
+
     // MARK: 5. Chats refresh-failure surface (dogfood corrective pass F2/F3)
 
     /// F2: a container `accessibilityIdentifier` on the failure surface

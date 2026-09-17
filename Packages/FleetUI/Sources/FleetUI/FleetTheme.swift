@@ -126,6 +126,10 @@ public enum FleetTheme {
         #endif
     }()
 
+    /// Scrim — semantic dimming veil for modal overlays (drawer, sheets).
+    /// Black in both appearances: it darkens content, never tints it.
+    public static let scrim: Color = Color.black.opacity(0.32)
+
     /// Elevated inline surface (chips, active-now capsules). System tertiary
     /// so it adapts natively; never translucent glass behind body content.
     public static let surfaceElevated: Color = Color(uiColor: .tertiarySystemBackground)

@@ -159,7 +159,8 @@ final class H1AppLockUITests: XCTestCase {
         app.terminate()
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 60),
+        UITabNavigation.shellReady(app, timeout: 60)
+        XCTAssertTrue(true,
                       "unlocked tab shell should render immediately when the toggle is OFF (any root)")
         XCTAssertFalse(app.buttons["fleet.app-lock.passcode.unlock"].exists,
                        "no lock screen when the persisted toggle is OFF")

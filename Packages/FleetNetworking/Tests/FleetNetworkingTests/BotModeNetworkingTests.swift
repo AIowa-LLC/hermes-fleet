@@ -286,7 +286,7 @@ final class BotModeNetworkingTests: XCTestCase {
     """#
 
     static let roomRow = #"""
-    {"room_id":"room-1","name":"Research Crew","members":"[{\"name\":\"researcher\"},{\"name\":\"writer\"}]","authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
+    {"room_id":"room-1","name":"Research Crew","members":"[{\"display_name\":\"Researcher\",\"profile\":\"researcher\",\"handle\":\"fleet-r\",\"target\":{\"kind\":\"peer\",\"peer_id\":\"install:arch\",\"installation_id\":\"install:arch\"}},{\"name\":\"writer\"}]","authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
     """#
 
     // MARK: - groups.create wire contract (legacy continuation + create)
@@ -394,19 +394,27 @@ final class BotModeNetworkingTests: XCTestCase {
         XCTAssertEqual(room.roomID, "room-1")
         XCTAssertEqual(room.name, "Research Crew")
         XCTAssertEqual(room.members.count, 2)
+        XCTAssertEqual(room.members[0].name, "Researcher")
+        XCTAssertEqual(room.members[0].handle, "fleet-r")
+        XCTAssertEqual(room.members[0].connectionID, "install:arch")
+        XCTAssertTrue(room.members[0].sourceScoped)
         XCTAssertEqual(room.authorityEpoch, 1)
         XCTAssertEqual(room.latestSeq, 12)
     }
 
     func testGroupsLogDecode() throws {
         let logJSON = #"""
-        {"events":[{"room_id":"room-1","seq":3,"event_id":"e-3","kind":"message.user","actor":{"kind":"user","id":"desktop"},"payload":{"text":"hello crew"},"created_at":1700000400.0},{"room_id":"room-1","seq":4,"event_id":"e-4","kind":"turn.failed","actor":{"kind":"gateway","id":"install:abc"},"payload":{"error":"boom","reason_code":"provider_auth_or_access"},"created_at":1700000500.0}],"cursor":4,"latest_seq":12,"has_more":true,"authority":{"gateway_id":"install:abc","epoch":1}}
+        {"events":[{"room_id":"room-1","seq":3,"event_id":"e-3","kind":"message.user","actor":{"kind":"user","id":"desktop"},"payload":{"text":"hello crew"},"created_at":1700000400.0},{"room_id":"room-1","seq":4,"event_id":"e-4","kind":"message.member","actor":{"kind":"member","id":"fleet-r","profile":"researcher","display_name":"Researcher","connection_id":"install:arch"},"payload":{"text":"hello back"},"created_at":1700000401.0},{"room_id":"room-1","seq":5,"event_id":"e-5","kind":"turn.failed","actor":{"kind":"gateway","id":"install:abc"},"payload":{"error":"boom","reason_code":"provider_auth_or_access"},"created_at":1700000500.0}],"cursor":5,"latest_seq":12,"has_more":true,"authority":{"gateway_id":"install:abc","epoch":1}}
         """#
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(logJSON.utf8))
         let page = try GatewayGroupsClient.decodeLogPage(json)
-        XCTAssertEqual(page.events.count, 2)
+        XCTAssertEqual(page.events.count, 3)
         XCTAssertEqual(page.events[0].text, "hello crew")
         XCTAssertEqual(page.events[0].seq, 3)
+        XCTAssertEqual(page.events[1].actorDisplayName, "Researcher")
+        XCTAssertEqual(page.events[1].actorProfile, "researcher")
+        XCTAssertEqual(page.events[1].actorConnectionID, "install:arch")
+        XCTAssertEqual(page.events[2].reasonCode, "provider_auth_or_access")
         XCTAssertTrue(page.hasMore)
         XCTAssertEqual(page.authority.epoch, 1)
         XCTAssertEqual(page.latestSeq, 12)

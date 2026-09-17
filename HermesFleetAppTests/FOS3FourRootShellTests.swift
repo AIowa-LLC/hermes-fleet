@@ -142,12 +142,13 @@ final class FOS3FourRootShellTests: XCTestCase {
         let gateway = results.items.first { $0.id == "gateway:workstation" }
         XCTAssertNotNil(gateway, "gateways must appear as DIRECT object results (FOS-3)")
         XCTAssertEqual(gateway?.screen, .gatewayDetail(workstation))
-        XCTAssertEqual(gateway?.screen.owner, .gateways)
+        // Build 43: gateway screens are owned by Fleet.
+        XCTAssertEqual(gateway?.screen.owner, .fleet)
 
         // Gateway resources route to Gateways with exact gateway scope.
         let cron = results.items.first { $0.id == "res:cron:\(workstation.rawValue)" }
         XCTAssertNotNil(cron)
-        XCTAssertEqual(cron?.screen.owner, .gateways)
+        XCTAssertEqual(cron?.screen.owner, .fleet)
         XCTAssertEqual(cron?.screen.gatewayID, workstation)
 
         // Conversations route to their owner (ordinary → Chats).

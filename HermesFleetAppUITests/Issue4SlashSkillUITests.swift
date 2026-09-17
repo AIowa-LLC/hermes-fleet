@@ -134,7 +134,7 @@ final class Issue4SlashSkillUITests: XCTestCase {
 
     func testStaleSkillDispatchFailsClosedKeepsTextAndAllowsOrdinaryChat() throws {
         let app = launch()
-        openConversation(app, gateway: "render-box", profile: "default", sessionID: "workstation.default.s1")
+        openConversation(app, gateway: "render-box", profile: "default", sessionID: "render-box.default.s1")
 
         let composer = composer(in: app)
         composer.tap()

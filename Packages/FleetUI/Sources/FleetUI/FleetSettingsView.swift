@@ -226,6 +226,16 @@ public struct FleetThemeEditorView: View {
         #if DEBUG
         let debugPalette: FleetThemePalette? = if ProcessInfo.processInfo.arguments.contains("-issue6-low-contrast") {
             .lowContrastFixture
+        } else if ProcessInfo.processInfo.arguments.contains("-b41-white-highlight") {
+            FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0xFFFFFF),
+                text: FleetStoredColor(hex: 0xF5F5F7),
+                background: FleetStoredColor(hex: 0x101216))
+        } else if ProcessInfo.processInfo.arguments.contains("-b41-invisible-palette") {
+            FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0xFFFFFF),
+                text: FleetStoredColor(hex: 0x1C1C1E),
+                background: FleetStoredColor(hex: 0xFFFFFF))
         } else if ProcessInfo.processInfo.arguments.contains("-issue6-arbitrary-theme") {
             .arbitraryFixture
         } else {
@@ -252,7 +262,7 @@ public struct FleetThemeEditorView: View {
             } header: {
                 Text("Palette")
             } footer: {
-                Text("Fleet stores one opaque sRGB palette. Any color is allowed; contrast warnings are advisory in normal appearance.")
+                Text("Fleet stores one opaque sRGB palette. Any color is allowed; contrast warnings are advisory. A palette whose highlight or text would be invisible against its background in either appearance cannot be applied.")
             }
 
             if colorConversionFailed {
@@ -286,7 +296,7 @@ public struct FleetThemeEditorView: View {
 
             if applyFailed {
                 Label(
-                    "The theme could not be applied. Your current theme is unchanged.",
+                    "This palette cannot be applied: a color would be invisible against its background in light or dark appearance. Your current theme is unchanged.",
                     systemImage: "exclamationmark.triangle")
                     .foregroundStyle(FleetTheme.statusDestructive)
                     .accessibilityIdentifier("fleet.theme.apply-error")
@@ -343,6 +353,7 @@ public struct FleetThemeEditorView: View {
             Button("Primary action") {}
                 .buttonStyle(.borderedProminent)
                 .tint(previewTheme.highlight)
+                .foregroundStyle(previewTheme.onHighlight)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(FleetTheme.spacingMd)

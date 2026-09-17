@@ -1,7 +1,8 @@
 # Hermes Fleet gitleaks configuration.
 #
-# Baseline: gitleaks default rules (useDefault = true), extended with a
-# scoped allowlist for a single known false positive.
+# Baseline: gitleaks default rules (useDefault = true), extended with
+# scoped, documented allowlist entries for known false positives
+# (gitleaks 8.x array form: one [[allowlists]] block per suppression).
 title = "Hermes Fleet gitleaks config"
 
 [extend]
@@ -13,8 +14,27 @@ useDefault = true
 #   used by WebSocket handshake probes to validate the gateway's
 #   Sec-WebSocket-Accept. It is a public specification test vector, not a
 #   credential. The generic-api-key rule flags it by entropy alone.
-[allowlist]
+# - `storageKey = "fleet.conversation.pins.v1"` in
+#   Packages/FleetCore/Sources/FleetCore/ConversationPinning.swift is the
+#   versioned UserDefaults key for the local conversation-pin store. It is
+#   a namespaced persistence constant, not a credential — nothing
+#   authenticates with it. The generic-api-key rule flags it by entropy
+#   alone (3.77). Suppression is line-anchored (regexTarget = "line") to
+#   the exact `public static let` declaration text, NOT path-scoped:
+#   gitleaks 8.x ORs paths/regexes within one [[allowlists]] block, so
+#   adding a path would skip the whole file and mask real secrets there.
+#   This way the same literal in any other shape or file (or any other
+#   high-entropy value in this file) still fails the gate — verified with
+#   planted-canary probes.
+[[allowlists]]
 description = "RFC 6455 sample nonce (public spec test vector, not a secret)"
 regexes = [
   '''dGhlIHNhbXBsZSBub25jZQ==''',
+]
+
+[[allowlists]]
+description = "FleetCore UserDefaults pin storage key (persistence constant, not a credential)"
+regexTarget = "line"
+regexes = [
+  '''public static let storageKey = "fleet\.conversation\.pins\.v1"''',
 ]

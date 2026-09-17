@@ -173,6 +173,7 @@ public struct ConversationView: View {
                 route: route,
                 sessionID: forkTargetSessionID
             )
+            .toolbar { FleetDrawerMenu() }
         }
         // Slash parity: command-driven navigation. /new pushes a fresh
         // conversation on the SAME route (gateway/profile preserved);
@@ -198,6 +199,7 @@ public struct ConversationView: View {
                 route: route,
                 sessionID: newChatTargetSessionID
             )
+            .toolbar { FleetDrawerMenu() }
         }
         // Dogfood top-space fix: status + timeline actions live in the inline
         // navigation bar. The pill keeps its live activity/presence
@@ -472,6 +474,7 @@ public struct ConversationView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.highlight)
+                    .foregroundStyle(theme.onHighlight)
                     .controlSize(.small)
                     .accessibilityIdentifier("fleet.conversation.reauthenticate")
                 default:
@@ -537,7 +540,7 @@ public struct ConversationView: View {
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(model.transcript) { row in
-                        ConversationBubbleView(row: row) { emoji in
+                        ConversationBubbleView(row: row, environment: environment) { emoji in
                             Task { await model.react(rowID: row.rowID, kind: row.kind, emoji: emoji) }
                         } clear: {
                             Task { await model.clearReaction(rowID: row.rowID, kind: row.kind) }
@@ -869,11 +872,14 @@ public struct ConversationView: View {
                     Button {
                         Task { await submit(model) }
                     } label: {
-                        // V2 (Nous Direction A): FLAT pale-cyan circle, dark
-                        // glyph — the one accent, no glow, no gradient.
+                        // V2 (Nous Direction A): FLAT highlight circle, derived
+                        // ink glyph — the one accent, no glow, no gradient.
+                        // The glyph ink is derived from the HIGHLIGHT fill
+                        // (not the canvas) so it stays legible for any user
+                        // highlight, including white or near-black.
                         Image(systemName: "arrow.up")
                             .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(theme.background)
+                            .foregroundStyle(theme.onHighlight)
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
                             .background(Circle().fill(theme.highlight))
                     }
@@ -1349,6 +1355,10 @@ public struct ConversationView: View {
 /// collapsed by default for completed turns (it is auxiliary, not the reply).
 private struct ReasoningDisclosure: View {
     @Environment(\.fleetTheme) private var theme
+    /// Build 46: the completed-turn default comes from the persisted
+    /// reasoning-presentation preference (Settings → Conversation).
+    @AppStorage(ReasoningPresentationPreference.storageKey)
+    private var defaultPreferenceRaw = ReasoningPresentationPreference.collapsed.rawValue
     let text: String
     let isStreaming: Bool
 
@@ -1357,15 +1367,19 @@ private struct ReasoningDisclosure: View {
         self.isStreaming = isStreaming
     }
 
-    @State private var expanded = false
+    private var preference: ReasoningPresentationPreference {
+        ReasoningPresentationPreference(rawValue: defaultPreferenceRaw) ?? .collapsed
+    }
+
+    @State private var expansionState = ReasoningExpansionState()
 
     var body: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
             Button {
-                expanded.toggle()
+                expansionState.toggle()
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: expansionState.isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(theme.textSecondary)
                     Text("Reasoning")
@@ -1374,10 +1388,10 @@ private struct ReasoningDisclosure: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Reasoning, \(expanded ? "expanded" : "collapsed")")
-            .accessibilityHint("Double tap to \(expanded ? "collapse" : "expand") reasoning")
+            .accessibilityLabel("Reasoning, \(expansionState.isExpanded ? "expanded" : "collapsed")")
+            .accessibilityHint("Double tap to \(expansionState.isExpanded ? "collapse" : "expand") reasoning")
             .accessibilityIdentifier("fleet.conversation.reasoning.toggle")
-            if expanded {
+            if expansionState.isExpanded {
                 Text(text)
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary)
@@ -1388,13 +1402,24 @@ private struct ReasoningDisclosure: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(theme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+        .onAppear {
+            // Completed-turn default from the persisted preference; a live
+            // stream immediately re-asserts visibility below.
+            if !isStreaming { expansionState.applyDefault(preference) }
+        }
+        .onChange(of: defaultPreferenceRaw) { _, _ in
+            if !isStreaming { expansionState.applyDefault(preference) }
+        }
         .onChange(of: isStreaming) { _, nowStreaming in
             // Keep live reasoning visible while the turn streams; auto-
-            // collapse when the turn completes.
-            expanded = nowStreaming
-        }
-        .onAppear {
-            expanded = isStreaming
+            // collapse when the turn completes. Streaming wins over the
+            // preference (live reasoning is the reply being written), but
+            // never clears a manual override made during the stream.
+            if nowStreaming {
+                expansionState.expandForStreaming()
+            } else if !expansionState.hasUserOverride {
+                expansionState.applyDefault(preference)
+            }
         }
     }
 }
@@ -1407,6 +1432,10 @@ private struct ConversationBubbleView: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let row: ConversationRow
+    /// Card D: needed to retrieve/render inline generated-image artifacts on
+    /// the row that cited them. Optional so previews/tests that only exercise
+    /// plain bubbles keep working.
+    var environment: AppEnvironment? = nil
     /// R10-T2: reaction handlers from the owning view (the bubble owns no
     /// model reference).
     var react: (String) -> Void = { _ in }
@@ -1592,7 +1621,36 @@ private struct ConversationBubbleView: View {
                     .strokeBorder(theme.border, lineWidth: 1)
             )
         case .tool:
-            FleetToolActivityView(title: row.text, detail: row.detail)
+            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                FleetToolActivityView(title: row.text, detail: row.detail)
+                // Card E: the branded indeterminate animation while the
+                // gateway has VERIFIED an in-flight image_generate call. The
+                // terminal states render nothing here (the artifact slot or
+                // the chip above tells the outcome) — and the cross-fade
+                // hands the space cleanly to the delivered image.
+                if row.generationActivity?.isGenerating == true {
+                    FleetWingGenerationView(identifier: row.id)
+                        .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+                }
+                // Card D: generated-image artifacts render in the CITING row's
+                // bubble — the row whose result named them (never a positional
+                // guess). Retrieval + dedupe live in the shared store.
+                if let environment, let artifacts = row.artifacts, !artifacts.isEmpty {
+                    ForEach(artifacts, id: \.self) { reference in
+                        ConversationArtifactView(
+                            reference: reference,
+                            environment: environment,
+                            identifier: "\(row.id).\(reference.name)")
+                            .transition(reduceMotion ? .identity : .opacity)
+                    }
+                }
+            }
+            // Card E: the lifecycle swap (animation ⇄ delivered artifact) is
+            // one animated handoff; under Reduce Motion both transitions are
+            // `.identity` and the animations are nil — an instant, motionless
+            // swap.
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: row.generationActivity)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: row.artifacts)
         case .status, .system:
             Text(row.text)
                 .font(.caption)

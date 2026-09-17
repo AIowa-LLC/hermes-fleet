@@ -39,6 +39,18 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
     /// R10-T2: reactions rendered under this bubble (a live view over the
     /// VM's `reactionsByRowID`, updated by the view). Nil = none.
     public var reactions: [MessageReaction]?
+    /// Card D: generated-image artifacts this row CITED (a tool row whose
+    /// `image_generate` result named retrievable media). Provenance-bound —
+    /// each reference carries its gateway + session. Nil/empty = none. The
+    /// view retrieves bytes through the shared `ArtifactImageStore`.
+    public var artifacts: [ArtifactReference]?
+    /// Card E: the in-flight `image_generate` lifecycle for THIS tool row,
+    /// derived from verified wire frames only (`ImageGenerationRules`). Nil =
+    /// no generation observed on the row. `.generating` renders the branded
+    /// indeterminate animation; the terminal states render nothing (the
+    /// artifact slot / tool chip already tells the outcome) — so the
+    /// animation can never overlap a delivered image.
+    public var generationActivity: ImageGenerationActivity?
 
     public init(
         id: String,
@@ -160,12 +172,25 @@ public final class ConversationViewModel {
     /// cache), so capping the window never loses history.
     public var transcript: [ConversationRow] {
         var rows = Array(allRows.suffix(maxDisplayRows))
+        // Offset of the display window inside the authoritative array (the
+        // window is a suffix, so allRows index = offset + row index).
+        let offset = allRows.count - rows.count
         // R10-T2: project the reaction state onto each row for rendering
         // (durable-keyed; a live row reads its in-flight optimistic state
         // under the live-* key).
         for index in rows.indices {
             let key = rows[index].rowID ?? Self.liveRowKey(kind: rows[index].kind)
             rows[index].reactions = reactionsByRowID[key]?.reactions
+            // Card D: an assistant row of a turn whose tool rows cited a
+            // generated image renders the agent's PROSE only — the artifact
+            // itself presents through the citing tool row, so the model's
+            // restated path/URL is stripped (desktop-verified de-dupe).
+            if rows[index].kind == .assistant {
+                let sources = turnEchoSources(beforeAssistantAt: offset + index)
+                if !sources.isEmpty {
+                    rows[index].text = GeneratedImageRules.strippingEchoes(in: rows[index].text, sources: sources)
+                }
+            }
         }
         return rows
     }
@@ -174,6 +199,17 @@ public final class ConversationViewModel {
     /// Sources: history-carried `display_metadata.reactions` (durable rows)
     /// and post-`message.react` server truth / optimistic updates.
     public private(set) var reactionsByRowID: [String: MessageReactionsSnapshot] = [:]
+
+    // MARK: Card D — generated-image artifacts (inline media)
+
+    /// Citations declared by each TOOL row (row id → citations). Drives the
+    /// prose-echo de-dupe for the row's turn: once a generation succeeded the
+    /// model's restated path/URL is a duplicate of the artifact slot.
+    @ObservationIgnored private var citationsByRowID: [String: [GeneratedImageCitation]] = [:]
+    /// Observed-artifact sink (composition root wires the device-local
+    /// library). Called once per NEW (gateway, path) citation — replayed
+    /// frames never re-record the same identity.
+    public var onArtifactObserved: ((ArtifactReference, _ sourceTitle: String?, _ sourceProfile: String?) -> Void)?
     public private(set) var replayNotice: String?
     /// t_8401d3c3 — non-secret stream-integrity notice shown when a gap was
     /// detected on the live event stream (recovered via targeted replay, or
@@ -1366,6 +1402,9 @@ public final class ConversationViewModel {
                 finalizeStreamingRow()
                 isStreaming = false
                 phase = .ready
+                // Card E: the user cancelled the turn — the generation
+                // animation stops with it.
+                stopInFlightImageGenerations(reason: .cancelled)
                 await persistTranscript()
             }
         } catch {
@@ -1545,11 +1584,16 @@ public final class ConversationViewModel {
             // same identities and does not tear down/recreate every bubble
             // — the cache→authoritative handoff must not visibly jump.
             let authoritative = opened.messages
+            let previousRows = allRows
             if hydratedFromCache {
                 allRows = Self.mergePreservingIDs(
                     existing: allRows, authoritative: authoritative,
                     nextRowID: { nextRowID() }
                 )
+                // Cards D+E: a preserved row identity keeps its cited
+                // artifacts (the wire's history projection carries no tool
+                // results) and any in-flight generation animation.
+                carryDerivedRowState(into: &allRows, from: previousRows)
             } else {
                 allRows = authoritative.map { Self.row(from: $0, id: nextRowID()) }
             }
@@ -1766,10 +1810,15 @@ public final class ConversationViewModel {
             if hydratedFromCache {
                 // H1 flash-free swap (see applyOpenedSession): preserve row
                 // identities across the cache→authoritative handoff.
+                let previousRows = allRows
                 allRows = Self.mergePreservingIDs(
                     existing: allRows, authoritative: history.messages,
                     nextRowID: { nextRowID() }
                 )
+                // Cards D+E: preserved row identities keep their cited
+                // artifacts (the wire's history projection carries no tool
+                // results) and any in-flight generation animation.
+                carryDerivedRowState(into: &allRows, from: previousRows)
             } else {
                 allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
             }
@@ -1848,6 +1897,10 @@ public final class ConversationViewModel {
             if isError, let error {
                 errorMessage = error
             }
+            // Card E: the turn settled — a generation that never reported its
+            // own result is over (failed when the turn failed, cut short
+            // otherwise). The animation never outlives its turn.
+            stopInFlightImageGenerations(reason: isError ? .failed : .cancelled)
             Task { await persistTranscript() }
 
         case .thinkingDelta(_, let text, _),
@@ -1866,24 +1919,41 @@ public final class ConversationViewModel {
             // duplicated inline. (Search scoped to the current turn, matching
             // updateLastTool's geometry.)
             let lowerBound = (lastAssistantIndex ?? -1) + 1
+            let rowIndex: Int
             if let idx = allRows[lowerBound...].lastIndex(where: { $0.kind == .tool && $0.text == name }) {
                 if let context, !context.isEmpty {
                     allRows[idx].detail = context
                 }
+                rowIndex = idx
             } else {
                 appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context))
+                rowIndex = allRows.count - 1
             }
+            // Card E: a verified generation start (by tool name) begins the
+            // branded animation on this row.
+            applyGenerationTransition(triggeredBy: event, onRowAt: rowIndex)
 
         case .toolGenerating(_, let name, _):
-            updateLastTool(name, generating: true)
+            applyGenerationTransition(triggeredBy: event, onRowAt: updateLastTool(name, generating: true))
 
         case .toolProgress(_, _, let name, let text, _):
             if let name {
-                updateLastTool(name, generating: true, progress: text)
+                applyGenerationTransition(
+                    triggeredBy: event,
+                    onRowAt: updateLastTool(name, generating: true, progress: text))
             }
 
-        case .toolComplete(_, _, let name, let summary, _):
-            updateLastTool(name, generating: false, progress: summary)
+        case .toolComplete(_, _, let name, let summary, let resultText, _):
+            let rowIndex = updateLastTool(name, generating: false, progress: summary)
+            // Card D: a completed generation result becomes an inline artifact
+            // on THIS row (dedupe by reference identity across replay/reconnect).
+            if let rowIndex {
+                // Card E: settle the animation FIRST — delivered (result) or
+                // stopped (explicit failure) — so it hands straight over to
+                // the artifact slot and can never overlap the image.
+                applyGenerationTransition(triggeredBy: event, onRowAt: rowIndex)
+                attachGeneratedImageCitations(toolName: name, resultText: resultText, toRowAt: rowIndex)
+            }
 
         case .backgroundComplete(_, _, let text, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: text ?? "Background task complete"))
@@ -1923,6 +1993,8 @@ public final class ConversationViewModel {
             isStreaming = false
             phase = .ready
             errorMessage = message
+            // Card E: a turn-level error ends any in-flight generation.
+            stopInFlightImageGenerations(reason: .failed)
 
         case .unknown(_, let rawType, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: "Unknown event: \(rawType)"))
@@ -1963,6 +2035,9 @@ public final class ConversationViewModel {
                 phase = .disconnected
                 errorMessage = nil
             }
+            // Card E: the transport dropped — an in-flight generation can no
+            // longer report, so the animation stops (never spins forever).
+            stopInFlightImageGenerations(reason: .disconnected)
         case .authenticationRequired:
             // M11: 4401 → surface re-auth UX, NEVER a silent retry.
             if phase == .streaming || phase == .ready {
@@ -1971,6 +2046,7 @@ public final class ConversationViewModel {
             }
             phase = .authRequired
             errorMessage = "Authentication required — re-authenticate to continue."
+            stopInFlightImageGenerations(reason: .disconnected)
         case .online, .degraded, .connecting:
             break
         }
@@ -2057,7 +2133,7 @@ public final class ConversationViewModel {
         allRows[idx].isStreaming = false
     }
 
-    private func updateLastTool(_ name: String, generating: Bool, progress: String? = nil) {
+    private func updateLastTool(_ name: String, generating: Bool, progress: String? = nil) -> Int? {
         // P0-8: match within the CURRENT turn only. A turn's tool rows arrive
         // AFTER the previous assistant reply (user → reasoning → tools →
         // message.start), so the search range starts past the last assistant
@@ -2071,8 +2147,109 @@ public final class ConversationViewModel {
             } else {
                 allRows[idx].detail = generating ? "Generating…" : allRows[idx].detail
             }
+            return idx
         } else {
             appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: generating ? "Generating…" : nil))
+            return allRows.count - 1
+        }
+    }
+
+    // MARK: Card E — image-generation animation lifecycle
+
+    /// Apply one frame to a tool row's generation activity. The pure rule
+    /// owns what counts as a verified start/terminal frame; the VM only
+    /// routes frames to the row the frame addressed.
+    private func applyGenerationTransition(triggeredBy event: ConversationEvent, onRowAt index: Int?) {
+        guard let index, allRows.indices.contains(index) else { return }
+        guard let next = ImageGenerationRules.transition(
+            current: allRows[index].generationActivity, event: event) else { return }
+        allRows[index].generationActivity = next
+    }
+
+    /// Stop every in-flight generation when the turn/transport settles
+    /// without the tool's own terminal frame (turn error, turn end without a
+    /// result, interrupt, disconnect). The animation is a claim about work in
+    /// flight — it must never outlive the work.
+    private func stopInFlightImageGenerations(reason: ImageGenerationStop) {
+        for index in allRows.indices {
+            guard let next = ImageGenerationRules.stopped(
+                allRows[index].generationActivity, reason: reason) else { continue }
+            allRows[index].generationActivity = next
+        }
+    }
+
+    // MARK: Card D — generated-image artifact capture
+
+    /// Record an `image_generate` citation on the TOOL row that cited it (the
+    /// "correct bubble" is the row whose result named the artifact — never a
+    /// positional guess). Replayed/re-delivered frames hit the same row and
+    /// the same reference identity, so nothing duplicates; the echo-strip set
+    /// is recorded even when no gateway-local path is retrievable (URL-only
+    /// results still de-dupe prose).
+    private func attachGeneratedImageCitations(toolName: String, resultText: String?, toRowAt index: Int) {
+        guard allRows.indices.contains(index),
+              let citation = GeneratedImageRules.citation(toolName: toolName, resultJSON: resultText) else { return }
+        let rowID = allRows[index].id
+        if !(citationsByRowID[rowID]?.contains(citation) ?? false) {
+            citationsByRowID[rowID, default: []].append(citation)
+        }
+        guard let reference = GeneratedImageRules.artifactReference(
+            for: citation,
+            gatewayID: route.gatewayID,
+            sessionID: openedSessionID ?? sessionID,
+            profile: route.profileSlug.rawValue) else { return }
+        var artifacts = allRows[index].artifacts ?? []
+        guard !artifacts.contains(reference) else { return }
+        artifacts.append(reference)
+        allRows[index].artifacts = artifacts
+        onArtifactObserved?(reference, sessionTitle, route.profileSlug.rawValue)
+    }
+
+    /// The de-dupe set for the assistant row at `index`: citations declared by
+    /// the tool rows of THAT turn (between the previous assistant row and this
+    /// one). Turn-scoped by construction — an earlier or later turn's artifact
+    /// never scrubs prose it did not cite.
+    private func turnEchoSources(beforeAssistantAt index: Int) -> [String] {
+        guard allRows.indices.contains(index), allRows[index].kind == .assistant else { return [] }
+        var cursor = index - 1
+        while cursor >= 0, allRows[cursor].kind != .assistant { cursor -= 1 }
+        let lower = cursor + 1
+        guard lower < index else { return [] }
+        var sources: [String] = []
+        for rowIndex in lower..<index {
+            if let citations = citationsByRowID[allRows[rowIndex].id] {
+                sources.append(contentsOf: citations.flatMap(\.echoSources))
+            }
+        }
+        return sources
+    }
+
+    /// Carry derived row state the wire does not re-deliver across a
+    /// transcript rebuild that preserved row identities (the
+    /// cache→authoritative swap): cited artifact references (card D — the
+    /// history projection carries no tool results) and the image-generation
+    /// activity of an in-flight call (card E — the projection cannot know a
+    /// tool is still running). The row identity is what keeps both attached
+    /// to the bubble they belong to.
+    private func carryDerivedRowState(into rows: inout [ConversationRow], from previous: [ConversationRow]) {
+        var artifactsByID: [String: [ArtifactReference]] = [:]
+        var activityByID: [String: ImageGenerationActivity] = [:]
+        for row in previous {
+            if !(row.artifacts ?? []).isEmpty {
+                artifactsByID[row.id] = row.artifacts
+            }
+            if let activity = row.generationActivity {
+                activityByID[row.id] = activity
+            }
+        }
+        guard !artifactsByID.isEmpty || !activityByID.isEmpty else { return }
+        for index in rows.indices {
+            if let carried = artifactsByID[rows[index].id], rows[index].artifacts == nil {
+                rows[index].artifacts = carried
+            }
+            if let carried = activityByID[rows[index].id], rows[index].generationActivity == nil {
+                rows[index].generationActivity = carried
+            }
         }
     }
 

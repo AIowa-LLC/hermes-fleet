@@ -1,5 +1,6 @@
 import Foundation
 import os
+import UIKit
 import FleetCore
 import FleetNetworking
 import FleetSecurity
@@ -73,7 +74,7 @@ extension FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
-        return AppEnvironment(
+        let environment = AppEnvironment(
             registry: registry,
             roster: roster,
             cache: cache,
@@ -89,6 +90,15 @@ extension FleetServiceGraph {
             },
             managementSeamFactory: { gateway in
                 ScriptedManagementSeam(gatewayID: gateway.id)
+            },
+            cronDashboardFactory: { gateway in
+                ScriptedCronDashboard(gatewayID: gateway.id)
+            },
+            // Card D: scripted artifact transport — deterministic image bytes
+            // for any media-root path, plus env knobs for the honest
+            // expired/denied states (see ScriptedArtifactRetriever).
+            artifactRetrievalFactory: { gateway in
+                ScriptedArtifactRetriever(gatewayID: gateway.id)
             },
             learningSeamFactory: { gateway in
                 ScriptedLearningSeam(gatewayID: gateway.id)
@@ -119,7 +129,7 @@ extension FleetServiceGraph {
             // HERMES_FLEET_ROOMLINK=unsupported renders the honest
             // unsupported state; default is a supported direct/TLS catalog.
             roomLinkFactory: { gateway in
-                ScriptedRoomLinkEngine.shared
+                ScriptedRoomLinkEngine(gatewayID: gateway.id)
             },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled
@@ -132,6 +142,80 @@ extension FleetServiceGraph {
             // deterministically in the simulator + UI tests — no live speech.
             voiceEngineFactory: { ScriptedVoiceEngine.shared }
         )
+        // Card D: `HERMES_FLEET_ARTIFACT_FIXTURE=1` seeds a deterministic
+        // observed-artifact library (gateway + source conversation) so the
+        // Artifacts destination is walkable without a live generation.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_ARTIFACT_FIXTURE"] == "1" {
+            let gatewayID = ScriptedFleet.registrations[0].id ?? GatewayID(rawValue: "workstation")
+            environment.recordObservedArtifact(
+                ArtifactReference(
+                    gatewayID: gatewayID,
+                    sessionID: "workstation.default.s1",
+                    profile: "default",
+                    path: "/home/u/.hermes/cache/images/fixture_briefing_chart.png"),
+                sourceTitle: "Fleet morning briefing",
+                sourceSubtitle: "default")
+            environment.recordObservedArtifact(
+                ArtifactReference(
+                    gatewayID: gatewayID,
+                    sessionID: "workstation.default.s1",
+                    profile: "default",
+                    path: "/home/u/.hermes/cache/images/fixture_ui_mock.png"),
+                sourceTitle: "Fleet morning briefing",
+                sourceSubtitle: "default")
+        }
+        return environment
+    }
+}
+
+/// Card D — scripted artifact retriever (DEBUG simulator only): deterministic
+/// image bytes for any media-root path, so inline generation media and the
+/// Artifacts destination are fully walkable without a live gateway.
+///
+/// Env knobs (the honest failure states):
+/// - `HERMES_FLEET_ARTIFACT_EXPIRED=1` → every retrieval reports `.expired`
+///   (the gateway no longer serves the path — terminal, never retried);
+/// - `HERMES_FLEET_ARTIFACT_DENIED=1` → `.notPermitted` (403-class refusal).
+final class ScriptedArtifactRetriever: ArtifactRetrieving, @unchecked Sendable {
+    let gatewayID: GatewayID
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+    }
+
+    func retrieve(_ reference: ArtifactReference) async throws -> RetrievedArtifact {
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_ARTIFACT_EXPIRED"] == "1" {
+            throw ArtifactTransportError.expired(detail: "fixture: cache entry aged out")
+        }
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_ARTIFACT_DENIED"] == "1" {
+            throw ArtifactTransportError.notPermitted(detail: "fixture: outside the media roots")
+        }
+        guard reference.gatewayID == gatewayID else {
+            throw ArtifactTransportError.gatewayMismatch(expected: gatewayID, actual: reference.gatewayID)
+        }
+        return RetrievedArtifact(
+            reference: reference,
+            data: Self.fixturePNG(for: reference.name),
+            mimeType: "image/png")
+    }
+
+    /// Deterministic per-artifact gradient PNG (visually distinct rows).
+    static func fixturePNG(for name: String) -> Data {
+        let size = CGSize(width: 240, height: 150)
+        var seed = 0
+        for scalar in name.unicodeScalars {
+            seed = (seed &* 31 &+ Int(scalar.value)) & 0xFFFFFF
+        }
+        let hue = Double(seed % 360) / 360.0
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(hue: hue, saturation: 0.45, brightness: 0.85, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor(hue: (hue + 0.12).truncatingRemainder(dividingBy: 1),
+                    saturation: 0.5, brightness: 0.6, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: size.height * 0.6, width: size.width, height: size.height * 0.4))
+        }
+        return image.pngData() ?? Data()
     }
 }
 
@@ -1580,7 +1664,74 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                     contextPercent: 43
                 )
             ))
+            // Card D demo hook (simulator only): `HERMES_FLEET_IMAGE_DEMO=1`
+            // makes every scripted turn run an image_generate call whose
+            // result names a retrievable gateway path — the inline artifact,
+            // the shared retrieval store and the prose echo-strip are then
+            // walkable end-to-end without a live gateway. Tools run BEFORE
+            // message.start (the real turn order: user → tools → reply).
+            let imageDemo = ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO"] == "1"
+            // Card E: the two REAL wire shapes of a turn that runs
+            // `image_generate`:
+            // - default (tools-first): user → tools → reply. The tool frames
+            //   (and their result) precede `message.start`; card D's inline
+            //   journey pins this layout, and `updateLastTool`'s turn-scoped
+            //   geometry requires the result before the assistant row;
+            // - `HERMES_FLEET_IMAGE_DEMO_ORDER=streaming`: the turn streams
+            //   first (`message.start` …) and the tool runs mid-turn — the
+            //   window in which the composer's Stop control exists (the phase
+            //   is `.ready` until `message.start`).
+            let imageDemoOrderStreaming =
+                ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_ORDER"] == "streaming"
+
+            func emitGenerationStart() {
+                // The live wire emits `tool.generating` BEFORE `tool.start`
+                // (P0-8 probe seq 66 vs 68) — mirrored exactly.
+                streamBox.yield(.toolGenerating(sessionID: sessionID, name: "image_generate"))
+                streamBox.yield(.toolStart(
+                    sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
+                    context: "scripted generation", argsText: nil))
+            }
+
+            func emitGenerationCompletion() async {
+                // Card E: `HERMES_FLEET_IMAGE_DEMO_HOLD_MS=<n>` keeps the
+                // generation IN FLIGHT for n ms (with a named progress frame
+                // mid-hold) so the branded animation is observable in UI tests
+                // and the manual demo; unset/0 preserves card D's immediate
+                // complete flow. `HERMES_FLEET_IMAGE_DEMO_FAIL=1` completes
+                // with an explicit failure instead — the stop path.
+                let holdMs = Int(ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_HOLD_MS"] ?? "") ?? 0
+                if holdMs > 0 {
+                    try? await Task.sleep(for: .milliseconds(holdMs / 2))
+                    streamBox.yield(.toolProgress(
+                        sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
+                        text: "generating (scripted)"))
+                    try? await Task.sleep(for: .milliseconds(holdMs / 2))
+                }
+                let failure = ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_FAIL"] == "1"
+                streamBox.yield(.toolComplete(
+                    sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
+                    summary: nil,
+                    resultText: failure
+                        ? #"{"success": false, "error": "scripted generation failure"}"#
+                        : #"{"success": true, "image": "/home/u/.hermes/cache/images/scripted_generation.png", "modality": "text", "upscaled": false}"#))
+            }
+
+            // Tools-first: BOTH the start and the result precede
+            // `message.start` — the shape card D's inline journey pins and the
+            // only shape `updateLastTool`'s turn-scoped geometry keeps on one
+            // chip.
+            if imageDemo && !imageDemoOrderStreaming {
+                emitGenerationStart()
+                await emitGenerationCompletion()
+            }
             streamBox.yield(.messageStart(sessionID: sessionID))
+            // Streaming: the turn is already streaming while the tool runs
+            // (the composer's Stop control exists in this window).
+            if imageDemo && imageDemoOrderStreaming {
+                emitGenerationStart()
+                await emitGenerationCompletion()
+            }
             if ProcessInfo.processInfo.arguments.contains("-issue5-markdown-fixture") {
                 // Keep the initial empty assistant row on screen long enough
                 // for the UI fixture to verify that the preceding user row
@@ -2089,13 +2240,16 @@ enum ScriptedFleet {
                     name: "default", path: "~/.hermes/profiles/default",
                     isDefault: true, model: "hermes", provider: "nous",
                     displayName: "Default", skillCount: 12, hasAvatar: true,
-                    lastSession: ScriptedFleet.session(on: "default")
+                    lastSession: ScriptedFleet.session(gateway: gatewayID, slug: "default")
                 )),
                 overlay(ProfileDescriptor(
                     name: "researcher", path: "~/.hermes/profiles/researcher",
                     isDefault: false, model: "hermes", provider: "openrouter",
                     displayName: "Researcher", skillCount: 8, hasAvatar: true,
-                    lastSession: ScriptedFleet.session(on: "researcher")
+                    lastSession: ScriptedFleet.session(gateway: gatewayID, slug: "researcher"),
+                    uiMeta: ProcessInfo.processInfo.environment["HERMES_FLEET_HIDDEN_BOT"] == "1"
+                        ? [BotModeContract.botsMetaKey: .object(BotModeMetadata(hidden: true).toWire())]
+                        : nil
                 )),
             ] + created
         case "render-box":
@@ -2104,7 +2258,7 @@ enum ScriptedFleet {
                     name: "default", path: "~/.hermes/profiles/default",
                     isDefault: true, model: "hermes", provider: "nous",
                     displayName: "Default", skillCount: 10, hasAvatar: true,
-                    lastSession: ScriptedFleet.session(on: "default")
+                    lastSession: ScriptedFleet.session(gateway: gatewayID, slug: "default")
                 )),
             ] + created
         default:
@@ -2125,7 +2279,7 @@ enum ScriptedFleet {
                 ]
             }
             return [
-                ScriptedFleet.session(on: "default"),
+                ScriptedFleet.session(gateway: route.gatewayID, slug: "default"),
                 SessionSummary(
                     id: "workstation.default.s2", title: "Replay plan review",
                     preview: "Discussing the reconnect/replay design.", startedAt: 1_755_000_000,
@@ -2133,13 +2287,18 @@ enum ScriptedFleet {
                 ),
             ]
         default:
-            return [ScriptedFleet.session(on: route.profileSlug.rawValue)]
+            return [ScriptedFleet.session(gateway: route.gatewayID, slug: route.profileSlug.rawValue)]
         }
     }
 
-    private static func session(on slug: String) -> SessionSummary {
+    /// Gateway-qualified session identity. A session id belongs to the
+    /// gateway that minted it: minting "workstation.<slug>.s1" for EVERY
+    /// gateway made render-box's default-profile session collide with
+    /// workstation's (two routes claiming one wire id — the Chats list
+    /// then attributes the row to the wrong gateway).
+    private static func session(gateway: GatewayID, slug: String) -> SessionSummary {
         SessionSummary(
-            id: "workstation.\(slug).s1", title: "Fleet setup",
+            id: "\(gateway.rawValue).\(slug).s1", title: "Fleet setup",
             preview: "Initial conversation about the Hermes fleet.",
             startedAt: 1_754_000_000, messageCount: 6, source: "ios"
         )
@@ -2173,11 +2332,23 @@ private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
         if FleetServiceGraph.connectSyncEnabled, gatewayID.rawValue == "workstation" {
             ScriptedConnectSyncStore.shared.markRecovered()
         }
+        // Build 43: a workstation connect also closes the roster-blip
+        // outage (HERMES_FLEET_ROSTER_BLIP user-driven journey).
+        if gatewayID.rawValue == "workstation" {
+            ScriptedConnectSyncStore.shared.markBlipReconnected()
+        }
         // No-op: scripted connect succeeds instantly.
     }
 
     func disconnect() async {
-        // No-op: scripted disconnect is safe from every state (spec §31).
+        // Build 43: with the roster-blip knob set, a user Disconnect of the
+        // workstation gateway fails its roster fetches until Connect heals
+        // them (deterministic offline-ghost journey). Without the knob this
+        // stays a no-op (scripted disconnect is safe from every state,
+        // spec §31).
+        if gatewayID.rawValue == "workstation" {
+            ScriptedConnectSyncStore.shared.markBlipDisconnected()
+        }
     }
 
     func currentGateway() async -> FleetGateway {
@@ -2190,6 +2361,16 @@ final class ScriptedConnectSyncStore: @unchecked Sendable {
     static let shared = ScriptedConnectSyncStore()
     private let lock = NSLock()
     private var _recovered = false
+    /// Build 43 UI-test knob (HERMES_FLEET_ROSTER_BLIP=1): while set, a user
+    /// DISCONNECT of the workstation gateway (Gateways row menu) also fails
+    /// its roster fetches, and Connect heals them. The fleet is healthy at
+    /// launch — the offline-ghost cache seeds from the launch refresh — so
+    /// the post-disconnect outage renders LAST-KNOWN ghost rows exactly
+    /// like a real gateway drop (a fetch-count window is NOT used: the two
+    /// concurrent launch refreshes race and can drop the first settlement,
+    /// leaving the cache empty).
+    private var _blipEnabled = ProcessInfo.processInfo.environment["HERMES_FLEET_ROSTER_BLIP"] == "1"
+    private var _blipDisconnected = false
 
     var recovered: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -2199,6 +2380,24 @@ final class ScriptedConnectSyncStore: @unchecked Sendable {
     func markRecovered() {
         lock.lock(); defer { lock.unlock() }
         _recovered = true
+    }
+
+    /// True while the user-driven roster-blip outage is open.
+    var rosterBlipOutage: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _blipEnabled && _blipDisconnected
+    }
+
+    /// A user Disconnect of the workstation gateway opened the outage.
+    func markBlipDisconnected() {
+        lock.lock(); defer { lock.unlock() }
+        if _blipEnabled { _blipDisconnected = true }
+    }
+
+    /// A user Connect closed the outage (gateway healthy again).
+    func markBlipReconnected() {
+        lock.lock(); defer { lock.unlock() }
+        _blipDisconnected = false
     }
 }
 
@@ -2286,12 +2485,22 @@ private struct ScriptedRosterSession: GatewayRosterSession {
 
     func fetchProfiles() async throws -> [ProfileDescriptor] {
         if isOutage { throw RosterError.notConnected }
+        // Build 43 roster blip: a user-disconnected workstation fails its
+        // roster fetches (offline-ghost journey; Connect heals).
+        if gatewayID.rawValue == "workstation",
+           ScriptedConnectSyncStore.shared.rosterBlipOutage {
+            throw RosterError.notConnected
+        }
         if hasNoBots { return [] }
         return ScriptedFleet.profiles(on: gatewayID)
     }
 
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
         if isOutage { throw RosterError.notConnected }
+        if gatewayID.rawValue == "workstation",
+           ScriptedConnectSyncStore.shared.rosterBlipOutage {
+            throw RosterError.notConnected
+        }
         return ScriptedFleet.sessions(on: route)
     }
 }
@@ -2704,6 +2913,8 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     private var _pendingRetry: RoomPendingRetry?
     private var _lastCreatedMembers: [[String: String]] = []
     private var _createdRoomNames: [String: String] = [:]
+    private var _createdRoomMembers: [String: [FleetRoomMember]] = [:]
+    private var _createdRoomAuthorities: [String: String] = [:]
 
     private init() {
         let seed = Self.makeSeed()
@@ -2732,9 +2943,23 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
         append(kind: "message.member", actorKind: "member", actorID: "researcher",
                actorProfile: "researcher", text: "Draft is ready for review.")
+        // D3 (iPad lane): deterministic pre-seeded history for the
+        // scroll-overflow suites. Typed filler text reflows width-dependent
+        // — on the iPad canvas it shrinks ~3x and the transcript can fit
+        // the viewport entirely, making "reading history" unreachable.
+        // Seeded log lines overflow ANY canvas width. Env-gated; unset for
+        // every other suite keeps the two-event seed unchanged.
+        let env = ProcessInfo.processInfo.environment
+        if let depthLine = env["HERMES_FLEET_ROOM_HISTORY_DEPTH"],
+           let depth = Int(depthLine), depth > 0 {
+            for index in 1...depth {
+                append(kind: "message.member", actorKind: "member", actorID: "researcher",
+                       actorProfile: "researcher",
+                       text: "Seeded history \(index) of \(depth): durable room log line for scroll-overflow coverage.")
+            }
+        }
         var pendingRetry: RoomPendingRetry?
         var pendingApproval: RoomPendingApproval?
-        let env = ProcessInfo.processInfo.environment
         if env["HERMES_FLEET_ROOM_FAILURE"] == "1" {
             append(kind: "turn.failed", actorKind: "gateway", actorID: "gateway",
                    actorProfile: "researcher",
@@ -2763,6 +2988,8 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         _retryCount = 0
         _approveChoices = []
         _lastCreatedMembers = []
+        _createdRoomMembers = [:]
+        _createdRoomAuthorities = [:]
         let seed = Self.makeSeed()
         _events = seed.events
         _seq = seed.seq
@@ -2796,7 +3023,7 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
                 FleetRoomMember(name: "Default", handle: "default"),
             ],
             hosted: HostedRoomState(
-                authorityGatewayID: gatewayID.rawValue,
+                authorityGatewayID: "install:\(gatewayID.rawValue)",
                 authorityEpoch: 1,
                 latestSeq: _seq,
                 advertisedMethods: [
@@ -2808,12 +3035,13 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
 
     @discardableResult
     private func append(
+        roomID: String? = nil,
         kind: String, actorKind: String, actorID: String, actorProfile: String? = nil,
         text: String?, reason: String? = nil
     ) -> HostedRoomEventValue {
         _seq += 1
         let event = HostedRoomEventValue(
-            roomID: roomKey, seq: _seq, eventID: "se-\(_seq)", kind: kind,
+            roomID: roomID ?? self.roomKey, seq: _seq, eventID: "se-\(_seq)", kind: kind,
             actorKind: actorKind, actorID: actorID, actorProfile: actorProfile,
             payloadText: text, reasonCode: reason, createdAt: Date().timeIntervalSince1970)
         _events.append(event)
@@ -2829,30 +3057,30 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
             cursor: _seq,
             latestSeq: _seq,
             hasMore: window.count > limit,
-            authorityGatewayID: "workstation",
+            authorityGatewayID: _createdRoomAuthorities[roomID] ?? "install:workstation",
             authorityEpoch: 1)
     }
 
     func send(roomID: String, text: String, threadID: String?) async throws -> Int {
         _sendCount += 1
-        append(kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
+        append(roomID: roomID, kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
         return _seq
     }
 
     func rename(roomID: String, name: String) async throws {
         _renameCount += 1
         _roomName = name
-        append(kind: "room.renamed", actorKind: "system", actorID: "system", text: name)
+        append(roomID: roomID, kind: "room.renamed", actorKind: "system", actorID: "system", text: name)
     }
 
     func disband(roomID: String) async throws {
         _disbanded = true
-        append(kind: "room.disbanded", actorKind: "system", actorID: "system", text: nil)
+        append(roomID: roomID, kind: "room.disbanded", actorKind: "system", actorID: "system", text: nil)
     }
 
     func stop(roomID: String) async throws -> Int {
         _stopCount += 1
-        append(kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
+        append(roomID: roomID, kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
         return 1
     }
 
@@ -2868,11 +3096,34 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
 
     func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
         let roomKey = roomID.isEmpty ? "room-\(_createdRooms.count + 1)" : roomID
-        _createdRooms.append(roomKey)
-        _createdRoomNames[roomKey] = name
+        recordCreatedRoom(
+            roomID: roomKey,
+            name: name,
+            members: members.map {
+                FleetRoomMember(
+                    name: $0["display_name"] ?? $0["name"] ?? $0["profile"] ?? "Bot",
+                    handle: $0["profile"])
+            })
         _lastCreatedMembers = members
-        append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
+        append(roomID: roomKey, kind: "room.created", actorKind: "system", actorID: "system", text: nil)
         return roomKey
+    }
+
+    func recordCreatedRoom(roomID: String, name: String, members: [FleetRoomMember]) {
+        if !_createdRooms.contains(roomID) {
+            _createdRooms.append(roomID)
+        }
+        _createdRoomNames[roomID] = name
+        _createdRoomMembers[roomID] = members
+        _createdRoomAuthorities[roomID] = _createdRoomAuthorities[roomID] ?? "install:workstation"
+    }
+
+    func recordLinkedRoom(
+        roomID: String, name: String, members: [FleetRoomMember], authorityGatewayID: String
+    ) {
+        recordCreatedRoom(roomID: roomID, name: name, members: members)
+        _createdRoomAuthorities[roomID] = authorityGatewayID
+        append(roomID: roomID, kind: "room.created", actorKind: "system", actorID: "system", text: nil)
     }
 
     /// FleetRoom rows for created rooms (fresh log per room; frozen roster
@@ -2882,9 +3133,9 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
             FleetRoom(
                 id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
                 name: _createdRoomNames[roomID] ?? roomID,
-                members: [],
+                members: _createdRoomMembers[roomID] ?? [],
                 hosted: HostedRoomState(
-                    authorityGatewayID: gatewayID.rawValue,
+                    authorityGatewayID: _createdRoomAuthorities[roomID] ?? "install:\(gatewayID.rawValue)",
                     authorityEpoch: 1,
                     advertisedMethods: [
                         "groups.create", "groups.send", "groups.rename", "groups.log",
@@ -2938,8 +3189,10 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
     private var _promoteConfirms: [Bool] = []
     private var _replicateCount = 0
     private var _replicaCaughtUp: Bool
+    private let gatewayID: GatewayID
 
-    private init() {
+    init(gatewayID: GatewayID = GatewayID(rawValue: "workstation")) {
+        self.gatewayID = gatewayID
         _replicaCaughtUp = ProcessInfo.processInfo.environment["HERMES_FLEET_ROOMLINK"] != "stale"
     }
 
@@ -2958,28 +3211,32 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
         _replicaCaughtUp = mode != .staleReplica
     }
 
-    private var supportedNegotiation: RoomLinkNegotiation {
-        RoomLinkNegotiation(
-            authorityGatewayID: "install:workstation",
+    private func supportedNegotiation(profile: String = "default") -> RoomLinkNegotiation {
+        let identity = "install:\(gatewayID.rawValue)"
+        return RoomLinkNegotiation(
+            authorityGatewayID: identity,
             enabled: true,
-            profile: "default",
+            profile: profile,
             protocolVersions: [2],
-            installationID: "workstation",
+            installationID: identity,
             linkModes: ["direct"],
             persistentProcess: true,
             textOnly: true,
             attachmentsSupported: false,
-            catalogDigest: String(repeating: "c", count: 64),
+            catalogDigest: String(repeating: String(gatewayID.rawValue.first ?? "c"), count: 64),
             executionPolicy: RoomLinkExecutionPolicy(
-                version: 1, targetProfile: "default",
+                version: 1, targetProfile: profile,
                 enabledToolsets: ["bot_room"], approvalMode: "manual",
-                maxIterations: 12, policyDigest: String(repeating: "p", count: 64)),
+                maxIterations: 12, policyDigest: String(repeating: String(profile.first ?? "p"), count: 64)),
             endpoint: RoomLinkEndpoint(
                 available: true,
-                url: "https://roomlink.fixture.test/v1",
+                url: "https://\(gatewayID.rawValue).roomlink.fixture.test/v1",
                 transportSecurity: "tls"),
             methods: [
-                "groups.capabilities", "groups.peer.invite", "groups.peer.register",
+                "groups.capabilities", "groups.create", "groups.state", "groups.send",
+                "groups.rename", "groups.log", "groups.disband", "groups.stop",
+                "groups.retry", "groups.approve",
+                "groups.peer.invite", "groups.peer.register",
                 "groups.peer.revoke", "groups.replica_state", "groups.replicate",
                 "groups.promote", "groups.demote",
             ])
@@ -2990,10 +3247,10 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
     func negotiate() async throws -> RoomLinkNegotiation {
         switch mode {
         case .supported, .staleReplica:
-            return supportedNegotiation
+            return supportedNegotiation()
         case .unsupported:
             return RoomLinkNegotiation(
-                authorityGatewayID: "install:workstation",
+                authorityGatewayID: "install:\(gatewayID.rawValue)",
                 enabled: false,
                 disabledReason: .durableRunStorageRequired)
         }
@@ -3118,6 +3375,126 @@ private struct ScriptedRoomReplaySource: RoomReplaySourceProviding {
             hasMore: false,
             authorityGatewayID: "install:hub",
             authorityEpoch: 3)
+    }
+}
+
+/// The simulator's cross-gateway setup uses the same capability and grant
+/// gates as production, while keeping the room state in the in-memory hosted
+/// room engine. This lets UI tests exercise a real multi-route create without
+/// pretending that a local roster union is server replication.
+extension ScriptedRoomLinkEngine: CrossGatewayRoomCommanding {
+    func roomLinkTarget(profile: String) async throws -> RoomLinkTargetSnapshot {
+        guard mode != .unsupported else {
+            return RoomLinkTargetSnapshot(
+                negotiation: RoomLinkNegotiation(
+                    authorityGatewayID: "install:\(gatewayID.rawValue)",
+                    enabled: false,
+                    disabledReason: .durableRunStorageRequired,
+                    profile: profile),
+                catalog: .object([:]),
+                driver: false)
+        }
+        let negotiation = supportedNegotiation(profile: profile)
+        return RoomLinkTargetSnapshot(
+            negotiation: negotiation,
+            catalog: Self.catalog(for: negotiation),
+            driver: true)
+    }
+
+    func createScopedRoom(
+        roomID: String, name: String, members: [MetadataValue]
+    ) async throws -> FleetRoom {
+        guard mode != .unsupported else {
+            throw RoomCommandFailure.unsupportedMethod("groups.create")
+        }
+        let normalized = members.compactMap(Self.decodeMember)
+        let room = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+            name: name,
+            members: normalized,
+            hosted: HostedRoomState(
+                authorityGatewayID: "install:\(gatewayID.rawValue)",
+                authorityEpoch: 1,
+                latestSeq: 0,
+                advertisedMethods: supportedNegotiation().methods,
+                driverAvailable: true))
+        await ScriptedRoomEngine.shared.recordLinkedRoom(
+            roomID: roomID, name: name, members: normalized,
+            authorityGatewayID: "install:\(gatewayID.rawValue)")
+        return room
+    }
+
+    func inviteScopedRoom(
+        room: FleetRoom, profile: String, memberID: String
+    ) async throws -> ScopedRoomGrant {
+        guard mode != .unsupported else {
+            throw RoomCommandFailure.unsupportedMethod("groups.peer.invite")
+        }
+        _inviteCount += 1
+        let negotiation = supportedNegotiation(profile: profile)
+        return ScopedRoomGrant(
+            token: "fixture-grant-\(_inviteCount)-0123456789abcdef",
+            profile: profile,
+            catalog: Self.catalog(for: negotiation))
+    }
+
+    func registerScopedPeer(
+        roomID: String, memberID: String, target: RoomLinkTargetSnapshot,
+        grant: ScopedRoomGrant
+    ) async throws {
+        guard target.supportsTarget,
+              grant.profile == target.negotiation.profile,
+              grant.catalog == target.catalog else {
+            throw RoomCommandFailure.rpcFailed(
+                "The target policy or capability catalog changed; refresh before linking.", 0)
+        }
+        _registerCount += 1
+    }
+
+    func revokeScopedPeer(_ grant: ScopedRoomGrant) async throws {
+        _revokeCount += 1
+    }
+
+    private static func decodeMember(_ value: MetadataValue) -> FleetRoomMember? {
+        guard let object = value.objectValue,
+              let name = object["display_name"]?.stringValue
+                ?? object["profile"]?.stringValue else { return nil }
+        let target = object["target"]?.objectValue
+        return FleetRoomMember(
+            name: name,
+            handle: object["profile"]?.stringValue,
+            connectionID: target?["installation_id"]?.stringValue,
+            sourceScoped: target?["kind"]?.stringValue == "peer")
+    }
+
+    private static func catalog(for negotiation: RoomLinkNegotiation) -> MetadataValue {
+        var object: [String: MetadataValue] = [
+            "protocol_versions": .array(negotiation.protocolVersions.map { .number(Double($0)) }),
+            "installation_id": .string(negotiation.installationID),
+            "link_modes": .array(negotiation.linkModes.map(MetadataValue.string)),
+            "persistent_process": .bool(negotiation.persistentProcess),
+            "text": .bool(negotiation.textOnly),
+            "attachments": .bool(negotiation.attachmentsSupported),
+            "catalog_digest": .string(negotiation.catalogDigest),
+        ]
+        if let policy = negotiation.executionPolicy {
+            object["execution_policy"] = .object([
+                "version": .number(Double(policy.version)),
+                "target_profile": .string(policy.targetProfile),
+                "enabled_toolsets": .array(policy.enabledToolsets.map(MetadataValue.string)),
+                "approval_mode": .string(policy.approvalMode),
+                "max_iterations": .number(Double(policy.maxIterations)),
+                "policy_digest": .string(policy.policyDigest),
+            ])
+        }
+        if let endpoint = negotiation.endpoint {
+            object["endpoint"] = .object([
+                "available": .bool(endpoint.available),
+                "url": endpoint.url.map(MetadataValue.string) ?? .null,
+                "transport_security": endpoint.transportSecurity.map(MetadataValue.string) ?? .null,
+            ])
+        }
+        return .object(object)
     }
 }
 

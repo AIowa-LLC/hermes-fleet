@@ -13,7 +13,9 @@ import FleetCore
 public struct CreateRoomSheet: View {
     @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
-    let gateway: FleetGateway
+    /// Nil means the user entered from Chats and the host is selected after
+    /// fleet-wide capability checks. Non-nil preserves the older scoped entry.
+    let gateway: FleetGateway?
     let onCreated: (FleetRoom) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -23,6 +25,8 @@ public struct CreateRoomSheet: View {
     @State private var searchText = ""
     @State private var errorMessage: String?
     @State private var isSubmitting = false
+    @State private var eligibility: [Route: String] = [:]
+    @State private var eligibilityReady = false
 
     public init(
         environment: AppEnvironment,
@@ -34,10 +38,38 @@ public struct CreateRoomSheet: View {
         self.onCreated = onCreated
     }
 
+    /// Fleet-wide entry point. Hosting is selected by the environment from
+    /// authoritative capability and RoomLink probes.
+    public init(
+        environment: AppEnvironment,
+        onCreated: @escaping (FleetRoom) -> Void
+    ) {
+        self.environment = environment
+        self.gateway = nil
+        self.onCreated = onCreated
+    }
+
     /// Member candidates: this gateway's bots plus compatible remote
     /// gateways' bots (source-qualified by Route) — slice 10.
     private var candidates: [RoomMemberCandidate] {
-        let bots = ([gateway.id] + compatibleGateways.sorted { $0.rawValue < $1.rawValue }).flatMap { environment.bots(on: $0) }
+        let bots: [FleetBot]
+        if let gateway {
+            bots = ([gateway.id] + compatibleGateways.sorted { $0.rawValue < $1.rawValue })
+                .flatMap { environment.bots(on: $0) }
+        } else {
+            // Live data wins for an exact route; cached ghosts remain visible
+            // and will be rendered as unavailable rather than omitted.
+            var byRoute: [Route: FleetBot] = [:]
+            for bot in environment.cachedBotsByGateway.values.flatMap({ $0 }) {
+                byRoute[bot.route] = bot
+            }
+            for bot in environment.rosterSnapshot?.roster.allBots ?? [] {
+                byRoute[bot.route] = bot
+            }
+            bots = byRoute.values.filter {
+                environment.gateway(for: $0.route.gatewayID) != nil
+            }
+        }
         return BotRosterPresentation.order(bots).compactMap { bot in
             RoomMemberCandidate(route: bot.route, displayName: BotRosterPresentation.displayTitle(for: bot))
         }
@@ -66,9 +98,15 @@ public struct CreateRoomSheet: View {
                             TextField("Group name", text: $draft.name)
                                 .textFieldStyle(.roundedBorder)
                                 .accessibilityIdentifier("fleet.room.create.name")
-                            Text("Hosted by \(gateway.displayName) — 2 to 6 members, frozen roster.")
-                                .font(FleetTheme.monoCaptionFont)
-                                .foregroundStyle(theme.textSecondary)
+                            if let gateway {
+                                Text("Hosted by \(gateway.displayName) — 2 to 6 members, frozen roster.")
+                                    .font(FleetTheme.monoCaptionFont)
+                                    .foregroundStyle(theme.textSecondary)
+                            } else {
+                                Text("Fleet-wide Group — the best eligible host is selected automatically. Pick 2 to 6 Bots from connected gateways.")
+                                    .font(FleetTheme.monoCaptionFont)
+                                    .foregroundStyle(theme.textSecondary)
+                            }
                         }
                     }
 
@@ -106,21 +144,28 @@ public struct CreateRoomSheet: View {
 
                     VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                         SectionHeader(title: "Pick Bots")
-                        if compatibleGateways.isEmpty {
+                        if let gateway, compatibleGateways.isEmpty {
                             Text("Bots on \(gateway.displayName). Remote gateways appear once direct RoomLink support is confirmed.")
                                 .font(FleetTheme.monoCaptionFont)
                                 .foregroundStyle(theme.textSecondary)
-                        } else {
+                        } else if let gateway {
                             Text("Bots on \(gateway.displayName) and \(compatibleGateways.count) linked gateway\(compatibleGateways.count == 1 ? "" : "s"). Each remote member is re-validated before creation.")
                                 .font(FleetTheme.monoCaptionFont)
                                 .foregroundStyle(theme.textSecondary)
                                 .accessibilityIdentifier("fleet.room.create.linked-note")
+                        } else {
+                            Text(eligibilityReady
+                                 ? "Each Bot keeps its owning gateway identity. Offline or unsupported participants remain visible with the reason they cannot be selected."
+                                 : "Checking connected gateways and RoomLink eligibility…")
+                                .font(FleetTheme.monoCaptionFont)
+                                .foregroundStyle(theme.textSecondary)
+                                .accessibilityIdentifier("fleet.room.create.fleet-note")
                         }
                         ForEach(visibleCandidates) { candidate in
                             candidateRow(candidate)
                         }
                         if visibleCandidates.isEmpty {
-                            Text("No bots on this gateway yet.")
+                            Text(gateway == nil ? "No Bots are available from the connected fleet yet." : "No bots on this gateway yet.")
                                 .font(FleetTheme.secondaryFont)
                                 .foregroundStyle(theme.textSecondary)
                         }
@@ -129,8 +174,21 @@ public struct CreateRoomSheet: View {
                 .padding(FleetTheme.spacingLg)
             }
             .background(theme.background.ignoresSafeArea())
-            .searchable(text: $searchText, prompt: "Bots on \(gateway.displayName)")
-            .task { compatibleGateways = await environment.compatibleRoomGateways(homeID: gateway.id) }
+            .searchable(text: $searchText, prompt: gateway.map { "Bots on \($0.displayName)" } ?? "Bots across every gateway")
+            .task {
+                if let gateway {
+                    compatibleGateways = await environment.compatibleRoomGateways(homeID: gateway.id)
+                } else {
+                    var results: [Route: String] = [:]
+                    for candidate in candidates {
+                        if let reason = await environment.roomEligibilityMessage(for: candidate.route) {
+                            results[candidate.route] = reason
+                        }
+                    }
+                    eligibility = results
+                    eligibilityReady = true
+                }
+            }
             .navigationTitle("Create Group")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -160,13 +218,18 @@ public struct CreateRoomSheet: View {
 
     private func candidateRow(_ candidate: RoomMemberCandidate) -> some View {
         let selected = draft.members.contains { $0.id == candidate.id }
+        let presence = environment.botPresence(for: candidate.route)
+        let reason = eligibility[candidate.route]
+        let selectable = gateway != nil
+            ? presence == .reachable
+            : eligibilityReady && presence == .reachable && reason == nil
         return Button {
             draft.toggle(candidate)
         } label: {
             // FOS-6: operational row (member candidate picker).
             FleetListRow {
                 HStack(spacing: FleetTheme.spacingMd) {
-                    BotAvatar(bot: environment.bot(for: candidate.route), management: environment.botManagement)
+                    BotAvatar(bot: environment.botIncludingGhost(for: candidate.route), management: environment.botManagement)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(candidate.displayName)
                             .font(.body.weight(.semibold))
@@ -175,6 +238,19 @@ public struct CreateRoomSheet: View {
                         Text("\(candidate.route.profileSlug.rawValue) · \(ownerGateway)")
                             .font(FleetTheme.monoCaptionFont)
                             .foregroundStyle(theme.textSecondary)
+                        if let reason {
+                            Text(reason)
+                                .font(.caption2)
+                                .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                        } else if presence == .reachable {
+                            Text("Available")
+                                .font(.caption2)
+                                .foregroundStyle(FleetTheme.statusOnline)
+                        } else {
+                            Text(presence == .unknown ? "Availability not confirmed" : "Gateway offline")
+                                .font(.caption2)
+                                .foregroundStyle(theme.textSecondary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -182,9 +258,22 @@ public struct CreateRoomSheet: View {
                 }
             }
         }
+        .disabled(!selectable)
         .buttonStyle(.fleetPressable)
         .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.room.create.candidate.\(candidate.route.profileSlug.rawValue)")
+        .accessibilityLabel("\(candidate.displayName), \(candidate.route.profileSlug.rawValue), owned by \(environment.gateway(for: candidate.route.gatewayID)?.displayName ?? candidate.route.gatewayID.rawValue)\(reason.map { ", \($0)" } ?? (selectable ? "" : ", unavailable"))")
+        // Keep the established profile-only identifiers for Bots owned by
+        // the gateway that opened this sheet. Linked candidates stay
+        // route-qualified so an identical profile slug cannot make the
+        // legacy gateway-context UI ambiguous. Chats always uses the
+        // route-qualified form for the fleet-wide picker.
+        .accessibilityIdentifier({
+            if gateway == nil { return "fleet.room.create.candidate.\(candidate.route.id)" }
+            if candidate.route.gatewayID == gateway?.id {
+                return "fleet.room.create.candidate.\(candidate.route.profileSlug.rawValue)"
+            }
+            return "fleet.room.create.candidate.\(candidate.route.id)"
+        }())
     }
 
     private func submit() async {
@@ -192,8 +281,14 @@ public struct CreateRoomSheet: View {
         isSubmitting = true
         defer { isSubmitting = false }
         do {
-            let room = try await environment.createRoom(
-                gatewayID: gateway.id, name: draft.name, members: draft.members, setupID: setupID)
+            let room: FleetRoom
+            if let gateway {
+                room = try await environment.createRoom(
+                    gatewayID: gateway.id, name: draft.name, members: draft.members, setupID: setupID)
+            } else {
+                room = try await environment.createRoom(
+                    name: draft.name, members: draft.members, setupID: setupID)
+            }
             onCreated(room)
             dismiss()
         } catch {

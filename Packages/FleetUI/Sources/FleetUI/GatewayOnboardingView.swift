@@ -163,6 +163,7 @@ public struct GatewayOnboardingView: View {
                     Label {
                         Text(copyConfirmed ? "Copied — paste it in chat" : "Copy setup prompt")
                             .font(.headline)
+                            .foregroundStyle(theme.onHighlight)
                             .frame(maxWidth: .infinity)
                     } icon: {
                         Image(systemName: copyConfirmed ? "checkmark.circle.fill" : "doc.on.doc.fill")

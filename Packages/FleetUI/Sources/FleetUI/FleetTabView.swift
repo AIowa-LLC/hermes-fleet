@@ -1,18 +1,41 @@
 import SwiftUI
 import FleetCore
 
+extension EnvironmentValues {
+    @Entry var openFleetDrawer: (@MainActor () -> Void)? = nil
+}
+
+/// Also used by the few locally pushed conversation destinations.
+struct FleetDrawerMenu: ToolbarContent {
+    @Environment(\.openFleetDrawer) private var openDrawer
+
+    var body: some ToolbarContent {
+        if let openDrawer {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Menu", systemImage: "sidebar.leading", action: openDrawer)
+                    .accessibilityIdentifier("fleet.drawer.open")
+                    .keyboardShortcut("m", modifiers: .command)
+            }
+        }
+    }
+}
+
 public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Codable {
-    /// Build 41 order: Bots / Chats / Kanban / Fleet / Gateways — Bots is the
-    /// normal launch tab; Kanban is a first-class owning surface.
-    case bots, chats, kanban, fleet, gateways
+    /// Build 43 order: Bots / Chats / Kanban / Fleet / Settings — Bots is
+    /// the normal launch tab; Kanban is a first-class owning surface; the
+    /// Gateways tab is retired (gateway management lives under Fleet).
+    case bots, chats, kanban, fleet, settings
     public var id: String { rawValue }
+    /// Drawer: the four primary destinations render in the Navigate section;
+    /// Settings renders as the drawer's dedicated last row.
+    public var isPrimary: Bool { self != .settings }
     public var label: String {
         switch self {
         case .bots: "Bots"
         case .chats: "Chats"
         case .kanban: "Kanban"
         case .fleet: "Fleet"
-        case .gateways: "Gateways"
+        case .settings: "Settings"
         }
     }
     public var systemImage: String {
@@ -21,7 +44,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         case .chats: "bubble.left.and.bubble.right"
         case .kanban: "rectangle.split.3x1"
         case .fleet: "square.grid.2x2"
-        case .gateways: "server.rack"
+        case .settings: "gearshape"
         }
     }
 }
@@ -32,10 +55,13 @@ public struct FleetTabView: View {
     private let environment: AppEnvironment
     private let lockController: AppLockController
     @State private var navigation = FleetNavigationState()
-    @State private var showingSettings = false
     @State private var restored = false
     @State private var showingCommandCenter = false
     @State private var autoNavHandled = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drawerPresented = false
+    @State private var visitedDestinations: Set<FleetTab> = []
 
     public init(environment: AppEnvironment, lockController: AppLockController) {
         self.environment = environment
@@ -68,17 +94,6 @@ public struct FleetTabView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingSettings) {
-            NavigationStack {
-                FleetSettingsView(controller: lockController, environment: environment)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showingSettings = false }
-                                .accessibilityIdentifier("fleet.settings.done")
-                        }
-                    }
-            }
-        }
         .onChange(of: navigation) { _, state in
             guard restored else { return }
             if let data = try? JSONEncoder().encode(state) {
@@ -86,7 +101,10 @@ public struct FleetTabView: View {
             }
         }
         .tint(theme.highlight)
-        .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false; showingSettings = false } }
+        .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false; drawerPresented = false } }
+        .onChange(of: navigation.selection) { _, _ in
+            if horizontalSizeClass != .regular { drawerPresented = false }
+        }
         .onChange(of: environment.pendingBotChatNavigation) { target in
             guard let target else { return }
             navigation.open(target)
@@ -121,45 +139,163 @@ public struct FleetTabView: View {
         }
     }
 
-    /// The normal four-tab Fleet application (configured state).
+    /// Compact navigation keeps visited stacks mounted: switching sections must
+    /// not discard drafts or tear down a streaming conversation. Regular width
+    /// retains the system sidebar. Both presentations use the same durable paths.
     private var tabShell: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Group {
+                    if horizontalSizeClass == .regular {
+                        tabs
+                    } else {
+                        ZStack {
+                            ForEach(FleetTab.allCases) { tab in
+                                if tab == navigation.selection || visitedDestinations.contains(tab) {
+                                    navigationStack(tab)
+                                        .opacity(tab == navigation.selection ? 1 : 0)
+                                        .allowsHitTesting(tab == navigation.selection && !drawerPresented)
+                                        .accessibilityHidden(tab != navigation.selection || drawerPresented)
+                                        .zIndex(tab == navigation.selection ? 1 : 0)
+                                }
+                            }
+                        }
+                    }
+                }
+                .onAppear { visitedDestinations.insert(navigation.selection) }
+                .onChange(of: navigation.selection) { old, new in
+                    visitedDestinations.formUnion([old, new])
+                }
+                if horizontalSizeClass != .regular && drawerPresented {
+                    FleetTheme.scrim
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { drawerPresented = false }
+                        .accessibilityLabel("Close navigation drawer")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityIdentifier("fleet.drawer.scrim")
+                        .zIndex(1)
+                    FleetNavigationDrawer(
+                        environment: environment,
+                        selection: navigation.selection,
+                        compact: true,
+                        onClose: { drawerPresented = false },
+                        onSearch: { showingCommandCenter = true },
+                        onNewChat: {
+                            navigation.selection = .chats
+                            navigation.paths[.chats] = [.roster]
+                            drawerPresented = false
+                        },
+                        onSelectTab: { tab in
+                            if navigation.selection == tab {
+                                // Re-selecting the current destination is the
+                                // conventional pop-to-root affordance.
+                                navigation.paths[tab] = []
+                            }
+                            navigation.selection = tab
+                            drawerPresented = false
+                        },
+                        onOpenConversation: { route, sessionID in
+                            guard environment.gateway(for: route.gatewayID) != nil else { return }
+                            navigation.selection = .chats
+                            navigation.paths[.chats] = [.conversation(route, sessionID: sessionID, canonical: false)]
+                            drawerPresented = false
+                        },
+                        onTogglePin: { identity, title, preview, gatewayID, avatarKey in
+                            Task {
+                                if environment.isPinned(identity) {
+                                    await environment.unpinConversation(identity)
+                                } else {
+                                    await environment.pinConversation(
+                                        identity: identity,
+                                        title: title,
+                                        preview: preview,
+                                        authoritativeGatewayID: gatewayID,
+                                        avatarKey: avatarKey
+                                    )
+                                }
+                            }
+                        },
+                        onOpenScreen: { screen in
+                            navigation.open(screen)
+                            drawerPresented = false
+                        },
+                        artifactsActive: navigation.selection == .fleet
+                            && navigation.paths[.fleet]?.last == .artifacts
+                    )
+                    .frame(width: min(360, geometry.size.width * 0.88))
+                    .frame(maxHeight: .infinity)
+                    .background(theme.background)
+                    .transition(reduceMotion ? .identity : .move(edge: .leading))
+                    .zIndex(2)
+                }
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: drawerPresented)
+        .environment(\.openFleetDrawer, drawerAction)
+        .onChange(of: horizontalSizeClass) { _, _ in drawerPresented = false }
+        .sheet(isPresented: $showingCommandCenter) {
+            FleetCommandCenter(environment: environment, navigate: { screen in
+                navigation.open(screen)
+            }, selectTab: { navigation.selection = $0 })
+        }
+    }
+
+    private var drawerAction: (@MainActor () -> Void)? {
+        guard horizontalSizeClass != .regular else { return nil }
+        return { drawerPresented = true }
+    }
+
+    private var tabs: some View {
         TabView(selection: Binding(get: { navigation.selection }, set: { tab in
             navigation.selection = tab
         })) {
             ForEach(FleetTab.allCases) { tab in
                 Tab(tab.label, systemImage: tab.systemImage, value: tab) {
-                    NavigationStack(path: Binding(get: { navigation.paths[tab] ?? [] }, set: { path in
-                        if let target = path.last, path.count > (navigation.paths[tab]?.count ?? 0) { navigation.open(target) }
-                        else { navigation.paths[tab] = path }
-                    })) {
-                        root(tab)
-                            .navigationDestination(for: FleetScreen.self) { destination($0) }
-                            .toolbar {
-                                ToolbarItem(placement: .topBarLeading) {
-                                    if tab == .fleet {
-                                        Button("Settings", systemImage: "gearshape") { showingSettings = true }
-                                            .accessibilityIdentifier("fleet.settings.open")
-                                    }
-                                }
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
-                                        .accessibilityIdentifier("fleet.command-center.open")
-                                        .keyboardShortcut("k", modifiers: .command)
-                                }
-                            }
-                    }
-                    .accessibilityIdentifier("fleet.tab.\(tab.rawValue)")
+                    navigationStack(tab)
                 }
             }
         }
         .tabViewStyle(.sidebarAdaptable)
-        .sheet(isPresented: $showingCommandCenter) {
-            FleetCommandCenter(environment: environment, navigate: { screen in
-                navigation.open(screen)
-            }, selectTab: { navigation.selection = $0 }, openSettings: {
-                showingSettings = true
-            })
+    }
+
+    private func navigationStack(_ tab: FleetTab) -> some View {
+        NavigationStack(path: Binding(get: { navigation.paths[tab] ?? [] }, set: { path in
+            if let target = path.last, path.count > (navigation.paths[tab]?.count ?? 0) {
+                navigation.open(target)
+            } else {
+                navigation.paths[tab] = path
+            }
+        })) {
+            root(tab)
+                .toolbar { rootShellToolbar }
+                .navigationDestination(for: FleetScreen.self) { screen in
+                    destination(screen)
+                        .toolbar { destinationShellToolbar }
+                }
         }
+        .accessibilityIdentifier("fleet.tab.\(tab.rawValue)")
+    }
+
+    /// Tab roots host the Command Center affordance. Pushed destinations
+    /// do NOT: their own toolbar content (e.g. the Kanban board's picker,
+    /// add and menu) already fills the compact bar, and adding a fourth
+    /// trailing item collapses the set into the system overflow — the
+    /// board's Add Card became unreachable that way. Search stays one
+    /// drawer-tap away on every screen.
+    @ToolbarContentBuilder
+    private var rootShellToolbar: some ToolbarContent {
+        FleetDrawerMenu()
+        ToolbarItem(placement: .topBarTrailing) {
+            Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
+                .accessibilityIdentifier("fleet.command-center.open")
+                .keyboardShortcut("k", modifiers: .command)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var destinationShellToolbar: some ToolbarContent {
+        FleetDrawerMenu()
     }
 
     @ViewBuilder private func root(_ tab: FleetTab) -> some View {
@@ -168,7 +304,10 @@ public struct FleetTabView: View {
         case .chats: FleetChatsView(environment: environment)
         case .bots: FleetRosterView(environment: environment)
         case .kanban: KanbanHomeView(environment: environment)
-        case .gateways: GatewaysView(environment: environment)
+        // Build 43: Settings is a first-class tab (was a Fleet-toolbar
+        // sheet). The tab IS the settings destination; its stack stays at
+        // the root screen.
+        case .settings: FleetSettingsView(controller: lockController, environment: environment)
         }
     }
 
@@ -187,7 +326,7 @@ public struct FleetTabView: View {
         case .botRoutines(let route):
             BotRoutinesView(environment: environment, route: route)
         case .room(let id):
-            if let room = environment.rooms(for: id.gatewayID).first(where: { $0.id == id }) {
+            if let room = environment.room(for: id) {
                 RoomChatView(room: room, environment: environment)
             } else {
                 ContentUnavailableView("Group unavailable", systemImage: "person.3", description: Text("This exact group has not been resolved. Refresh its gateway to try again."))
@@ -212,6 +351,9 @@ public struct FleetTabView: View {
             // Legacy unscoped entry: land on the Kanban tab's chooser root
             // (the tab is the authoritative Kanban surface now).
             KanbanHomeView(environment: environment)
+        case .artifacts:
+            // Card D: the device-local Artifacts destination (Fleet stack).
+            ArtifactsView(environment: environment)
         case .gatewayKanban(let id, let board):
             KanbanBoardView(environment: environment, gatewayID: id, board: board)
         case .cron(let id, let profile), .skills(let id, let profile), .memoryGraph(let id, let profile), .projects(let id, let profile, _):
@@ -224,8 +366,10 @@ public struct FleetTabView: View {
                 case .projects(_, _, let path): scoped = .projects(id, profile: selected, focusPath: path)
                 default: return
                 }
-                if let index = navigation.paths[.gateways]?.firstIndex(of: screen) {
-                    navigation.paths[.gateways]?[index] = scoped
+                // Build 43: gateway-resource panes are pushed on the FLEET
+                // stack (the Gateways tab no longer exists to host them).
+                if let index = navigation.paths[.fleet]?.firstIndex(of: screen) {
+                    navigation.paths[.fleet]?[index] = scoped
                 }
             }
         }
@@ -240,7 +384,8 @@ public struct FleetTabView: View {
         await environment.refreshRoster()
         if let tab = FleetNavigationState.legacyTab(autoNav) { navigation.selection = tab }
         if autoNav == "command-center" { showingCommandCenter = true }
-        if autoNav == "settings" { showingSettings = true }
+        // Build 43: "settings" selects the Settings TAB (was: the sheet).
+        if autoNav == "settings" { navigation.selection = .settings }
         if autoNav == "kanban" { navigation.open(.kanban) }
         // Test automation specifies a stable fixture identity; it never picks a machine by order.
         if let gateway = environment.gateways.first(where: { $0.id.rawValue == "workstation" }) {

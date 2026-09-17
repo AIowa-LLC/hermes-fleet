@@ -42,13 +42,18 @@ public struct HostedRoomRow: Hashable, Sendable {
         guard let data = membersJSON.data(using: .utf8),
               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
         return array.compactMap { o in
-            guard let name = o["name"] as? String ?? o["profile"] as? String else { return nil }
+            guard let name = o["display_name"] as? String
+                    ?? o["name"] as? String
+                    ?? o["profile"] as? String else { return nil }
+            let target = o["target"] as? [String: Any]
             return FleetRoomMember(
                 name: name,
-                handle: o["handle"] as? String,
-                connectionID: (o["target"] as? [String: Any])?["peer_id"] as? String ?? o["connection_id"] as? String,
+                handle: o["handle"] as? String ?? o["profile"] as? String,
+                connectionID: target?["installation_id"] as? String
+                    ?? target?["peer_id"] as? String
+                    ?? o["connection_id"] as? String,
                 connectionLabel: nil,
-                sourceScoped: (o["target"] as? [String: Any])?["kind"] as? String == "peer"
+                sourceScoped: target?["kind"] as? String == "peer"
             )
         }
     }
@@ -93,7 +98,11 @@ public struct HostedRoomEvent: Hashable, Sendable, Identifiable {
     public let kind: String
     public let actorKind: String
     public let actorID: String
+    public let actorDisplayName: String?
+    public let actorProfile: String?
+    public let actorConnectionID: String?
     public let text: String
+    public let reasonCode: String?
     public let createdAt: Double
 
     public var id: String { "\(roomID)#\(seq)" }
@@ -369,7 +378,11 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
             kind: kind,
             actorKind: actorObj?["kind"]?.stringValue ?? "",
             actorID: actorObj?["id"]?.stringValue ?? "",
+            actorDisplayName: actorObj?["display_name"]?.stringValue,
+            actorProfile: actorObj?["profile"]?.stringValue,
+            actorConnectionID: actorObj?["connection_id"]?.stringValue,
             text: o["payload"]?["text"]?.stringValue ?? "",
+            reasonCode: o["payload"]?["reason_code"]?.stringValue,
             createdAt: o["created_at"]?.numberValue ?? 0
         )
     }

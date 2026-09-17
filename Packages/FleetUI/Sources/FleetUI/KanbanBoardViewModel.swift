@@ -213,10 +213,13 @@ public final class KanbanBoardViewModel {
 
     // MARK: Mutations (Build 41 — all require boardOperator, fail closed)
 
-    private func runMutation(_ label: String, _ body: () async throws -> Void) async {
+    /// Runs a board mutation. Returns whether the write succeeded — callers
+    /// gate local echo on this (a failed write must never look applied).
+    @discardableResult
+    private func runMutation(_ label: String, _ body: () async throws -> Void) async -> Bool {
         guard let boardOperator else {
             mutationErrorMessage = "This gateway's board is read-only."
-            return
+            return false
         }
         isMutating = true
         defer { isMutating = false }
@@ -226,8 +229,10 @@ public final class KanbanBoardViewModel {
             // The mutation changes board state — refetch immediately (do not
             // wait for the event tail; local echo must not drift from truth).
             await loadSnapshot(initial: false)
+            return true
         } catch {
             mutationErrorMessage = Redaction.safeErrorDescription(error)
+            return false
         }
     }
 
@@ -310,8 +315,11 @@ public final class KanbanBoardViewModel {
         }
     }
 
-    /// `POST /tasks/{id}/comments`.
-    public func addComment(taskID: String, body: String) async {
+    /// `POST /tasks/{id}/comments`. Returns false when the write failed —
+    /// the detail composer keeps its text for a retry (a failed comment must
+    /// never look posted).
+    @discardableResult
+    public func addComment(taskID: String, body: String) async -> Bool {
         await runMutation("comment") {
             try await boardOperator?.addComment(taskID: taskID, body: body, author: nil)
         }

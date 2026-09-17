@@ -446,7 +446,7 @@ final class ConversationClientTests: XCTestCase {
         XCTAssertEqual(tid, "t1")
         XCTAssertEqual(tname, "web_search")
         XCTAssertEqual(ctx, "search(x)")
-        guard case .toolComplete(_, let cid, let cname, let summary, _) = events[7] else { return XCTFail("expected toolComplete") }
+        guard case .toolComplete(_, let cid, let cname, let summary, _, _) = events[7] else { return XCTFail("expected toolComplete") }
         XCTAssertEqual(cid, "t1")
         XCTAssertEqual(cname, "web_search")
         XCTAssertEqual(summary, "3 results")
@@ -454,6 +454,85 @@ final class ConversationClientTests: XCTestCase {
         guard case .messageComplete(_, let finalText, let status, _, _) = events[8] else { return XCTFail("expected messageComplete") }
         XCTAssertEqual(finalText, "The plan is: search.")
         XCTAssertNil(status)
+    }
+
+    /// Card D: the tool RESULT must ride through `tool.complete` as compact
+    /// JSON — the gateway emits it already parsed
+    /// (`tui_gateway/tool_progress.py:_on_tool_complete`), and for
+    /// `image_generate` it is the only live source of the artifact path.
+    /// Proves the whole wire→citation chain at the transport decode level.
+    func testToolCompleteCarriesTheParsedResultForImageGenerate() async throws {
+        let imagePath = "/home/u/.hermes/cache/images/generated_1.png"
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, _) = Self.extractRequest(frame) else { return [] }
+                if method == "prompt.submit" {
+                    return [
+                        Self.responseFrame(id: id, result: ["status": "streaming"]),
+                        Self.eventFrame(type: "message.start", sessionID: "sess-001"),
+                        Self.eventFrame(type: "tool.complete", sessionID: "sess-001", payload: [
+                            "tool_id": "t-img-1",
+                            "name": "image_generate",
+                            "args": ["prompt": "a cat"],
+                            "result": [
+                                "success": true,
+                                "image": imagePath,
+                                "modality": "text",
+                                "upscaled": false,
+                            ],
+                        ]),
+                        Self.eventFrame(type: "message.complete", sessionID: "sess-001", payload: ["text": "Done."]),
+                    ]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let collector = EventCollector()
+        let subscription = Task {
+            for await event in client.events {
+                collector.append(event)
+            }
+        }
+        _ = try await client.submitPrompt(sessionID: "sess-001", text: "draw a cat")
+        _ = await collector.waitForTerminal(timeout: .seconds(3))
+        subscription.cancel()
+
+        guard case .toolComplete(_, let toolID, let name, let summary, let resultText, _) = collector.all.first(where: {
+            if case .toolComplete = $0 { return true }
+            return false
+        }) else { return XCTFail("expected toolComplete; got \(collector.all)") }
+        XCTAssertEqual(toolID, "t-img-1")
+        XCTAssertEqual(name, "image_generate")
+        XCTAssertNil(summary, "image_generate has no upstream summary — the result is the only source")
+        let citation = GeneratedImageRules.citation(toolName: name, resultJSON: resultText)
+        XCTAssertEqual(citation?.displaySource, imagePath)
+        let reference = cite(reference: citation, name: name, resultText: resultText)
+        XCTAssertEqual(reference?.path, imagePath)
+        XCTAssertEqual(reference?.displayName, "generated_1.png")
+        XCTAssertEqual(reference?.gatewayID.rawValue, "workstation")
+    }
+
+    /// Test-local reference construction (proves the decoded result drives the
+    /// citation → provenance-bound reference chain).
+    private func cite(
+        reference citation: GeneratedImageCitation?, name: String, resultText: String?
+    ) -> ArtifactReference? {
+        guard let citation = GeneratedImageRules.citation(toolName: name, resultJSON: resultText) else {
+            return nil
+        }
+        return GeneratedImageRules.artifactReference(
+            for: citation, gatewayID: GatewayID(rawValue: "workstation"),
+            sessionID: "sess-001", profile: "default")
     }
 
     /// A failed turn ends with `message.complete {status: "error"}` and an

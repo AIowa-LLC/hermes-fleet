@@ -43,12 +43,36 @@ public struct FleetRoomUnion: Sendable {
         }
     }
 
-    /// All live rooms, deterministic order (name then identity).
+    /// All live rooms, deterministic order (name then identity). Verified
+    /// hosted advertisements are collapsed by canonical authority + room id;
+    /// unverified rows retain their source-scoped identity.
     public var allRooms: [FleetRoom] {
-        roomsByID.values.sorted {
+        var canonical: [String: FleetRoom] = [:]
+        for room in roomsByID.values {
+            let key = room.canonicalIdentity
+            guard let current = canonical[key] else {
+                canonical[key] = room
+                continue
+            }
+            canonical[key] = preferred(current, over: room)
+        }
+        return canonical.values.sorted {
             if $0.name != $1.name { return $0.name < $1.name }
             return $0.id.description < $1.id.description
         }
+    }
+
+    private func preferred(_ lhs: FleetRoom, over rhs: FleetRoom) -> FleetRoom {
+        if rhs.revision != lhs.revision { return rhs.revision > lhs.revision ? rhs : lhs }
+        if (rhs.hosted?.latestSeq ?? -1) != (lhs.hosted?.latestSeq ?? -1) {
+            return (rhs.hosted?.latestSeq ?? -1) > (lhs.hosted?.latestSeq ?? -1) ? rhs : lhs
+        }
+        // Prefer the row with the richer event/member projection, then use a
+        // stable source id so refresh order cannot change the UI.
+        let lhsRichness = lhs.members.count + lhs.recentLog.count
+        let rhsRichness = rhs.members.count + rhs.recentLog.count
+        if lhsRichness != rhsRichness { return rhsRichness > lhsRichness ? rhs : lhs }
+        return rhs.id.description < lhs.id.description ? rhs : lhs
     }
 
     /// Rooms grouped by provenance — UI never branches on generation inside

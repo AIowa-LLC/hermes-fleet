@@ -277,7 +277,11 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
             kind: event.kind,
             actorKind: event.actorKind,
             actorID: event.actorID,
+            actorDisplayName: event.actorDisplayName,
+            actorProfile: event.actorProfile,
+            actorConnectionID: event.actorConnectionID,
             payloadText: event.text.isEmpty ? nil : event.text,
+            reasonCode: event.reasonCode,
             createdAt: event.createdAt)
     }
 

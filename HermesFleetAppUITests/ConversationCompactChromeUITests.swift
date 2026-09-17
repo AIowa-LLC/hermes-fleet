@@ -50,7 +50,15 @@ final class ConversationCompactChromeUITests: XCTestCase {
         let app = launch()
         openConversation(app)
 
-        let navBar = app.navigationBars.firstMatch
+        // Scope to the conversation's OWNING stack. Build 43 keeps visited
+        // compact stacks MOUNTED (retention); a hidden stack's UIKit nav bar
+        // still surfaces in the AX snapshot (observed: a hidden Bots stack's
+        // 106pt large-title bar while the conversation was up), so an
+        // unscoped `navigationBars.firstMatch` can resolve a bar the user
+        // cannot see. The conversation routes to the Chats stack
+        // (canonical-owner rule), whose container is tagged `fleet.tab.chats`.
+        let navBar = app.descendants(matching: .any)["fleet.tab.chats"]
+            .descendants(matching: .navigationBar).firstMatch
         XCTAssertTrue(navBar.waitForExistence(timeout: 10), "a navigation bar must exist")
         let navHeight = navBar.frame.height
         XCTAssertLessThanOrEqual(

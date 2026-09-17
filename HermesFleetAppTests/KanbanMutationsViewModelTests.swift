@@ -182,7 +182,10 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         }
 
         func addComment(taskID: String, body: String, author: String?) async throws {
-            lock.withLock {
+            try lock.withLock {
+                guard _tasks[taskID] != nil else {
+                    throw KanbanMutationError.rejected("task \(taskID) not found")
+                }
                 _commentBodies.append(body)
                 var list = _comments[taskID] ?? []
                 list.append(KanbanComment(id: list.count + 1, taskID: taskID,
@@ -351,10 +354,33 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         await model.start()
         defer { Task { await model.stop() } }
 
-        await model.addComment(taskID: "t_1", body: "Looks good")
+        let posted = await model.addComment(taskID: "t_1", body: "Looks good")
+        XCTAssertTrue(posted, "a confirmed write must report success")
         XCTAssertEqual(op.commentBodies, ["Looks good"])
+        XCTAssertNil(model.mutationErrorMessage)
         // The scripted notify drove a live refetch too.
         try await waitFor { op.snapshotFetchCount >= 3 }
+    }
+
+    /// A refused comment write reports failure and surfaces the reason — the
+    /// detail composer gates its local echo (clear + reveal) on this Bool, so
+    /// a failed comment can never look posted.
+    func testRefusedCommentReportsFailureAndKeepsError() async throws {
+        let op = RecordingBoardOperator()
+        let model = KanbanBoardViewModel(watcher: op, boardOperator: op)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        let posted = await model.addComment(taskID: "t_missing", body: "nope")
+        XCTAssertFalse(posted, "a refused write must report failure")
+        XCTAssertNotNil(model.mutationErrorMessage,
+                        "the refusal reason must be surfaced for the retry")
+        XCTAssertTrue(op.commentBodies.isEmpty,
+                      "a refused write must not record a comment body")
+
+        let retried = await model.addComment(taskID: "t_1", body: "nope")
+        XCTAssertTrue(retried, "a retry against a real card must succeed")
+        XCTAssertNil(model.mutationErrorMessage, "success clears the refusal")
     }
 
     func testReclaimReassignSpecifyDecomposeDispatchAllReachTheOperator() async throws {

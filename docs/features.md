@@ -36,6 +36,15 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 - model selection and context information
 - steer, rename, and fork workflows where supported
 - attachments and message reactions
+- generated-image artifacts: an `image_generate` result is retrieved through
+  the owning gateway's authenticated media API and renders inline on the tool
+  row that cited it (device-local observed-artifact library behind the
+  Artifacts destination)
+- a branded, indeterminate animation (FleetWingMark) marks a **verified**
+  in-flight `image_generate` call. It carries no percentage or ETA — nothing
+  is fabricated — holds still under Reduce Motion, and stops on the result, an
+  explicit failure, an interrupt, or a transport drop; the delivered image
+  takes its place
 
 Very long conversations use a bounded display window while retaining authoritative cached history separately.
 

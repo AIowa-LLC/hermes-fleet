@@ -142,9 +142,9 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
                       "scripted passcode success should unlock to the roster")
     }
 
-    // MARK: - Settings sheet (FOS-3: app-level sheet, first item is config)
+    // MARK: - Settings tab (Build 43: Settings is a first-class tab, first item is config)
 
-    func testSettingsSheetRendersConfigurationFirst() throws {
+    func testSettingsTabRendersConfigurationFirst() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
@@ -156,18 +156,20 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
         // not render; the first content is useful configuration (App Lock).
         XCTAssertFalse(
             firstMatch(in: app, identifier: "fleet.settings.brand").exists,
-            "the brand banner must not render in the Settings sheet (FOS-3)"
+            "the brand banner must not render in Settings (FOS-3)"
         )
 
-        // The sheet carries its own navigation bar with a Done action.
+        // Build 43: Settings is a tab with its own navigation bar (no sheet
+        // Done button).
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
-                      "Settings renders as a sheet with its own stack")
-        XCTAssertTrue(app.buttons["Done"].exists, "the Settings sheet must expose Done")
+                      "Settings renders as a tab with its own stack")
+        XCTAssertFalse(app.buttons["fleet.settings.done"].exists,
+                       "the retired sheet Done button must not render")
 
         // The H1 acceptance surface is untouched.
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10), "App Lock toggle should render")
-        attachScreenshot(of: app, name: "u7-settings-sheet")
+        attachScreenshot(of: app, name: "u7-settings-tab")
     }
 
     func testSettingsAppearancePreferenceOffersSystemLightDark() throws {

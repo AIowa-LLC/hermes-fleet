@@ -18,6 +18,9 @@ public struct KanbanTaskDetailView: View {
     @State private var showingEdit = false
     @State private var commentText = ""
     @State private var isCommenting = false
+    /// Bumped after a CONFIRMED comment write — reveals the new row (it is
+    /// inserted above the composer, outside the typing viewport).
+    @State private var commentScrollPulse = 0
     @State private var pendingDestructive: PendingDestructive?
     @State private var actionNote: String?
     @State private var showingAddDependency = false
@@ -50,7 +53,7 @@ public struct KanbanTaskDetailView: View {
     public var body: some View {
         NavigationStack {
             Group {
-                if isLoading {
+                if isLoading && detail == nil {
                     ProgressView("Loading card…")
                         .accessibilityIdentifier("kanban.detail.loading")
                 } else if let detail {
@@ -148,33 +151,43 @@ public struct KanbanTaskDetailView: View {
     // MARK: Detail list
 
     private func detailList(_ detail: KanbanTaskDetail) -> some View {
-        List {
-            taskSection(detail.task)
-            if let note = actionNote {
-                Section {
-                    Text(note)
-                        .font(FleetTheme.secondaryFont)
-                        .foregroundStyle(theme.textSecondary)
+        ScrollViewReader { proxy in
+            List {
+                taskSection(detail.task)
+                if let note = actionNote {
+                    Section {
+                        Text(note)
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+                actionsSection(detail.task)
+                if !detail.comments.isEmpty {
+                    commentsSection(detail.comments)
+                }
+                commentComposerSection
+                if !detail.links.parents.isEmpty || !detail.links.children.isEmpty {
+                    dependencySection(detail)
+                }
+                dependencyActionsSection
+                if !detail.runs.isEmpty {
+                    runsSection(detail.runs)
+                }
+                if !detail.events.isEmpty {
+                    eventsSection(detail.events)
                 }
             }
-            actionsSection(detail.task)
-            if !detail.comments.isEmpty {
-                commentsSection(detail.comments)
-            }
-            commentComposerSection
-            if !detail.links.parents.isEmpty || !detail.links.children.isEmpty {
-                dependencySection(detail)
-            }
-            dependencyActionsSection
-            if !detail.runs.isEmpty {
-                runsSection(detail.runs)
-            }
-            if !detail.events.isEmpty {
-                eventsSection(detail.events)
+            .listStyle(.insetGrouped)
+            .refreshable { await load() }
+            // A confirmed comment is inserted ABOVE the composer — outside
+            // the viewport the user is typing in. Reveal the new row so the
+            // write is visibly confirmed (mirrors the transcript's
+            // scroll-to-latest idiom).
+            .onChange(of: commentScrollPulse) { _, _ in
+                guard let lastCommentID = self.detail?.comments.last?.id else { return }
+                proxy.scrollTo(lastCommentID, anchor: .top)
             }
         }
-        .listStyle(.insetGrouped)
-        .refreshable { await load() }
     }
 
     private func taskSection(_ task: KanbanTaskRecord) -> some View {
@@ -375,9 +388,13 @@ public struct KanbanTaskDetailView: View {
         guard let boardModel, !commentText.isEmpty else { return }
         isCommenting = true
         defer { isCommenting = false }
-        await boardModel.addComment(taskID: taskID, body: commentText)
-        commentText = ""
+        let posted = await boardModel.addComment(taskID: taskID, body: commentText)
+        // Only a CONFIRMED write clears the composer and reveals the row; a
+        // failure keeps the text for a retry (a failed comment must never
+        // look posted).
+        if posted { commentText = "" }
         await load()
+        if posted { commentScrollPulse += 1 }
     }
 
     private func commentsSection(_ comments: [KanbanComment]) -> some View {

@@ -507,6 +507,13 @@ public enum RoomMemberDisplay {
     public static func sourceQualifier(
         for member: FleetRoomMember, gatewayLabel: String
     ) -> String {
+        // New hosted rows carry the owning gateway label and an explicit
+        // source-scoped marker. Older linked projections only carried an
+        // opaque connection label, so preserve their established "linked"
+        // affordance instead of treating that opaque value as a gateway name.
+        if member.sourceScoped {
+            return member.connectionLabel ?? gatewayLabel
+        }
         if member.connectionLabel != nil {
             return "\(gatewayLabel) · linked"
         }

@@ -387,6 +387,9 @@ public struct RoomChatView: View {
     @State private var isUserInteractingWithScroll = false
     /// Suppresses unfollow while a programmatic follow-scroll settles.
     @State private var isProgrammaticFollow = false
+    /// t_363bc529: monotonic token for the open-at-latest convergence loop —
+    /// a newer projection arrival supersedes any in-flight loop.
+    @State private var followLatestToken = 0
     @FocusState private var composing: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
@@ -471,6 +474,7 @@ public struct RoomChatView: View {
             }
             .navigationDestination(item: $continuedRoom) { room in
                 RoomChatView(room: room, environment: environment)
+                    .toolbar { FleetDrawerMenu() }
             }
             .onChange(of: viewModel.transcript.count) { _, _ in
                 // FOS-8 (SPEC §16 Focus): new events never steal the user's
@@ -478,7 +482,18 @@ public struct RoomChatView: View {
                 // bottom (followingLatest).
                 guard followingLatest else { return }
                 if let last = viewModel.transcript.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                    // t_363bc529: ONE scrollTo is not enough when a large
+                    // durable history projects at once — the LazyVStack's
+                    // height estimates for rows it has not yet materialized
+                    // are wrong, so a single assertion can park the viewport
+                    // mid-transcript with nothing left to re-assert it (count
+                    // never changes again). Re-assert in a bounded loop until
+                    // the geometry observer confirms at-bottom; each pass
+                    // materializes more rows, so estimates converge.
+                    followLatestToken += 1
+                    convergeOnLatest(
+                        proxy: proxy, target: last.id,
+                        token: followLatestToken)
                 }
             }
             .onAppear {
@@ -486,7 +501,10 @@ public struct RoomChatView: View {
                 // the room opens following the latest; only an explicit
                 // upward escape unfollows).
                 if let last = viewModel.transcript.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                    followLatestToken += 1
+                    convergeOnLatest(
+                        proxy: proxy, target: last.id,
+                        token: followLatestToken)
                 }
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -570,6 +588,51 @@ public struct RoomChatView: View {
         }
     }
 
+    // MARK: Open-at-latest convergence (t_363bc529)
+
+    /// Re-assert scrollTo(latest) until the scroll view CONFIRMS it is at
+    /// the bottom (the onScrollGeometryChange at-bottom observer clears the
+    /// programmatic-follow guard), bounded so a pathological layout can
+    /// never spin forever.
+    ///
+    /// A single scrollTo on a freshly-projected deep transcript lands on the
+    /// LazyVStack's unmaterialized height estimates and can park mid-transcript
+    /// (observed y=-742 of ~2340pt). Each re-assertion materializes more rows,
+    /// so the estimates converge to the true content height within a few
+    /// passes.
+    ///
+    /// Cancels itself when: geometry confirms at-bottom, the user starts
+    /// dragging (their scroll wins), or a newer projection supersedes the
+    /// token. If the bounded budget is exhausted without arrival, it leaves
+    /// the honest state — NOT following — so the Latest control renders and
+    /// the user has an explicit way back down.
+    private func convergeOnLatest(proxy: ScrollViewProxy, target: String, token: Int) {
+        isProgrammaticFollow = true
+        Task { @MainActor in
+            var attempts = 0
+            while attempts < 10 {
+                guard followLatestToken == token else { return } // superseded
+                guard !isUserInteractingWithScroll else {
+                    // The user grabbed the scroll: hand control back fully so
+                    // their drag can unfollow (otherwise Latest stays hidden
+                    // until they happen to touch bottom).
+                    isProgrammaticFollow = false
+                    return
+                }
+                if isAtBottomLatest && attempts > 0 { return }   // arrived
+                proxy.scrollTo(target, anchor: .bottom)
+                attempts += 1
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if followLatestToken == token {
+                isProgrammaticFollow = false
+                // Bounded budget exhausted without confirmed arrival: leave
+                // the honest state so the Latest control offers the way down.
+                if !isAtBottomLatest { followingLatest = false }
+            }
+        }
+    }
+
     // MARK: Header (member strip, D18)
 
     private var header: some View {
@@ -591,7 +654,7 @@ public struct RoomChatView: View {
             // cross-machine members never collapse.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: FleetTheme.spacingXs) {
-                    ForEach(viewModel.memberRows(gatewayLabel: label), id: \.member.name) { row in
+                    ForEach(Array(viewModel.memberRows(gatewayLabel: label).enumerated()), id: \.offset) { _, row in
                         HStack(spacing: 4) {
                             Text(row.member.name)
                                 .font(.caption.weight(.semibold))
@@ -607,8 +670,27 @@ public struct RoomChatView: View {
                     }
                 }
             }
+            if hostIsUnavailable {
+                Text("Authoritative host unavailable. Cached identity is preserved; sending is disabled until it reconnects.")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("fleet.room.host-unavailable")
+            }
         }
         .padding(.bottom, FleetTheme.spacingXs)
+    }
+
+    private var hostIsUnavailable: Bool {
+        guard viewModel.room.id.provenance == .hosted else { return false }
+        if case .failed = environment.rosterSnapshot?.outcome(for: viewModel.room.id.gatewayID) {
+            return true
+        }
+        guard let state = environment.connectionStates[viewModel.room.id.gatewayID] else { return false }
+        switch state {
+        case .failed(_), .disconnected: return true
+        case .idle, .connecting, .connected: return false
+        }
     }
 
     @ViewBuilder
@@ -996,6 +1078,7 @@ public struct RoomChatView: View {
                     Task { await viewModel.rename(renameDraft) }
                 } label: {
                     Text("Rename")
+                        .foregroundStyle(theme.onHighlight)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)

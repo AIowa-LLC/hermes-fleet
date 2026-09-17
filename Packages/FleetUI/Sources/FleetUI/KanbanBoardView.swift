@@ -182,12 +182,18 @@ public struct KanbanBoardView: View {
                     Image(systemName: "rectangle.stack")
                     Text(model.displayBoardName)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     Image(systemName: "chevron.down")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(theme.textSecondary)
                 }
                 .font(FleetTheme.secondaryFont.weight(.semibold))
                 .foregroundStyle(theme.highlight)
+                // Compact nav bars overflow trailing items into the system
+                // More bucket when the set does not fit; keep the picker
+                // narrow so Add Card and the board menu stay on the bar.
+                .lineLimit(1)
+                .frame(maxWidth: 110)
             }
             .accessibilityIdentifier("fleet.kanban.board.picker")
         }
@@ -384,6 +390,7 @@ public struct KanbanBoardView: View {
                     showingCreate = true
                 } label: {
                     Label("Add Card", systemImage: "plus")
+                        .foregroundStyle(theme.onHighlight)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("kanban.board.empty.add")

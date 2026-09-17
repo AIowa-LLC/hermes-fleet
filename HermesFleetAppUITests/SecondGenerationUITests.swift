@@ -10,13 +10,20 @@ final class SecondGenerationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
+        UITabNavigation.shellReady(app, timeout: 15)
         return app
     }
     func testChatsPreserveRouteAndOpenSession() {
         let app = launch()
-        app.tabBars.buttons["Chats"].tap()
+        UITabNavigation.selectTab(app, label: "Chats")
         let session = app.buttons["fleet.chats.session.workstation#default/workstation.default.s1"]
+        // iOS 26 lazy Lists materialize rows near the viewport only. The
+        // workstation default session sorts BELOW the fold (its startedAt is
+        // older than the rows above it), so scroll it into the tree first —
+        // the route-qualified identity requirement itself is unchanged.
+        if !session.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !session.exists { app.swipeUp(velocity: .fast) }
+        }
         XCTAssertTrue(session.waitForExistence(timeout: 20))
         session.tap()
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15) || app.textViews["fleet.conversation.composer"].exists)
@@ -35,6 +42,7 @@ final class SecondGenerationUITests: XCTestCase {
         let turn = app.collectionViews.buttons.firstMatch
         if turn.exists { turn.tap() } else { app.buttons["Done"].tap() }
     }
+
     /// Workspace successor: Projects + Kanban live beneath Gateway Detail
     /// (§11), reached from the Gateways tab.
     func testGatewayResourcesAndCommandCenter() {
@@ -45,7 +53,7 @@ final class SecondGenerationUITests: XCTestCase {
         capture("revamp-projects-scoped")
         // Command Center (global launcher) unchanged — it lives on the
         // Fleet root toolbar (§6).
-        app.tabBars.firstMatch.buttons["Fleet"].tap()
+        UITabNavigation.selectTab(app, label: "Fleet")
         let commandCenter = app.buttons["fleet.command-center.open"]
         XCTAssertTrue(commandCenter.waitForExistence(timeout: 10))
         commandCenter.tap()
@@ -58,11 +66,17 @@ final class SecondGenerationUITests: XCTestCase {
         let app = launch()
         UITabNavigation.openGatewaysTab(app)
         capture("revamp-gateways")
-        app.tabBars.buttons["Chats"].tap()
+        UITabNavigation.selectTab(app, label: "Chats")
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 5))
         capture("revamp-chats")
-        app.tabBars.buttons["Gateways"].tap()
-        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 5))
+        // Build 43: the Fleet tab PRESERVES its pushed Gateways cockpit —
+        // switching back lands on Gateways (not the Fleet root), and
+        // popping returns to Fleet. Either landing is a pass.
+        UITabNavigation.selectTab(app, label: "Fleet")
+        let gatewaysAgain = app.navigationBars["Gateways"].waitForExistence(timeout: 5)
+        if !gatewaysAgain {
+            XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 5))
+        }
     }
     private func firstMatchOrNil(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch

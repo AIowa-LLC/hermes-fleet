@@ -1,18 +1,7 @@
 import UIKit
 import XCTest
 
-/// U3 (Gold Fleet) — root tab-bar navigation regression suite.
-///
-/// Drives the DEBUG build (scripted fleet, deterministic) and proves the
-/// four-tab structure of the current shell (the old five-tab shell with
-/// Activity and Settings tabs is retired — those surfaces moved under
-/// Fleet/Gateways; see docs/navigation.md):
-///   1. cold launch lands on Fleet with all four tabs in the tab bar;
-///   2. each tab opens its real screen (roster on Bots, registry on
-///      Gateways, connection activity via Gateways → Connection history,
-///      App Lock toggle in the Settings sheet);
-///   3. Gateways → Bots drill-in still pushes bot detail + conversation on
-///      the tab's own NavigationStack, and switching tabs preserves it.
+/// Adaptive drawer/sidebar navigation, pushed-screen access, and state retention.
 final class U3TabNavigationUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -24,12 +13,29 @@ final class U3TabNavigationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // The root shell exposes four semantic destinations. On iPhone these
-        // are a tab bar; on iPad the adaptive style renders another control.
-        for label in ["Bots", "Chats", "Kanban", "Fleet", "Gateways"] {
-            XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
-                .waitForExistence(timeout: 15),
-                "root shell must include \(label)")
+        // Regular iPad exposes five destinations in its adaptive top control
+        // (plain labeled Buttons — no UITabBar element); compact iPhone
+        // exposes them from the drawer. Branch on the device idiom, NOT on
+        // a runtime probe: iPhone launches through the lock-gate swap (no
+        // drawer button exists until the scripted biometric lands), so a
+        // timed drawer probe would race the unlock and misroute iPhone into
+        // the adaptive path. tabControl/openDrawer still VERIFY the probed
+        // shape actually renders.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            for label in ["Bots", "Chats", "Kanban", "Fleet", "Settings"] {
+                XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
+                    .waitForExistence(timeout: 15), "root shell must include \(label)")
+            }
+            XCTAssertFalse(UITabNavigation.tabControl(app, label: "Gateways").exists,
+                           "Gateways must not be a tab (Build 43: it lives under Fleet)")
+        } else {
+            let drawer = UITabNavigation.openDrawer(app)
+            XCTAssertTrue(drawer.exists, "compact root navigation drawer must render")
+            for raw in ["bots", "chats", "kanban", "fleet", "settings"] {
+                XCTAssertTrue(app.descendants(matching: .any)
+                    .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
+            }
+            app.buttons["fleet.drawer.close"].tap()
         }
 
         // Build 41: Bots is the initial tab and shows the real roster (the
@@ -51,11 +57,12 @@ final class U3TabNavigationUITests: XCTestCase {
         attachScreenshot(of: app, name: "u3-bots-roster")
     }
 
-    func testGatewaysTabHostsRegistryCockpit() throws {
+    func testGatewaysCockpitFromFleetTab() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
+        // Build 43: the registry cockpit is reached Fleet → Manage Gateways.
         UITabNavigation.openGatewaysTab(app)
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.gateways.add").waitForExistence(timeout: 10),
                       "the Gateways toolbar must keep the Add entry")
@@ -100,7 +107,7 @@ final class U3TabNavigationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Drill in on the Gateways tab: gateway → bots → bot detail.
+        // Drill in under Fleet: Manage Gateways → gateway → bots → bot detail.
         UITabNavigation.openGatewaysTab(app)
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 10))
         tap(firstMatch(in: app, identifier: "fleet.gateways.row.workstation"))
@@ -112,11 +119,10 @@ final class U3TabNavigationUITests: XCTestCase {
             "Bot detail should render")
 
         // Switch away and back — the pushed detail must survive the tab
-        // switch (each tab keeps its own NavigationStack). Plain tap on the
-        // return trip: with bot detail pushed, the top bar is the detail's,
-        // not "Hermes Fleet", so the verified-open helper does not apply.
-        tapTab(app, "Fleet")
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        // switch (each tab keeps its own NavigationStack). The Bots detail
+        // was pushed on the Bots stack (owner routing, FOS-2 §6).
+        tapTab(app, "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
         tapTab(app, "Bots")
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
@@ -141,21 +147,169 @@ final class U3TabNavigationUITests: XCTestCase {
         device.orientation = .landscapeLeft
         defer { device.orientation = .portrait }
 
+        let fleet = UITabNavigation.tabControl(app, label: "Fleet")
         XCTAssertTrue(
-            UITabNavigation.tabControl(app, label: "Fleet")
-                .waitForExistence(timeout: 10),
+            fleet.waitForExistence(timeout: 10),
             "Fleet destination remains available in landscape")
+        // Select Fleet first — cold launch lands on Bots (Build 41+), so
+        // the Fleet root only hosts its bar once selected.
+        fleet.tap()
         XCTAssertTrue(
             app.navigationBars["Fleet"].waitForExistence(timeout: 10),
             "Fleet navigation bar remains available in landscape")
+        attachScreenshot(of: app, name: "u3-ipad-landscape-navigation")
+    }
+
+    // MARK: - Compact drawer navigation
+
+    func testCompactRootMenuOpensAndHasAllDestinations() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone,
+                          "compact iPhone drawer coverage")
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName",
+                                "UICTContentSizeCategoryAccessibilityXL"]
+        app.launch()
+
+        XCTAssertFalse(app.tabBars.firstMatch.waitForExistence(timeout: 2),
+                       "compact iPhone replaces the visible tab bar")
+        let drawer = UITabNavigation.openDrawer(app)
+        for raw in ["bots", "chats", "kanban", "fleet", "settings"] {
+            XCTAssertTrue(app.descendants(matching: .any)
+                .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists,
+                "drawer exposes \(raw) destination")
+        }
+        attachScreenshot(of: app, name: "u3-compact-drawer-accessibility-type")
+        XCTAssertTrue(drawer.exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists, "no bottom bar while drawer is open")
+        app.buttons["fleet.drawer.close"].tap()
+        XCTAssertFalse(app.descendants(matching: .any)["fleet.drawer"].exists,
+                       "Close dismisses the compact drawer")
+    }
+
+    func testCompactMenuIsAvailableOnIndividualAndGroupDestinations() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone,
+                          "compact iPhone drawer coverage")
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        let individual = app.descendants(matching: .any)
+            .matching(identifier: "fleet.roster.row.workstation#default").firstMatch
+        XCTAssertTrue(individual.waitForExistence(timeout: 15))
+        individual.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.bot-detail.header"].waitForExistence(timeout: 10))
+        UITabNavigation.openDrawer(app)
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.drawer.destination.chats"].exists)
+        app.buttons["fleet.drawer.close"].tap()
+
+        // Same-tab drawer reselection pops the Bots stack to its roster root.
+        UITabNavigation.openDrawer(app)
+        app.descendants(matching: .any)["fleet.drawer.destination.bots"].firstMatch.tap()
+        let group = app.descendants(matching: .any)["fleet.room.row.room-alpha"].firstMatch
+        if !group.waitForExistence(timeout: 5) {
+            for _ in 0..<8 where !group.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(group.waitForExistence(timeout: 10), "scripted group row renders")
+        group.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10))
+        attachScreenshot(of: app, name: "u3-group-menu-and-back")
+        UITabNavigation.openDrawer(app)
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.drawer.destination.bots"].exists)
+    }
+
+    func testCompactSwitchingRetainsIndividualConversationDraft() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone,
+                          "compact iPhone drawer coverage")
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        let row = app.descendants(matching: .any)["fleet.roster.row.workstation#default"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        let session = app.descendants(matching: .any)
+            .matching(identifier: "fleet.bot-detail.sessions.row.workstation.default.s1").firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 10))
+        session.tap()
+        let composer = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("drawer draft")
+        attachScreenshot(of: app, name: "u3-individual-menu-and-draft")
+
+        UITabNavigation.selectTab(app, label: "Fleet")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "conversation path survives drawer switch")
+        XCTAssertTrue(composer.value as? String == "drawer draft",
+                      "conversation draft survives drawer switching")
+    }
+
+    func testCompactHiddenBotsMenuToggleUsesStableIdentifiers() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone,
+                          "compact iPhone drawer coverage")
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        // The scripted fixture marks workstation#researcher hidden when this
+        // flag is enabled.
+        app.launchEnvironment["HERMES_FLEET_HIDDEN_BOT"] = "1"
+        app.launch()
+        let manage = app.buttons["fleet.roster.manage"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 15))
+        XCTAssertTrue(manage.label.localizedCaseInsensitiveContains("bot") ||
+                      manage.label.localizedCaseInsensitiveContains("option"),
+                      "roster management control is presented as Bots options")
+        XCTAssertFalse(app.descendants(matching: .any)["fleet.roster.row.workstation#researcher"].exists)
+        manage.tap()
+        let toggle = app.descendants(matching: .any)["fleet.roster.hidden-toggle"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        XCTAssertTrue(toggle.label.localizedCaseInsensitiveContains("show hidden bots"),
+                      "hidden-bot action starts as Show hidden bots")
+        toggle.tap()
+        let researcher = app.descendants(matching: .any)["fleet.roster.row.workstation#researcher"]
+        XCTAssertTrue(researcher.waitForExistence(timeout: 10), "revealed researcher bot renders")
+        manage.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.roster.hidden-toggle"].label
+            .localizedCaseInsensitiveContains("hide hidden bots"),
+                      "revealed hidden-bot action becomes Hide hidden bots")
+        app.buttons["fleet.roster.hidden-toggle"].tap()
+        XCTAssertFalse(researcher.exists, "Hide restores the original filtering")
+    }
+
+    func testCompactHiddenBotsEmptyNoticeHasStableIdentifier() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone,
+                          "compact iPhone drawer coverage")
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["fleet.roster.manage"].waitForExistence(timeout: 15))
+        app.buttons["fleet.roster.manage"].tap()
+        let toggle = app.descendants(matching: .any)["fleet.roster.hidden-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        toggle.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.roster.hidden-empty"]
+            .waitForExistence(timeout: 10), "empty hidden-bot notice has stable id")
+    }
+
+    func testCompactEveryRootExposesMenu() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone, "compact navigation")
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        for label in ["Chats", "Kanban", "Fleet", "Settings", "Bots"] {
+            UITabNavigation.selectTab(app, label: label)
+            XCTAssertTrue(app.navigationBars[label].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["fleet.drawer.open"].isHittable)
+            XCTAssertFalse(app.tabBars.firstMatch.exists)
+        }
+        attachScreenshot(of: app, name: "u3-compact-roots-no-bottom-bar")
     }
 
     // MARK: - Tab helpers (verified switch, one retry on a dropped tap)
 
     private func tapTab(_ app: XCUIApplication, _ label: String) {
-        let tab = UITabNavigation.tabControl(app, label: label)
-        XCTAssertTrue(tab.waitForExistence(timeout: 15), "\(label) tab should exist")
-        tab.tap()
+        UITabNavigation.selectTab(app, label: label)
     }
 
     private func openActivityTab(_ app: XCUIApplication) {

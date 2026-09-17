@@ -29,6 +29,7 @@ public struct FleetRosterView: View {
 
     @State private var searchText = ""
     @State private var revealingHidden = false
+    @State private var hiddenBotsNoticeID: UUID?
     @State private var showingCreate = false
     @State private var sectionsGateway: FleetGateway?
     @State private var createRoomGateway: FleetGateway?
@@ -60,9 +61,10 @@ public struct FleetRosterView: View {
     /// FOS-5: filter controls render on the fleet root only.
     private var showsFilterBar: Bool { gatewayID == nil }
 
-    private var hiddenBotsActive: Bool {
-        visibleGateways.flatMap { environment.bots(on: $0.id) }
-            .contains { environment.botPresence(for: $0.route) != .unreachable && HiddenBotActivity.hasSignal($0) }
+    private var hasHiddenBots: Bool {
+        snapshotSections.contains { section in
+            section.bots.contains { $0.botModeMetadata?.hidden == true }
+        }
     }
 
     // MARK: Sections — per-gateway grouping with outage states
@@ -114,9 +116,22 @@ public struct FleetRosterView: View {
             }
         }
         .navigationTitle("Bots")
+        .accessibilityIdentifier("fleet.roster")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    Button {
+                        revealingHidden.toggle()
+                        hiddenBotsNoticeID = revealingHidden && !hasHiddenBots ? UUID() : nil
+                        if hiddenBotsNoticeID != nil {
+                            UIAccessibility.post(notification: .announcement, argument: "No hidden bots")
+                        }
+                    } label: {
+                        Label(revealingHidden ? "Hide hidden bots" : "Show hidden bots",
+                              systemImage: revealingHidden ? "eye.slash" : "eye")
+                    }
+                    .accessibilityIdentifier("fleet.roster.hidden-toggle")
+                    Divider()
                     Button {
                         showingCreate = true
                     } label: {
@@ -141,7 +156,7 @@ public struct FleetRosterView: View {
                         .accessibilityIdentifier("fleet.roster.sections.\(gateway.id.rawValue)")
                     }
                 } label: {
-                    Label("Manage", systemImage: "plus.circle")
+                    Label("Bots options", systemImage: "ellipsis")
                 }
                 .accessibilityIdentifier("fleet.roster.manage")
             }
@@ -154,17 +169,26 @@ public struct FleetRosterView: View {
                 .disabled(environment.isRefreshing)
                 .accessibilityIdentifier("fleet.roster.refresh")
             }
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    revealingHidden.toggle()
-                } label: {
-                    Label(
-                        revealingHidden ? "Hide Hidden Bots" : (hiddenBotsActive ? "Hidden Bots Active" : "Show Hidden Bots"),
-                        systemImage: revealingHidden ? "eye.slash" : (hiddenBotsActive ? "eye.trianglebadge.exclamationmark" : "eye")
-                    )
-                }
-                .accessibilityIdentifier("fleet.roster.hidden-toggle")
+
+        }
+        .overlay(alignment: .top) {
+            if hiddenBotsNoticeID != nil {
+                Text("No hidden bots")
+                    .font(.callout)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("fleet.roster.hidden-empty")
+                    .allowsHitTesting(false)
             }
+        }
+        .task(id: hiddenBotsNoticeID) {
+            guard hiddenBotsNoticeID != nil else { return }
+            do {
+                try await Task.sleep(for: .seconds(6))
+                hiddenBotsNoticeID = nil
+            } catch { /* A new notice or leaving the roster cancels this timer. */ }
         }
         .sheet(isPresented: $showingCreate) {
             CreateBotSheet(environment: environment) { _, _ in }
@@ -188,7 +212,6 @@ public struct FleetRosterView: View {
             }
         }
         .background(theme.background.ignoresSafeArea())
-        .accessibilityIdentifier("fleet.roster")
     }
 
     private var rosterList: some View {
@@ -488,13 +511,11 @@ public struct FleetRosterView: View {
             SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
             ForEach(visible) { room in
-                // An explicit destination keeps room opening reliable in
-                // iPad's adaptive NavigationStack. The value-link path is
-                // retained for the other roster destinations, but this
-                // custom room row was being exposed as a tappable control
-                // without activating its value destination.
+                // Preserve the explicit group push used by the adaptive iPad
+                // stack, and share the shell's Menu action on this destination.
                 NavigationLink {
                     RoomChatView(room: room, environment: environment)
+                        .toolbar { FleetDrawerMenu() }
                 } label: {
                     RoomRowView(room: room)
                 }
@@ -506,7 +527,10 @@ public struct FleetRosterView: View {
     }
 
     private func filteredRooms(for gateway: FleetGateway) -> [FleetRoom] {
-        let rooms = environment.rooms(for: gateway.id)
+        let unifiedIDs = Set(environment.allRooms.map(\.id))
+        let rooms = environment.rooms(for: gateway.id).filter {
+            unifiedIDs.contains($0.id)
+        }
         guard !searchText.isEmpty else { return rooms }
         return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
@@ -860,6 +884,12 @@ struct RoomRowView: View {
                     } else if !room.members.isEmpty {
                         Text(room.members.map(\.name).joined(separator: ", "))
                             .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    if let authority = room.hosted?.authorityGatewayID, !authority.isEmpty {
+                        Text("Authority host · \(authority)")
+                            .font(FleetTheme.monoCaptionFont)
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }

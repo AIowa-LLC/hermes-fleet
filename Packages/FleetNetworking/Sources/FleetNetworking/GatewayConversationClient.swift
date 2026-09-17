@@ -319,6 +319,11 @@ public struct GatewayConversationClient: ConversationProviding {
                 toolID: payload["tool_id"]?.stringValue ?? "",
                 name: payload["name"]?.stringValue ?? "",
                 summary: payload["summary"]?.stringValue,
+                // Card D: the tool RESULT rides through as compact JSON — the
+                // gateway emits it already parsed (`tool_progress.py`
+                // `_on_tool_complete`), and it is the only live source of a
+                // generated-image artifact path.
+                resultText: Self.compactJSON(payload["result"]),
                 seq: seq
             )
         case .backgroundComplete:
