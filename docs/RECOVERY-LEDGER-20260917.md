@@ -165,3 +165,40 @@ Sanitizations:
 5. Push/PR: NOT performed (requires explicit owner instruction).
 6. gitleaks allowlist entry for ConversationPinning storageKey (G2): committed;
    flagged for owner review at commit time per overnight handoff.
+
+## 9. Validation record (committed SHA 53e58b2)
+
+All gates run at the committed state (fresh worktree `/tmp/fleet-rc-verify-53e58b2`):
+
+| Gate | Result |
+|---|---|
+| FleetCore package | 513/513 PASS |
+| FleetPersistence | 31/31 PASS |
+| FleetSecurity | 37/37 PASS |
+| FleetNetworking (focused: slash client 12, conversation 20) | 32/32 PASS |
+| HermesFleetAppUnitTests (app bundle, sim) | 697/697 PASS (was 692 pre-Build46) |
+| Focused UI: U3 settings 1/1, R9 cron 1/1 | PASS |
+| Focused UI: ConversationCompactChrome 5/5, Issue4SlashSkill 3/3 | 8/8 PASS |
+| UI-matrix audit | 54 CI + 11 environmental = 65 classes, all accounted once |
+| theme call-site audit | PASS |
+| public-safety guard | PASS |
+| gitleaks (staged + new-file tree scan) | clean |
+| Release build (generic/platform=iOS, CURRENT_PROJECT_VERSION=47) | BUILD SUCCEEDED, codesign valid |
+
+Full C1 matrix + hosted CI remain to run on the pushed SHA (owner gate G6).
+
+## 10. Delivery record (owner-authorized 2026-09-17)
+
+- **TestFlight build 0.2.0(47)** uploaded from SHA `53e58b2` (dogfood/build-41-integration).
+  IPA SHA-256 `3936807c286f78877f06318a6e35a266f6c6b0b1f23057285b6fd647aef126e2`.
+  ASC Delivery UUID `8ac2522f-3395-46d7-9d8f-ec151313e5b9`; processing state **VALID**
+  (2026-09-17 17:19 CDT); groups: Internal Testers + AIowa; en-US "What's New" set.
+  Build number 47 chosen to clear the tainted "46" (two wrong-lineage 46s were
+  installed on the device from the mirror repo).
+- Local WiFi device install of the Release 47 app attempted at 17:12 CDT: device
+  unreachable (CoreDeviceError 4016, phone asleep — owner away). On-disk artifact:
+  `build/rc-release-dd/Build/Products/Release-iphoneos/HermesFleetApp.app`.
+  TestFlight is the delivery channel for this build.
+- Xcode 27.0 (27A266a) was used for archive/export/upload; the release-lane
+  script's hard Xcode 26.x check (G5) was superseded by explicit owner
+  authorization today (same SDK/toolchain family used for all b4x builds).
