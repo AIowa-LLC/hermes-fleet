@@ -39,8 +39,8 @@ final class FOS3FourRootShellUITests: XCTestCase {
                 XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
             }
             let tabLabels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
-            XCTAssertEqual(tabLabels.count, 5,
-                           "the tab bar must expose exactly five tabs (got \(tabLabels))")
+            XCTAssertEqual(tabLabels.count, 6,
+                           "the tab bar must expose exactly six destinations (got \(tabLabels))")
             XCTAssertFalse(tabBar.buttons["Gateways"].exists,
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
         } else if app.buttons["fleet.drawer.open"].exists {
