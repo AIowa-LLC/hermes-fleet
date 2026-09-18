@@ -91,6 +91,36 @@ final class CronTabUITests: XCTestCase {
                       "machine sections are named after their gateway")
     }
 
+    /// QA finding (deleg_865febdb): the tab MUST expose an Add control —
+    /// single-gateway opens the create form directly; a fleet opens the
+    /// per-machine menu. The scripted fleet has one real gateway, so the +
+    /// is a direct button here.
+    func testCronTabExposesAddControl() throws {
+        openCronTab()
+
+        let add = firstMatch("cron.new")
+        XCTAssertTrue(add.waitForExistence(timeout: 10),
+                      "the Cron tab must expose an Add (+) control")
+        XCTAssertTrue(scrollTo(add), "the Add control must be hittable")
+        add.tap()
+
+        // Multi-gateway fleets (the scripted fleet has workstation + arch):
+        // + opens the per-machine menu; pick the workstation machine, which
+        // then presents the shared create form (CronJobFormSheet).
+        let menuItem = app.buttons["Workstation"].firstMatch
+        if menuItem.waitForExistence(timeout: 5) {
+            menuItem.tap()
+        }
+
+        let nameField = app.descendants(matching: .any)
+            .matching(identifier: "cron.form.name").firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 10),
+                      "Add must open the create form (cron.form.name)")
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.waitForExistence(timeout: 3) { cancel.tap() }
+        else { app.swipeDown() }
+    }
+
     func testCronTabRunNowShowsNoticeWithoutLeavingScreen() throws {
         openCronTab()
 

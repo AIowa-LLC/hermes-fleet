@@ -13,6 +13,12 @@ public struct CronHomeView: View {
     @Environment(\.fleetTheme) private var theme
     private let environment: AppEnvironment
 
+    /// Create-form target: nil closes the sheet. The form is gateway+profile
+    /// scoped, so the + control first picks the machine (single gateway opens
+    /// directly; a fleet gets an explicit per-gateway menu — never a silent
+    /// default).
+    @State private var createTarget: (gateway: FleetGateway, profile: ProfileSlug)?
+
     public init(environment: AppEnvironment) {
         self.environment = environment
     }
@@ -31,6 +37,47 @@ public struct CronHomeView: View {
             }
         }
         .navigationTitle("Cron")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                addControl
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { createTarget != nil },
+            set: { if !$0 { createTarget = nil } }
+        )) {
+            if let target = createTarget,
+               let model = CronSectionCache.shared.modelIfRetained(target.gateway.id) {
+                CronJobFormSheet(model: model, profile: target.profile.rawValue, mode: .create)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addControl: some View {
+        if environment.gateways.count == 1, let only = environment.gateways.first {
+            Button {
+                createTarget = (only, ProfileSlug(rawValue: "default"))
+            } label: {
+                Image(systemName: "plus")
+            }
+            .foregroundStyle(theme.highlight)
+            .accessibilityLabel("New cron job")
+            .accessibilityIdentifier("cron.new")
+        } else {
+            Menu {
+                ForEach(environment.gateways) { gateway in
+                    Button("\(gateway.displayName)") {
+                        createTarget = (gateway, ProfileSlug(rawValue: "default"))
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .foregroundStyle(theme.highlight)
+            .accessibilityLabel("New cron job")
+            .accessibilityIdentifier("cron.new")
+        }
     }
 
     private var machineSections: some View {
@@ -345,6 +392,12 @@ final class CronSectionCache {
         } else {
             retainCounts[gatewayID] = n - 1
         }
+    }
+
+    /// Peek at a retained model without creating one (create-form target).
+    func modelIfRetained(_ gatewayID: GatewayID) -> CronDashboardModel? {
+        guard retainCounts[gatewayID] != nil else { return nil }
+        return models[gatewayID]
     }
 
     func refreshAll() async {
