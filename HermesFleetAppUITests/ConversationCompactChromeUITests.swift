@@ -76,41 +76,50 @@ final class ConversationCompactChromeUITests: XCTestCase {
         XCTAssertFalse(unknownRow.exists, "session.title must not surface as Unknown event")
     }
 
-    func testConversationUsesInlineNavTitle() throws {
+    func testConversationUsesSingleRowHeader() throws {
         let app = launch()
         openConversation(app)
 
-        // Scope to the conversation's OWNING stack. Build 43 keeps visited
-        // compact stacks MOUNTED (retention); a hidden stack's UIKit nav bar
-        // still surfaces in the AX snapshot (observed: a hidden Bots stack's
-        // 106pt large-title bar while the conversation was up), so an
-        // unscoped `navigationBars.firstMatch` can resolve a bar the user
-        // cannot see. The conversation routes to the Chats stack
-        // (canonical-owner rule), whose container is tagged `fleet.tab.chats`.
-        let navBar = app.descendants(matching: .any)["fleet.tab.chats"]
-            .descendants(matching: .navigationBar).firstMatch
-        XCTAssertTrue(navBar.waitForExistence(timeout: 10), "a navigation bar must exist")
-        let navHeight = navBar.frame.height
+        // Compaction round 2: the system navigation bar is HIDDEN on the
+        // conversation — all chrome lives in ONE 44-56pt custom row.
+        let header = firstMatch(in: app, identifier: "fleet.conversation.header")
+        XCTAssertTrue(header.waitForExistence(timeout: 10), "compact header must render")
+        // The header's AX frame includes the status-bar region (custom chrome
+        // owns the full top inset), so measure the ROW itself: back-button
+        // top to transcript top = the single chrome row.
+        let back = firstMatch(in: app, identifier: "fleet.conversation.back")
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "custom back button must render")
+        let transcript0 = firstMatch(in: app, identifier: "fleet.conversation.transcript")
+        XCTAssertTrue(transcript0.waitForExistence(timeout: 10))
         XCTAssertLessThanOrEqual(
-            navHeight, 60,
-            "inline nav bar must be compact (large-title bars measure ~96pt+); got \(navHeight)"
+            transcript0.frame.minY - back.frame.minY, 48,
+            "the merged header must stay a single compact row (got \(transcript0.frame.minY - back.frame.minY)pt)"
         )
 
-        // Bot identity remains visible in the compact header row. The
-        // container uses .contain, so the name is asserted on its leaf.
-        let header = firstMatch(in: app, identifier: "fleet.conversation.header")
-        XCTAssertTrue(header.waitForExistence(timeout: 10), "compact bot header must render")
-        let name = firstMatch(in: app, identifier: "fleet.conversation.header.name")
-        XCTAssertTrue(name.waitForExistence(timeout: 5), "bot name leaf must render")
-        XCTAssertTrue(name.label.contains("Default"), "header label: \(name.label)")
+        // The system nav bar must not render for the conversation's stack.
+        // (Scope to the owning Chats stack — mounted hidden stacks' bars can
+        // still surface in the AX snapshot.)
+        let stackBar = app.descendants(matching: .any)["fleet.tab.chats"]
+            .descendants(matching: .navigationBar).firstMatch
+        let barVisible = stackBar.exists && stackBar.isHittable
+        XCTAssertFalse(barVisible,
+                       "the conversation must not show the system navigation bar")
 
-        // The transcript surface itself starts within ~250pt of the top —
-        // the old chrome consumed 250+ before the first message.
+        // Identity + title leaves, back + drawer buttons, one row.
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.header.name").waitForExistence(timeout: 5))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.header.title").exists)
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer.open").waitForExistence(timeout: 5),
+                      "drawer toggle must render in the row")
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.header.identity").exists,
+                      "identity element (spoken status carrier) must render")
+
+        // The transcript must begin at/below the single header row — the old
+        // two-row chrome is gone (pre-fix transcript minY included the bar).
         let transcript = firstMatch(in: app, identifier: "fleet.conversation.transcript")
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         XCTAssertLessThanOrEqual(
-            transcript.frame.minY, 250,
-            "transcript must begin substantially higher; got \(transcript.frame.minY)"
+            transcript.frame.minY, header.frame.maxY + 8,
+            "transcript must start right after the single header row (header maxY \(header.frame.maxY), transcript minY \(transcript.frame.minY))"
         )
     }
 
@@ -131,17 +140,21 @@ final class ConversationCompactChromeUITests: XCTestCase {
         _ = waitUntilGone(firstMatch(in: app, identifier: "model.picker.row.nous/hermes"))
 
         // Send a turn so user turns exist, then open the timeline from the
-        // toolbar.
+        // ⋯ session-actions menu (compaction round 2: the toolbar row is
+        // gone; timeline rides the menu).
         let composer = app.textFields["fleet.conversation.composer"]
         waitUntilEnabled(composer, timeout: 10)
         composer.tap()
         composer.typeText("compact chrome probe")
         tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
 
+        let menu = firstMatch(in: app, identifier: "session.actions.menu")
+        XCTAssertTrue(menu.waitForExistence(timeout: 15), "session actions menu must render")
+        menu.tap()
         let timeline = app.buttons["fleet.conversation.timeline.open"]
         XCTAssertTrue(
-            timeline.waitForExistence(timeout: 15),
-            "timeline affordance must be reachable from the navigation toolbar"
+            timeline.waitForExistence(timeout: 10),
+            "timeline affordance must be reachable from the session-actions menu"
         )
         timeline.tap()
         XCTAssertTrue(app.navigationBars["Timeline"].waitForExistence(timeout: 5))

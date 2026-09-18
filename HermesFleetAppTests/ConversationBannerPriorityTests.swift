@@ -148,10 +148,21 @@ final class ConversationBannerPriorityTests: XCTestCase {
                       "Re-authenticate must keep its identifier")
         XCTAssertTrue(source.contains("\"model.chip\""),
                       "the model chip must keep its identifier")
-        XCTAssertTrue(source.contains("\"fleet.conversation.timeline.open\""),
-                      "timeline.open must stay reachable")
-        XCTAssertTrue(source.contains("\"fleet.conversation.timeline.latest\""),
-                      "timeline.latest must stay reachable")
+        // Compaction round 2: timeline.open lives in the ⋯ session-actions
+        // menu (SessionSteerControls) — guarded there, not in ConversationView.
+        let steerSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Packages/FleetUI/Sources/FleetUI/SessionSteerControls.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(steerSource.contains("\"fleet.conversation.timeline.open\""),
+                      "timeline.open must stay reachable (session-actions menu)")
+        XCTAssertTrue(
+            source.contains("\"fleet.conversation.timeline.latest\"")
+                || steerSource.contains("\"fleet.conversation.timeline.latest\""),
+            "timeline.latest must stay reachable (floating chevron or menu)")
         XCTAssertFalse(source.contains("safeAreaInset(edge: .top"),
                        "the permanent transcript top inset must stay gone")
         XCTAssertTrue(source.contains(".navigationBarTitleDisplayMode(.inline)"),

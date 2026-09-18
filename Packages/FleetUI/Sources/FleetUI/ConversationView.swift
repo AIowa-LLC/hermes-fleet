@@ -19,6 +19,7 @@ import FleetPersistence
 public struct ConversationView: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openFleetDrawer) private var openDrawer
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -81,10 +82,12 @@ public struct ConversationView: View {
             }
         }
         .navigationTitle(screenTitle)
-        // Dogfood top-space fix: the conversation is a compact chat surface,
-        // never a large-title screen — the transcript must begin high. The
-        // bot identity/status move into the nav bar + one compact header row.
+        // Compaction round 2: the conversation owns ALL of its chrome in one
+        // 44pt row — the system navigation bar is hidden here (back, drawer,
+        // status, timeline and latest all live in the compact header row /
+        /// the floating latest chevron / the ⋯ menu).
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .task {
             if viewModel == nil {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
@@ -129,7 +132,7 @@ public struct ConversationView: View {
 
     private func canvas(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
-            botHeader(model)
+            compactHeader(model)
             bannerArea(model)
             // R9-T4: transient tooling notices (fork/rename failures) —
             // renders nothing when clear, so the steady-state chrome stays
@@ -201,81 +204,36 @@ public struct ConversationView: View {
             )
             .toolbar { FleetDrawerMenu() }
         }
-        // Dogfood top-space fix: status + timeline actions live in the inline
-        // navigation bar. The pill keeps its live activity/presence
-        // semantics (`headerPillStatus`); the timeline surfaces move OFF the
-        // transcript's permanent 44pt top inset into toolbar items.
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                StatusPill(status: headerPillStatus(bot: environment.bot(for: route), model: model))
-                    .accessibilityIdentifier("fleet.conversation.status")
-            }
-            // Distinct tap targets per action (a bare HStack in one
-            // ToolbarItem can merge hit areas on iOS 26).
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if dynamicTypeSize.isAccessibilitySize {
-                    timelineCollapsibleMenu
-                } else {
-                    timelineOpenButton
-                    latestButton
-                }
-            }
+        // (Toolbar intentionally empty: the former principal StatusPill and
+        // the trailing timeline/latest items now live in compactHeader and
+        // the ⋯ session-actions menu; latest ALSO floats on the transcript.)
+        .overlay(alignment: .bottomTrailing) {
+            floatingLatestChevron
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showingJumpToLatest)
     }
 
-    /// Opens the loaded-turns timeline sheet directly (default sizes).
+    /// Floating jump-to-latest chevron — zero permanent chrome: it renders
+    /// ONLY while the user has scrolled away from the live bottom (same
+    /// condition the old toolbar item used), overlaid on the transcript's
+    /// bottom-trailing corner above the composer.
     @ViewBuilder
-    private var timelineOpenButton: some View {
-        if hasUserTurns {
-            Button {
-                showingTimeline = true
-            } label: {
-                Image(systemName: "list.bullet.indent")
-            }
-            .accessibilityLabel("Timeline")
-            .accessibilityIdentifier("fleet.conversation.timeline.open")
-        }
-    }
-
-    /// Jump-to-latest — rendered only when the user has scrolled away from
-    /// the live bottom (same condition as the removed permanent row).
-    @ViewBuilder
-    private var latestButton: some View {
+    private var floatingLatestChevron: some View {
         if showingJumpToLatest {
             Button {
                 followingLatest = true
                 scrollPulse += 1
             } label: {
-                Image(systemName: "arrow.down.to.line")
+                Image(systemName: "chevron.down.circle.fill")
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(theme.highlight, theme.surface)
             }
+            .buttonStyle(.fleetPressable)
             .accessibilityLabel("Latest")
             .accessibilityIdentifier("fleet.conversation.timeline.latest")
-        }
-    }
-
-    /// Accessibility-size collapse: one menu carrying both actions.
-    @ViewBuilder
-    private var timelineCollapsibleMenu: some View {
-        if hasUserTurns {
-            Menu {
-                Button {
-                    showingTimeline = true
-                } label: {
-                    Label("Timeline", systemImage: "list.bullet.indent")
-                }
-                .accessibilityIdentifier("fleet.conversation.timeline.open")
-                Button {
-                    followingLatest = true
-                    scrollPulse += 1
-                } label: {
-                    Label("Latest", systemImage: "arrow.down.to.line")
-                }
-                .accessibilityIdentifier("fleet.conversation.timeline.latest")
-            } label: {
-                Image(systemName: "list.bullet.indent")
-            }
-            .accessibilityLabel("Timeline")
-            .accessibilityIdentifier("fleet.conversation.timeline.menu")
+            .padding(.trailing, FleetTheme.spacingLg)
+            .padding(.bottom, FleetTheme.spacingSm)
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
     }
 
@@ -316,23 +274,58 @@ public struct ConversationView: View {
         )
     }
 
-    // MARK: Bot header (dogfood top-space fix — one compact row)
+    // MARK: Single-row header (dogfood compaction round 2 — merge the
+    // inline nav bar INTO the bot header row; the conversation hides the
+    // system navigation bar entirely and owns its chrome: back, drawer,
+    // status dot, identity, meter, chip, actions — 44pt total).
 
-    /// Compact single-row bot header: avatar + identity + session context
-    /// leading; steer/yolo controls, model chip, and context meter trailing.
-    /// The StatusPill moved into the INLINE navigation bar (beside the
-    /// title), so no permanent row is spent on status. At accessibility
-    /// Dynamic Type sizes the secondary metadata (chip/meter) drops out
-    /// instead of squeezing the bot name; the chip stays reachable via the
-    /// session-actions menu.
-    private func botHeader(_ model: ConversationViewModel) -> some View {
+    /// ONE row: [‹] [☰] [avatar●status] Name / session-title … [3%] [chip] [⋯]
+    /// - Back: custom chevron (NavigationStack pop; swipe-back survives —
+    ///   the gesture rides the interactive pop, not the bar).
+    /// - Drawer: same `openFleetDrawer` action + `fleet.drawer.open` id.
+    /// - Status: colored dot on the avatar's corner (semantic color); the
+    ///   spoken form stays on the identity element ("Status: Online").
+    /// - Identity: 28pt avatar, name + title stacked; at accessibility
+    ///   sizes the trailing metadata drops (still reachable via ⋯).
+    /// - Timeline + jump-to-latest moved into the ⋯ session-actions menu;
+    ///   latest ALSO has a zero-chrome floating chevron on the transcript.
+    private func compactHeader(_ model: ConversationViewModel) -> some View {
         let bot = environment.bot(for: route)
         let name = bot?.displayName ?? route.profileSlug.rawValue
-        return HStack(spacing: FleetTheme.spacingMd) {
-            BotAvatar(bot: bot, management: environment.botManagement)
-            VStack(alignment: .leading, spacing: 2) {
+        let status = headerPillStatus(bot: bot, model: model)
+        return HStack(spacing: FleetTheme.spacingSm) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Back")
+            .accessibilityIdentifier("fleet.conversation.back")
+
+            Button {
+                openDrawer?()
+            } label: {
+                Image(systemName: "sidebar.leading")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Menu")
+            .accessibilityIdentifier("fleet.drawer.open")
+
+            avatarWithStatus(bot: bot, status: status)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
                 Text(name)
-                    .font(.body.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .accessibilityIdentifier("fleet.conversation.header.name")
@@ -343,36 +336,40 @@ public struct ConversationView: View {
                     .truncationMode(.middle)
                     .accessibilityIdentifier("fleet.conversation.header.title")
             }
-            Spacer(minLength: FleetTheme.spacingSm)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(name), status \(status.label)")
+            .accessibilityIdentifier("fleet.conversation.header.identity")
+
+            Spacer(minLength: FleetTheme.spacingXs)
             // Accessibility sizes: primary identity gets the row; secondary
             // metadata hides (chip + meter remain reachable via the menu).
             if !dynamicTypeSize.isAccessibilitySize {
-                modelChipButton(model)
                 if let toolingModel = model.toolingViewModel {
                     ContextMeterView(model: toolingModel) {
                         showingContextBreakdown = true
                     }
                 }
+                modelChipButton(model)
             }
-            // R9-T4: steer/rename/fork menu.
             if let toolingModel = model.toolingViewModel {
                 SessionSteerControls(
                     model: toolingModel,
                     isStreaming: model.isStreaming,
-                    sessionTitle: model.sessionTitle
-                ) { _ in
-                    // The fork result lands on the conversation VM
-                    // (forkedSession) — navigated by the canvas binding.
-                }
-            }
-            // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
-            // on enable). Hidden when the session has no approvals seam.
-            if let approvalModel = model.approvalViewModel {
-                SessionYoloToggle(model: approvalModel)
+                    sessionTitle: model.sessionTitle,
+                    showsTimeline: hasUserTurns,
+                    showsLatest: showingJumpToLatest,
+                    onTimeline: { showingTimeline = true },
+                    onLatest: {
+                        followingLatest = true
+                        scrollPulse += 1
+                    },
+                    onFork: { _ in }
+                )
             }
         }
-        .padding(.horizontal, FleetTheme.spacingLg)
-        .padding(.vertical, FleetTheme.spacingSm)
+        .frame(minHeight: 44)
+        .padding(.horizontal, FleetTheme.spacingSm)
+        .padding(.vertical, 4)
         .background(theme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -381,6 +378,19 @@ public struct ConversationView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.conversation.header")
+    }
+
+    /// 28pt avatar with a 10pt status dot pinned bottom-trailing. The dot is
+    /// decorative (the identity element carries the spoken status).
+    private func avatarWithStatus(bot: FleetBot?, status: FleetStatus) -> some View {
+        BotAvatar(bot: bot, management: environment.botManagement)
+            .frame(width: 28, height: 28)
+            .overlay(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(theme.semanticStatusColor(for: status))
+                    .frame(width: 10, height: 10)
+                    .overlay(Circle().stroke(theme.surface, lineWidth: 2))
+            }
     }
 
     /// The compact model chip (no longer its own dedicated full-width row).

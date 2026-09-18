@@ -43,10 +43,13 @@ final class U6ConversationSkinUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 5),
                       "the bot display name must render in the header")
         XCTAssertTrue(name.label.contains("Default"), "header shows the bot display name (label: \(name.label))")
-        let status = firstMatch(in: app, identifier: "fleet.conversation.status")
-        XCTAssertTrue(status.waitForExistence(timeout: 5),
-                      "the status pill must render in the navigation bar")
-        XCTAssertTrue(status.label.contains("Status:"), "status pill announces state (label: \(status.label))")
+        // Compaction round 2: the StatusPill is gone — the header identity
+        // element carries the spoken status ("Name, status Online").
+        let identity = firstMatch(in: app, identifier: "fleet.conversation.header.identity")
+        XCTAssertTrue(identity.waitForExistence(timeout: 5),
+                      "the identity element must render in the header row")
+        XCTAssertTrue(identity.label.lowercased().contains("status"),
+                      "identity announces the status (label: \(identity.label))")
 
         // The composer still exists under the new skin.
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
