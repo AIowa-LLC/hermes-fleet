@@ -202,3 +202,45 @@ Full C1 matrix + hosted CI remain to run on the pushed SHA (owner gate G6).
 - Xcode 27.0 (27A266a) was used for archive/export/upload; the release-lane
   script's hard Xcode 26.x check (G5) was superseded by explicit owner
   authorization today (same SDK/toolchain family used for all b4x builds).
+
+## 11. Codex reconciliation round 2 + first external TestFlight (2026-09-17 evening)
+
+### Codex audit completion (forensic, hunk-level)
+Definitive diff audited: d9db5bb..08f7444 (both quarantined commits, parent
+lineage already contained in this branch). Classification:
+- Already integrated (verified by source inspection): connection-intent
+  restore incl. post-unlock re-run; conversation pinning (model+environment+
+  drawer+toggle, Codex's own 3 test bodies' subjects); drawer theme routing;
+  five-tab shell + nav-state tests (equivalents existed); compact chat;
+  Settings sections; reasoning preference; pathSafeBasename; SetupPromptSheet
+  theme env.
+- Ported this round (were genuinely missing): 3 regression tests
+  (restore isolation, pin reload/unpin, gateway-removal pin retention),
+  makeEnvironment test seams, FleetToolActivityView compact paddings.
+- Superseded / intentionally excluded: FleetNavigationPanel (redundant
+  lighter drawer variant), mirror-root UI-harness rewrites, project.yml
+  build-number churn, AppEnvironmentTests duplicates of
+  ConnectionLifecycleIntentTests coverage.
+
+### Release 48 (first external TestFlight)
+- Source: dogfood/build-41-integration @ 7f9d61a (+ guard 66530c4 after the
+  archive; archive provenance: clean tree at 7f9d61a).
+- Archive/export via new scripts/archive_and_export.sh provenance guard
+  (committed 66530c4; wrong-repo + dirty-tree failure modes proven).
+- IPA 0.2.0(48), bundle com.aiowa.hermesfleet, sha256
+  e33c9859b3e5b727e85fe9ffc78f1c906e0e8bf448831f976dc02b3c0694e3d7.
+- Uploaded 17:02 PDT, Delivery UUID d609b058-e753-4221-98a2-ac39d6ea913d,
+  processing VALID.
+- Groups assigned: AIowa (internal), Internal Testers (ext), Beta Crew (ext).
+- en-US whatsNew + beta app description (408 chars) + feedback
+  hello@aiowa.dev + review contact Anthony Simons / tony@aiowa.dev set.
+- Beta App Review SUBMITTED 17:11 PDT — state WAITING_FOR_REVIEW
+  (internalBuildState IN_BETA_TESTING, externalBuildState
+  WAITING_FOR_BETA_REVIEW). Apple approval is the remaining external gate.
+- NOTE: Apple required contactPhone on the review contact; a placeholder
+  number was set — owner should replace with the real number in ASC.
+
+### Validation at 7f9d61a
+AppEnvironmentTests 30/30 (3 new), full bundle 700/700, FleetCore 513,
+Persistence 31, Security 37, Networking focused 32, theme audit PASS,
+public-safety PASS (ledger home paths scrubbed), gitleaks staged clean.
