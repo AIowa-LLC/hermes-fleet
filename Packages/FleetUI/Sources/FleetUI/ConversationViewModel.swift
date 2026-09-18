@@ -270,6 +270,13 @@ public final class ConversationViewModel {
     public private(set) var historyLoadError: String?
     /// Best-effort session metadata from session.info.
     public private(set) var sessionTitle: String?
+    /// The session's working directory (session.info `cwd`; the opened
+    /// session projection does not carry it). Drives the header's project
+    /// folder chip; nil hides the chip honestly.
+    public private(set) var sessionCWD: String?
+    /// The effective profile for this conversation (session.info
+    /// `profile_name`; falls back to the route's slug). Header profile chip.
+    public private(set) var sessionProfileName: String?
     public private(set) var sessionModel: String?
 
     // MARK: R10-T1 — attachment staging (composer tray)
@@ -1614,6 +1621,7 @@ public final class ConversationViewModel {
             Task { await refetchAuthoritativeHistory(sessionID: opened.sessionID) }
         }
         sessionTitle = opened.profileName
+        sessionProfileName = opened.profileName ?? route.profileSlug.rawValue
         if let model = opened.model, let provider = opened.provider {
             sessionModel = "\(model) · \(provider)"
         } else if let model = opened.model {
@@ -1958,13 +1966,18 @@ public final class ConversationViewModel {
         case .backgroundComplete(_, _, let text, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: text ?? "Background task complete"))
 
-        case .sessionInfo(_, let model, let provider, let title, _, _, let yolo, let approvalMode, _):
+        case .sessionInfo(_, let model, let provider, let title, let cwd, let profileName, let yolo, let approvalMode, _):
             if let model, let provider {
                 sessionModel = "\(model) · \(provider)"
             } else if let model {
                 sessionModel = model
             }
             sessionTitle = title ?? sessionTitle
+            // Top chip bar: retain the working folder + profile so the
+            // header chips stay live (nil keeps the previous value — the
+            // gateway only re-sends fields that changed).
+            if let cwd { sessionCWD = cwd }
+            if let profileName { sessionProfileName = profileName }
             // R9-T3: adopt the approval-bypass readback (effective OR of
             // config mode / env / session flag — server.py:7758).
             approvalViewModel?.applySessionInfo(yolo: yolo, approvalMode: approvalMode)

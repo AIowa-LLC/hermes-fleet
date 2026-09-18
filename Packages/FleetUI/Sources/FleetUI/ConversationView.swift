@@ -54,6 +54,7 @@ public struct ConversationView: View {
     @State private var showingModelPicker = false
     /// R9-T3: context breakdown sheet presentation.
     @State private var showingContextBreakdown = false
+    @State private var showingFolderPath = false
     /// R9-T4: fork navigation — the new session id to route to.
     @State private var forkTargetSessionID: String?
     /// Slash parity: pending command-driven navigation (new chat / model
@@ -340,16 +341,30 @@ public struct ConversationView: View {
             .accessibilityLabel("\(name), status \(status.label)")
             .accessibilityIdentifier("fleet.conversation.header.identity")
 
-            Spacer(minLength: FleetTheme.spacingXs)
-            // Accessibility sizes: primary identity gets the row; secondary
-            // metadata hides (chip + meter remain reachable via the menu).
+            // Scrollable chip zone: model · working folder · profile ·
+            // context. Overflow scrolls (never truncates); Hermex-style but
+            // docked at the TOP. Hidden at accessibility sizes (the ⋯ menu
+            // carries model + context there — established policy).
             if !dynamicTypeSize.isAccessibilitySize {
-                if let toolingModel = model.toolingViewModel {
-                    ContextMeterView(model: toolingModel) {
-                        showingContextBreakdown = true
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: FleetTheme.spacingSm) {
+                        modelChipButton(model)
+                        folderChip(model)
+                        profileChip(model)
+                        if let toolingModel = model.toolingViewModel {
+                            ContextMeterView(model: toolingModel) {
+                                showingContextBreakdown = true
+                            }
+                        }
                     }
+                    .padding(.horizontal, FleetTheme.spacingXs)
+                    .frame(minHeight: 32)
                 }
-                modelChipButton(model)
+                .frame(maxWidth: .infinity)
+                .defaultScrollAnchor(.center)
+                .accessibilityIdentifier("fleet.conversation.header.chipzone")
+                .scrollBounceBehavior(.basedOnSize)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             if let toolingModel = model.toolingViewModel {
                 SessionSteerControls(
@@ -382,6 +397,30 @@ public struct ConversationView: View {
 
     /// 28pt avatar with a 10pt status dot pinned bottom-trailing. The dot is
     /// decorative (the identity element carries the spoken status).
+    /// Full-path popover for the folder chip (copyable — TextSelection).
+    private func folderPopover(_ cwd: String) -> some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Label("Working folder", systemImage: "folder")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.textPrimary)
+            Text(cwd)
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+                .textSelection(.enabled)
+            Button {
+                UIPasteboard.general.string = cwd
+            } label: {
+                Label("Copy path", systemImage: "doc.on.doc")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(theme.highlight)
+        }
+        .padding(FleetTheme.spacingMd)
+        .frame(maxWidth: 320, alignment: .leading)
+        .presentationDetents([.height(140)])
+    }
+
     private func avatarWithStatus(bot: FleetBot?, status: FleetStatus) -> some View {
         BotAvatar(bot: bot, management: environment.botManagement)
             .frame(width: 28, height: 28)
@@ -392,6 +431,75 @@ public struct ConversationView: View {
                     .overlay(Circle().stroke(theme.surface, lineWidth: 2))
             }
     }
+
+    /// Working-project-folder chip: folder glyph + the LAST path component
+    /// (full path in the tap popover — phone-width chips must not truncate).
+    /// Hidden honestly when the gateway reports no cwd.
+    @ViewBuilder
+    private func folderChip(_ model: ConversationViewModel) -> some View {
+        if let cwd = model.sessionCWD {
+            Button {
+                showingFolderPath = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                    Text(ConversationHeaderChips.lastPathComponent(cwd))
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(theme.background, in: Capsule())
+                .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Working folder")
+            .accessibilityValue(cwd)
+            .accessibilityHint("Shows the session's full working directory")
+            .accessibilityIdentifier("fleet.conversation.header.folder")
+            .popover(isPresented: $showingFolderPath, arrowEdge: .bottom) {
+                folderPopover(cwd)
+            }
+        }
+    }
+
+    /// Selected-profile chip (display-only; the conversation is bound to
+    /// this profile's route).
+    @ViewBuilder
+    private func profileChip(_ model: ConversationViewModel) -> some View {
+        if let profile = model.sessionProfileName {
+            HStack(spacing: 4) {
+                Image(systemName: "person.crop.circle")
+                    .font(.caption2)
+                    .foregroundStyle(theme.textSecondary)
+                Text(profile)
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(theme.background, in: Capsule())
+            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
+            .accessibilityLabel("Profile")
+            .accessibilityValue(profile)
+            .accessibilityIdentifier("fleet.conversation.header.profile")
+        }
+    }
+
+/// Header chip string helpers.
+enum ConversationHeaderChips {
+    /// Last path component of a working directory ("/a/b/hermes-fleet" ->
+    /// "hermes-fleet"; "/" -> "/"; trailing slashes normalized).
+    static func lastPathComponent(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else { return "/" }
+        return String(trimmed.split(separator: "/").last ?? Substring(trimmed))
+    }
+}
 
     /// The compact model chip (no longer its own dedicated full-width row).
     /// The chip shows the sticky pick (or the session's model readback);

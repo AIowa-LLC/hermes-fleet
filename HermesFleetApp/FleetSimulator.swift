@@ -1781,6 +1781,17 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "You said: ", rendered: nil))
             streamBox.yield(.messageDelta(sessionID: sessionID, text: echoBase, rendered: nil))
             streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+            // Top chip bar UI-journey knob: after the turn, emit a
+            // session.info carrying cwd + profile_name (the live gateway's
+            // end-of-turn shape) so the folder/profile chips are testable.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_INFO_FIXTURE"] == "1" {
+                streamBox.yield(.sessionInfo(
+                    sessionID: sessionID,
+                    model: "glm-4.6-flash", provider: "zai",
+                    title: nil,
+                    cwd: "/home/dev/hermes-fleet",
+                    profileName: "default"))
+            }
             // UI-journey knob (HERMES_FLEET_SESSION_TITLE_FIXTURE=1): mirror
             // the live gateway's auto-title frame (methods_session.py:1427)
             // so the header-adoption path is testable without a gateway.

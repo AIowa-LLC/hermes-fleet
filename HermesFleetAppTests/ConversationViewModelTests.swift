@@ -352,6 +352,26 @@ final class ConversationViewModelTests: XCTestCase {
             "no raw event name may leak into the transcript")
     }
 
+    /// Top chip bar: session.info's cwd + profile_name are retained (the
+    /// folder/profile chips' data); nil fields keep the previous values.
+    func testSessionInfoRetainsCWDAndProfile() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.push(.sessionInfo(
+            sessionID: "s-1", model: "glm-4.6-flash", provider: "zai",
+            title: "T", cwd: "/home/dev/hermes-fleet", profileName: "default"))
+        await flush()
+        XCTAssertEqual(viewModel.sessionCWD, "/home/dev/hermes-fleet")
+        XCTAssertEqual(viewModel.sessionProfileName, "default")
+        // A later frame omitting both fields keeps the previous values.
+        scripted.push(.sessionInfo(
+            sessionID: "s-1", model: nil, provider: nil, title: nil,
+            cwd: nil, profileName: nil))
+        await flush()
+        XCTAssertEqual(viewModel.sessionCWD, "/home/dev/hermes-fleet")
+        XCTAssertEqual(viewModel.sessionProfileName, "default")
+    }
+
     func testStartConnectsAndCreatesSession() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: nil)
         XCTAssertEqual(viewModel.phase, .idle)

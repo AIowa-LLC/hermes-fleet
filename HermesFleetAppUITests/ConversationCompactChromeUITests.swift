@@ -76,6 +76,55 @@ final class ConversationCompactChromeUITests: XCTestCase {
         XCTAssertFalse(unknownRow.exists, "session.title must not surface as Unknown event")
     }
 
+    /// Top chip bar (Hermex-inspired, docked at the top): after a turn the
+    /// scroll zone carries model · folder · profile · context. Off-screen
+    /// chips are reachable by swiping the zone (overflow scrolls, never
+    /// truncates).
+    func testHeaderChipBarScrollsAndCarriesSessionFacts() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_INFO_FIXTURE"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("chip bar probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        // The model chip is always in the zone.
+        let chip = firstMatch(in: app, identifier: "model.chip")
+        XCTAssertTrue(chip.waitForExistence(timeout: 15), "model chip must render in the scroll zone")
+
+        // Folder + profile chips arrive with the session.info fixture; if
+        // off-screen, swipe the zone left to reveal them (bounded).
+        let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
+        XCTAssertTrue(zone.waitForExistence(timeout: 5), "chip scroll zone must render")
+        func reveal(_ id: String) -> XCUIElement {
+            let e = app.descendants(matching: .any)[id]
+            for _ in 0..<4 where !(e.exists && e.isHittable) {
+                zone.swipeLeft(velocity: .slow)
+            }
+            return e
+        }
+        let folder = reveal("fleet.conversation.header.folder")
+        XCTAssertTrue(folder.waitForExistence(timeout: 10), "folder chip must render")
+        let folderValue = folder.value as? String ?? ""
+        XCTAssertTrue(folderValue.contains("hermes-fleet"),
+                      "folder chip carries the cwd as its accessibility value (got \(folderValue))")
+        let profile = reveal("fleet.conversation.header.profile")
+        XCTAssertTrue(profile.waitForExistence(timeout: 5), "profile chip must render")
+
+        // Full path popover on folder tap.
+        if folder.isHittable {
+            folder.tap()
+            let path = app.staticTexts["/home/dev/hermes-fleet"]
+            XCTAssertTrue(path.waitForExistence(timeout: 5), "folder popover shows the full cwd")
+            tap(app.buttons["Copy path"])
+        }
+    }
+
     func testConversationUsesSingleRowHeader() throws {
         let app = launch()
         openConversation(app)
