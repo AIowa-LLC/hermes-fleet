@@ -57,9 +57,17 @@ final class B43NavigationEditingUITests: XCTestCase {
             }
             app.buttons["fleet.drawer.close"].tap()
         } else {
-            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"] {
+            // iPad: top control hosts the five primaries; Settings in drawer.
+            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 10), "sidebar must include \(label)")
+            }
+            if app.buttons["fleet.drawer.open"].exists {
+                _ = UITabNavigation.openDrawer(app)
+                XCTAssertTrue(app.descendants(matching: .any)
+                    .matching(identifier: "fleet.drawer.destination.settings").firstMatch.exists,
+                    "Settings must remain reachable in the drawer on iPad")
+                app.buttons["fleet.drawer.close"].tap()
             }
         }
         XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),

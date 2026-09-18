@@ -22,12 +22,21 @@ final class U3TabNavigationUITests: XCTestCase {
         // the adaptive path. tabControl/openDrawer still VERIFY the probed
         // shape actually renders.
         if UIDevice.current.userInterfaceIdiom == .pad {
-            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"] {
+            // iPad: the top control hosts the five PRIMARY destinations
+            // (sidebarAdaptable paginates past five — Settings would hide);
+            // Settings stays in the drawer.
+            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 15), "root shell must include \(label)")
             }
             XCTAssertFalse(UITabNavigation.tabControl(app, label: "Gateways").exists,
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
+            let drawer = UITabNavigation.openDrawer(app)
+            XCTAssertTrue(drawer.exists, "iPad keeps the drawer for Settings")
+            XCTAssertTrue(app.descendants(matching: .any)
+                .matching(identifier: "fleet.drawer.destination.settings").firstMatch.exists,
+                "Settings must remain reachable in the drawer on iPad")
+            app.buttons["fleet.drawer.close"].tap()
         } else {
             let drawer = UITabNavigation.openDrawer(app)
             XCTAssertTrue(drawer.exists, "compact root navigation drawer must render")

@@ -105,7 +105,7 @@ public struct FleetTabView: View {
         .tint(theme.highlight)
         .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false; drawerPresented = false } }
         .onChange(of: navigation.selection) { _, _ in
-            if horizontalSizeClass != .regular { drawerPresented = false }
+            drawerPresented = false
         }
         .onChange(of: environment.pendingBotChatNavigation) { target in
             guard let target else { return }
@@ -168,7 +168,7 @@ public struct FleetTabView: View {
                 .onChange(of: navigation.selection) { old, new in
                     visitedDestinations.formUnion([old, new])
                 }
-                if horizontalSizeClass != .regular && drawerPresented {
+                if drawerPresented {
                     FleetTheme.scrim
                         .ignoresSafeArea()
                         .contentShape(Rectangle())
@@ -244,15 +244,28 @@ public struct FleetTabView: View {
     }
 
     private var drawerAction: (@MainActor () -> Void)? {
-        guard horizontalSizeClass != .regular else { return nil }
-        return { drawerPresented = true }
+        // The drawer is universal now: on iPad the top control hosts only
+        // the five PRIMARY destinations (sidebarAdaptable paginates past
+        // five), so Settings — and the full destination list — needs the
+        // drawer on regular width too. Compact keeps its single surface.
+        { drawerPresented = true }
+    }
+
+    /// All six destinations stay HOSTED: on regular-width iPad the top
+    /// control paginates past five (UIKit hides the trailing bar button),
+    /// but a paginated Tab still RENDERS when selected programmatically —
+    /// and the universal drawer is the always-visible entry that selects
+    /// Settings (and everything else). Compact iPhone is unaffected: the
+    /// drawer owns navigation there regardless.
+    private var hostedTabs: [FleetTab] {
+        FleetTab.allCases
     }
 
     private var tabs: some View {
         TabView(selection: Binding(get: { navigation.selection }, set: { tab in
             navigation.selection = tab
         })) {
-            ForEach(FleetTab.allCases) { tab in
+            ForEach(hostedTabs) { tab in
                 Tab(tab.label, systemImage: tab.systemImage, value: tab) {
                     navigationStack(tab)
                 }
