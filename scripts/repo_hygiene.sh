@@ -37,7 +37,7 @@ echo "== 2. worktree topology =="
 MAP="$(git worktree list --porcelain)"
 COUNT=$(grep -c '^worktree ' <<<"$MAP")
 if [ "$COUNT" -le 4 ]; then ok "$COUNT worktrees (lean)"; else bad "$COUNT worktrees (bloat — prune stale ones)"; fi
-grep -q '^worktree /Users/tonysimons/code/hermes-fleet$' <<<"$MAP" && ok "root worktree present"
+grep -q "^worktree ${REPO_HOME}/hermes-fleet\$" <<<"$MAP" && ok "root worktree present (${REPO_HOME}/hermes-fleet)"
 
 echo "== 3. every worktree clean =="
 while IFS= read -r wt; do
