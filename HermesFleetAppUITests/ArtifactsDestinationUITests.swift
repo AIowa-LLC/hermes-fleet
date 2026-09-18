@@ -91,7 +91,7 @@ final class ArtifactsDestinationUITests: XCTestCase {
             "the Pinned section must survive the drawer change")
         XCTAssertTrue(
             firstMatch(app, "fleet.drawer.recent.empty").exists
-            || app.staticTexts["RECENT CHATS"].exists,
+            || app.staticTexts["RECENTS"].exists,
             "the Recent chats section must survive the drawer change")
         XCTAssertTrue(app.staticTexts["NAVIGATE"].exists, "the Navigate section must remain")
         app.buttons["fleet.drawer.close"].tap()

@@ -62,14 +62,17 @@ struct FleetNavigationDrawer: View {
                 primarySection
                 pinnedSection
                 recentSection
-                Divider()
-                    .overlay(theme.border)
+                // Drawer polish: no hairline before Settings — the VStack's
+                // section spacing already separates them cleanly.
                 settingsRow
             }
             .padding(.horizontal, FleetTheme.spacingMd)
             .padding(.top, FleetTheme.spacingLg)
             .padding(.bottom, FleetTheme.spacingLg)
         }
+        // Drawer polish: the scrollbar indicator is chrome noise on a
+        // compact drawer — hidden; scrolling/momentum/dismiss untouched.
+        .scrollIndicators(.hidden)
         .background(theme.background)
         .accessibilityIdentifier("fleet.drawer")
         .onAppear {
@@ -167,7 +170,7 @@ struct FleetNavigationDrawer: View {
     }
 
     private var recentSection: some View {
-        drawerSection("Recent chats") {
+        drawerSection("Recents") {
             if recentEntries.isEmpty {
                 emptySectionText("Your recent conversations will appear here.", identifier: "fleet.drawer.recent.empty")
             } else {
