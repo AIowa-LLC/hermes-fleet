@@ -125,6 +125,35 @@ final class ConversationCompactChromeUITests: XCTestCase {
         }
     }
 
+    /// Hermes-parity working state: while a turn is in flight the
+    /// "Working for Ns" indicator renders above the composer AND the stop
+    /// control is present (red styling evidenced by screenshot; AX is
+    /// colorblind). Uses the card-E demo hold to pin the streaming window.
+    func testWorkingIndicatorAndStopRenderDuringTurn() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO_ORDER"] = "streaming"
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO_HOLD_MS"] = "6000"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("working state probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let working = firstMatch(in: app, identifier: "fleet.conversation.working")
+        XCTAssertTrue(working.waitForExistence(timeout: 10),
+                      "the working indicator must render during a turn")
+        XCTAssertTrue(working.label.contains("Working for"),
+                      "indicator announces elapsed time (got \(working.label))")
+        let stop = firstMatch(in: app, identifier: "fleet.conversation.stop")
+        XCTAssertTrue(stop.waitForExistence(timeout: 5),
+                      "the stop control must render while streaming")
+    }
+
     func testConversationUsesSingleRowHeader() throws {
         let app = launch()
         openConversation(app)

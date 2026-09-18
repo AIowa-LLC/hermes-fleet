@@ -195,6 +195,14 @@ public final class ConversationViewModel {
         return rows
     }
     public private(set) var isStreaming = false
+    /// Turn clock (Hermes parity): when the in-flight turn started — set at
+    /// prompt submit, cleared at message.complete / turn error / interrupt.
+    /// Drives the "Working for Ns" indicator; covers the WHOLE turn
+    /// (tool runs, reasoning, streaming), not just the streaming phase.
+    public private(set) var turnStartedAt: Date?
+    /// True while a turn is in flight (any phase). The honest full-turn
+    /// signal — `isStreaming` alone misses the pre-message.start window.
+    public var isWorking: Bool { turnStartedAt != nil }
     /// R10-T2: reactions per transcript row id — rendered under the bubbles.
     /// Sources: history-carried `display_metadata.reactions` (durable rows)
     /// and post-`message.react` server truth / optimistic updates.
@@ -1092,6 +1100,9 @@ public final class ConversationViewModel {
         guard !modelPayload.isEmpty else { return false }
 
         appendRow(.init(id: nextRowID(), kind: .user, text: displayPayload))
+        // Turn clock: starts at submit — the user waits from HERE, through
+        // tools/reasoning, until the turn completes.
+        turnStartedAt = Date()
         // The refs were staged successfully at pick time — the tray clears
         // with the send (image/PDF bytes are already queued server-side;
         // removing them here would orphan the upload).
@@ -1408,6 +1419,7 @@ public final class ConversationViewModel {
             if result.isInterrupted {
                 finalizeStreamingRow()
                 isStreaming = false
+                turnStartedAt = nil
                 phase = .ready
                 // Card E: the user cancelled the turn — the generation
                 // animation stops with it.
@@ -1895,6 +1907,7 @@ public final class ConversationViewModel {
             }
             spokenThisTurn = false
             isStreaming = false
+            turnStartedAt = nil
             phase = .ready
             // P0-8: a completed turn must not carry buffered reasoning into
             // the next one (e.g. an errored turn that never minted a row).
@@ -2004,6 +2017,7 @@ public final class ConversationViewModel {
         case .error(_, let message, _):
             appendRow(.init(id: nextRowID(), kind: .error, text: message, isFailed: true))
             isStreaming = false
+            turnStartedAt = nil
             phase = .ready
             errorMessage = message
             // Card E: a turn-level error ends any in-flight generation.

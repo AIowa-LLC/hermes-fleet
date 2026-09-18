@@ -490,6 +490,37 @@ public struct ConversationView: View {
         }
     }
 
+/// Animated three-dot "working" glyph (Hermes `...` parity). Discrete phase
+/// animation ~0.9s cycle; purely decorative (the working label carries AX).
+private struct WorkingDots: View {
+    @State private var phase = 0.0
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color.secondary.opacity(0.85))
+                    .frame(width: 4, height: 4)
+                    .opacity(0.35 + 0.65 * pulse(index: index))
+            }
+        }
+        .onAppear { phase = 0 }
+        .task {
+            while !Task.isCancelled {
+                phase += 0.15
+                try? await Task.sleep(for: .milliseconds(135))
+            }
+        }
+    }
+
+    /// 0...1 opacity wave for dot `index` at the current phase.
+    private func pulse(index: Int) -> Double {
+        let offset = Double(index) / 3.0
+        let t = (phase.truncatingRemainder(dividingBy: 3.0)) / 3.0
+        return 0.5 + 0.5 * sin((t - offset) * 2 * .pi)
+    }
+}
+
 /// Header chip string helpers.
 enum ConversationHeaderChips {
     /// Last path component of a working directory ("/a/b/hermes-fleet" ->
@@ -654,6 +685,42 @@ enum ConversationHeaderChips {
         .accessibilityIdentifier("fleet.conversation.history.loading")
     }
 
+    /// "••• Working for 7s" — dots + live elapsed, one line under the last
+    /// row (Hermes placement). TimelineView ticks 1s; the label is the AX
+    /// surface (VoiceOver reads the live elapsed). Reduce Motion: dots stop.
+    private func workingIndicator(_ model: ConversationViewModel) -> some View {
+        TimelineView(.periodic(from: model.turnStartedAt ?? .now, by: 1)) { timeline in
+            let elapsed = Int(timeline.date.timeIntervalSince(model.turnStartedAt ?? timeline.date))
+            HStack(spacing: 6) {
+                if reduceMotion {
+                    Image(systemName: "ellipsis")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(theme.textSecondary)
+                } else {
+                    WorkingDots()
+                }
+                Text("Working for \(Self.workingDuration(elapsed))")
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Working for \(Self.workingSpoken(elapsed))")
+            .accessibilityIdentifier("fleet.conversation.working")
+        }
+    }
+
+    /// 7s / 1m 05s — compact elapsed format.
+    static func workingDuration(_ seconds: Int) -> String {
+        seconds < 60 ? "\(seconds)s" : String(format: "%dm %02ds", seconds / 60, seconds % 60)
+    }
+
+    /// Spoken form for VoiceOver.
+    static func workingSpoken(_ seconds: Int) -> String {
+        seconds < 60 ? "\(seconds) seconds" : String(format: "%d minutes %d seconds", seconds / 60, seconds % 60)
+    }
+
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -677,6 +744,13 @@ enum ConversationHeaderChips {
                         if row.kind == .user {
                             fileRefChips(row)
                         }
+                    }
+                    // Hermes-parity working indicator: animated dots + a
+                    // live elapsed clock for the WHOLE in-flight turn
+                    // (submit → complete/error/interrupt) — the tool/reasoning
+                    // phases finally say "working" out loud.
+                    if model.isWorking {
+                        workingIndicator(model)
                     }
                     // H1 (t_01c9d411): while an EXISTING session's history is
                     // still in flight and no row has rendered yet, show a
@@ -977,12 +1051,15 @@ enum ConversationHeaderChips {
                     Button {
                         Task { await model.interrupt() }
                     } label: {
+                        // Hermes parity: the live turn's interrupt reads as
+                        // DESTRUCTIVE — bright red glyph on a dimmed red
+                        // circle (the mic-stop pattern), not a neutral chip.
                         Image(systemName: "stop.fill")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
+                            .foregroundStyle(FleetTheme.statusDestructive)
                             .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(theme.surfaceElevated))
-                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
+                            .background(Circle().fill(FleetTheme.statusDestructive.opacity(0.18)))
+                            .overlay(Circle().strokeBorder(FleetTheme.statusDestructive.opacity(0.45), lineWidth: 1))
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Stop")

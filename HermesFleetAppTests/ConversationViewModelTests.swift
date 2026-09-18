@@ -372,6 +372,33 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.sessionProfileName, "default")
     }
 
+    /// Turn clock (Hermes-parity working indicator): starts at submit,
+    /// cleared at message.complete and at interrupt; isWorking is the
+    /// full-turn signal (independent of the streaming phase).
+    func testTurnClockLifecycle() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        XCTAssertNil(viewModel.turnStartedAt, "idle: no clock")
+        XCTAssertFalse(viewModel.isWorking)
+
+        _ = await sendOrIgnore(viewModel, text: "hello")
+        XCTAssertNotNil(viewModel.turnStartedAt, "submit starts the clock")
+        XCTAssertTrue(viewModel.isWorking, "isWorking covers the pre-streaming window")
+
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil))
+        await flush()
+        XCTAssertNil(viewModel.turnStartedAt, "complete clears the clock")
+        XCTAssertFalse(viewModel.isWorking)
+    }
+
+    /// Helper: send() guards on state — tolerate the scripted seam's
+    /// non-streaming submission answer (clock behavior is under test).
+    private func sendOrIgnore(_ viewModel: ConversationViewModel, text: String) async -> Bool {
+        await viewModel.send(text)
+    }
+
     func testStartConnectsAndCreatesSession() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: nil)
         XCTAssertEqual(viewModel.phase, .idle)
