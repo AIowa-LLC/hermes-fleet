@@ -142,6 +142,113 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
             "legacy row carries the read-only label (got: \(legacy.label))")
     }
 
+    // MARK: 4a. Codex-style chat menu cleanup (dogfood)
+
+    /// The floating cluster: new-chat (menu: direct + group) and settings
+    /// gear, Liquid Glass, bottom-trailing. Rows scroll under it.
+    func testChatsFloatingClusterNewChatAndSettings() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+
+        // The glass cluster surfaces to AX by LABEL (the Menu/glass wrapper
+        // can mask the identifier); label is stable and localized.
+        let newChat = firstMatch(in: app, identifier: "fleet.chats.new")
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10), "floating new-chat control must render")
+        newChat.tap()
+        // The menu keeps BOTH entry points (direct + group).
+        let direct = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New conversation")).firstMatch
+        XCTAssertTrue(direct.waitForExistence(timeout: 5), "direct conversation entry offered")
+        let group = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New Group")).firstMatch
+        XCTAssertTrue(group.exists, "group entry offered")
+        direct.tap()
+        let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
+        XCTAssertTrue(candidate.waitForExistence(timeout: 10), "direct opens the bot picker")
+
+        // Dismiss the sheet via its own Cancel BEFORE touching the gear (the
+        // cluster sits under presented sheets — a tap there computes no hit).
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.waitForExistence(timeout: 3) { cancel.tap() }
+        _ = candidate.waitForNonExistence(timeout: 5)
+
+        // Settings gear routes to the Settings tab.
+        let settings = firstMatch(in: app, identifier: "fleet.chats.settings")
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "floating settings gear must render")
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
+                      "gear selects the Settings tab")
+    }
+
+    /// Swipe right (leading) on a conversation row exposes Pin; the row
+    /// pins via the shared pin store (same identity as the drawer).
+    func testChatsSwipeRightPinsConversation() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+
+        let row = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "seeded session row must render")
+        // The LAST row can sit under the floating cluster — scroll until the
+        // row's frame clears it (cluster ≈ y 700-760), then swipe.
+        for _ in 0..<4 where row.isHittable && row.frame.maxY > 690 {
+            app.swipeUp(velocity: .slow)
+        }
+
+        row.swipeRight()
+        let pin = firstMatch(in: app, identifier: "fleet.chats.swipe.pin.workstation#default/workstation.default.s1")
+        XCTAssertTrue(pin.waitForExistence(timeout: 5), "swipe right exposes the pin action")
+        pin.tap()
+        // Give the pin store a beat to persist, then verify via the drawer's
+        // pinned section (scroll it into the tree if needed).
+        sleep(1)
+        let drawer = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 5), "drawer affordance")
+        drawer.tap()
+        let pinnedRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "fleet.drawer.pinned.individual:workstation")).firstMatch
+        var found = pinnedRow.waitForExistence(timeout: 8)
+        for _ in 0..<3 where !found {
+            app.swipeUp(velocity: .slow)
+            found = pinnedRow.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(found, "pinning from the Chats swipe feeds the drawer's pinned section")
+    }
+
+    /// Swipe left (trailing) exposes Archive + Delete; archive hides locally
+    /// with the honest device-level notice; delete confirms first.
+    func testChatsSwipeLeftArchiveAndDelete() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+
+        let row0 = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s2")
+        if !row0.waitForExistence(timeout: 5) || !row0.isHittable {
+            app.swipeUp(velocity: .slow)
+        }
+        let row = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s2")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "second seeded session row must render")
+
+        row.swipeLeft()
+        let archive = firstMatch(in: app, identifier: "fleet.chats.swipe.archive.workstation#default/workstation.default.s2")
+        XCTAssertTrue(archive.waitForExistence(timeout: 5), "swipe left exposes archive")
+        let del = firstMatch(in: app, identifier: "fleet.chats.swipe.delete.workstation#default/workstation.default.s2")
+        XCTAssertTrue(del.exists, "swipe left exposes delete")
+        archive.tap()
+
+        let noticePredicate = NSPredicate(format: "label CONTAINS %@", "Archived on this device")
+        let notice = app.descendants(matching: .any).matching(noticePredicate).firstMatch
+        XCTAssertTrue(notice.waitForExistence(timeout: 5), "archive surfaces the honest device-level notice")
+    }
+
     // MARK: 4. Chats Compose + heading
 
     func testChatsComposeOpensSourceQualifiedBotPicker() throws {
@@ -151,13 +258,13 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Heading stays honest (SPEC §10: do not rename to Recent).
-        XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.chats.new").waitForExistence(timeout: 10))
-
-        // Compose opens the bot picker: source-qualified rows (slug +
-        // gateway name), never a silent first gateway.
-        firstMatch(in: app, identifier: "fleet.chats.new").tap()
+        // Codex-style cluster: floating new-chat opens a menu first.
+        let newChat2 = firstMatch(in: app, identifier: "fleet.chats.new")
+        XCTAssertTrue(newChat2.waitForExistence(timeout: 10))
+        newChat2.tap()
+        let direct = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New conversation")).firstMatch
+        XCTAssertTrue(direct.waitForExistence(timeout: 5), "direct entry offered")
+        direct.tap()
         let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
         XCTAssertTrue(
             candidate.waitForExistence(timeout: 10),
@@ -177,8 +284,12 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        let newGroup = app.buttons["fleet.chats.new-group"]
-        XCTAssertTrue(newGroup.waitForExistence(timeout: 10), "Chats exposes fleet-wide New Group")
+        // New Group rides the floating new-chat menu now.
+        let newChat3 = firstMatch(in: app, identifier: "fleet.chats.new")
+        XCTAssertTrue(newChat3.waitForExistence(timeout: 10), "floating new-chat cluster renders")
+        newChat3.tap()
+        let newGroup = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New Group")).firstMatch
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 5), "Chats exposes fleet-wide New Group")
         newGroup.tap()
 
         let name = app.textFields["fleet.room.create.name"]

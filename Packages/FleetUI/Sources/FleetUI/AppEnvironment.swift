@@ -209,6 +209,8 @@ public final class AppEnvironment {
     public internal(set) var pendingBotChatNavigation: FleetScreen?
     /// FOS-5: one-shot screen push request (consumed by the shell).
     public internal(set) var pendingScreenNavigation: FleetScreen?
+    /// Codex-style floating gear request: the shell selects the Settings tab.
+    public var pendingSettingsTabRequest = false
 
     /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
     /// avatar/sections) over the per-gateway seam.
@@ -315,6 +317,12 @@ public final class AppEnvironment {
     /// shell observes this and opens the destination on the OWNING tab.
     public func requestScreen(_ screen: FleetScreen) {
         pendingScreenNavigation = screen
+    }
+
+    /// Codex-style floating gear: request the Settings TAB from any surface
+    /// (the shell selects the tab; no screen push involved).
+    public func requestSettingsTab() {
+        pendingSettingsTabRequest = true
     }
 
     /// D03: whether (route, sessionID) is the canonical "Bot Chat" for the

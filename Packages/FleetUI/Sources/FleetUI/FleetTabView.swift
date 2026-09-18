@@ -117,6 +117,12 @@ public struct FleetTabView: View {
             navigation.open(target)
             environment.pendingScreenNavigation = nil
         }
+        .onChange(of: environment.pendingSettingsTabRequest) { requested in
+            guard requested else { return }
+            navigation.selection = .settings
+            drawerPresented = false
+            environment.pendingSettingsTabRequest = false
+        }
         .task {
             if !restored {
                 if ProcessInfo.processInfo.environment["HERMES_FLEET_AUTO_NAV"] == nil && ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] != "1" {
@@ -129,6 +135,7 @@ public struct FleetTabView: View {
             // (a stored choice would otherwise skip straight into the pane).
             if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
                 GatewayResourceView.resetStoredSelections()
+                FleetChatsArchiveStore.resetForUITests()
             }
             // Build 41: KANBAN_BOARD_RESET (deliberately separate from
             // NAV_RESET — board-selection persistence is product behavior

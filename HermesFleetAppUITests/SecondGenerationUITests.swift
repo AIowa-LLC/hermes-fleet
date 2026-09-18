@@ -25,6 +25,11 @@ final class SecondGenerationUITests: XCTestCase {
             for _ in 0..<6 where !session.exists { app.swipeUp(velocity: .fast) }
         }
         XCTAssertTrue(session.waitForExistence(timeout: 20))
+        // Scroll the row clear of the floating action cluster + tab bar
+        // (a tap on a partially covered row lands on the chrome instead).
+        for _ in 0..<4 where session.isHittable && session.frame.maxY > 690 {
+            app.swipeUp(velocity: .slow)
+        }
         session.tap()
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15) || app.textViews["fleet.conversation.composer"].exists)
         let composer = app.textFields["fleet.conversation.composer"].exists ? app.textFields["fleet.conversation.composer"] : app.textViews["fleet.conversation.composer"]

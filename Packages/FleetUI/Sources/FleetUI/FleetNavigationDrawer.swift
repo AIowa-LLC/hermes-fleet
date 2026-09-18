@@ -230,28 +230,30 @@ struct FleetNavigationDrawer: View {
     }
 
     private func conversationRow(pin: FleetConversationPin, isRecent: Bool) -> some View {
+        // Codex-style row diet: title + muted secondary only. No avatar, no
+        // pin glyph — pinning is managed by swipe on the Chats list.
         let unavailable = !isAvailable(pin)
-        return HStack(spacing: FleetTheme.spacingSm) {
-            Button {
-                open(pin)
-            } label: {
-                conversationLabel(
-                    title: pin.title,
-                    subtitle: provenance(for: pin),
-                    identity: pin.identity,
-                    unavailable: unavailable
-                )
+        return Button {
+            open(pin)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pin.title.isEmpty ? "Untitled conversation" : pin.title)
+                    .font(.body.weight(.regular))
+                    .foregroundStyle(unavailable ? theme.textSecondary : theme.textPrimary)
+                    .lineLimit(1)
+                if unavailable {
+                    Text("Last synced — reconnect to open")
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(unavailable)
-            Button("Unpin", systemImage: "pin.slash") {
-                onTogglePin(pin.identity, pin.title, pin.preview, pin.authoritativeGatewayID, pin.avatarKey)
-            }
-            .labelStyle(.iconOnly)
-            .foregroundStyle(theme.textSecondary)
-            .accessibilityIdentifier("fleet.drawer.unpin.\(pin.id)")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, FleetTheme.spacingMd)
+            .padding(.vertical, 7)
         }
-        .accessibilityElement(children: .contain)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("fleet.drawer.pinned.\(pin.id)")
     }
 
     private func recentRow(_ entry: FleetChatEntry) -> some View {
@@ -267,12 +269,6 @@ struct FleetNavigationDrawer: View {
                 )
             }
             .buttonStyle(.plain)
-            Button("Pin", systemImage: "pin") {
-                onTogglePin(identity, title, entry.session.preview, entry.route.gatewayID, entry.route.profileSlug.rawValue)
-            }
-            .labelStyle(.iconOnly)
-            .foregroundStyle(theme.textSecondary)
-            .accessibilityIdentifier("fleet.drawer.pin.\(identity.id)")
         }
         .accessibilityElement(children: .contain)
     }
@@ -285,13 +281,11 @@ struct FleetNavigationDrawer: View {
     ) -> some View {
         HStack(spacing: FleetTheme.spacingSm) {
             if identity.isGroup {
-                Image(systemName: "person.3.fill")
-                    .foregroundStyle(theme.highlight)
-                    .frame(width: 28, height: 28)
+                Image(systemName: "person.3")
+                    .font(.body)
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 22, height: 22)
                     .accessibilityHidden(true)
-            } else {
-                BotAvatar(displayName: avatarName(for: identity))
-                    .frame(width: 28, height: 28)
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
