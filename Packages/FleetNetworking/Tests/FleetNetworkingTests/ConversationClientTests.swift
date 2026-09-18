@@ -585,6 +585,48 @@ final class ConversationClientTests: XCTestCase {
         XCTAssertEqual(message, "provider rejected")
     }
 
+    /// `session.title` (methods_session.py:1427: `{session_id, title}`):
+    /// decodes to `.sessionTitleUpdate` — the header adopts the live title.
+    func testSessionTitleEventDecodesToDomainCase() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, _) = Self.extractRequest(frame) else { return [] }
+                if method == "prompt.submit" {
+                    return [
+                        Self.responseFrame(id: id, result: ["status": "streaming"]),
+                        Self.eventFrame(type: "message.start", sessionID: "sess-001"),
+                        Self.eventFrame(type: "session.title", sessionID: "sess-001",
+                                        payload: ["title": "Good morning brother"]),
+                        Self.eventFrame(type: "message.complete", sessionID: "sess-001", payload: ["text": "done"]),
+                    ]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let collector = EventCollector()
+        let subscription = Task {
+            for await event in client.events { collector.append(event) }
+        }
+        _ = try await client.submitPrompt(sessionID: "sess-001", text: "go")
+        _ = await collector.waitForTerminal(timeout: .seconds(3))
+        subscription.cancel()
+
+        guard case .sessionTitleUpdate(_, let title, _) = collector.all[1] else {
+            return XCTFail("expected sessionTitleUpdate, got \(collector.all)")
+        }
+        XCTAssertEqual(title, "Good morning brother")
+    }
+
     /// spec §5.5: an unknown event type must be tolerated (surfaced as
     /// `.unknown`), not fatal.
     func testToleratesUnknownEventType() async throws {

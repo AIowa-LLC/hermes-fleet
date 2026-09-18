@@ -1996,6 +1996,11 @@ public final class ConversationViewModel {
             // Card E: a turn-level error ends any in-flight generation.
             stopInFlightImageGenerations(reason: .failed)
 
+        case .sessionTitleUpdate(_, let title, _):
+            // The gateway auto-titled the session (methods_session.py:1427).
+            // Adopt into the header state; the transcript stays clean.
+            sessionTitle = title
+
         case .unknown(_, let rawType, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: "Unknown event: \(rawType)"))
         }

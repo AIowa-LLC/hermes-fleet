@@ -622,7 +622,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
              .messageComplete, .thinkingDelta, .reasoningDelta,
              .reasoningAvailable, .statusUpdate, .toolStart, .toolGenerating,
              .toolProgress, .toolComplete, .backgroundComplete,
-             .approvalRequest, .usageUpdate, .unknown:
+             .approvalRequest, .usageUpdate, .sessionTitle, .unknown:
             // Conversation/streaming events are forwarded via the event
             // channel above; the transport itself does not interpret them.
             break

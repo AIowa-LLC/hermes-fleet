@@ -341,6 +341,7 @@ public struct ConversationView: View {
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .accessibilityIdentifier("fleet.conversation.header.title")
             }
             Spacer(minLength: FleetTheme.spacingSm)
             // Accessibility sizes: primary identity gets the row; secondary

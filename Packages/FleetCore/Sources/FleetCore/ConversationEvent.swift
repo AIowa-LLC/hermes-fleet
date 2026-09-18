@@ -73,6 +73,10 @@ public enum ConversationEvent: Hashable, Sendable {
     case usageUpdate(sessionID: String, usage: SessionUsageSnapshot, seq: Int? = nil)
     /// `error` — a turn-level error event (`{message, ...}`).
     case error(sessionID: String?, message: String, seq: Int? = nil)
+    /// `session.title` — the gateway titled/renamed the session
+    /// (`{session_id, title}`; methods_session.py:1427). Arrives shortly
+    /// after a new chat's first turn; the conversation header adopts it.
+    case sessionTitleUpdate(sessionID: String, title: String, seq: Int? = nil)
     /// Any event type this client does not model — preserved with its raw
     /// wire type so a newer gateway's event is never dropped (spec §5.5).
     case unknown(sessionID: String?, rawType: String, seq: Int? = nil)
@@ -99,6 +103,7 @@ extension ConversationEvent {
         case .sessionInfo(let sid, _, _, _, _, _, _, _, _): return sid
         case .approvalRequested(let sid, _, _, _, _, _): return sid
         case .usageUpdate(let sid, _, _): return sid
+        case .sessionTitleUpdate(let sid, _, _): return sid
         case .error(let sid, _, _): return sid
         case .unknown(let sid, _, _): return sid
         }
@@ -124,6 +129,7 @@ extension ConversationEvent {
              .backgroundComplete(_, _, _, let seq),
              .sessionInfo(_, _, _, _, _, _, _, _, let seq),
              .approvalRequested(_, _, _, _, _, let seq),
+             .sessionTitleUpdate(_, _, let seq),
              .usageUpdate(_, _, let seq),
              .error(_, _, let seq),
              .unknown(_, _, let seq):

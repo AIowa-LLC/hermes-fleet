@@ -28,6 +28,10 @@ public struct GatewayEvent: Sendable, Hashable {
         case backgroundComplete = "background.complete"
         case approvalRequest = "approval.request"
         case usageUpdate = "session.usage"
+        /// `session.title` — the gateway auto-titled (or renamed) the
+        /// session (`methods_session.py:1427`: `{session_id, title}`). Emitted
+        /// shortly after a new chat's first turn; the header adopts it live.
+        case sessionTitle = "session.title"
         case error = "error"
 
         /// Unknown event types are preserved for forward compatibility and

@@ -332,6 +332,26 @@ final class ConversationViewModelTests: XCTestCase {
 
     // MARK: - Open/create/resume
 
+    /// `session.title` (methods_session.py:1427): the gateway auto-titles a
+    /// new chat mid/after the first turn — the header adopts it and NOTHING
+    /// renders in the transcript (the pre-fix bug printed "Unknown event:
+    /// session.title" rows into the chat).
+    func testSessionTitleEventAdoptsHeaderWithoutTranscriptRow() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.sessionTitleUpdate(sessionID: "s-1", title: "Good morning brother"))
+        await flush()
+        XCTAssertEqual(viewModel.sessionTitle, "Good morning brother",
+                       "the header must adopt the auto-title")
+        XCTAssertFalse(
+            viewModel.transcript.contains { $0.text.contains("Unknown event") },
+            "session.title must never surface as an Unknown-event transcript row")
+        XCTAssertFalse(
+            viewModel.transcript.contains { $0.text.contains("session.title") },
+            "no raw event name may leak into the transcript")
+    }
+
     func testStartConnectsAndCreatesSession() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: nil)
         XCTAssertEqual(viewModel.phase, .idle)

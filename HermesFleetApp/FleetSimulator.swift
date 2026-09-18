@@ -1781,6 +1781,14 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "You said: ", rendered: nil))
             streamBox.yield(.messageDelta(sessionID: sessionID, text: echoBase, rendered: nil))
             streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+            // UI-journey knob (HERMES_FLEET_SESSION_TITLE_FIXTURE=1): mirror
+            // the live gateway's auto-title frame (methods_session.py:1427)
+            // so the header-adoption path is testable without a gateway.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_TITLE_FIXTURE"] == "1" {
+                streamBox.yield(.sessionTitleUpdate(
+                    sessionID: sessionID,
+                    title: "Scripted auto title"))
+            }
             streamBox.yield(.messageComplete(
                 sessionID: sessionID,
                 text: "Hello from the scripted fleet. You said: \(echoBase)",

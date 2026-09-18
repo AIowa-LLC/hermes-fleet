@@ -46,6 +46,36 @@ final class ConversationCompactChromeUITests: XCTestCase {
     /// The nav bar must be INLINE (compact) — a large-title bar measures
     /// taller than this bound on iPhone. The bound is generous vs the ~96pt
     /// large-title bar but tight vs the old stacked chrome.
+    /// session.title (methods_session.py:1427): the gateway auto-titles a new
+    /// chat after the first turn — the header adopts it live and NO "Unknown
+    /// event" row renders in the transcript (the build-49 bug).
+    func testSessionAutoTitleAdoptsHeaderWithoutUnknownEventRow() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_TITLE_FIXTURE"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        composer.tap()
+        composer.typeText("good morning")
+        app.descendants(matching: .any).matching(identifier: "fleet.conversation.send").firstMatch.tap()
+
+        // The header's secondary line adopts the scripted auto-title.
+        let headerTitle = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.header.title").firstMatch
+        XCTAssertTrue(headerTitle.waitForExistence(timeout: 15))
+        let titled = NSPredicate(format: "label CONTAINS %@", "Scripted auto title")
+        let titledExp = XCTNSPredicateExpectation(predicate: titled, object: headerTitle)
+        XCTAssertTrue(XCTWaiter().wait(for: [titledExp], timeout: 10) == .completed,
+                      "header must adopt the auto title (got: \(headerTitle.label))")
+
+        // The transcript stays clean — no raw event-name rows.
+        let unknownRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Unknown event")).firstMatch
+        XCTAssertFalse(unknownRow.exists, "session.title must not surface as Unknown event")
+    }
+
     func testConversationUsesInlineNavTitle() throws {
         let app = launch()
         openConversation(app)

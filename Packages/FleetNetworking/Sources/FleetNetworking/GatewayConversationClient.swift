@@ -238,6 +238,10 @@ public struct GatewayConversationClient: ConversationProviding {
                 approvalMode: payload["approval_mode"]?.stringValue,
                 seq: seq
             )
+        case .sessionTitle:
+            // methods_session.py:1427 — `{session_id, title}`. The header
+            // adopts the live title; nothing renders in the transcript.
+            return .sessionTitleUpdate(sessionID: sid, title: payload["title"]?.stringValue ?? "", seq: seq)
         case .approvalRequest:
             // R9-T1 (server.py:3102): a dangerous command is blocked. The
             // command is ALREADY gateway-redacted (#48456); the client-side
