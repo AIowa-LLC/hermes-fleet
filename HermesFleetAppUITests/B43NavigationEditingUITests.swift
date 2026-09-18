@@ -46,7 +46,7 @@ final class B43NavigationEditingUITests: XCTestCase {
         if tabBar.exists {
             let labels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
             XCTAssertEqual(labels, ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"],
-                           "exactly five tabs in the approved order")
+                           "exactly six destinations in the approved order")
             XCTAssertFalse(tabBar.buttons["Gateways"].exists,
                            "Gateways must not be a tab (Build 43)")
         } else if app.buttons["fleet.drawer.open"].exists {
