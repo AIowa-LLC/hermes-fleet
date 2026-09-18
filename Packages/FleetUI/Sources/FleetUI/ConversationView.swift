@@ -93,6 +93,9 @@ public struct ConversationView: View {
             if viewModel == nil {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
             }
+            // Foreground auto-heal: a mounted conversation reconnects itself
+            // when the app returns (no manual banner tap).
+            viewModel?.startForegroundHealing()
             await viewModel?.start()
             // FOS-4 (SPEC §7 Continue / §17): record the open ONLY after the
             // destination resolved — the view model's resolved id is the

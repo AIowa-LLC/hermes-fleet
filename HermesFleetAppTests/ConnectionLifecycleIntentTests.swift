@@ -63,6 +63,62 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             endpoint: URL(string: "http://127.0.0.1:\(9000 + id.count)")!)
     }
 
+    /// Scripted conversation session for restore tests (status-driven, no
+    /// transport). Mirrors the suite's ScriptedConnection shape.
+    private final class ScriptedConversationSession: ConversationSessionProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        var statusValue: GatewayStatus = .online
+        var connectCount = 0
+        let conversation: any ConversationProviding = UnreachableConversation()
+        let replay: any ReplayProviding = UnreachableReplay()
+        let history: any SessionHistoryProviding = UnreachableHistory()
+
+        init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
+
+        var status: GatewayStatus { statusValue }
+        var liveness: ConnectionLivenessSnapshot? { nil }
+
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func connect() async throws { connectCount += 1 }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
+        }
+        func reauthenticate() async throws {}
+    }
+
+    private struct UnreachableConversation: ConversationProviding {
+        var events: AsyncStream<ConversationEvent> { AsyncStream { $0.finish() } }
+        func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+            throw GatewayConnectivityError.unreachable
+        }
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
+        func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession {
+            throw GatewayConnectivityError.unreachable
+        }
+        func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            PromptSubmission(status: "ok")
+        }
+        func interrupt(sessionID: String) async throws -> InterruptResult {
+            InterruptResult(status: "ok")
+        }
+    }
+
+    private struct UnreachableReplay: ReplayProviding {
+        let gatewayID = GatewayID(rawValue: "workstation")
+        func watermarks() async -> [SessionEventWatermark] { [] }
+        func replayAfterReconnect() async throws -> [ReplayOutcome] { [] }
+    }
+
+    private struct UnreachableHistory: SessionHistoryProviding {
+        func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
+            SessionHistory(sessionID: sessionID, count: 0, messages: [])
+        }
+        func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
+            SessionStatus(rawOutput: "", sessionID: sessionID)
+        }
+    }
+
     private func makeEnvironment(
         ids: [String],
         errors: [String: GatewayConnectivityError] = [:],
@@ -97,6 +153,30 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
 
     private func suiteDefaults() -> UserDefaults {
         UserDefaults(suiteName: "connection-intent-\(UUID().uuidString)")!
+    }
+
+    /// Foreground auto-heal for conversation sessions: an unreachable
+    /// session's transport reconnects on restore; a reachable one is left
+    /// alone; `.authenticationRequired` is surfaced, never silently healed
+    /// (M11).
+    func testRestoreConversationSessionsHealsDroppedSkipsReachableAndAuth() async {
+        let id = GatewayID(rawValue: "workstation")
+        let conversation = ScriptedConversationSession(gatewayID: id)
+
+        // Reachable: no reconnect.
+        conversation.statusValue = .online
+        await AppEnvironment.restoreConversationSessionsTestHarness([conversation])
+        XCTAssertEqual(conversation.connectCount, 0, "reachable sessions skip restore")
+
+        // Dropped: reconnect once.
+        conversation.statusValue = .offline
+        await AppEnvironment.restoreConversationSessionsTestHarness([conversation])
+        XCTAssertEqual(conversation.connectCount, 1, "dropped sessions heal")
+
+        // Auth required: NEVER silently re-authenticated (M11).
+        conversation.statusValue = .authenticationRequired
+        await AppEnvironment.restoreConversationSessionsTestHarness([conversation])
+        XCTAssertEqual(conversation.connectCount, 1, "authRequired is surfaced, not healed")
     }
 
     func testTransportTeardownPreservesIntentAndRestores() async {

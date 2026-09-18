@@ -56,7 +56,10 @@ struct HermesFleetApp: App {
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
             if phase == .active && !lockController.isLocked {
-                Task { await environment.restoreIntendedConnections() }
+                Task {
+                    await environment.restoreIntendedConnections()
+                    await environment.restoreConversationSessions()
+                }
             }
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
@@ -70,6 +73,7 @@ struct HermesFleetApp: App {
                 Task {
                     await environment.hydrateIfNeeded()
                     await environment.restoreIntendedConnections()
+                    await environment.restoreConversationSessions()
                 }
             }
         }

@@ -399,6 +399,41 @@ final class ConversationViewModelTests: XCTestCase {
         await viewModel.send(text)
     }
 
+    /// Foreground auto-heal: a `.disconnected` conversation reconnects on
+    /// activation (no manual banner tap); `.authRequired` stays manual (M11).
+    func testAppBecameActiveHealsDisconnectedNotAuthRequired() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        let baseline = scripted.connectCount
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        // A drop flips the VM to .disconnected (the status watcher's honest
+        // signal). Activation then heals it.
+        scripted.statusValue = .offline
+        await viewModel.appBecameActive()
+        // .ready sessions don't need healing — connectCount unchanged by the
+        // active-guard itself; force the disconnected phase and retry.
+        scripted.statusValue = .online
+        // Simulate the watcher's disconnected verdict directly:
+        await viewModel.appBecameActive()  // no-op while ready
+        XCTAssertEqual(scripted.connectCount, baseline, "ready sessions don't heal")
+
+        // Force .disconnected (as the watcher would after a suspension kill):
+        scripted.statusValue = .offline
+        await viewModel.forceDisconnectedForTesting()
+        await viewModel.appBecameActive()
+        XCTAssertGreaterThanOrEqual(scripted.connectCount, baseline + 1,
+                                    "activation must attempt a reconnect when disconnected")
+
+        // Auth-required is NEVER silently healed (M11).
+        scripted.statusValue = .authenticationRequired
+        await viewModel.forceAuthRequiredForTesting()
+        let before = scripted.connectCount
+        await viewModel.appBecameActive()
+        XCTAssertEqual(scripted.connectCount, before,
+                       "authRequired must not auto-reconnect")
+    }
+
     func testStartConnectsAndCreatesSession() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: nil)
         XCTAssertEqual(viewModel.phase, .idle)

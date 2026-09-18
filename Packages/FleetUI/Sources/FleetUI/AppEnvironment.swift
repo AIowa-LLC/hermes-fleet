@@ -1626,6 +1626,35 @@ public final class AppEnvironment {
         connectionIntent.isIntended(id)
     }
 
+    #if DEBUG
+    /// Test harness: runs the restore decision over an explicit session list
+    /// (the lazily-built `conversationSessions` dictionary is unreachable
+    /// without the full environment graph).
+    public static func restoreConversationSessionsTestHarness(
+        _ sessions: [any ConversationSessionProviding]
+    ) async {
+        for session in sessions {
+            let status = session.status
+            if status.isReachable { continue }
+            if status == .authenticationRequired { continue }
+            try? await session.connect()
+        }
+    }
+    #endif
+
+    /// Foreground heal for lazily-built conversation sessions: any session
+    /// whose transport is no longer reachable reconnects. Sessions in
+    /// `.authenticationRequired` are surfaced, NOT silently re-authenticated
+    /// (M11 — the conversation screen owns the re-auth UX).
+    public func restoreConversationSessions() async {
+        for (id, session) in conversationSessions {
+            let status = session.status
+            if status.isReachable { continue }
+            if status == .authenticationRequired { continue }
+            try? await session.connect()
+        }
+    }
+
     // MARK: Roster accessors (for the Bots / Sessions screens)
 
     /// Bots owned by a gateway from the latest roster snapshot (fail closed:

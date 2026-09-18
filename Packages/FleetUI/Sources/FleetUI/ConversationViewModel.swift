@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import FleetCore
 
 /// One rendered row in the conversation transcript (U3).
@@ -1576,6 +1577,68 @@ public final class ConversationViewModel {
     public func teardown() {
         statusWatcher?.cancel()
         statusWatcher = nil
+        foregroundObserver?.cancel()
+        foregroundObserver = nil
+        foregroundRetryTask?.cancel()
+        foregroundRetryTask = nil
+    }
+
+    // MARK: Foreground auto-heal (dogfood: stale connection on app return)
+
+    /// Reacts to scene activation: a conversation left `.disconnected` by a
+    /// suspension kill reconnects WITHOUT the manual banner tap. Bounded (one
+    /// immediate attempt + one 2s-delayed retry) and fenced by the normal
+    /// operation generation. `.authRequired` is DELIBERATELY untouched — M11:
+    /// re-authentication is never silent.
+    private var foregroundObserver: Task<Void, Never>?
+    private var foregroundRetryTask: Task<Void, Never>?
+    private var isHealingFromForeground = false
+
+    public func appBecameActive() async {
+        guard phase == .disconnected, !isHealingFromForeground else { return }
+        isHealingFromForeground = true
+        defer { isHealingFromForeground = false }
+        await reconnect()
+        guard phase == .disconnected else { return }
+        // One bounded retry after a short grace period — never a loop (F1's
+        // login rate-limit lesson: user-paced attempts, not a polling pump).
+        foregroundRetryTask?.cancel()
+        foregroundRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                guard self.phase == .disconnected else { return }
+                Task { await self.reconnect() }
+            }
+        }
+    }
+
+    /// Starts the foreground observer (called from the view's onAppear so
+    /// only live conversation screens auto-heal).
+    #if DEBUG
+    /// Test hooks: place the VM in the watcher's post-drop states without a
+    /// real transport kill (the scripted seam's status is polled, not pushed).
+    public func forceDisconnectedForTesting() {
+        phase = .disconnected
+    }
+
+    public func forceAuthRequiredForTesting() {
+        phase = .authRequired
+    }
+    #endif
+
+    public func startForegroundHealing() {
+        guard foregroundObserver == nil else { return }
+        foregroundObserver = Task { [weak self] in
+            let notifications = NotificationCenter.default
+            while !Task.isCancelled {
+                for await _ in NotificationCenter.default.notifications(
+                    named: UIApplication.didBecomeActiveNotification) {
+                    guard !Task.isCancelled else { break }
+                    await self?.appBecameActive()
+                }
+            }
+        }
     }
 
     // MARK: Cold-start hydration (M10)
