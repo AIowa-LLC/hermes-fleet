@@ -36,7 +36,7 @@ public struct CronHomeView: View {
                 machineSections
             }
         }
-        .navigationTitle("Cron")
+        .navigationTitle("Scheduled")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 addControl

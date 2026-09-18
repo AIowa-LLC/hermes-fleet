@@ -25,7 +25,7 @@ final class U3TabNavigationUITests: XCTestCase {
             // iPad: the top control hosts the five PRIMARY destinations
             // (sidebarAdaptable paginates past five — Settings would hide);
             // Settings stays in the drawer.
-            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet"] {
+            for label in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 15), "root shell must include \(label)")
             }

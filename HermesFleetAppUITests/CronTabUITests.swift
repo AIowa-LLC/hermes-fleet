@@ -59,11 +59,11 @@ final class CronTabUITests: XCTestCase {
             drawerDestination.tap()
         } else {
             app.buttons["fleet.drawer.close"].tap()
-            let tab = UITabNavigation.tabControl(app, label: "Cron")
+            let tab = UITabNavigation.tabControl(app, label: "Scheduled")
             XCTAssertTrue(tab.waitForExistence(timeout: 10), "Cron destination must exist (drawer or top control)")
             tab.tap()
         }
-        XCTAssertTrue(app.navigationBars["Cron"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.navigationBars["Scheduled"].waitForExistence(timeout: 10),
                       "the Cron tab root must show the Cron navigation title")
         resolveDefaultProfileIfNeeded()
     }
@@ -143,7 +143,7 @@ final class CronTabUITests: XCTestCase {
         }
         XCTAssertTrue(firstMatch("cron.notice").waitForExistence(timeout: 10),
                       "run-now surfaces the notice bar on the same screen")
-        XCTAssertTrue(app.navigationBars["Cron"].exists,
+        XCTAssertTrue(app.navigationBars["Scheduled"].exists,
                       "run-now must not navigate away from the Cron tab")
     }
 

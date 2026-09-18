@@ -33,7 +33,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         switch self {
         case .bots: "Bots"
         case .chats: "Chats"
-        case .cron: "Cron"
+        case .cron: "Scheduled"
         case .kanban: "Kanban"
         case .fleet: "Fleet"
         case .settings: "Settings"
@@ -43,7 +43,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         switch self {
         case .bots: "cpu"
         case .chats: "bubble.left.and.bubble.right"
-        case .cron: "clock.badge.circle" 
+        case .cron: "clock"
         case .kanban: "rectangle.split.3x1"
         case .fleet: "square.grid.2x2"
         case .settings: "gearshape"

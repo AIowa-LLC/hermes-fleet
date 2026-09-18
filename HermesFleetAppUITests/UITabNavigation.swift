@@ -36,7 +36,9 @@ enum UITabNavigation {
             XCTAssertTrue(app.tabBars.buttons[label].isSelected,
                           "\(label) destination must be selected")
         } else {
-            let stack = app.descendants(matching: .any)["fleet.tab.\(label.lowercased())"]
+            let tabRaw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
+                        "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
+            let stack = app.descendants(matching: .any)["fleet.tab.\(tabRaw)"]
             if stack.waitForExistence(timeout: 2) {
                 XCTAssertTrue(stack.exists,
                               "\(label) destination must be visible")
@@ -98,7 +100,7 @@ enum UITabNavigation {
             return tab
         }
         menu.tap()
-        let raw = ["Bots": "bots", "Chats": "chats", "Kanban": "kanban",
+        let raw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
                    "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
@@ -194,7 +196,7 @@ enum UITabNavigation {
         let menu = app.buttons["fleet.drawer.open"].firstMatch
         guard menu.waitForExistence(timeout: 3) else { return }
         menu.tap()
-        let raw = ["Bots": "bots", "Chats": "chats", "Kanban": "kanban",
+        let raw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
                    "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch

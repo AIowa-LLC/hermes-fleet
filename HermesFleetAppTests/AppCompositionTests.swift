@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 import FleetUI
 import FleetCore
 @testable import HermesFleetApp
@@ -12,9 +13,18 @@ final class AppCompositionTests: XCTestCase {
         // tab is retired — gateway management is owned by Fleet.
         XCTAssertEqual(
             FleetTab.allCases.map(\.label),
-            ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"],
-            "the tab bar must match the approved domains in order (Cron sits between Chats and Kanban)"
+            ["Bots", "Chats", "Scheduled", "Kanban", "Fleet", "Settings"],
+            "the tab bar must match the approved domains in order (Scheduled sits between Chats and Kanban)"
         )
+    }
+
+    /// QA round-3: every tab's SF Symbol must be a REAL symbol — a bad name
+    /// renders a silent blank icon (build 49's `clock.badge.circle` ghost).
+    func testEveryTabSystemImageResolvesToRealSFSymbol() {
+        for tab in FleetTab.allCases {
+            XCTAssertNotNil(UIImage(systemName: tab.systemImage),
+                            "\(tab.label)'s symbol '\(tab.systemImage)' must resolve")
+        }
     }
 
     func testBotsIsDefaultLaunchTab() {

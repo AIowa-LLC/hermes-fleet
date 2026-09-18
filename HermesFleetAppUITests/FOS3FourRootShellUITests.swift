@@ -33,7 +33,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
         let app = launch()
 
         let tabBar = app.tabBars.firstMatch
-        let labels = ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"]
+        let labels = ["Bots", "Chats", "Scheduled", "Kanban", "Fleet", "Settings"]
         if tabBar.exists {
             for label in labels {
                 XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
@@ -52,7 +52,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
             app.buttons["fleet.drawer.close"].tap()
         } else {
             // iPad: top control hosts the five primaries; Settings in drawer.
-            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet"] {
+            for label in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 10), "sidebar must include \(label)")
             }
@@ -298,7 +298,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
                        "the Control root must be retired")
         XCTAssertFalse(app.navigationBars["Workspace"].exists,
                        "the Workspace root must be retired")
-        for tab in ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"] {
+        for tab in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet", "Settings"] {
             UITabNavigation.selectTab(app, label: tab)
             XCTAssertFalse(app.descendants(matching: .any)
                 .matching(identifier: "fleet.control").firstMatch.exists,
