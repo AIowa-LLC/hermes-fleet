@@ -2,6 +2,23 @@
 
 Status: execution required for every external TestFlight RC. This document is a gate, not evidence that a candidate passed.
 
+## Execution semantics
+
+This checklist deliberately separates evidence types:
+
+- **Automated**: simulator/package/hosted test commands listed under a
+  journey. These may establish deterministic behavior but cannot replace a
+  physical-device or live-gateway result.
+- **Physical-device**: clean install, lifecycle, permissions, Face ID/App
+  Lock, microphone, speech, and real network transitions on the exact RC.
+- **Live-gateway**: gateway registration/authentication, streaming, skills,
+  approvals, bots, groups, RoomLink, attachments, and reconnection against the
+  actual safe test gateway.
+
+For every journey, record the exact result and evidence reference for each
+applicable modality. An empty field is incomplete; do not convert historical
+dogfood or simulator evidence into current RC evidence.
+
 ## Candidate and gate rules
 
 - Candidate SHA: ______________________________
@@ -140,19 +157,19 @@ Result: [ ] PASS [ ] FAIL [ ] HOLD  Evidence: __________  Notes/defect: ________
 
 Every environmental class in `scripts/c1_ui_matrix.sh` is mapped above (H1AppLock was re-admitted to the deterministic CI inventory in PR #28 and is no longer environmental). Run each applicable suite against the RC and record PASS/FAIL/HOLD. If a suite is not applicable to the external-beta configuration, write the concrete reason and evidence here; omission is not an acceptable result.
 
-| Suite | Journey above | Result | Command/evidence or concrete N/A reason |
-|---|---|---|---|
-| B1LiveBoardPicker | Bots / Groups | | |
-| BotChatTap | Direct chat / Bots / Groups | | |
-| BotRosterSlice2 | Direct chat / Bots | | |
-| F1TwoGatewayFleetLive | Gateway setup | | |
-| H2HealthDashboard | Gateway setup | | |
-| L1FixLiveGateway | Gateway setup / Recovery | | |
-| L1LiveGateway | Gateway/chat/skills/voice/recovery | | |
-| P0_7LiveTailnet | Gateway/chat/skills/groups/voice/recovery | | |
-| P3FixLANGateway | Gateway / Recovery | | |
-| P3FixLoopbackGateway | Gateway / Recovery | | |
-| T2FixTailnetGateway | Gateway / Recovery | | |
+| Suite | Journey above | Expected result | Result | Command/evidence or concrete N/A reason |
+|---|---|---|---|---|
+| B1LiveBoardPicker | Bots / Groups | Live board/profile data is fetched from the intended gateway without stale or fabricated state. | | |
+| BotChatTap | Direct chat / Bots / Groups | Tapping a bot opens the correct source-qualified chat/session. | | |
+| BotRosterSlice2 | Direct chat / Bots | The live roster loads, edits remain scoped to the selected bot, and relaunch preserves authoritative state. | | |
+| F1TwoGatewayFleetLive | Gateway setup | Two configured gateways remain separately identified and healthy. | | |
+| H2HealthDashboard | Gateway setup | Health/resource rows reflect the live gateway response and show degraded state truthfully. | | |
+| L1FixLiveGateway | Gateway setup / Recovery | The real gateway connects, streams, and recovers without duplicate or stale session state. | | |
+| L1LiveGateway | Gateway/chat/skills/voice/recovery | The configured live gateway supports the tested primary flow and reports unsupported capabilities honestly. | | |
+| P0_7LiveTailnet | Gateway/chat/skills/groups/voice/recovery | The supported remote path connects and recovers after an intentional interruption. | | |
+| P3FixLANGateway | Gateway / Recovery | The supported LAN path connects or fails closed with understandable errors. | | |
+| P3FixLoopbackGateway | Gateway / Recovery | The supported loopback rehearsal behaves as documented and is not mistaken for public reachability. | | |
+| T2FixTailnetGateway | Gateway / Recovery | The supported tailnet rehearsal connects only when the test environment permits it and records its path class without private addresses. | | |
 
 ## Release decision
 
