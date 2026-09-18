@@ -24,7 +24,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
     /// Build 43 order: Bots / Chats / Kanban / Fleet / Settings — Bots is
     /// the normal launch tab; Kanban is a first-class owning surface; the
     /// Gateways tab is retired (gateway management lives under Fleet).
-    case bots, chats, kanban, fleet, settings
+    case bots, chats, cron, kanban, fleet, settings
     public var id: String { rawValue }
     /// Drawer: the four primary destinations render in the Navigate section;
     /// Settings renders as the drawer's dedicated last row.
@@ -33,6 +33,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         switch self {
         case .bots: "Bots"
         case .chats: "Chats"
+        case .cron: "Cron"
         case .kanban: "Kanban"
         case .fleet: "Fleet"
         case .settings: "Settings"
@@ -42,6 +43,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         switch self {
         case .bots: "cpu"
         case .chats: "bubble.left.and.bubble.right"
+        case .cron: "clock.badge.circle" 
         case .kanban: "rectangle.split.3x1"
         case .fleet: "square.grid.2x2"
         case .settings: "gearshape"
@@ -304,6 +306,7 @@ public struct FleetTabView: View {
         case .chats: FleetChatsView(environment: environment)
         case .bots: FleetRosterView(environment: environment)
         case .kanban: KanbanHomeView(environment: environment)
+        case .cron: CronHomeView(environment: environment)
         // Build 43: Settings is a first-class tab (was a Fleet-toolbar
         // sheet). The tab IS the settings destination; its stack stays at
         // the root screen.

@@ -22,7 +22,7 @@ final class U3TabNavigationUITests: XCTestCase {
         // the adaptive path. tabControl/openDrawer still VERIFY the probed
         // shape actually renders.
         if UIDevice.current.userInterfaceIdiom == .pad {
-            for label in ["Bots", "Chats", "Kanban", "Fleet", "Settings"] {
+            for label in ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 15), "root shell must include \(label)")
             }
@@ -31,7 +31,7 @@ final class U3TabNavigationUITests: XCTestCase {
         } else {
             let drawer = UITabNavigation.openDrawer(app)
             XCTAssertTrue(drawer.exists, "compact root navigation drawer must render")
-            for raw in ["bots", "chats", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
@@ -174,7 +174,7 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertFalse(app.tabBars.firstMatch.waitForExistence(timeout: 2),
                        "compact iPhone replaces the visible tab bar")
         let drawer = UITabNavigation.openDrawer(app)
-        for raw in ["bots", "chats", "kanban", "fleet", "settings"] {
+        for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
             XCTAssertTrue(app.descendants(matching: .any)
                 .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists,
                 "drawer exposes \(raw) destination")

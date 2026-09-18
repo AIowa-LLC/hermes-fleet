@@ -167,150 +167,16 @@ public struct CronView: View {
         // FOS-6: operational row (the List's own separators are the
         // hairlines — SPEC §18).
         FleetListRow(showsSeparator: false) {
-            HStack(spacing: FleetTheme.spacingMd) {
-                Circle()
-                    .fill(job.enabled ? FleetTheme.statusOnline : theme.textMuted)
-                    .frame(width: 8, height: 8)
-                    .accessibilityHidden(true)
-                NavigationLink {
-                    CronJobDetailView(
-                        environment: environment,
-                        gatewayID: gatewayID,
-                        profile: profile,
-                        jobID: job.id,
-                        model: model)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(job.name)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(theme.textPrimary)
-                            // The row identity rides the NAME text — a
-                            // container-level identifier propagates to every
-                            // descendant and overrides the per-control ids.
-                            .accessibilityIdentifier("cron.row.\(job.id)")
-                        // Schedule is machine data — mono, the terminal voice.
-                        Text(job.scheduleDisplay)
-                            .font(FleetTheme.monoFont)
-                            .foregroundStyle(theme.textSecondary)
-                            .lineLimit(1)
-                            .accessibilityIdentifier("cron.row.schedule.\(job.id)")
-                        if let preview = previewText(job), !preview.isEmpty {
-                            Text(preview)
-                                .font(FleetTheme.secondaryFont)
-                                .foregroundStyle(theme.textSecondary)
-                                .lineLimit(1)
-                        }
-                        nextFireLine(job)
-                        deliveryLine(job, model: model)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+            CronJobRow(
+                job: job,
+                model: model,
+                profile: profile,
+                gatewayID: gatewayID,
+                environment: environment,
+                onDelete: { record in
+                    pendingDelete = record
+                })
 
-                Button {
-                    Task { await model.triggerJob(job.id, profile: profileScope) }
-                } label: {
-                    Image(systemName: "play.circle")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(theme.highlight)
-                }
-                .buttonStyle(.borderless)
-                // FOS-6 tap-target: the 18pt icon is a real action — pad to
-                // the 44pt actionable bar (SPEC §21 gate 15).
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-                .disabled(model.inFlightJobs.contains(job.id))
-                .accessibilityLabel("Run \(job.name) now")
-                .accessibilityIdentifier("cron.row.fire.\(job.id)")
-
-                Button {
-                    Task { await model.setJob(job.id, enabled: !job.enabled, profile: profileScope) }
-                } label: {
-                    Image(systemName: job.enabled ? "pause.circle" : "arrow.up.circle")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(job.enabled ? theme.textSecondary : FleetTheme.statusOnline)
-                }
-                .buttonStyle(.borderless)
-                // FOS-6 tap-target: pad to the 44pt actionable bar.
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
-                .disabled(model.inFlightJobs.contains(job.id))
-                .accessibilityLabel(job.enabled ? "Disable \(job.name)" : "Enable \(job.name)")
-                .accessibilityIdentifier("cron.row.toggle.\(job.id)")
-            }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button {
-                Task { await model.setJob(job.id, enabled: !job.enabled, profile: profileScope) }
-            } label: {
-                Label(job.enabled ? "Disable" : "Enable", systemImage: job.enabled ? "pause.circle" : "arrow.up.circle")
-            }
-            .tint(job.enabled ? theme.textSecondary : FleetTheme.statusOnline)
-            .accessibilityIdentifier("cron.swipe.toggle.\(job.id)")
-
-            // Card B: delete asks for confirmation (confirmationDialog on the
-            // pane, ids cron.delete.confirm / cron.delete.cancel).
-            Button(role: .destructive) {
-                pendingDelete = job
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-            .accessibilityIdentifier("cron.swipe.delete.\(job.id)")
-        }
-        // NOTE: NO container-level identifier or .combine — SwiftUI
-        // propagates a container's identifier to every descendant,
-        // REPLACING the per-control ids (fire/toggle/swipe). Row identity
-        // rides the job-name text; controls keep their own ids.
-    }
-
-    /// Prompt preview; script jobs preview their script instead (the server
-    /// leaves `prompt` empty for them).
-    private func previewText(_ job: CronJobRecord) -> String? {
-        if !job.prompt.isEmpty { return job.prompt }
-        if let script = job.script, !script.isEmpty { return "script: \(script)" }
-        return nil
-    }
-
-    @ViewBuilder
-    private func nextFireLine(_ job: CronJobRecord) -> some View {
-        // Telemetry timestamps — mono caption.
-        HStack(spacing: FleetTheme.spacingSm) {
-            Image(systemName: "clock")
-                .font(.caption2)
-                .foregroundStyle(theme.textMuted)
-                .accessibilityHidden(true)
-            Text(job.enabled
-                 ? (CronTimestamp.display(job.nextRunAt) ?? "no upcoming run")
-                 : "Paused")
-                .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(job.enabled ? theme.textSecondary : theme.textMuted)
-            if let status = job.lastStatus, !status.isEmpty {
-                Label(status, systemImage: job.isTerminalOrError ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(job.isTerminalOrError ? FleetTheme.statusDestructive : theme.textMuted)
-            }
-        }
-    }
-
-    /// Delivery target + state, compact: the operator always sees where a job
-    /// delivers and what state the server reports.
-    @ViewBuilder
-    private func deliveryLine(_ job: CronJobRecord, model: CronDashboardModel) -> some View {
-        HStack(spacing: FleetTheme.spacingSm) {
-            Image(systemName: "paperplane")
-                .font(.caption2)
-                .foregroundStyle(theme.textMuted)
-                .accessibilityHidden(true)
-            Text(model.deliveryLabel(for: job.deliver))
-                .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
-                .accessibilityIdentifier("cron.row.deliver.\(job.id)")
-            Text("· \(job.displayState)")
-                .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(job.isTerminalOrError ? FleetTheme.statusDestructive : theme.textMuted)
-                .accessibilityIdentifier("cron.row.state.\(job.id)")
         }
     }
 
@@ -522,6 +388,157 @@ struct CronJobFormSheet: View {
             if deliver != job.deliver { patch.deliver = deliver }
             guard !patch.isEmpty else { return true }
             return await model.updateJob(id: job.id, patch: patch, profile: profile)
+        }
+    }
+}
+
+/// Shared cron job row — renders identically in the legacy scoped CronView
+/// pane and the Cron tab's per-machine sections. Identity rides the NAME
+/// text (container ids would override the per-control ids).
+struct CronJobRow: View {
+    @Environment(\.fleetTheme) private var theme
+    let job: CronJobRecord
+    let model: CronDashboardModel
+    let profile: ProfileSlug
+    let gatewayID: GatewayID
+    let environment: AppEnvironment
+    let onDelete: (CronJobRecord) -> Void
+
+    private var profileScope: String { profile.rawValue }
+
+    var body: some View {
+        HStack(spacing: FleetTheme.spacingMd) {
+            Circle()
+                .fill(job.enabled ? FleetTheme.statusOnline : theme.textMuted)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            NavigationLink {
+                CronJobDetailView(
+                    environment: environment,
+                    gatewayID: gatewayID,
+                    profile: profile,
+                    jobID: job.id,
+                    model: model)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(job.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .accessibilityIdentifier("cron.row.\(job.id)")
+                    Text(job.scheduleDisplay)
+                        .font(FleetTheme.monoFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("cron.row.schedule.\(job.id)")
+                    if let preview = CronJobRow.previewText(job), !preview.isEmpty {
+                        Text(preview)
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    nextFireLine
+                    deliveryLine
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                Task { await model.triggerJob(job.id, profile: profileScope) }
+            } label: {
+                Image(systemName: "play.circle")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(theme.highlight)
+            }
+            .buttonStyle(.borderless)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .disabled(model.inFlightJobs.contains(job.id))
+            .accessibilityLabel("Run \(job.name) now")
+            .accessibilityIdentifier("cron.row.fire.\(job.id)")
+
+            Button {
+                Task { await model.setJob(job.id, enabled: !job.enabled, profile: profileScope) }
+            } label: {
+                Image(systemName: job.enabled ? "pause.circle" : "arrow.up.circle")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(job.enabled ? theme.textSecondary : FleetTheme.statusOnline)
+            }
+            .buttonStyle(.borderless)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
+            .disabled(model.inFlightJobs.contains(job.id))
+            .accessibilityLabel(job.enabled ? "Disable \(job.name)" : "Enable \(job.name)")
+            .accessibilityIdentifier("cron.row.toggle.\(job.id)")
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                Task { await model.setJob(job.id, enabled: !job.enabled, profile: profileScope) }
+            } label: {
+                Label(job.enabled ? "Disable" : "Enable", systemImage: job.enabled ? "pause.circle" : "arrow.up.circle")
+            }
+            .tint(job.enabled ? theme.textSecondary : FleetTheme.statusOnline)
+            .accessibilityIdentifier("cron.swipe.toggle.\(job.id)")
+
+            Button(role: .destructive) {
+                onDelete(job)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+            .accessibilityIdentifier("cron.swipe.delete.\(job.id)")
+        }
+    }
+
+    /// Prompt preview; script jobs preview their script instead.
+    static func previewText(_ job: CronJobRecord) -> String? {
+        if !job.prompt.isEmpty { return job.prompt }
+        if let script = job.script, !script.isEmpty { return "script: \(script)" }
+        return nil
+    }
+}
+
+extension CronJobRow {
+    /// Telemetry timestamps — mono caption.
+    @ViewBuilder
+    private var nextFireLine: some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Image(systemName: "clock")
+                .font(.caption2)
+                .foregroundStyle(theme.textMuted)
+                .accessibilityHidden(true)
+            Text(job.enabled
+                 ? (CronTimestamp.display(job.nextRunAt) ?? "no upcoming run")
+                 : "Paused")
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(job.enabled ? theme.textSecondary : theme.textMuted)
+                .accessibilityIdentifier("cron.row.nextfire.\(job.id)")
+            if let status = job.lastStatus, !status.isEmpty {
+                Label(status, systemImage: job.isTerminalOrError ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(job.isTerminalOrError ? FleetTheme.statusDestructive : theme.textMuted)
+            }
+        }
+    }
+
+    /// Delivery target + state, compact: the operator always sees where a job
+    /// delivers and what state the server reports.
+    @ViewBuilder
+    private var deliveryLine: some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Image(systemName: "paperplane")
+                .font(.caption2)
+                .foregroundStyle(theme.textMuted)
+                .accessibilityHidden(true)
+            Text(model.deliveryLabel(for: job.deliver))
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+                .accessibilityIdentifier("cron.row.deliver.\(job.id)")
+            Text("· \(job.displayState)")
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(job.isTerminalOrError ? FleetTheme.statusDestructive : theme.textMuted)
+                .accessibilityIdentifier("cron.row.state.\(job.id)")
         }
     }
 }

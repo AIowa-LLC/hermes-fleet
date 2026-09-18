@@ -55,7 +55,12 @@ public final class CronDashboardModel {
     // MARK: Lifecycle
 
     /// Load the list + delivery targets for the scoped profile.
+    /// The profile scope the model last loaded (used by the Cron tab's
+    /// shared-section refresh).
+    public private(set) var lastProfile: String?
+
     public func start(profile: String?) async {
+        lastProfile = profile
         isLoading = true
         defer { isLoading = false }
         await reload(profile: profile)
@@ -65,6 +70,7 @@ public final class CronDashboardModel {
     }
 
     public func refresh(profile: String?) async {
+        lastProfile = profile
         await reload(profile: profile)
     }
 

@@ -33,7 +33,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
         let app = launch()
 
         let tabBar = app.tabBars.firstMatch
-        let labels = ["Bots", "Chats", "Kanban", "Fleet", "Settings"]
+        let labels = ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"]
         if tabBar.exists {
             for label in labels {
                 XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
@@ -45,7 +45,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
         } else if app.buttons["fleet.drawer.open"].exists {
             _ = UITabNavigation.openDrawer(app)
-            for raw in ["bots", "chats", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
@@ -290,7 +290,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
                        "the Control root must be retired")
         XCTAssertFalse(app.navigationBars["Workspace"].exists,
                        "the Workspace root must be retired")
-        for tab in ["Bots", "Chats", "Kanban", "Fleet", "Settings"] {
+        for tab in ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"] {
             UITabNavigation.selectTab(app, label: tab)
             XCTAssertFalse(app.descendants(matching: .any)
                 .matching(identifier: "fleet.control").firstMatch.exists,

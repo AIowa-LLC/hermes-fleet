@@ -12,8 +12,8 @@ final class AppCompositionTests: XCTestCase {
         // tab is retired — gateway management is owned by Fleet.
         XCTAssertEqual(
             FleetTab.allCases.map(\.label),
-            ["Bots", "Chats", "Kanban", "Fleet", "Settings"],
-            "the tab bar must match the five approved domains in order"
+            ["Bots", "Chats", "Cron", "Kanban", "Fleet", "Settings"],
+            "the tab bar must match the approved domains in order (Cron sits between Chats and Kanban)"
         )
     }
 

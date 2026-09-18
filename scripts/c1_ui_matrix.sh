@@ -67,6 +67,8 @@ UI_CLASSES=(
   # gateway; HERMES_FLEET_NAV_RESET hermetic launch) — registered
   # retroactively after the audit caught the drift.
   CronManagement
+  # Cron tab (six-tab shell): all-machines home — sections, inline ops.
+  CronTab
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They
