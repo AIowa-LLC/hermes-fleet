@@ -93,7 +93,7 @@ struct FleetNavigationDrawer: View {
     private var header: some View {
         HStack(spacing: FleetTheme.spacingMd) {
             Text("Hermes Fleet")
-                .font(.title3.weight(.bold))
+                .font(.title2.weight(.bold))
                 .foregroundStyle(theme.textPrimary)
             Spacer()
             circleAction("Search", systemImage: "magnifyingglass", action: onSearch,
@@ -113,11 +113,12 @@ struct FleetNavigationDrawer: View {
             ForEach(primaryTabs) { tab in
                 Button { onSelectTab(tab) } label: {
                     Label(tab.label, systemImage: tab.systemImage)
-                        .font(.body.weight(selection == tab ? .semibold : .regular))
+                        .font(.title3.weight(selection == tab ? .semibold : .regular))
+                        .imageScale(.large)
                         .foregroundStyle(selection == tab ? theme.highlight : theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, FleetTheme.spacingMd)
-                        .padding(.vertical, 11)
+                        .padding(.vertical, 13)
                         .background(
                             selection == tab ? theme.highlight.opacity(0.14) : .clear,
                             in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
@@ -133,11 +134,12 @@ struct FleetNavigationDrawer: View {
             // architecture, pins, recents and nav-restore stay untouched.
             Button { onOpenScreen(.artifacts) } label: {
                 Label("Artifacts", systemImage: "photo.on.rectangle")
-                    .font(.body.weight(artifactsActive ? .semibold : .regular))
+                    .font(.title3.weight(artifactsActive ? .semibold : .regular))
+                    .imageScale(.large)
                     .foregroundStyle(artifactsActive ? theme.highlight : theme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, FleetTheme.spacingMd)
-                    .padding(.vertical, 11)
+                    .padding(.vertical, 13)
                     .background(
                         artifactsActive ? theme.highlight.opacity(0.14) : .clear,
                         in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
@@ -152,24 +154,18 @@ struct FleetNavigationDrawer: View {
 
     private var pinnedSection: some View {
         drawerSection("Pinned") {
-            if environment.pinnedConversations.isEmpty {
-                emptySectionText("Pin a conversation to keep it here.", identifier: "fleet.drawer.pinned.empty")
-            } else {
-                ForEach(environment.pinnedConversations) { pin in
-                    conversationRow(pin: pin, isRecent: false)
-                }
+            // ChatGPT parity: no empty-state caption — an empty section
+            // renders just its header.
+            ForEach(environment.pinnedConversations) { pin in
+                conversationRow(pin: pin, isRecent: false)
             }
         }
     }
 
     private var recentSection: some View {
         drawerSection("Recents") {
-            if recentEntries.isEmpty {
-                emptySectionText("Your recent conversations will appear here.", identifier: "fleet.drawer.recent.empty")
-            } else {
-                ForEach(recentEntries) { entry in
-                    recentRow(entry)
-                }
+            ForEach(recentEntries) { entry in
+                recentRow(entry)
             }
         }
     }
@@ -183,10 +179,10 @@ struct FleetNavigationDrawer: View {
         HStack(spacing: FleetTheme.spacingMd) {
             Button(action: onNewChat) {
                 Label("New Chat", systemImage: "square.and.pencil")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(theme.background)
-                    .padding(.horizontal, FleetTheme.spacingMd)
-                    .padding(.vertical, FleetTheme.spacingSm + 4)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
                     .background(theme.highlight, in: Capsule())
             }
             .buttonStyle(.plain)
@@ -194,9 +190,9 @@ struct FleetNavigationDrawer: View {
 
             Button { onSelectTab(.settings) } label: {
                 Image(systemName: FleetTab.settings.systemImage)
-                    .font(.body.weight(.semibold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 40, height: 40)
                     .background(theme.surfaceElevated, in: Circle())
             }
             .buttonStyle(.plain)
@@ -210,7 +206,6 @@ struct FleetNavigationDrawer: View {
         .padding(.horizontal, FleetTheme.spacingMd)
         .padding(.top, FleetTheme.spacingSm)
         .padding(.bottom, FleetTheme.spacingSm)
-        .background(theme.background)
     }
 
     private func drawerSection<Content: View>(
@@ -219,7 +214,7 @@ struct FleetNavigationDrawer: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text(title)
-                .font(FleetTheme.sectionHeaderFont)
+                .font(.title3.weight(.bold))
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, FleetTheme.spacingSm)
             content()
@@ -267,7 +262,7 @@ struct FleetNavigationDrawer: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, FleetTheme.spacingMd)
-            .padding(.vertical, 7)
+            .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("fleet.drawer.pinned.\(pin.id)")
@@ -280,7 +275,6 @@ struct FleetNavigationDrawer: View {
             Button { onOpenConversation(entry.route, entry.session.id) } label: {
                 conversationLabel(
                     title: title,
-                    subtitle: "\(entry.route.profileSlug.rawValue) · \(gatewayName(entry.route.gatewayID))",
                     identity: identity,
                     unavailable: false
                 )
@@ -292,21 +286,13 @@ struct FleetNavigationDrawer: View {
 
     private func conversationLabel(
         title: String,
-        subtitle: String,
         identity: FleetConversationIdentity,
         unavailable: Bool
     ) -> some View {
         HStack(spacing: FleetTheme.spacingSm) {
-            if identity.isGroup {
-                Image(systemName: "person.3")
-                    .font(.body)
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(width: 22, height: 22)
-                    .accessibilityHidden(true)
-            }
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.regular))
                     .foregroundStyle(unavailable ? theme.textSecondary : theme.textPrimary)
                     .lineLimit(1)
                 if unavailable {
@@ -318,15 +304,7 @@ struct FleetNavigationDrawer: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
-        .accessibilityLabel(unavailable ? "\(title), unavailable, \(subtitle)" : "\(title), \(subtitle)")
-    }
-
-    private func emptySectionText(_ text: String, identifier: String) -> some View {
-        Text(text)
-            .font(.caption)
-            .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, FleetTheme.spacingSm)
-            .accessibilityIdentifier(identifier)
+        .accessibilityLabel(unavailable ? "\(title), unavailable" : title)
     }
 
     private func isAvailable(_ pin: FleetConversationPin) -> Bool {
@@ -348,23 +326,6 @@ struct FleetNavigationDrawer: View {
         guard isAvailable(pin) else { return }
         if case .individual(let route, let sessionID) = pin.identity {
             onOpenConversation(route, sessionID)
-        }
-    }
-
-    private func avatarName(for identity: FleetConversationIdentity) -> String {
-        guard case .individual(let route, _) = identity else { return "Group" }
-        return environment.bot(for: route)?.displayName ?? route.profileSlug.rawValue
-    }
-
-    private func provenance(for pin: FleetConversationPin) -> String {
-        switch pin.identity {
-        case .individual(let route, _):
-            return "\(route.profileSlug.rawValue) · \(gatewayName(route.gatewayID))"
-        case .group:
-            if let gatewayID = pin.authoritativeGatewayID {
-                return "Group · \(gatewayName(gatewayID))"
-            }
-            return "Group"
         }
     }
 
