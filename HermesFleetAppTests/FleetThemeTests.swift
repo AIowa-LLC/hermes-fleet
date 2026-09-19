@@ -197,6 +197,30 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetTheme.spacingXxl, 32)
     }
 
+    // MARK: - Compose pill (ADR-0008 round-3 Codex parity)
+
+    /// composeFill is FIXED — #5B35D5 in both appearances (white content on
+    /// it is 7.2:1). Not appearance-adaptive, unlike every status token.
+    func testComposeFillIsFixedDeepViolet() {
+        for appearance in [UIUserInterfaceStyle.light, .dark] {
+            assertResolvedHex(
+                FleetTheme.composeFill, hex: 0x5B35D5,
+                traits: UITraitCollection(userInterfaceStyle: appearance),
+                name: "composeFill \(appearance)")
+        }
+    }
+
+    /// neutralFill keeps the selection visible on the canvas in BOTH modes
+    /// (round-3 QA catch: tertiarySystemBackground vanished on #F8F9FC).
+    func testNeutralFillResolvesPerAppearance() {
+        assertResolvedHex(FleetTheme.neutralFill, hex: 0xE4E4E9,
+                          traits: UITraitCollection(userInterfaceStyle: .light),
+                          name: "neutralFill light")
+        assertResolvedHex(FleetTheme.neutralFill, hex: 0x2C2C2E,
+                          traits: UITraitCollection(userInterfaceStyle: .dark),
+                          name: "neutralFill dark")
+    }
+
     // MARK: - Typography (SPEC §14: SF default design, Dynamic Type styles)
 
     func testTypographyScale() {

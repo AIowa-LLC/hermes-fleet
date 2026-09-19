@@ -609,6 +609,16 @@ public final class AppEnvironment {
     /// known gateways (DEBUG simulator walkthrough) — never overrides a
     /// user-managed fleet.
     public func load() async {
+        // UI-test hygiene ordering (HERMES_FLEET_NAV_RESET): pinned
+        // conversations hydrate EAGERLY below — before the shell's reset
+        // block runs — so the pin store clears at this hydration choke
+        // point. A pin written by an earlier suite on a shared simulator
+        // otherwise flips the next suite's swipe action to "Unpin".
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
+            UserDefaultsConversationPinStore.resetForUITests()
+        }
+        #endif
         // P0-4: FIRST rebuild the registry from the durable record store so a
         // user-added gateway survives app close / relaunch (never-connected
         /// entries included, restored disconnected). Restore runs BEFORE the

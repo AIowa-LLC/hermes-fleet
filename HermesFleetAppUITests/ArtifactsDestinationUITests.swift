@@ -97,7 +97,7 @@ final class ArtifactsDestinationUITests: XCTestCase {
                        "the Navigate header is gone by design (ChatGPT-parity drawer)")
         XCTAssertTrue(firstMatch(app, "fleet.drawer.destination.bots").exists,
                       "primary destinations render directly under the header")
-        app.buttons["fleet.drawer.close"].tap()
+        UITabNavigation.closeDrawer(app)
     }
 
     // MARK: 2. Destination content + preview + share

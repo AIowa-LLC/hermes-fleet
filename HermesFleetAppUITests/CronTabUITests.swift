@@ -58,7 +58,7 @@ final class CronTabUITests: XCTestCase {
         if drawerDestination.waitForExistence(timeout: 10) {
             drawerDestination.tap()
         } else {
-            app.buttons["fleet.drawer.close"].tap()
+            UITabNavigation.closeDrawer(app)
             let tab = UITabNavigation.tabControl(app, label: "Scheduled")
             XCTAssertTrue(tab.waitForExistence(timeout: 10), "Cron destination must exist (drawer or top control)")
             tab.tap()

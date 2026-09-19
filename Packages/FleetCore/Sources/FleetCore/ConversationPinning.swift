@@ -95,6 +95,14 @@ public actor UserDefaultsConversationPinStore: ConversationPinStoring {
         let data = try JSONEncoder().encode(pins)
         defaults.set(data, forKey: Self.storageKey)
     }
+
+    /// UI-test hygiene (HERMES_FLEET_NAV_RESET): pinned rows must not leak
+    /// across suite runs on a shared simulator (same contract as the chats
+    /// archive store). Tests launch with the reset flag; production never
+    /// calls this — pins persist across launches by design.
+    public static func resetForUITests() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
+    }
 }
 
 /// Small deterministic test double for conversation pin persistence.

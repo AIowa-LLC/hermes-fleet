@@ -134,6 +134,26 @@ enum UITabNavigation {
         return drawer
     }
 
+    /// ADR-0008: the ✕ close control is retired. The deterministic suite
+    /// dismissal is the scrim (a real button in the AX tree); swipe and
+    /// destination-select dismissals are exercised by U3's dedicated test.
+    @discardableResult
+    static func closeDrawer(_ app: XCUIApplication, timeout: TimeInterval = 10) -> Bool {
+        let scrim = app.buttons["fleet.drawer.scrim"].firstMatch
+        XCTAssertTrue(scrim.waitForExistence(timeout: timeout), "the drawer scrim must be present")
+        // The drawer covers the scrim's center on every device — tap the
+        // visible strip at the trailing screen edge instead.
+        scrim.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let drawer = app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer").firstMatch
+        var dismissed = false
+        for _ in 0..<20 where !dismissed {
+            if !drawer.exists { dismissed = true } else { usleep(250_000) }
+        }
+        XCTAssertTrue(dismissed, "the drawer must dismiss after a scrim tap")
+        return dismissed
+    }
+
     /// Open a tab and verify its ROOT screen is showing.
     ///
     /// Build 43 retention contract: tabs keep their pushed stacks across

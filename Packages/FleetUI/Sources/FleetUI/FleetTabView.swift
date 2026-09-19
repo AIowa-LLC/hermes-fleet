@@ -63,6 +63,8 @@ public struct FleetTabView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawerPresented = false
+    /// ADR-0008: live left-swipe offset while the drawer is presented.
+    @State private var drawerDrag: CGFloat = 0
     @State private var visitedDestinations: Set<FleetTab> = []
 
     public init(environment: AppEnvironment, lockController: AppLockController) {
@@ -133,6 +135,8 @@ public struct FleetTabView: View {
             // UI-test hygiene: NAV_RESET also clears persisted explicit
             // profile selections so the §8 chooser deterministically renders
             // (a stored choice would otherwise skip straight into the pane).
+            // Pinned conversations clear EARLIER — at AppEnvironment.load():
+            // they hydrate eagerly, before this block runs (ConversationPinning).
             if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
                 GatewayResourceView.resetStoredSelections()
                 FleetChatsArchiveStore.resetForUITests()
@@ -188,7 +192,6 @@ public struct FleetTabView: View {
                         environment: environment,
                         selection: navigation.selection,
                         compact: true,
-                        onClose: { drawerPresented = false },
                         onSearch: { showingCommandCenter = true },
                         onNewChat: {
                             navigation.selection = .chats
@@ -235,6 +238,9 @@ public struct FleetTabView: View {
                     .frame(width: min(340, geometry.size.width * 0.78))
                     .frame(maxHeight: .infinity)
                     .background(theme.background)
+                    .offset(x: drawerDrag)
+                    .simultaneousGesture(
+                        drawerSwipeGesture(width: min(340, geometry.size.width * 0.78)))
                     .transition(reduceMotion ? .identity : .move(edge: .leading))
                     .zIndex(2)
                 }
@@ -248,6 +254,34 @@ public struct FleetTabView: View {
                 navigation.open(screen)
             }, selectTab: { navigation.selection = $0 })
         }
+    }
+
+    /// ADR-0008 (Codex parity): interactive left-swipe dismissal. The
+    /// drawer follows a horizontal drag, springs back under threshold, and
+    /// dismisses past 25% of its width (or a decisive flick). Reduce Motion
+    /// skips the live follow — the threshold still dismisses.
+    private func drawerSwipeGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { value in
+                guard !reduceMotion else { return }
+                let t = value.translation
+                // Axis lock: horizontal-dominant drags only — a mostly
+                // vertical drag belongs to the drawer's ScrollView.
+                guard abs(t.width) > abs(t.height) else { return }
+                drawerDrag = min(0, t.width)
+            }
+            .onEnded { value in
+                let threshold = max(80, width * 0.25)
+                let flicksAway = value.predictedEndTranslation.width < -160
+                if value.translation.width < -threshold || flicksAway {
+                    drawerDrag = 0
+                    drawerPresented = false
+                } else {
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                        drawerDrag = 0
+                    }
+                }
+            }
     }
 
     private var drawerAction: (@MainActor () -> Void)? {

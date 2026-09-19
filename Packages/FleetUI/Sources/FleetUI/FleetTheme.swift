@@ -25,6 +25,10 @@ public enum FleetColors {
     public static let interactiveHighContrastLight: UInt32 = 0x422093
     public static let interactiveHighContrastDark: UInt32 = 0xD5C7FF
 
+    /// Drawer compose pill (ADR-0008 round-3 Codex parity): FIXED deep
+    /// Fleet violet in both appearances — white content on it is 7.2:1.
+    public static let composeFill: UInt32 = 0x5B35D5
+
     // MARK: - Status (SPEC §14 token table)
 
     public static let onlineLight: UInt32 = 0x176B46
@@ -138,6 +142,12 @@ public enum FleetTheme {
     /// so it adapts natively; never translucent glass behind body content.
     public static let surfaceElevated: Color = Color(uiColor: .tertiarySystemBackground)
 
+    /// Neutral drawer fill (ADR-0008 round-3): selected navigation rows and
+    /// the drawer's circular controls. Explicit per-appearance values — the
+    /// system tertiary background is invisible on the near-white canvas in
+    /// light mode (round-3 QA catch: no visible selection on #F8F9FC).
+    public static let neutralFill: Color = adaptive(dark: 0x2C2C2E, light: 0xE4E4E9)
+
     /// Contrast-aware card surface. Increase Contrast lifts to the opaque
     /// system background; this seam keeps that behavior testable.
     public static let surfaceIncreased: Color = surface
@@ -161,16 +171,28 @@ public enum FleetTheme {
 
     // MARK: - Interactive (fixed Fleet violet)
 
-    /// Links, selected controls, and the primary action tint. FOS-7 (SPEC
+    /// Links, controls, badges, and the primary action tint. FOS-7 (SPEC
     /// §14): one fixed Fleet violet — the V7.5 accent picker no longer
     /// applies. The stored pick is preserved untouched for rollback.
     /// Increase Contrast resolves to the stronger silhouette variants.
+    /// Navigation selection uses the neutral elevated surface (ADR-0008).
     public static let accent: Color = adaptiveHighContrast(
         dark: FleetColors.interactiveDark,
         light: FleetColors.interactiveLight,
         highContrastDark: FleetColors.interactiveHighContrastDark,
         highContrastLight: FleetColors.interactiveHighContrastLight
     )
+
+    /// Drawer compose pill (ADR-0008): FIXED deep violet #5B35D5 in BOTH
+    /// appearances — the one filled affordance that keeps white content in
+    /// dark mode (white-on-#5B35D5 = 7.2:1; §14 contrast-note exception).
+    public static let composeFill: Color = {
+        #if canImport(UIKit)
+        return Color(uiColor: UIColor { _ in Self.rgb(FleetColors.composeFill) })
+        #else
+        return Color(red: 0x5B / 255.0, green: 0x35 / 255.0, blue: 0xD5 / 255.0)
+        #endif
+    }()
 
     // MARK: - Status (semantic, SPEC §14 table)
 

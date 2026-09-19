@@ -8,7 +8,6 @@ struct FleetNavigationDrawer: View {
     let environment: AppEnvironment
     let selection: FleetTab
     let compact: Bool
-    let onClose: () -> Void
     let onSearch: () -> Void
     let onNewChat: () -> Void
     let onSelectTab: (FleetTab) -> Void
@@ -87,9 +86,11 @@ struct FleetNavigationDrawer: View {
         }
     }
 
-    /// ChatGPT-parity header: one bold title, circular search, circular
-    /// close (compact only). The wide Search / New Chat pills are gone —
-    /// Search lives here as a circle, New Chat lives in the pinned footer.
+    /// ChatGPT-parity header: one bold title and the circular search
+    /// (ADR-0008: the ✕ close is retired — the drawer dismisses via
+    /// scrim tap, destination select, or a left swipe). The wide
+    /// Search / New Chat pills are gone — Search lives here as a
+    /// circle, the compose pill lives in the pinned footer.
     private var header: some View {
         HStack(spacing: FleetTheme.spacingMd) {
             Text("Hermes Fleet")
@@ -98,10 +99,6 @@ struct FleetNavigationDrawer: View {
             Spacer()
             circleAction("Search", systemImage: "magnifyingglass", action: onSearch,
                          identifier: "fleet.drawer.search")
-            if compact {
-                circleAction("Close", systemImage: "xmark", action: onClose,
-                             identifier: "fleet.drawer.close")
-            }
         }
         .accessibilityFocused($headerFocused)
     }
@@ -113,14 +110,14 @@ struct FleetNavigationDrawer: View {
             ForEach(primaryTabs) { tab in
                 Button { onSelectTab(tab) } label: {
                     Label(tab.label, systemImage: tab.systemImage)
-                        .font(.title3.weight(selection == tab ? .semibold : .regular))
+                        .font(.body.weight(selection == tab ? .semibold : .regular))
                         .imageScale(.large)
-                        .foregroundStyle(selection == tab ? theme.highlight : theme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, FleetTheme.spacingMd)
-                        .padding(.vertical, 13)
+                        .padding(.vertical, 12)
                         .background(
-                            selection == tab ? theme.highlight.opacity(0.14) : .clear,
+                            selection == tab ? FleetTheme.neutralFill : .clear,
                             in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
                         )
                 }
@@ -134,14 +131,14 @@ struct FleetNavigationDrawer: View {
             // architecture, pins, recents and nav-restore stay untouched.
             Button { onOpenScreen(.artifacts) } label: {
                 Label("Artifacts", systemImage: "photo.on.rectangle")
-                    .font(.title3.weight(artifactsActive ? .semibold : .regular))
+                    .font(.body.weight(artifactsActive ? .semibold : .regular))
                     .imageScale(.large)
-                    .foregroundStyle(artifactsActive ? theme.highlight : theme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, FleetTheme.spacingMd)
-                    .padding(.vertical, 13)
+                    .padding(.vertical, 12)
                     .background(
-                        artifactsActive ? theme.highlight.opacity(0.14) : .clear,
+                        artifactsActive ? FleetTheme.neutralFill : .clear,
                         in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
                     )
             }
@@ -170,38 +167,40 @@ struct FleetNavigationDrawer: View {
         }
     }
 
-    /// ChatGPT-parity pinned footer: the accent compose pill and the
-    /// circular Settings button float at the drawer's bottom edge.
+    /// Codex-parity pinned footer (ADR-0008): the compose pill leads, the
+    /// glass Settings control sits at the drawer's trailing edge.
     /// Identifiers are unchanged (contract stability) — only position moved.
-    /// Pill text uses the canvas color: dark-mode lavender accent carries
-    /// near-black text, light-mode deep violet carries near-white text.
+    /// The pill is the fixed deep Fleet violet with white content in both
+    /// appearances (white-on-#5B35D5 = 7.2:1); the pale dark-mode violet
+    /// stays reserved for tint/status use.
     private var footer: some View {
         HStack(spacing: FleetTheme.spacingMd) {
             Button(action: onNewChat) {
-                Label("New Chat", systemImage: "square.and.pencil")
+                Label("Chat", systemImage: "square.and.pencil")
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(theme.background)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
-                    .background(theme.highlight, in: Capsule())
+                    .background(FleetTheme.composeFill, in: Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("fleet.drawer.new-chat")
+
+            Spacer(minLength: 0)
 
             Button { onSelectTab(.settings) } label: {
                 Image(systemName: FleetTab.settings.systemImage)
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: 40, height: 40)
-                    .background(theme.surfaceElevated, in: Circle())
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
             .accessibilityValue(selection == .settings ? "Selected" : "")
             .accessibilityAddTraits(selection == .settings ? .isSelected : [])
             .accessibilityIdentifier("fleet.drawer.destination.settings")
-
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, FleetTheme.spacingMd)
         .padding(.top, FleetTheme.spacingSm)
@@ -214,7 +213,7 @@ struct FleetNavigationDrawer: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text(title)
-                .font(.title3.weight(.bold))
+                .font(FleetTheme.sectionHeaderFont)
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, FleetTheme.spacingSm)
             content()
@@ -234,7 +233,7 @@ struct FleetNavigationDrawer: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 34, height: 34)
-                .background(theme.surfaceElevated, in: Circle())
+                .background(FleetTheme.neutralFill, in: Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
@@ -303,6 +302,7 @@ struct FleetNavigationDrawer: View {
             }
             Spacer(minLength: 0)
         }
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
         .accessibilityLabel(unavailable ? "\(title), unavailable" : title)
     }

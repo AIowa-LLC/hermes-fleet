@@ -55,7 +55,7 @@ final class B43NavigationEditingUITests: XCTestCase {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
-            app.buttons["fleet.drawer.close"].tap()
+            UITabNavigation.closeDrawer(app)
         } else {
             // iPad: top control hosts the five primaries; Settings in drawer.
             for label in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet"] {
@@ -67,7 +67,7 @@ final class B43NavigationEditingUITests: XCTestCase {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.settings").firstMatch.exists,
                     "Settings must remain reachable in the drawer on iPad")
-                app.buttons["fleet.drawer.close"].tap()
+                UITabNavigation.closeDrawer(app)
             }
         }
         XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),

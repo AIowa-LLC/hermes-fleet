@@ -36,7 +36,7 @@ final class U3TabNavigationUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)
                 .matching(identifier: "fleet.drawer.destination.settings").firstMatch.exists,
                 "Settings must remain reachable in the drawer on iPad")
-            app.buttons["fleet.drawer.close"].tap()
+            UITabNavigation.closeDrawer(app)
         } else {
             let drawer = UITabNavigation.openDrawer(app)
             XCTAssertTrue(drawer.exists, "compact root navigation drawer must render")
@@ -44,7 +44,7 @@ final class U3TabNavigationUITests: XCTestCase {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
-            app.buttons["fleet.drawer.close"].tap()
+            UITabNavigation.closeDrawer(app)
         }
 
         // Build 41: Bots is the initial tab and shows the real roster (the
@@ -191,7 +191,7 @@ final class U3TabNavigationUITests: XCTestCase {
         attachScreenshot(of: app, name: "u3-compact-drawer-accessibility-type")
         XCTAssertTrue(drawer.exists)
         XCTAssertFalse(app.tabBars.firstMatch.exists, "no bottom bar while drawer is open")
-        app.buttons["fleet.drawer.close"].tap()
+        UITabNavigation.closeDrawer(app)
         XCTAssertFalse(app.descendants(matching: .any)["fleet.drawer"].exists,
                        "Close dismisses the compact drawer")
     }
@@ -210,7 +210,7 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["fleet.bot-detail.header"].waitForExistence(timeout: 10))
         UITabNavigation.openDrawer(app)
         XCTAssertTrue(app.descendants(matching: .any)["fleet.drawer.destination.chats"].exists)
-        app.buttons["fleet.drawer.close"].tap()
+        UITabNavigation.closeDrawer(app)
 
         // Same-tab drawer reselection pops the Bots stack to its roster root.
         UITabNavigation.openDrawer(app)
@@ -313,6 +313,40 @@ final class U3TabNavigationUITests: XCTestCase {
             XCTAssertFalse(app.tabBars.firstMatch.exists)
         }
         attachScreenshot(of: app, name: "u3-compact-roots-no-bottom-bar")
+    }
+
+    /// ADR-0008 (round-3 Codex parity): the ✕ close is retired — an
+    /// interactive left swipe on the drawer dismisses it, and the scrim
+    /// remains the deterministic dismissal control.
+    func testDrawerSwipeLeftDismisses() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        // Populate the drawer's Recents before capturing evidence: sessions
+        // hydrate when the Chats root loads (a cold launch shows them empty).
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 15))
+        usleep(1_500_000)
+
+        let drawer = UITabNavigation.openDrawer(app)
+        XCTAssertTrue(drawer.exists, "drawer opens")
+        // Retired control: the strict-parity header is search-only.
+        XCTAssertFalse(app.buttons["fleet.drawer.close"].exists,
+                       "the close button is retired (ADR-0008)")
+        XCTAssertTrue(app.buttons["fleet.drawer.search"].exists, "search stays")
+        attachScreenshot(of: app, name: "u3-drawer-r3-open")
+
+        drawer.swipeLeft()
+        var dismissed = false
+        for _ in 0..<20 where !dismissed {
+            if !app.descendants(matching: .any)["fleet.drawer"].exists { dismissed = true } else { usleep(250_000) }
+        }
+        XCTAssertTrue(dismissed, "swipe-left must dismiss the drawer")
+
+        // Re-open works after a gesture dismissal, and the scrim closes it.
+        _ = UITabNavigation.openDrawer(app)
+        XCTAssertTrue(UITabNavigation.closeDrawer(app), "scrim dismissal still works")
     }
 
     // MARK: - Tab helpers (verified switch, one retry on a dropped tap)
