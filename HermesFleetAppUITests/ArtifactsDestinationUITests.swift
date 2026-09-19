@@ -5,7 +5,7 @@ import XCTest
 /// observed artifacts with their source conversation).
 ///
 /// Proves:
-///   1. the drawer's Navigate section carries Artifacts while pins / recents /
+///   1. the drawer carries Artifacts while pins / recents /
 ///      Search / New Chat / Settings stay intact;
 ///   2. the destination lists observed media with provenance, and a row opens
 ///      the preview with the live image + sharing;
@@ -86,14 +86,17 @@ final class ArtifactsDestinationUITests: XCTestCase {
         }
         XCTAssertTrue(
             firstMatch(app, "fleet.drawer.pinned.empty").exists
-            || app.staticTexts["PINNED"].exists
+            || app.staticTexts["Pinned"].exists
             || app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'fleet.drawer.pin.'")).count > 0,
             "the Pinned section must survive the drawer change")
         XCTAssertTrue(
             firstMatch(app, "fleet.drawer.recent.empty").exists
-            || app.staticTexts["RECENTS"].exists,
+            || app.staticTexts["Recents"].exists,
             "the Recent chats section must survive the drawer change")
-        XCTAssertTrue(app.staticTexts["NAVIGATE"].exists, "the Navigate section must remain")
+        XCTAssertFalse(app.staticTexts["NAVIGATE"].exists,
+                       "the Navigate header is gone by design (ChatGPT-parity drawer)")
+        XCTAssertTrue(firstMatch(app, "fleet.drawer.destination.bots").exists,
+                      "primary destinations render directly under the header")
         app.buttons["fleet.drawer.close"].tap()
     }
 

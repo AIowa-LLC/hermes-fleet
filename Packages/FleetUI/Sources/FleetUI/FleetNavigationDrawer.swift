@@ -62,9 +62,6 @@ struct FleetNavigationDrawer: View {
                 primarySection
                 pinnedSection
                 recentSection
-                // Drawer polish: no hairline before Settings — the VStack's
-                // section spacing already separates them cleanly.
-                settingsRow
             }
             .padding(.horizontal, FleetTheme.spacingMd)
             .padding(.top, FleetTheme.spacingLg)
@@ -79,44 +76,40 @@ struct FleetNavigationDrawer: View {
             guard compact else { return }
             if !reduceMotion { headerFocused = true }
         }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            HStack(spacing: FleetTheme.spacingSm) {
-                Image("FleetWingMark", bundle: .module)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 34, height: 34)
-                    .accessibilityLabel("Hermes Fleet")
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Hermes Fleet")
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(theme.textPrimary)
-                    Text("Your agents. Within reach.")
-                        .font(.caption)
-                        .foregroundStyle(theme.textSecondary)
-                }
-                Spacer()
-                if compact {
-                    Button("Close", systemImage: "xmark") { onClose() }
-                        .labelStyle(.iconOnly)
-                        .accessibilityIdentifier("fleet.drawer.close")
-                }
-            }
-            .accessibilityFocused($headerFocused)
-
-            HStack(spacing: FleetTheme.spacingSm) {
-                drawerAction("Search", systemImage: "magnifyingglass", action: onSearch,
-                             identifier: "fleet.drawer.search")
-                drawerAction("New Chat", systemImage: "square.and.pencil", action: onNewChat,
-                             identifier: "fleet.drawer.new-chat")
-            }
+        // ChatGPT parity: the compose affordance and Settings float in a
+        // pinned footer — always reachable regardless of scroll position.
+        // AX RULE: the surface id attaches BEFORE this inset — a container
+        // identifier applied after floating chrome wraps it and swallows
+        // every descendant id (measured: footer buttons vanished from the
+        // AX tree while ScrollView rows stayed visible).
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            footer
         }
     }
 
+    /// ChatGPT-parity header: one bold title, circular search, circular
+    /// close (compact only). The wide Search / New Chat pills are gone —
+    /// Search lives here as a circle, New Chat lives in the pinned footer.
+    private var header: some View {
+        HStack(spacing: FleetTheme.spacingMd) {
+            Text("Hermes Fleet")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(theme.textPrimary)
+            Spacer()
+            circleAction("Search", systemImage: "magnifyingglass", action: onSearch,
+                         identifier: "fleet.drawer.search")
+            if compact {
+                circleAction("Close", systemImage: "xmark", action: onClose,
+                             identifier: "fleet.drawer.close")
+            }
+        }
+        .accessibilityFocused($headerFocused)
+    }
+
+    /// ChatGPT parity: primary destinations render directly under the
+    /// header — no section wrapper.
     private var primarySection: some View {
-        drawerSection("Navigate") {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             ForEach(primaryTabs) { tab in
                 Button { onSelectTab(tab) } label: {
                     Label(tab.label, systemImage: tab.systemImage)
@@ -181,23 +174,43 @@ struct FleetNavigationDrawer: View {
         }
     }
 
-    private var settingsRow: some View {
-        Button { onSelectTab(.settings) } label: {
-            Label("Settings", systemImage: FleetTab.settings.systemImage)
-                .font(.body.weight(selection == .settings ? .semibold : .regular))
-                .foregroundStyle(selection == .settings ? theme.highlight : theme.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, FleetTheme.spacingMd)
-                .padding(.vertical, 11)
-                .background(
-                    selection == .settings ? theme.highlight.opacity(0.14) : .clear,
-                    in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                )
+    /// ChatGPT-parity pinned footer: the accent compose pill and the
+    /// circular Settings button float at the drawer's bottom edge.
+    /// Identifiers are unchanged (contract stability) — only position moved.
+    /// Pill text uses the canvas color: dark-mode lavender accent carries
+    /// near-black text, light-mode deep violet carries near-white text.
+    private var footer: some View {
+        HStack(spacing: FleetTheme.spacingMd) {
+            Button(action: onNewChat) {
+                Label("New Chat", systemImage: "square.and.pencil")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.background)
+                    .padding(.horizontal, FleetTheme.spacingMd)
+                    .padding(.vertical, FleetTheme.spacingSm + 4)
+                    .background(theme.highlight, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("fleet.drawer.new-chat")
+
+            Button { onSelectTab(.settings) } label: {
+                Image(systemName: FleetTab.settings.systemImage)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 34, height: 34)
+                    .background(theme.surfaceElevated, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+            .accessibilityValue(selection == .settings ? "Selected" : "")
+            .accessibilityAddTraits(selection == .settings ? .isSelected : [])
+            .accessibilityIdentifier("fleet.drawer.destination.settings")
+
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .accessibilityValue(selection == .settings ? "Selected" : "")
-        .accessibilityAddTraits(selection == .settings ? .isSelected : [])
-        .accessibilityIdentifier("fleet.drawer.destination.settings")
+        .padding(.horizontal, FleetTheme.spacingMd)
+        .padding(.top, FleetTheme.spacingSm)
+        .padding(.bottom, FleetTheme.spacingSm)
+        .background(theme.background)
     }
 
     private func drawerSection<Content: View>(
@@ -205,30 +218,31 @@ struct FleetNavigationDrawer: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-            Text(title.uppercased())
+            Text(title)
                 .font(FleetTheme.sectionHeaderFont)
-                .tracking(0.8)
-                .foregroundStyle(theme.textSecondary)
+                .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, FleetTheme.spacingSm)
             content()
         }
     }
 
-    private func drawerAction(
+    /// Circular header action (ChatGPT parity: search/close are circles,
+    /// not wide pills).
+    private func circleAction(
         _ title: String,
         systemImage: String,
         action: @escaping () -> Void,
         identifier: String
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, FleetTheme.spacingSm)
-                .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+            Image(systemName: systemImage)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(theme.textPrimary)
+                .frame(width: 34, height: 34)
+                .background(theme.surfaceElevated, in: Circle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(theme.textPrimary)
+        .accessibilityLabel(title)
         .accessibilityIdentifier(identifier)
     }
 
@@ -295,12 +309,11 @@ struct FleetNavigationDrawer: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(unavailable ? theme.textSecondary : theme.textPrimary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(unavailable ? "Unavailable · \(subtitle)" : subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if unavailable {
+                    Text("Unavailable")
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                }
             }
             Spacer(minLength: 0)
         }

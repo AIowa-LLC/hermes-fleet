@@ -130,6 +130,10 @@ public enum FleetTheme {
     /// Black in both appearances: it darkens content, never tints it.
     public static let scrim: Color = Color.black.opacity(0.32)
 
+    /// Drawer scrim — the navigation drawer floats OVER live content and
+    /// needs a deeper veil than sheets (ChatGPT-parity drawer pass).
+    public static let drawerScrim: Color = Color.black.opacity(0.55)
+
     /// Elevated inline surface (chips, active-now capsules). System tertiary
     /// so it adapts natively; never translucent glass behind body content.
     public static let surfaceElevated: Color = Color(uiColor: .tertiarySystemBackground)

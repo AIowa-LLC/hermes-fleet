@@ -176,7 +176,7 @@ public struct FleetTabView: View {
                     visitedDestinations.formUnion([old, new])
                 }
                 if drawerPresented {
-                    FleetTheme.scrim
+                    FleetTheme.drawerScrim
                         .ignoresSafeArea()
                         .contentShape(Rectangle())
                         .onTapGesture { drawerPresented = false }
@@ -232,7 +232,7 @@ public struct FleetTabView: View {
                         artifactsActive: navigation.selection == .fleet
                             && navigation.paths[.fleet]?.last == .artifacts
                     )
-                    .frame(width: min(360, geometry.size.width * 0.88))
+                    .frame(width: min(340, geometry.size.width * 0.78))
                     .frame(maxHeight: .infinity)
                     .background(theme.background)
                     .transition(reduceMotion ? .identity : .move(edge: .leading))
