@@ -53,9 +53,8 @@ final class ArtifactsDestinationUITests: XCTestCase {
             XCTAssertTrue(firstMatch(app, "fleet.artifacts").waitForExistence(timeout: 10),
                           "the Artifacts destination must open from the drawer")
         } else {
-            let search = app.buttons["fleet.command-center.open"]
-            XCTAssertTrue(search.waitForExistence(timeout: 10))
-            search.tap()
+            // Dogfood r4: the drawer's search circle is the entry.
+            UITabNavigation.openCommandCenter(app)
             let goto = firstMatch(app, "fleet.command-center.goto.artifacts")
             XCTAssertTrue(goto.waitForExistence(timeout: 10), "Command Center must offer Artifacts")
             goto.tap()

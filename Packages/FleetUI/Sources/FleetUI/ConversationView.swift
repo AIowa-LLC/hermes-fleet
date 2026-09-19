@@ -101,6 +101,12 @@ public struct ConversationView: View {
             // destination resolved — the view model's resolved id is the
             // exact session (resumed or created), never a title guess.
             if let resolved = viewModel?.resolvedSessionID {
+                // Dogfood r4 (decision 1): opening marks read. Use the
+                // LISTED session's lastActive when this entry came from a
+                // list read; a brand-new session has nothing unread yet.
+                if let listed = environment.sessionsByRoute[route]?.first(where: { $0.id == resolved }) {
+                    environment.markConversationRead(route: route, sessionID: resolved, lastActive: listed.lastActive)
+                }
                 let gatewayLabel = environment.gateway(for: route.gatewayID)?.displayName
                     ?? route.gatewayID.rawValue
                 environment.recordConversationOpen(

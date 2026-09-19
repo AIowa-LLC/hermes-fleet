@@ -71,6 +71,8 @@ UI_CLASSES=(
   CronTab
   # ADR-0011 (Settings restructure + About tab): new deterministic suite.
   FleetAbout
+  # Dogfood r4 (unread dots + drawer-only search + chrome ink): new suite.
+  FleetUnreadBadge
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They

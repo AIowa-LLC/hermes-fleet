@@ -88,8 +88,9 @@ final class FOS3FourRootShellUITests: XCTestCase {
         // tab; a second presentation would compete with it).
         XCTAssertFalse(app.buttons["fleet.settings.open"].exists,
                        "the Fleet root must NOT expose the retired Settings gear")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "the Fleet root must expose trailing Command Center")
+        // Dogfood r4: search is drawer-only — the toolbar button is retired.
+        XCTAssertFalse(app.buttons["fleet.command-center.open"].exists,
+                       "the Fleet root must NOT expose the retired toolbar search button")
     }
 
     func testChatsBotsToolbarActions() throws {
@@ -100,16 +101,16 @@ final class FOS3FourRootShellUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.chats.new"].exists,
                       "Chats must expose its Compose entry")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "Chats must expose Command Center")
+        XCTAssertFalse(app.buttons["fleet.command-center.open"].exists,
+                       "Chats must NOT expose the retired toolbar search button")
 
         // Bots: Create/organize menu + Command Center.
         UITabNavigation.selectTab(app, label: "Bots")
         XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.roster.manage"].waitForExistence(timeout: 10),
                       "Bots must expose its Create/organize menu")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "Bots must expose Command Center")
+        XCTAssertFalse(app.buttons["fleet.command-center.open"].exists,
+                       "Bots must NOT expose the retired toolbar search button")
     }
 
     /// Build 43: the Gateways registry cockpit keeps its Add toolbar once
@@ -177,8 +178,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
         UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
         // Direct gateway-object result: the scripted Workstation renders as
         // a Gateway row (new in FOS-3). Roster/conversation sections sit
@@ -208,8 +208,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
         UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
         let botRow = app.descendants(matching: .any)
             .matching(identifier: "fleet.command-center.row.bot:workstation#default").firstMatch
@@ -250,8 +249,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
         UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
         // Scope to the sheet's own Go-to row (the tab bar sits BEHIND the
         // presented sheet — a bare "Settings" query is ambiguous).
@@ -284,7 +282,10 @@ final class FOS3FourRootShellUITests: XCTestCase {
         // Open Command Center, then background the app — the documented
         // relock path (AppLockController.handleScenePhase(.background)
         // re-locks an unlocked app). The lock must tear the sheet down.
-        openScreen(app, button: "fleet.command-center.open", navTitle: "Command Center")
+        // Dogfood r4: search is drawer-only — open Command Center through
+        // the drawer's search circle, then verify the relock dismissal.
+        UITabNavigation.openCommandCenter(app)
+        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
 
         // Deactivate the app (home screen) then reactivate — this drives
         // the real scene-phase .background/.active cycle. With the scripted

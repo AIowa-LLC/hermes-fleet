@@ -8,6 +8,10 @@ extension EnvironmentValues {
 /// Also used by the few locally pushed conversation destinations.
 struct FleetDrawerMenu: ToolbarContent {
     @Environment(\.openFleetDrawer) private var openDrawer
+    /// Dogfood r4: the unread aggregate (menu-button badge), supplied by
+    /// the OWNING view (FleetTabView holds the AppEnvironment; there is no
+    /// environment-object injection on this shell).
+    var showsUnreadBadge: Bool = false
 
     var body: some ToolbarContent {
         if let openDrawer {
@@ -26,8 +30,19 @@ struct FleetDrawerMenu: ToolbarContent {
                     .frame(width: 34, height: 34)
                     .background(.ultraThinMaterial, in: Circle())
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                    // Dogfood r4: unread badge (ChatGPT parity) — a small
+                    // accent dot at the glass circle's top-right edge.
+                    if showsUnreadBadge {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+                            .offset(x: 10, y: -10)
+                            .accessibilityLabel("Unread conversations")
+                            .accessibilityIdentifier("fleet.menu.unread-badge")
+                    }
                 }
-                .accessibilityLabel("Menu")
+                .accessibilityLabel(showsUnreadBadge ? "Menu, unread conversations" : "Menu")
                 .accessibilityIdentifier("fleet.drawer.open")
                 .keyboardShortcut("m", modifiers: .command)
             }
@@ -162,6 +177,9 @@ public struct FleetTabView: View {
             if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
                 GatewayResourceView.resetStoredSelections()
                 FleetChatsArchiveStore.resetForUITests()
+                // Dogfood r4: read watermarks are persisted state — reset
+                // them with the same hygiene window (leak = phantom dots).
+                environment.resetUnreadStateForUITests()
             }
             // Build 41: KANBAN_BOARD_RESET (deliberately separate from
             // NAV_RESET — board-selection persistence is product behavior
@@ -363,27 +381,15 @@ public struct FleetTabView: View {
     /// drawer-tap away on every screen.
     @ToolbarContentBuilder
     private var rootShellToolbar: some ToolbarContent {
-        FleetDrawerMenu()
-        ToolbarItem(placement: .topBarTrailing) {
-            // Dogfood r3: chrome icons are NEUTRAL ink. The style must sit
-            // on the Image INSIDE the label — a Button-level style loses to
-            // the root .tint(theme.highlight) on toolbar items (measured on
-            // build 57: button-level .primary still rendered themed).
-            Button {
-                showingCommandCenter = true
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(Color.primary)
-            }
-            .accessibilityLabel("Command Center")
-            .accessibilityIdentifier("fleet.command-center.open")
-            .keyboardShortcut("k", modifiers: .command)
-        }
+        // Dogfood r4 (decisions 4–5): search is DRAWER-ONLY — the trailing
+        // toolbar button (and its ⌘K shortcut) is retired. The drawer's
+        // search circle (fleet.drawer.search) is the one entry.
+        FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions)
     }
 
     @ToolbarContentBuilder
     private var destinationShellToolbar: some ToolbarContent {
-        FleetDrawerMenu()
+        FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions)
     }
 
     @ViewBuilder private func root(_ tab: FleetTab) -> some View {
@@ -398,9 +404,9 @@ public struct FleetTabView: View {
         // sheet). The tab IS the settings destination; its stack stays at
         // the root screen. ADR-0011: the App Lock toggle moved into the
         // Security sub-screen; the root no longer needs the controllers.
-        case .settings: FleetSettingsView(onSelectAbout: {
-            navigation.selection = .about
-        })
+        case .settings: FleetSettingsView(
+            onSelectAbout: { navigation.selection = .about },
+            onOpenGateways: { navigation.open(.gateways) })
         // ADR-0011: About — identity, version, Terms / Privacy / Support.
         case .about: FleetAboutView()
         }

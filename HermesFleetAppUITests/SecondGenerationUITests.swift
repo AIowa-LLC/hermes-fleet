@@ -62,10 +62,8 @@ final class SecondGenerationUITests: XCTestCase {
         // Command Center (global launcher) unchanged — it lives on the
         // Fleet root toolbar (§6).
         UITabNavigation.selectTab(app, label: "Fleet")
-        let commandCenter = app.buttons["fleet.command-center.open"]
-        XCTAssertTrue(commandCenter.waitForExistence(timeout: 10))
-        commandCenter.tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 5))
+        // Dogfood r4: Command Center opens via the DRAWER search circle.
+        UITabNavigation.openCommandCenter(app)
         capture("revamp-command-center")
     }
     /// Control successor: the Gateways tab owns machine operations, and tab

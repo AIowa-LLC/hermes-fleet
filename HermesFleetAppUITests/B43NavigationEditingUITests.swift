@@ -94,8 +94,7 @@ final class B43NavigationEditingUITests: XCTestCase {
         let app = launch()
         UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
         // Scope to the sheet's own Go-to row (the tab bar sits BEHIND the
         // presented sheet — a bare "Settings" query is ambiguous).

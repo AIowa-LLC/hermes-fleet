@@ -272,10 +272,21 @@ struct FleetChatsView: View {
                         // one muted secondary line. No avatars, no previews,
                         // no pin icons — pin/archive/delete live on swipes.
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(theme.textPrimary)
-                                .lineLimit(1)
+                            HStack(spacing: 6) {
+                                Text(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(theme.textPrimary)
+                                    .lineLimit(1)
+                                // Dogfood r4 (decision 7): plain dot, right
+                                // of the title — no count.
+                                if environment.isConversationUnread(route: entry.route, session: entry.session) {
+                                    Circle()
+                                        .fill(Color.blue)
+                                        .frame(width: 8, height: 8)
+                                        .accessibilityLabel("Unread")
+                                        .accessibilityIdentifier("fleet.chats.unread.\(entry.id)")
+                                }
+                            }
                             HStack(spacing: 4) {
                                 if isRetainedDuringOutage(entry) {
                                     Image(systemName: "wifi.slash")

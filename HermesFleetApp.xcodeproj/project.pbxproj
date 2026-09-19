@@ -27,6 +27,7 @@
 		1A1D00EE7582B69FCF421ABA /* MemoryGraphTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D337F869D057A934E90AF5FD /* MemoryGraphTests.swift */; };
 		1B5563751D50E50C7B196921 /* U3TabNavigationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36A4B24E61526D2294992BD2 /* U3TabNavigationUITests.swift */; };
 		1C08552B54A3B45AF72E2E01 /* F4FirstRunGateUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4B15B3C49C6C5FA5F888B9 /* F4FirstRunGateUITests.swift */; };
+		1D7EA3CA3E5566E1FC2F17B5 /* FleetUnreadBadgeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0918AF27FDA4443914DCD67E /* FleetUnreadBadgeUITests.swift */; };
 		1DECF9B55382047514145BE4 /* FOS4TruthfulHomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F68797AD9C57818CDC7085 /* FOS4TruthfulHomeTests.swift */; };
 		1EE8D3F281470F207063727D /* InProcessWebSocketServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4799DB925C4D9935D2DD7D21 /* InProcessWebSocketServer.swift */; };
 		1F1FD7F5ADF544FC0A62D5F9 /* RoomLinkViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3BA69A7CC0AA2466F1FD5E8 /* RoomLinkViewModelTests.swift */; };
@@ -185,6 +186,7 @@
 		0507B28E7DB64CC4AC0DDDF4 /* BotAvatarSourcesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatarSourcesUITests.swift; sourceTree = "<group>"; };
 		068164FABF60AF462ACB6CA2 /* OnboardingPromptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPromptTests.swift; sourceTree = "<group>"; };
 		07655520ABEDB2077F32D167 /* HermesFleetReconnectUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesFleetReconnectUITests.swift; sourceTree = "<group>"; };
+		0918AF27FDA4443914DCD67E /* FleetUnreadBadgeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetUnreadBadgeUITests.swift; sourceTree = "<group>"; };
 		0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H1AppLockUITests.swift; sourceTree = "<group>"; };
 		0A603A8D0B8049916523C335 /* AppLockProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockProviders.swift; sourceTree = "<group>"; };
 		0AF95D840A084BE9C9CAD33C /* RoomLinkMentionsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomLinkMentionsUITests.swift; sourceTree = "<group>"; };
@@ -521,6 +523,7 @@
 				CA4B15B3C49C6C5FA5F888B9 /* F4FirstRunGateUITests.swift */,
 				9AEF3050FC73430C47847963 /* FleetAboutUITests.swift */,
 				B066A503BF426E07D5165863 /* FleetSettingsAccentUITests.swift */,
+				0918AF27FDA4443914DCD67E /* FleetUnreadBadgeUITests.swift */,
 				65CA49DCCE4D28E086A7ABE5 /* FOS2GatewayDetailUITests.swift */,
 				9D049EEAAB53A7AB714E7F2B /* FOS3FourRootShellUITests.swift */,
 				EE4159F90136D3243A7471A8 /* FOS4TruthfulHomeUITests.swift */,
@@ -831,6 +834,7 @@
 				E240413C0BAEE6F045C82516 /* FOS8AccessibilityUITests.swift in Sources */,
 				BC0821D9EFDCF2F5984BEDC1 /* FleetAboutUITests.swift in Sources */,
 				44D3313BD3B75361ECF04043 /* FleetSettingsAccentUITests.swift in Sources */,
+				1D7EA3CA3E5566E1FC2F17B5 /* FleetUnreadBadgeUITests.swift in Sources */,
 				EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */,
 				B1AB16A9F5EB927CD0BADA2C /* H2HealthDashboardUITests.swift in Sources */,
 				53AB0A9DB99780F8669D9A82 /* HermesFleetHappyPathUITests.swift in Sources */,

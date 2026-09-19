@@ -524,7 +524,7 @@ public struct FleetDashboardView: View {
             NavigationLink(value: FleetScreen.gateways) {
                 Label("Manage Gateways", systemImage: "server.rack")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.highlight)
+                    .foregroundStyle(Color.primary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, FleetTheme.spacingSm)
             }

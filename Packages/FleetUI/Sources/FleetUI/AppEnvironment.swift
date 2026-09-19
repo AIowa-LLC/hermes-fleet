@@ -196,6 +196,15 @@ public final class AppEnvironment {
     /// Gateways currently running a connection test (for a Testing… row).
     public private(set) var testingGatewayIDs: Set<GatewayID> = []
 
+    /// Dogfood r4: true when ANY loaded session is unread (menu-button
+    /// badge aggregate). Recomputed on every successful session-list read.
+    public private(set) var anyUnreadSessions = false
+
+    /// Dogfood r4: OBSERVABLE last-read watermarks (key = entry id). Rows
+    /// read THIS dict — a raw UserDefaults read is untracked and would
+    /// never re-render a cleared dot. Persisted mirror: FleetUnreadStore.
+    public private(set) var readWatermarks: [String: Double] = FleetUnreadStore.watermarks()
+
     /// Sessions per bot route, fetched via the read-only `session.list` seam.
     /// Observable so Bot detail re-renders as a fetch resolves.
     public private(set) var sessionsByRoute: [Route: [SessionSummary]] = [:]
@@ -2055,6 +2064,7 @@ public final class AppEnvironment {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionsByRoute[route] = sessions
+            recomputeUnreadAggregate()
             sessionReadErrors[route] = nil
             sessionsObservedAt[route] = Date()
         } catch let error as RosterError {
@@ -2064,6 +2074,39 @@ public final class AppEnvironment {
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         }
+    }
+
+    // MARK: Dogfood r4 — unread watermarks
+
+    /// Decision 1: opening a conversation marks it read. `lastActive` is
+    /// the gateway's CURRENT stamp for the session (server clock — device
+    /// skew can neither fabricate nor mask unread state).
+    public func markConversationRead(route: Route, sessionID: String, lastActive: Double) {
+        guard lastActive > 0 else { return }
+        FleetUnreadStore.markRead(route: route, sessionID: sessionID, lastActive: lastActive)
+        readWatermarks["\(route.id)/\(sessionID)"] = lastActive
+        recomputeUnreadAggregate()
+    }
+
+    public func isConversationUnread(route: Route, session: SessionSummary) -> Bool {
+        guard session.lastActive > 0 else { return false }
+        let mark = readWatermarks["\(route.id)/\(session.id)"] ?? 0
+        return session.lastActive > mark
+    }
+
+    private func recomputeUnreadAggregate() {
+        anyUnreadSessions = sessionsByRoute.contains { route, sessions in
+            sessions.contains { isConversationUnread(route: route, session: $0) }
+        }
+    }
+
+    /// UI-test hygiene (HERMES_FLEET_NAV_RESET): clears BOTH the persisted
+    /// store and the observable mirror (the in-memory dict outlives the
+    /// store reset — a stale dict suppresses dots in later suites).
+    public func resetUnreadStateForUITests() {
+        FleetUnreadStore.resetForUITests()
+        readWatermarks = [:]
+        recomputeUnreadAggregate()
     }
 
     // MARK: Chats session freshness

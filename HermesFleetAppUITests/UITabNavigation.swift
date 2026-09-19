@@ -123,6 +123,19 @@ enum UITabNavigation {
         return destination
     }
 
+    /// Dogfood r4: search/Command Center is DRAWER-ONLY — the toolbar
+    /// button (fleet.command-center.open) is retired. This is the suite
+    /// entry: open the drawer, tap its search circle.
+    static func openCommandCenter(_ app: XCUIApplication, timeout: TimeInterval = 15) {
+        _ = openDrawer(app, timeout: timeout)
+        let search = app.buttons["fleet.drawer.search"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: timeout),
+                      "the drawer must expose the search circle")
+        search.tap()
+        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: timeout),
+                      "the drawer search circle must present Command Center")
+    }
+
     @discardableResult
     static func openDrawer(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
         let menu = app.buttons["fleet.drawer.open"].firstMatch

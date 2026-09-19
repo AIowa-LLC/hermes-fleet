@@ -61,7 +61,7 @@ public struct CronHomeView: View {
             } label: {
                 Image(systemName: "plus")
             }
-            .foregroundStyle(theme.highlight)
+            .foregroundStyle(Color.primary)
             .accessibilityLabel("New cron job")
             .accessibilityIdentifier("cron.new")
         } else {
@@ -74,7 +74,7 @@ public struct CronHomeView: View {
             } label: {
                 Image(systemName: "plus")
             }
-            .foregroundStyle(theme.highlight)
+            .foregroundStyle(Color.primary)
             .accessibilityLabel("New cron job")
             .accessibilityIdentifier("cron.new")
         }

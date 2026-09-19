@@ -157,6 +157,7 @@ public struct FleetRosterView: View {
                     }
                 } label: {
                     Label("Bots options", systemImage: "ellipsis")
+                        .foregroundStyle(Color.primary)
                 }
                 .accessibilityIdentifier("fleet.roster.manage")
             }
@@ -165,6 +166,7 @@ public struct FleetRosterView: View {
                     Task { await environment.refreshRoster() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
+                        .foregroundStyle(Color.primary)
                 }
                 .disabled(environment.isRefreshing)
                 .accessibilityIdentifier("fleet.roster.refresh")

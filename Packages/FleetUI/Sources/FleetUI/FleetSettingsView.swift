@@ -15,6 +15,10 @@ public struct FleetSettingsView: View {
     /// Dogfood round 2 (ADR-0011): the About row selects the About TAB
     /// (the drawer circle is retired — Settings is About's entry point).
     private let onSelectAbout: () -> Void
+    /// Dogfood r4 (decision 6): Manage Gateways is duplicated into Settings
+    /// — routes via open(.gateways), which selects the Fleet tab and pushes
+    /// the registry cockpit (the Command Center routing contract).
+    private let onOpenGateways: () -> Void
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
@@ -22,10 +26,12 @@ public struct FleetSettingsView: View {
 
     public init(appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
                 themeController: FleetThemeController = FleetThemeController.shared,
-                onSelectAbout: @escaping () -> Void = {}) {
+                onSelectAbout: @escaping () -> Void = {},
+                onOpenGateways: @escaping () -> Void = {}) {
         self.appearanceController = appearanceController
         self.themeController = themeController
         self.onSelectAbout = onSelectAbout
+        self.onOpenGateways = onOpenGateways
     }
 
     public var body: some View {
@@ -111,6 +117,16 @@ public struct FleetSettingsView: View {
                         .foregroundStyle(theme.textPrimary)
                 }
                 .accessibilityIdentifier("fleet.settings.security")
+                // Dogfood r4: gateway management duplicated from the Fleet
+                // dashboard into Settings (App settings group).
+                Button {
+                    onOpenGateways()
+                } label: {
+                    Label("Manage Gateways", systemImage: "server.rack")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("fleet.settings.gateways")
                 NavigationLink(value: FleetScreen.settingsData) {
                     Label("Data & Storage", systemImage: "externaldrive")
                         .foregroundStyle(theme.textPrimary)

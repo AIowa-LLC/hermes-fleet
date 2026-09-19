@@ -40,16 +40,18 @@ final class AppCompositionTests: XCTestCase {
                       "the menu glyph must be the two custom capsule bars")
         // The search (Command Center) icon's neutral ink must be INSIDE the
         // label (on the Image); a Button-level style loses to the root tint.
+        // Dogfood r4: search is DRAWER-ONLY. The root toolbar block must NOT
+        // carry the retired button; the drawer hosts the magnifyingglass
+        // circle (fleet.drawer.search) and the menu button carries the
+        // unread badge aggregate.
         let toolbarStart = source.range(of: "private var rootShellToolbar")
         let toolbarEnd = source.range(of: "private var destinationShellToolbar")
         if let s = toolbarStart, let e = toolbarEnd, s.lowerBound < e.lowerBound {
             let block = String(source[s.lowerBound..<e.lowerBound])
-            XCTAssertTrue(block.contains("Image(systemName: \"magnifyingglass\")"),
-                          "the search chrome must use the magnifyingglass image")
-            XCTAssertTrue(block.contains(".foregroundStyle(Color.primary)"),
-                          "the search icon ink must be set on the Image inside the label")
-            XCTAssertFalse(block.contains("Button(\"Command Center\", systemImage:"),
-                          "the titled-button form cannot carry in-label ink — keep the explicit label")
+            XCTAssertFalse(block.contains("fleet.command-center.open"),
+                          "the toolbar search button is retired (drawer-only, r4)")
+            XCTAssertFalse(block.contains("systemName: \"magnifyingglass\""),
+                          "no search glyph may render in the root toolbar")
         } else {
             XCTFail("rootShellToolbar block not found for the chrome guard")
         }

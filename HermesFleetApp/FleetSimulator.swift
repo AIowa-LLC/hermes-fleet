@@ -2302,7 +2302,10 @@ enum ScriptedFleet {
                 SessionSummary(
                     id: "workstation.default.s2", title: "Replay plan review",
                     preview: "Discussing the reconnect/replay design.", startedAt: 1_755_000_000,
-                    messageCount: 24, source: "ios"
+                    // Dogfood r4: lastActive seeds the unread-dot contract
+                    // (0 = unknown = never unread; this row is the
+                    // deterministic dot target in the scripted fleet).
+                    lastActive: 1_755_000_600, messageCount: 24, source: "ios"
                 ),
             ]
         default:
