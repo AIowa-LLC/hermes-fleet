@@ -73,6 +73,8 @@ UI_CLASSES=(
   FleetAbout
   # Dogfood r4 (unread dots + drawer-only search + chrome ink): new suite.
   FleetUnreadBadge
+  # ADR-0012 (launch cache): cached-first cold launch.
+  FleetLaunchCache
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They

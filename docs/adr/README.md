@@ -15,6 +15,7 @@ ADRs document durable architectural choices and important constraints. They are 
 | [0009](0009-compose-pill-theme-coupling-and-white-accent.md) | Compose pill theme coupling and the White (mono) accent | Accepted, implementation pending |
 | [0010](0010-groups-tab.md) | Groups as a first-class tab (separated from Chats) | Accepted, implementation pending |
 | [0011](0011-settings-about-tabs-and-legal-hosting.md) | Settings restructure, About tab, and official legal hosting at hermes-fleet.aiowa.dev | Accepted, implementation pending |
+| [0012](0012-cached-first-instant-launch.md) | Cached-first instant launch (the Fleet launch cache) | Accepted, implementation pending |
 
 ## ADR status language
 

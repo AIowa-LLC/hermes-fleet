@@ -181,6 +181,9 @@ enum FleetServiceGraph {
         // The file-backed SwiftData cache doubles as the health-stats store
         // (H2): same non-secret persistence seam, one store file.
         let cache: any CacheStoring = cacheStore
+        // ADR-0012: the launch cache rides the SAME container (non-secret
+        // posture + file protection) with its own row models.
+        let launchCache: any FleetLaunchCaching = SwiftDataLaunchCacheStore(container: cacheStore.container)
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
@@ -228,7 +231,10 @@ enum FleetServiceGraph {
             },
             gatewaySessionInvalidatorAll: {
                 await FleetServiceGraph.sharedSessionStore.invalidateAll()
-            }
+            },
+            // ADR-0012: SwiftData-backed launch cache (same container as
+            // the cache store — non-secret posture, shared file protection).
+            launchCache: launchCache
         )
     }
 

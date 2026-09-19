@@ -200,6 +200,12 @@ public final class AppEnvironment {
     /// badge aggregate). Recomputed on every successful session-list read.
     public private(set) var anyUnreadSessions = false
 
+    /// ADR-0012: TRUE from cache hydration at launch until the first
+    /// successful LIVE refresh settles — the temporal stale signal (launch
+    /// freshness). Distinct from FOS-5 outage markers: the fleet painted is
+    /// the last-known-good one, and a live refresh is in flight.
+    public private(set) var isViewingCachedFleet = false
+
     /// Dogfood r4: OBSERVABLE last-read watermarks (key = entry id). Rows
     /// read THIS dict — a raw UserDefaults read is untracked and would
     /// never re-render a cleared dot. Persisted mirror: FleetUnreadStore.
@@ -370,6 +376,11 @@ public final class AppEnvironment {
     /// not need the UI re-pair surface and leave these nil.
     private let tlsPinStore: (any TLSPinStoring)?
     private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
+    /// ADR-0012: the launch cache (last-good roster + session lists).
+    /// Defaults to an in-memory store; the composition root injects the
+    /// SwiftData-backed concrete. Structurally non-secret.
+    private let launchCache: any FleetLaunchCaching
+
     private let connectionFactory: FleetConnectionFactory
     /// H2: connection-health accumulator (FleetCore seam; concrete
     /// `GatewayHealthStatsAccumulator` fed by the composition root's transport
@@ -533,7 +544,8 @@ public final class AppEnvironment {
         connectionIntentDefaults: UserDefaults? = nil,
         gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
         gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil,
-        conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore()
+        conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
+        launchCache: (any FleetLaunchCaching)? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -561,6 +573,7 @@ public final class AppEnvironment {
         self.gatewaySessionInvalidator = gatewaySessionInvalidator
         self.gatewaySessionInvalidatorAll = gatewaySessionInvalidatorAll
         self.conversationPinStore = conversationPinStore
+        self.launchCache = launchCache ?? InMemoryLaunchCache()
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -648,6 +661,12 @@ public final class AppEnvironment {
             }
         }
         await reloadGateways()
+        // ADR-0012 (W3): hydrate the observable fleet from the launch cache
+        // BEFORE any network work — cold launch paints the last fleet the
+        // user saw. Registry identity (restored above) owns the gateways;
+        // the cache supplies bots + session lists. Best-effort: a broken
+        // cache must never brick launch (fail-open to today's behavior).
+        await hydrateFromLaunchCache()
         cachedWatermarkCount = (try? await cache.loadWatermarks())?.count ?? 0
         // Drawer Pinned section: local pins load best-effort (a broken store
         // must not brick launch); rows render unavailable until routable.
@@ -655,6 +674,60 @@ public final class AppEnvironment {
         // First-run gate: load() has settled — the registry's emptiness (or
         // not) is now authoritative, so the root shell may leave .loading.
         settleHydrationPhase()
+    }
+
+    // MARK: ADR-0012 — launch cache
+
+    /// W3: paint the fleet from the persisted launch cache. Gateways come
+    /// from the live registry (already restored); bots + session lists come
+    /// from cache; a synthetic snapshot marks hydrated gateways `.loaded`
+    /// so sections render without outage chrome. Entries for gateways no
+    /// longer registered are ignored (orphan pruning at read).
+    private func hydrateFromLaunchCache() async {
+        guard let rosters = try? await launchCache.loadRosterCache(),
+              let lists = try? await launchCache.loadSessionListCache() else { return }
+        let knownIDs = Set(gateways.map(\.id))
+        let usableRosters = rosters.filter { knownIDs.contains($0.gatewayID) }
+        guard !usableRosters.isEmpty || !lists.isEmpty else { return }
+
+        var botsByGateway: [GatewayID: [FleetBot]] = [:]
+        for entry in usableRosters {
+            botsByGateway[entry.gatewayID] = entry.bots.map(FleetLaunchCacheMapper.live(from:))
+        }
+        var roster = FleetRoster(gateways: gateways)
+        for (_, bots) in botsByGateway {
+            for bot in bots { roster.upsertBot(bot) }
+        }
+        let outcomes: [GatewayID: GatewayRosterOutcome] = knownIDs.reduce(into: [:]) { acc, id in
+            acc[id] = .loaded(profileCount: botsByGateway[id]?.count ?? 0)
+        }
+        rosterSnapshot = FleetRosterSnapshot(roster: roster, gatewayOutcomes: outcomes)
+        cachedBotsByGateway = botsByGateway
+        for list in lists where knownIDs.contains(list.route.gatewayID) {
+            sessionsByRoute[list.route] = list.sessions
+        }
+        recomputeUnreadAggregate()
+        isViewingCachedFleet = true
+    }
+
+    /// W4: write-through after a settled refresh — one row per gateway that
+    /// ANSWERED (success replaces; failed gateways keep their last-good
+    /// entry: the persisted FOS-5 ghost).
+    private func writeRosterToLaunchCache(snapshot: FleetRosterSnapshot) async {
+        for gateway in snapshot.roster.allGateways {
+            guard case .loaded = snapshot.outcome(for: gateway.id) else { continue }
+            let bots = snapshot.bots(on: gateway.id)
+            let entry = CachedGatewayRoster(
+                gatewayID: gateway.id,
+                bots: bots.map(FleetLaunchCacheMapper.dto(from:)))
+            try? await launchCache.saveRosterCache(entry)
+        }
+    }
+
+    /// W7/W8b: clears the persisted launch cache + the stale flag.
+    public func resetLaunchCacheForUITests() async {
+        try? await launchCache.clearLaunchCache()
+        isViewingCachedFleet = false
     }
 
     /// Hydrate protected app content exactly once per runtime instance.
@@ -667,8 +740,12 @@ public final class AppEnvironment {
         guard !didHydrateEnvironment else { return }
         didHydrateEnvironment = true
         await load()
-        await refreshRoster()
-        await restoreIntendedConnections()
+        // ADR-0012 (W6): the two launch waves are INDEPENDENT (the registry
+        // gates both; neither gates the other) — run them concurrently so
+        // cold launch pays one round-trip window, not two serial ones.
+        async let rosterWave: Void = refreshRoster()
+        async let connectionWave: Void = restoreIntendedConnections()
+        _ = await (rosterWave, connectionWave)
     }
 
     private func reloadGateways() async {
@@ -718,6 +795,10 @@ public final class AppEnvironment {
         rosterSnapshot = snapshot
         rosterObservedAt = Date()
         isRefreshing = false
+        // ADR-0012 (W4): a settled LIVE refresh owns the truth — write the
+        // cache through and clear the launch-stale flag.
+        await writeRosterToLaunchCache(snapshot: snapshot)
+        isViewingCachedFleet = false
         // FOS-4 (SPEC §17): settle the per-gateway scheduler bookkeeping —
         // success resets the backoff ladder; a classified failure climbs it.
         for gateway in gateways {
@@ -1469,6 +1550,9 @@ public final class AppEnvironment {
         await gatewaySessionInvalidatorAll?()
         await disconnectAll()
         try await cache.clearCachedData()
+        // ADR-0012 (W7): the launch cache is local disposable data too.
+        try? await launchCache.clearLaunchCache()
+        isViewingCachedFleet = false
         activeConnections.removeAll()
         conversationSessions.removeAll()
         kanbanWatchers.removeAll()
@@ -2067,6 +2151,9 @@ public final class AppEnvironment {
             recomputeUnreadAggregate()
             sessionReadErrors[route] = nil
             sessionsObservedAt[route] = Date()
+            // ADR-0012 (W4): write-through the successful read.
+            try? await launchCache.saveSessionListCache(
+                CachedSessionList(route: route, sessions: sessions))
         } catch let error as RosterError {
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)

@@ -180,6 +180,12 @@ public struct FleetTabView: View {
                 // Dogfood r4: read watermarks are persisted state — reset
                 // them with the same hygiene window (leak = phantom dots).
                 environment.resetUnreadStateForUITests()
+                // ADR-0012 (W8b): the launch cache is persisted state too —
+                // a cached fleet from an earlier suite must not paint in a
+                // hermetic run (unless the suite seeds the fixture knob).
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_LAUNCH_CACHE_FIXTURE"] != "1" {
+                    await environment.resetLaunchCacheForUITests()
+                }
             }
             // Build 41: KANBAN_BOARD_RESET (deliberately separate from
             // NAV_RESET — board-selection persistence is product behavior

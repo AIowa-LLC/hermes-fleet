@@ -232,6 +232,23 @@ struct FleetChatsView: View {
                 }
                 .accessibilityIdentifier("fleet.chats.gateway-filter")
             }
+            // ADR-0012 (W5): launch-stale pill — cached conversations are
+            // painted; the live refresh is running. Compact + inline.
+            if environment.isViewingCachedFleet && environment.isRefreshing {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text("Updating…")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.chats.launch-updating")
+            }
             if !environment.loadingRoutes.isEmpty {
                 if entries.isEmpty && environment.sessionsByRoute.isEmpty {
                     ProgressView("Refreshing conversations…")

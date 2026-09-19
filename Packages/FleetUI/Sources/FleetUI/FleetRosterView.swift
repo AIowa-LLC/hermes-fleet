@@ -117,6 +117,26 @@ public struct FleetRosterView: View {
         }
         .navigationTitle("Bots")
         .accessibilityIdentifier("fleet.roster")
+        // ADR-0012 (W5): cached-fleet freshness — a compact inline pill
+        // while the live refresh runs over a cache-painted fleet. Never
+        // blocks; disappears the moment a live refresh settles.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if environment.isViewingCachedFleet && environment.isRefreshing {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text("Updating…")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.roster.launch-updating")
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {

@@ -20,8 +20,12 @@ import FleetCore
 public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     /// The SwiftData container backing this cache. In-memory in tests /
     /// previews; file-backed in the app with NSFileProtectionComplete +
-    /// backup-exclusion applied to the store file.
-    let container: ModelContainer
+    /// backup-exclusion applied to the store file. Public read-only so the
+    /// composition root can share the container with the ADR-0012 launch
+    /// cache (same non-secret posture + file protection, distinct models).
+    /// `nonisolated` (immutable + Sendable) so the composition root can
+    /// read it without crossing the actor boundary (the `storeURL` pattern).
+    nonisolated public let container: ModelContainer
 
     /// Where the file-backed store lives (nil for in-memory). Used to apply
     /// and verify file-protection attributes. Immutable and Sendable, so it is
