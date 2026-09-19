@@ -69,6 +69,8 @@ UI_CLASSES=(
   CronManagement
   # Cron tab (six-tab shell): all-machines home — sections, inline ops.
   CronTab
+  # ADR-0011 (Settings restructure + About tab): new deterministic suite.
+  FleetAbout
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They

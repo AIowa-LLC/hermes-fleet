@@ -1,94 +1,62 @@
 import Foundation
 import SwiftUI
 
-/// FOS-3 (SPEC §12) — Settings is an app-level SHEET reached from the Fleet
-/// root's leading gearshape and Command Center. First item is useful
-/// configuration, not a brand block. No invented preferences: Security
-/// (App Lock), Appearance (System/Light/Dark — FOS-3), and the always-
-/// reachable Agent Setup Prompt (C2) plus app version. Appearance owns both
-/// the System/Light/Dark choice and the V1 environment-backed theme editor.
+/// ADR-0011 — Settings is a first-class tab (Build 43) restructured into the
+/// ChatGPT anatomy: quick Theme value-pickers at the top, "App settings"
+/// chevron rows pushing sub-screens (`FleetScreen.settingsSecurity` /
+/// `.settingsData` — the Settings stack is typed `[FleetScreen]`, so the
+/// sub-routes are Settings-owned FleetScreen cases), and the always-
+/// reachable Agent Setup Prompt (C2). Version, legal, and support live in
+/// the About tab (`FleetAboutView`). No invented preferences (SPEC §12):
+/// every control maps to implemented behavior.
 public struct FleetSettingsView: View {
-    private let controller: AppLockController
-    private let environment: AppEnvironment?
     private let appearanceController: FleetAppearanceController
     private let themeController: FleetThemeController
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
-    @State private var showingCacheClearConfirmation = false
-    @State private var cacheClearFailed = false
-    @State private var cacheClearError = ""
-    @State private var clearingCache = false
     @Environment(\.fleetTheme) private var theme
 
-    public init(controller: AppLockController,
-                environment: AppEnvironment? = nil,
-                appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
+    public init(appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
                 themeController: FleetThemeController = FleetThemeController.shared) {
-        self.controller = controller
-        self.environment = environment
         self.appearanceController = appearanceController
         self.themeController = themeController
     }
 
     public var body: some View {
         Form {
+            // ADR-0011 W2: Appearance collapses to ONE Menu row (ChatGPT
+            // value-picker anatomy). Same options, same immediate apply
+            // through FleetAppearanceController.shared; the identifier
+            // `fleet.settings.appearance` is KEPT (contract continuity).
             Section {
-                Toggle(isOn: Binding(
-                    get: { controller.isEnabled },
-                    set: { controller.setEnabled($0) }
-                )) {
-                    Label("App Lock", systemImage: "faceid")
-                        .foregroundStyle(theme.textPrimary)
-                }
-                .accessibilityIdentifier("fleet.settings.app-lock.toggle")
-            } header: {
-                Text("Security")
-                    .foregroundStyle(theme.textSecondary)
-            } footer: {
-                Text("Require Face ID (or your device passcode) to unlock "
-                     + "Hermes Fleet when the app opens. Stored gateway "
-                     + "credentials stay protected by the Keychain.")
-                    .foregroundStyle(theme.textSecondary)
-            }
-
-            Section {
-                if environment != nil {
-                    Button("Delete Local Cache", role: .destructive) {
-                        showingCacheClearConfirmation = true
-                    }
-                    .disabled(clearingCache)
-                    .accessibilityIdentifier("fleet.settings.delete-local-cache")
-                }
-            } header: {
-                Text("Local Data")
-                    .foregroundStyle(theme.textSecondary)
-            } footer: {
-                Text("Deletes cached conversations, roster snapshots, health history, and recent destinations. Saved gateways and Keychain credentials are kept.")
-                    .foregroundStyle(theme.textSecondary)
-            }
-
-            // FOS-3 (§12 Appearance): System / Light / Dark, default System.
-            Section {
-                Picker("Appearance", selection: Binding(
-                    get: { appearanceController.selection },
-                    set: { appearanceController.selection = $0 }
-                )) {
+                Menu {
                     ForEach(FleetAppearance.allCases) { appearance in
-                        Text(appearance.label).tag(appearance)
+                        Button {
+                            appearanceController.selection = appearance
+                        } label: {
+                            if appearance == appearanceController.selection {
+                                Label(appearance.label, systemImage: "checkmark")
+                            } else {
+                                Text(appearance.label)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Label("Appearance", systemImage: "circle.lefthalf.filled")
+                            .foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        Text(appearanceController.selection.label)
+                            .foregroundStyle(theme.textSecondary)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
-                .pickerStyle(.inline)
+                .accessibilityLabel("Appearance, \(appearanceController.selection.label)")
                 .accessibilityIdentifier("fleet.settings.appearance")
-            } header: {
-                Text("Appearance")
-                    .foregroundStyle(theme.textSecondary)
-            } footer: {
-                Text("Choose Light or Dark, or follow your device's system setting. Theme colors are edited separately and applied across Fleet together.")
-                    .foregroundStyle(theme.textSecondary)
-            }
 
-            Section {
                 // ChatGPT-style accent picker (dogfood: the full theme
                 // editor is retired from Settings; the picker applies a
                 // curated highlight over Fleet-default colors IMMEDIATELY).
@@ -128,8 +96,23 @@ public struct FleetSettingsView: View {
             } header: {
                 Text("Theme")
                     .foregroundStyle(theme.textSecondary)
-            } footer: {
-                Text("Pick an accent color. It applies immediately.")
+            }
+
+            // ADR-0011 W3/W4: App settings is a chevron group — Security
+            // and Data & Storage push sub-screens on the Settings stack.
+            Section {
+                NavigationLink(value: FleetScreen.settingsSecurity) {
+                    Label("Security", systemImage: "faceid")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .accessibilityIdentifier("fleet.settings.security")
+                NavigationLink(value: FleetScreen.settingsData) {
+                    Label("Data & Storage", systemImage: "externaldrive")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .accessibilityIdentifier("fleet.settings.data")
+            } header: {
+                Text("App settings")
                     .foregroundStyle(theme.textSecondary)
             }
 
@@ -154,32 +137,9 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(theme.textSecondary)
             }
 
-            Section {
-                LabeledContent("Version", value: Self.appVersion)
-                    .accessibilityIdentifier("fleet.settings.version")
-            } footer: {
-                Text("Hermes Fleet — a pocket operations console for your agents.")
-                    .foregroundStyle(theme.textSecondary)
-            }
-
-            Section {
-                Link(destination: Self.privacyPolicyURL) {
-                    Label("Privacy Policy", systemImage: "hand.raised")
-                        .foregroundStyle(theme.textPrimary)
-                }
-                .accessibilityIdentifier("fleet.settings.privacy-policy")
-                Link(destination: Self.supportURL) {
-                    Label("Support", systemImage: "questionmark.circle")
-                        .foregroundStyle(theme.textPrimary)
-                }
-                .accessibilityIdentifier("fleet.settings.support")
-            } header: {
-                Text("Help & Privacy")
-                    .foregroundStyle(theme.textSecondary)
-            } footer: {
-                Text("Hermes Fleet connects directly to gateways you choose. Review the policy before pairing a gateway.")
-                    .foregroundStyle(theme.textSecondary)
-            }
+            // ADR-0011 W8: version + legal + support rows moved to the
+            // About tab (FleetAboutView) — retired ids are pinned by
+            // source guards in the hosted composition tests.
         }
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())
@@ -187,29 +147,6 @@ public struct FleetSettingsView: View {
         // C2: the setup-prompt door — standard sheet presentation.
         .sheet(isPresented: $showingSetupPrompt) {
             SetupPromptSheet()
-        }
-        .confirmationDialog("Delete local cache?", isPresented: $showingCacheClearConfirmation, titleVisibility: .visible) {
-            Button("Delete Cache", role: .destructive) {
-                guard let environment else { return }
-                clearingCache = true
-                Task {
-                    do {
-                        try await environment.clearLocalCache()
-                    } catch {
-                        cacheClearError = "The local cache could not be deleted. Try again after closing any active gateway operation."
-                        cacheClearFailed = true
-                    }
-                    clearingCache = false
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes cached fleet and conversation data from this device. Saved gateways and credentials are not removed.")
-        }
-        .alert("Unable to Delete Cache", isPresented: $cacheClearFailed) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(cacheClearError)
         }
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
@@ -237,21 +174,103 @@ public struct FleetSettingsView: View {
         // backgrounds by construction).
         themeController.apply(accent.palette)
     }
+}
 
-    /// Marketing/build version from the main bundle (no invented values).
-    private static var appVersion: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        if let short, let build { return "\(short) (\(build))" }
-        if let short { return short }
-        return "Unknown"
+/// ADR-0011 W3: the Security sub-screen — the App Lock toggle and its real
+/// biometric/passcode behavior, unchanged from the pre-restructure surface.
+public struct FleetSettingsSecurityView: View {
+    private let controller: AppLockController
+    @Environment(\.fleetTheme) private var theme
+
+    public init(controller: AppLockController) {
+        self.controller = controller
     }
 
-    // These are repository-backed, stable URLs rather than placeholders. The
-    // release owner must still verify that the public policy and support
-    // channel are reachable before submitting to App Store Connect.
-    private static let privacyPolicyURL = URL(string: "https://github.com/AIowa-LLC/hermes-fleet/blob/main/PRIVACY.md")!
-    private static let supportURL = URL(string: "https://github.com/AIowa-LLC/hermes-fleet/issues")!
+    public var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: Binding(
+                    get: { controller.isEnabled },
+                    set: { controller.setEnabled($0) }
+                )) {
+                    Label("App Lock", systemImage: "faceid")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .accessibilityIdentifier("fleet.settings.app-lock.toggle")
+            } footer: {
+                Text("Require Face ID (or your device passcode) to unlock "
+                     + "Hermes Fleet when the app opens. Stored gateway "
+                     + "credentials stay protected by the Keychain.")
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.background.ignoresSafeArea())
+        .tint(theme.highlight)
+        .navigationTitle("Security")
+        .accessibilityIdentifier("fleet.settings.security.screen")
+    }
+}
+
+/// ADR-0011 W4: the Data & Storage sub-screen — the destructive cache-clear
+/// action, its confirmation dialog, and failure alert, unchanged from the
+/// pre-restructure surface.
+public struct FleetSettingsDataView: View {
+    private let environment: AppEnvironment?
+    @State private var showingCacheClearConfirmation = false
+    @State private var cacheClearFailed = false
+    @State private var cacheClearError = ""
+    @State private var clearingCache = false
+    @Environment(\.fleetTheme) private var theme
+
+    public init(environment: AppEnvironment? = nil) {
+        self.environment = environment
+    }
+
+    public var body: some View {
+        Form {
+            Section {
+                if environment != nil {
+                    Button("Delete Local Cache", role: .destructive) {
+                        showingCacheClearConfirmation = true
+                    }
+                    .disabled(clearingCache)
+                    .accessibilityIdentifier("fleet.settings.delete-local-cache")
+                }
+            } footer: {
+                Text("Deletes cached conversations, roster snapshots, health history, and recent destinations. Saved gateways and Keychain credentials are kept.")
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.background.ignoresSafeArea())
+        .tint(theme.highlight)
+        .confirmationDialog("Delete local cache?", isPresented: $showingCacheClearConfirmation, titleVisibility: .visible) {
+            Button("Delete Cache", role: .destructive) {
+                guard let environment else { return }
+                clearingCache = true
+                Task {
+                    do {
+                        try await environment.clearLocalCache()
+                    } catch {
+                        cacheClearError = "The local cache could not be deleted. Try again after closing any active gateway operation."
+                        cacheClearFailed = true
+                    }
+                    clearingCache = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes cached fleet and conversation data from this device. Saved gateways and credentials are not removed.")
+        }
+        .alert("Unable to Delete Cache", isPresented: $cacheClearFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(cacheClearError)
+        }
+        .navigationTitle("Data & Storage")
+        .accessibilityIdentifier("fleet.settings.data.screen")
+    }
 }
 
 /// Local-draft editor for the applied V1 palette. ColorPicker changes only
@@ -483,7 +502,14 @@ public struct FleetThemeEditorView: View {
 #if DEBUG
 #Preview("Settings") {
     NavigationStack {
-        FleetSettingsView(controller: .init(auth: AlwaysSuccessSettingsAuth()))
+        FleetSettingsView()
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Security") {
+    NavigationStack {
+        FleetSettingsSecurityView(controller: .init(auth: AlwaysSuccessSettingsAuth()))
     }
     .preferredColorScheme(.dark)
 }

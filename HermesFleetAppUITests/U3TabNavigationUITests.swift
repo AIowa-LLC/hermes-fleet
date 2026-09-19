@@ -40,7 +40,7 @@ final class U3TabNavigationUITests: XCTestCase {
         } else {
             let drawer = UITabNavigation.openDrawer(app)
             XCTAssertTrue(drawer.exists, "compact root navigation drawer must render")
-            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings", "about"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
@@ -103,9 +103,15 @@ final class U3TabNavigationUITests: XCTestCase {
         app.launch()
 
         openSettingsTab(app)
+        // ADR-0011: the toggle lives in the Security sub-screen.
+        let security = app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch
+        XCTAssertTrue(security.waitForExistence(timeout: 15),
+                      "the Settings root must expose the Security row")
+        security.tap()
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15),
-                      "the Settings sheet must host the App Lock toggle")
+                      "the Security sub-screen must host the App Lock toggle")
         XCTAssertEqual(toggle.value as? String, "1",
                        "App Lock toggle must default to ON in the Settings sheet")
         attachScreenshot(of: app, name: "u3-settings-app-lock")
@@ -183,7 +189,7 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertFalse(app.tabBars.firstMatch.waitForExistence(timeout: 2),
                        "compact iPhone replaces the visible tab bar")
         let drawer = UITabNavigation.openDrawer(app)
-        for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
+        for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings", "about"] {
             XCTAssertTrue(app.descendants(matching: .any)
                 .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists,
                 "drawer exposes \(raw) destination")

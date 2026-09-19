@@ -45,7 +45,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
         } else if app.buttons["fleet.drawer.open"].exists {
             _ = UITabNavigation.openDrawer(app)
-            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings", "about"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
@@ -155,8 +155,14 @@ final class FOS3FourRootShellUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)
             .matching(identifier: "fleet.settings.brand").firstMatch.exists,
             "the brand banner must not render in Settings (FOS-3)")
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10),
-                      "App Lock must lead the Settings tab")
+        // ADR-0011: the root leads with the Theme section; App Lock moved
+        // into the Security sub-screen (pushed, not inline).
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.accent").firstMatch.waitForExistence(timeout: 10),
+            "the Theme section must lead the Settings root")
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Security chevron row must render on the Settings root")
 
         // The tab identifier is stable for programmatic navigation.
         XCTAssertTrue(app.descendants(matching: .any)
@@ -213,7 +219,20 @@ final class FOS3FourRootShellUITests: XCTestCase {
         }
         XCTAssertTrue(botRow.waitForExistence(timeout: 10),
                       "Command Center must list roster bots with source-qualified ids")
-        botRow.tap()
+        // ADR-0011: the Go-to section gained the About row, shifting result
+        // rows down — the workstation row sits UNDER the sheet's floating
+        // search bar, where AX reports it hittable but the synthesized tap
+        // lands on the bar. A SHORT controlled drag (not a momentum swipe —
+        // that overshoots the row out of the lazy AX tree) shifts the list
+        // just clear of the bar; re-query, then tap the row center.
+        let listCoord = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+        let destCoord = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+        listCoord.press(forDuration: 0.05, thenDragTo: destCoord)
+        let clearedRow = app.descendants(matching: .any)
+            .matching(identifier: "fleet.command-center.row.bot:workstation#default").firstMatch
+        XCTAssertTrue(clearedRow.waitForExistence(timeout: 5),
+                      "the bot row must survive the controlled drag")
+        clearedRow.tap()
 
         UITabNavigation.assertSelected(app, label: "Bots", navigationTitle: "Bots")
         XCTAssertTrue(
@@ -242,8 +261,9 @@ final class FOS3FourRootShellUITests: XCTestCase {
         settings.tap()
 
         UITabNavigation.assertSelected(app, label: "Settings", navigationTitle: "Settings")
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10),
-                      "the Settings tab must host the App Lock configuration")
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Settings root must expose the Security row (ADR-0011: App Lock lives in its sub-screen)")
     }
 
     // MARK: 5. Lock dismissal (card acceptance)

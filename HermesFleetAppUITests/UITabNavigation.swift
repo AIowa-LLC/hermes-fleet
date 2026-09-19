@@ -37,7 +37,7 @@ enum UITabNavigation {
                           "\(label) destination must be selected")
         } else {
             let tabRaw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
-                        "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
+                        "Fleet": "fleet", "Settings": "settings", "About": "about"][label] ?? label.lowercased()
             let stack = app.descendants(matching: .any)["fleet.tab.\(tabRaw)"]
             if stack.waitForExistence(timeout: 2) {
                 XCTAssertTrue(stack.exists,
@@ -101,7 +101,7 @@ enum UITabNavigation {
         }
         menu.tap()
         let raw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
-                   "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
+                   "Fleet": "fleet", "Settings": "settings", "About": "about"][label] ?? label.lowercased()
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
         XCTAssertTrue(destination.waitForExistence(timeout: timeout), "drawer must expose \(label)")
@@ -217,7 +217,7 @@ enum UITabNavigation {
         guard menu.waitForExistence(timeout: 3) else { return }
         menu.tap()
         let raw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
-                   "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
+                   "Fleet": "fleet", "Settings": "settings", "About": "about"][label] ?? label.lowercased()
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
         guard destination.waitForExistence(timeout: timeout) else { return }
@@ -272,9 +272,36 @@ enum UITabNavigation {
     }
 
     /// Build 43: Settings is a first-class tab (was the Fleet gear sheet).
+    /// ADR-0011: the App Lock toggle moved into the Security sub-screen —
+    /// the root contract is the Theme section, not the toggle.
     static func openSettings(_ app: XCUIApplication) {
         _ = openTab(app, label: "Settings", expectedBar: "Settings", timeout: 15)
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(identifier: "fleet.settings.accent")
+                .firstMatch.waitForExistence(timeout: 10),
+            "the Settings root must render the Theme section (accent row)")
+    }
+
+    /// ADR-0011 W3: open Settings and push into the Security sub-screen
+    /// (the App Lock toggle lives there now).
+    static func openSettingsSecurity(_ app: XCUIApplication) {
+        openSettings(app)
+        let row = app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 10),
+                      "Settings must expose the Security row")
+        if !row.isHittable { app.swipeUp() }
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Security"].waitForExistence(timeout: 10),
+                      "the Security row must push its sub-screen")
+    }
+
+    /// ADR-0011: open the About tab (identity / version / legal / support).
+    static func openAbout(_ app: XCUIApplication) {
+        _ = openTab(app, label: "About", expectedBar: "About", timeout: 15)
     }
     static func openActivity(_ app: XCUIApplication) {
         // FOS-3: Control's cross-fleet diagnostics links are owned by the

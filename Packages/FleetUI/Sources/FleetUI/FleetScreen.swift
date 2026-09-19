@@ -28,6 +28,10 @@ public enum FleetScreen: Hashable, Sendable, Codable {
     /// media with source conversation + gateway). Lives on the Fleet stack;
     /// reached from the navigation drawer.
     case artifacts
+    /// ADR-0011 W3: Settings → Security sub-screen (App Lock).
+    case settingsSecurity
+    /// ADR-0011 W4: Settings → Data & Storage sub-screen (cache clear).
+    case settingsData
 
     public var owner: FleetTab {
         switch self {
@@ -44,6 +48,9 @@ public enum FleetScreen: Hashable, Sendable, Codable {
         case .gateways, .gatewayDetail, .gatewayConnection, .gatewayHealth,
              .health, .cron, .skills, .memoryGraph, .projects, .artifacts:
             .fleet
+        // ADR-0011: the Settings sub-screens own to the Settings tab.
+        case .settingsSecurity, .settingsData:
+            .settings
         }
     }
 
@@ -177,6 +184,7 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
         case "bots", "roster": .bots
         case "kanban", "board": .kanban
         case "settings": .settings
+        case "about": .about
         // Build 43: the Gateways tab is retired; every legacy gateway
         // destination (control / gateways / workspace / projects) lands on
         // Fleet, which now owns the gateway-management experience.

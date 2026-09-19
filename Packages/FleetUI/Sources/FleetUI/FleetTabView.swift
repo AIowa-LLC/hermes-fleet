@@ -25,11 +25,13 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
     /// the normal launch tab; Kanban is a first-class owning surface; the
     /// Gateways tab is retired (gateway management lives under Fleet).
     /// ADR-0010: Groups is a first-class tab directly under Chats.
-    case bots, chats, groups, cron, kanban, fleet, settings
+    /// ADR-0011: About is a first-class tab directly after Settings
+    /// (identity, version, legal, support).
+    case bots, chats, groups, cron, kanban, fleet, settings, about
     public var id: String { rawValue }
-    /// Drawer: the four primary destinations render in the Navigate section;
-    /// Settings renders as the drawer's dedicated last row.
-    public var isPrimary: Bool { self != .settings }
+    /// Drawer: the primary destinations render in the Navigate section;
+    /// Settings and About render as the drawer's dedicated trailing rows.
+    public var isPrimary: Bool { self != .settings && self != .about }
     public var label: String {
         switch self {
         case .bots: "Bots"
@@ -39,6 +41,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         case .kanban: "Kanban"
         case .fleet: "Fleet"
         case .settings: "Settings"
+        case .about: "About"
         }
     }
     public var systemImage: String {
@@ -50,6 +53,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         case .kanban: "rectangle.split.3x1"
         case .fleet: "square.grid.2x2"
         case .settings: "gearshape"
+        case .about: "info.circle"
         }
     }
 }
@@ -367,8 +371,11 @@ public struct FleetTabView: View {
         case .cron: CronHomeView(environment: environment)
         // Build 43: Settings is a first-class tab (was a Fleet-toolbar
         // sheet). The tab IS the settings destination; its stack stays at
-        // the root screen.
-        case .settings: FleetSettingsView(controller: lockController, environment: environment)
+        // the root screen. ADR-0011: the App Lock toggle moved into the
+        // Security sub-screen; the root no longer needs the controllers.
+        case .settings: FleetSettingsView()
+        // ADR-0011: About — identity, version, Terms / Privacy / Support.
+        case .about: FleetAboutView()
         }
     }
 
@@ -408,6 +415,12 @@ public struct FleetTabView: View {
             GatewayGroupsView(environment: environment, gatewayID: id)
         case .gatewayHealth(let id):
             HealthDashboardView(environment: environment, gatewayID: id)
+        case .settingsSecurity:
+            // ADR-0011 W3: the App Lock sub-screen owns the lock controller.
+            FleetSettingsSecurityView(controller: lockController)
+        case .settingsData:
+            // ADR-0011 W4: Data & Storage owns the cache-clear flow.
+            FleetSettingsDataView(environment: environment)
         case .kanban:
             // Legacy unscoped entry: land on the Kanban tab's chooser root
             // (the tab is the authoritative Kanban surface now).
@@ -447,6 +460,8 @@ public struct FleetTabView: View {
         if autoNav == "command-center" { showingCommandCenter = true }
         // Build 43: "settings" selects the Settings TAB (was: the sheet).
         if autoNav == "settings" { navigation.selection = .settings }
+        // ADR-0011: "about" selects the About tab.
+        if autoNav == "about" { navigation.selection = .about }
         if autoNav == "groups" { navigation.selection = .groups }
         if autoNav == "kanban" { navigation.open(.kanban) }
         // Test automation specifies a stable fixture identity; it never picks a machine by order.

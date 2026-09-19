@@ -7,14 +7,14 @@ import FleetCore
 /// Composition smoke tests: the app starts with a clean, inert fleet model.
 @MainActor
 final class AppCompositionTests: XCTestCase {
-    func testAppTabModelCoversFiveOwningDomains() {
-        // Build 43: the root shell exposes exactly the five approved tabs,
-        // in order (Bots / Chats / Kanban / Fleet / Settings). The Gateways
-        // tab is retired — gateway management is owned by Fleet.
+    func testAppTabModelCoversAllOwningDomains() {
+        // Build 43: Bots / Chats / Kanban / Fleet / Settings. ADR-0011:
+        // About is a first-class tab directly after Settings (identity,
+        // version, legal, support).
         XCTAssertEqual(
             FleetTab.allCases.map(\.label),
-            ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet", "Settings"],
-            "the tab bar must match the approved domains in order (Scheduled sits between Chats and Kanban)"
+            ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet", "Settings", "About"],
+            "the tab bar must match the approved domains in order (Scheduled sits between Chats and Kanban; About follows Settings)"
         )
     }
 
@@ -128,6 +128,10 @@ extension AppCompositionTests {
         XCTAssertEqual(FleetNavigationState.legacyTab("workspace"), .fleet)
         XCTAssertEqual(FleetNavigationState.legacyTab("gateways"), .fleet)
         XCTAssertEqual(FleetNavigationState.legacyTab("settings"), .settings)
+        // ADR-0011: the About tab resolves by its raw name.
+        XCTAssertEqual(FleetNavigationState.legacyTab("about"), .about)
+        XCTAssertEqual(FleetScreen.settingsSecurity.owner, .settings)
+        XCTAssertEqual(FleetScreen.settingsData.owner, .settings)
         // Build 41: the Kanban tab owns the Kanban experience.
         XCTAssertEqual(FleetScreen.kanban.owner, .kanban)
         XCTAssertEqual(FleetScreen.gatewayKanban(id).owner, .kanban)

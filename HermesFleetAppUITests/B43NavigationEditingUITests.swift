@@ -51,7 +51,7 @@ final class B43NavigationEditingUITests: XCTestCase {
                            "Gateways must not be a tab (Build 43)")
         } else if app.buttons["fleet.drawer.open"].exists {
             _ = UITabNavigation.openDrawer(app)
-            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings", "about"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
@@ -81,7 +81,11 @@ final class B43NavigationEditingUITests: XCTestCase {
                       "Settings must render as a tab with its own nav bar")
         XCTAssertFalse(app.buttons["fleet.settings.done"].exists,
                        "no sheet Done button may render")
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
+        // ADR-0011: the App Lock toggle moved into the Security
+        // sub-screen (the root leads with Theme + App settings chevrons).
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Security chevron row must render on the Settings root")
         XCTAssertTrue(firstMatch(app, "fleet.tab.settings").waitForExistence(timeout: 10),
                       "the Settings tab carries its dedicated identifier")
     }
@@ -100,7 +104,9 @@ final class B43NavigationEditingUITests: XCTestCase {
                       "Command Center's Go-to list must include Settings")
         settings.tap()
         UITabNavigation.assertSelected(app, label: "Settings", navigationTitle: "Settings")
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Settings root must expose the Security row (App Lock lives in its sub-screen)")
     }
 
     func testAutoNavSettingsSelectsTab() {
@@ -108,7 +114,9 @@ final class B43NavigationEditingUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 15),
                       "AUTO_NAV=settings must select the Settings tab")
         UITabNavigation.assertSelected(app, label: "Settings", navigationTitle: "Settings")
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Settings root must expose the Security row (App Lock lives in its sub-screen)")
     }
 
     // MARK: 2. Fleet → Gateways consolidation
