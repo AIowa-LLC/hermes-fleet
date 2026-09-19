@@ -1,0 +1,121 @@
+import SwiftUI
+import FleetCore
+
+/// ADR-0010: the Groups tab root — the fleet-wide home for hosted and
+/// desktop-legacy rooms, separated from the Chats screen (ordinary
+/// conversations only). Rows deep-link by `FleetScreen.room` value like
+/// every other room surface; New Group lives here (moved from the Chats
+/// floating menu).
+struct GroupsHomeView: View {
+    @Environment(\.fleetTheme) private var theme
+    let environment: AppEnvironment
+    @State private var query = ""
+    @State private var gatewayID: GatewayID?
+    @State private var showingGroupCompose = false
+
+    /// Flat fleet-wide room set (Chats' former filter, unchanged): gateway
+    /// scope + query over name and member names, stable order by canonical
+    /// identity.
+    private var groups: [FleetRoom] {
+        environment.allRooms
+            .filter { room in
+                (gatewayID == nil || room.id.gatewayID == gatewayID)
+                    && (query.isEmpty || "\(room.name) \(room.members.map(\.name).joined(separator: " "))".localizedCaseInsensitiveContains(query))
+            }
+            .sorted { $0.canonicalIdentity < $1.canonicalIdentity }
+    }
+
+    private var hasActiveFilter: Bool {
+        !query.isEmpty || gatewayID != nil
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Picker("Gateway", selection: $gatewayID) {
+                    Text("All gateways").tag(Optional<GatewayID>.none)
+                    ForEach(environment.gateways) { gateway in
+                        Text(gateway.displayName).tag(Optional(gateway.id))
+                    }
+                }
+                .accessibilityIdentifier("fleet.groups.gateway-filter")
+            }
+            Section {
+                if groups.isEmpty {
+                    ContentUnavailableView(
+                        hasActiveFilter ? "No matching groups" : "No groups yet",
+                        systemImage: "person.3",
+                        description: Text(
+                            hasActiveFilter
+                                ? "Clear the search or gateway filter to see every group in the fleet."
+                                : "Groups you create or join appear here, across every connected gateway."
+                        )
+                    )
+                    .accessibilityIdentifier("fleet.groups.empty")
+                } else {
+                    ForEach(groups, id: \.canonicalIdentity) { room in
+                        NavigationLink(value: FleetScreen.room(room.id)) {
+                            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                                RoomRowView(room: room)
+                                if environment.roomSyncWarnings[room.canonicalIdentity] != nil {
+                                    Label("History sync pending", systemImage: "arrow.triangle.2.circlepath")
+                                        .font(.caption2)
+                                        .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                                        .padding(.leading, FleetTheme.spacingMd)
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("fleet.groups.row.\(room.canonicalIdentity)")
+                    }
+                }
+            }
+        }
+        // Surface id rides the List BEFORE overlays attach (the QA-measured
+        // rule: a container id applied after .overlay wraps the overlay and
+        // replaces every descendant identifier).
+        .accessibilityIdentifier("fleet.groups")
+        .sheet(isPresented: $showingGroupCompose) {
+            CreateRoomSheet(environment: environment) { room in
+                environment.requestScreen(.room(room.id))
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            floatingNewGroupCluster
+                .padding(.trailing, FleetTheme.spacingLg)
+                .padding(.bottom, FleetTheme.spacingMd)
+        }
+        // No bar on scroll: the nav bar keeps NO background at the scroll
+        // edge (same treatment as Chats).
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .scrollContentBackground(.hidden).background(theme.background)
+        // Reserve bottom breathing room clear of the iOS 26 floating bar
+        // (FleetChatsListLayout is the shared design token).
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: FleetChatsListLayout.bottomBreathingRoom)
+                .accessibilityHidden(true)
+        }
+        .navigationTitle("Groups")
+        .searchable(text: $query, prompt: "Search groups and members")
+        .refreshable { await environment.loadRooms() }
+        .task { await environment.loadRooms() }
+    }
+
+    /// Floating Liquid Glass New Group control (Chats' FAB pattern,
+    /// single-action): opens the fleet-wide CreateRoomSheet.
+    private var floatingNewGroupCluster: some View {
+        Button {
+            showingGroupCompose = true
+        } label: {
+            Image(systemName: "person.3")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(theme.textPrimary)
+                .frame(width: 48, height: 48)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.fleetPressable)
+        .background(.ultraThinMaterial)
+        .accessibilityLabel("New Group")
+        .accessibilityIdentifier("fleet.groups.new")
+    }
+}

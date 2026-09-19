@@ -107,7 +107,6 @@ struct FleetChatsView: View {
     @State private var query = ""
     @State private var gatewayID: GatewayID?
     @State private var showingCompose = false
-    @State private var showingGroupCompose = false
     @State private var pendingDeleteEntry: FleetChatEntry?
     @State private var archivedNotice: String?
 
@@ -149,13 +148,6 @@ struct FleetChatsView: View {
         hiddenEntryIDs.insert(entry.id)
         FleetChatsArchiveStore.setHidden(entry.id, hidden: true)
         archivedNotice = "Removed from this device — \(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)"
-    }
-
-    private var groups: [FleetRoom] {
-        environment.allRooms.filter { room in
-            (gatewayID == nil || room.id.gatewayID == gatewayID)
-                && (query.isEmpty || "\(room.name) \(room.members.map(\.name).joined(separator: " "))".localizedCaseInsensitiveContains(query))
-        }
     }
 
     /// FOS-5 (SPEC §10): entries retained during a gateway outage even when
@@ -239,29 +231,6 @@ struct FleetChatsView: View {
                     }
                 }
                 .accessibilityIdentifier("fleet.chats.gateway-filter")
-            }
-            Section("Groups") {
-                if groups.isEmpty {
-                    Text("No groups in the connected fleet yet.")
-                        .font(.footnote)
-                        .foregroundStyle(theme.textSecondary)
-                        .accessibilityIdentifier("fleet.chats.groups.empty")
-                } else {
-                    ForEach(groups, id: \.canonicalIdentity) { room in
-                        NavigationLink(value: FleetScreen.room(room.id)) {
-                            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
-                                RoomRowView(room: room)
-                                if environment.roomSyncWarnings[room.canonicalIdentity] != nil {
-                                    Label("History sync pending", systemImage: "arrow.triangle.2.circlepath")
-                                        .font(.caption2)
-                                        .foregroundStyle(FleetTheme.statusNeedsIntervention)
-                                        .padding(.leading, FleetTheme.spacingMd)
-                                }
-                            }
-                        }
-                        .accessibilityIdentifier("fleet.chats.group.\(room.canonicalIdentity)")
-                    }
-                }
             }
             if !environment.loadingRoutes.isEmpty {
                 if entries.isEmpty && environment.sessionsByRoute.isEmpty {
@@ -381,11 +350,6 @@ struct FleetChatsView: View {
         .sheet(isPresented: $showingCompose) {
             ComposeBotPickerSheet(environment: environment)
         }
-        .sheet(isPresented: $showingGroupCompose) {
-            CreateRoomSheet(environment: environment) { room in
-                environment.requestScreen(.room(room.id))
-            }
-        }
         .alert(
             "Delete conversation?",
             isPresented: Binding(
@@ -447,22 +411,12 @@ struct FleetChatsView: View {
 
     /// Floating Liquid Glass action cluster (Codex-inspired): new chat to
     /// the LEFT of settings, bottom-trailing, hovering over the list.
+    /// ADR-0010: New Group lives on the Groups tab — the Chats FAB is a
+    /// direct New-conversation button (no menu wrapper needed).
     private var floatingActionCluster: some View {
         HStack(spacing: FleetTheme.spacingSm) {
-            // New chat: menu keeps BOTH entry points (direct + group).
-            Menu {
-                Button {
-                    showingCompose = true
-                } label: {
-                    Label("New conversation", systemImage: "square.and.pencil")
-                }
-                .accessibilityIdentifier("fleet.chats.new")
-                Button {
-                    showingGroupCompose = true
-                } label: {
-                    Label("New Group", systemImage: "person.3")
-                }
-                .accessibilityIdentifier("fleet.chats.new-group")
+            Button {
+                showingCompose = true
             } label: {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 17, weight: .semibold))
@@ -470,7 +424,6 @@ struct FleetChatsView: View {
                     .frame(width: 48, height: 48)
                     .contentShape(Circle())
             }
-            .background(.ultraThinMaterial)
             .buttonStyle(.fleetPressable)
             .accessibilityLabel("New chat")
             .accessibilityIdentifier("fleet.chats.new")

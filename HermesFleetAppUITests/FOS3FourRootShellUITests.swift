@@ -33,26 +33,26 @@ final class FOS3FourRootShellUITests: XCTestCase {
         let app = launch()
 
         let tabBar = app.tabBars.firstMatch
-        let labels = ["Bots", "Chats", "Scheduled", "Kanban", "Fleet", "Settings"]
+        let labels = ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet", "Settings"]
         if tabBar.exists {
             for label in labels {
                 XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
             }
             let tabLabels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
-            XCTAssertEqual(tabLabels.count, 6,
-                           "the tab bar must expose exactly six destinations (got \(tabLabels))")
+            XCTAssertEqual(tabLabels.count, 7,
+                           "the tab bar must expose exactly seven destinations (got \(tabLabels))")
             XCTAssertFalse(tabBar.buttons["Gateways"].exists,
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
         } else if app.buttons["fleet.drawer.open"].exists {
             _ = UITabNavigation.openDrawer(app)
-            for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
             UITabNavigation.closeDrawer(app)
         } else {
             // iPad: top control hosts the five primaries; Settings in drawer.
-            for label in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet"] {
+            for label in ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 10), "sidebar must include \(label)")
             }

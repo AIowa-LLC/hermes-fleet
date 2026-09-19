@@ -25,7 +25,7 @@ final class U3TabNavigationUITests: XCTestCase {
             // iPad: the top control hosts the five PRIMARY destinations
             // (sidebarAdaptable paginates past five — Settings would hide);
             // Settings stays in the drawer.
-            for label in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet"] {
+            for label in ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 15), "root shell must include \(label)")
             }
@@ -40,7 +40,7 @@ final class U3TabNavigationUITests: XCTestCase {
         } else {
             let drawer = UITabNavigation.openDrawer(app)
             XCTAssertTrue(drawer.exists, "compact root navigation drawer must render")
-            for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
@@ -183,7 +183,7 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertFalse(app.tabBars.firstMatch.waitForExistence(timeout: 2),
                        "compact iPhone replaces the visible tab bar")
         let drawer = UITabNavigation.openDrawer(app)
-        for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
+        for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
             XCTAssertTrue(app.descendants(matching: .any)
                 .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists,
                 "drawer exposes \(raw) destination")

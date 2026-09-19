@@ -45,20 +45,20 @@ final class B43NavigationEditingUITests: XCTestCase {
         let tabBar = app.tabBars.firstMatch
         if tabBar.exists {
             let labels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
-            XCTAssertEqual(labels, ["Bots", "Chats", "Scheduled", "Kanban", "Fleet", "Settings"],
-                           "exactly six destinations in the approved order")
+            XCTAssertEqual(labels, ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet", "Settings"],
+                           "exactly seven destinations in the approved order")
             XCTAssertFalse(tabBar.buttons["Gateways"].exists,
                            "Gateways must not be a tab (Build 43)")
         } else if app.buttons["fleet.drawer.open"].exists {
             _ = UITabNavigation.openDrawer(app)
-            for raw in ["bots", "chats", "cron", "kanban", "fleet", "settings"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }
             UITabNavigation.closeDrawer(app)
         } else {
             // iPad: top control hosts the five primaries; Settings in drawer.
-            for label in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet"] {
+            for label in ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet"] {
                 XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
                     .waitForExistence(timeout: 10), "sidebar must include \(label)")
             }

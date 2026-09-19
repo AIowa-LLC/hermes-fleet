@@ -32,7 +32,7 @@ public enum FleetScreen: Hashable, Sendable, Codable {
     public var owner: FleetTab {
         switch self {
         case .roster, .bots, .botDetail, .botRoutines, .gatewayGroups: .bots
-        case .room: .chats
+        case .room: .groups
         case .conversation(_, _, let canonical): canonical ? .bots : .chats
         case .activity: .fleet
         // Build 41: Kanban owns the Kanban experience (from Gateway Detail
@@ -45,6 +45,12 @@ public enum FleetScreen: Hashable, Sendable, Codable {
              .health, .cron, .skills, .memoryGraph, .projects, .artifacts:
             .fleet
         }
+    }
+
+    /// ADR-0010: room destinations own to the Groups tab.
+    public var isRoom: Bool {
+        if case .room = self { return true }
+        return false
     }
 
     public var gatewayID: GatewayID? {
@@ -137,6 +143,17 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
                 }
             }
         }
+        // ADR-0010: `.room` screens own to the Groups tab now. Persisted
+        // Chats paths from pre-Groups installs carried room destinations —
+        // migrate them onto the Groups path (order preserved, other tabs
+        // untouched) so a restored stack never pushes a room on the Chats
+        // stack (and `open(.room)`'s same-screen dedupe stays coherent).
+        if let chatsPath = merged[.chats], chatsPath.contains(where: \.isRoom) {
+            let retained = chatsPath.filter { !$0.isRoom }
+            let migrated = chatsPath.filter { $0.isRoom }
+            merged[.chats] = retained
+            merged[.groups, default: []].insert(contentsOf: migrated, at: 0)
+        }
         paths = merged
     }
 
@@ -156,6 +173,7 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
         switch name.lowercased() {
         case "home", "command", "fleet": .fleet
         case "chats": .chats
+        case "groups": .groups
         case "bots", "roster": .bots
         case "kanban", "board": .kanban
         case "settings": .settings

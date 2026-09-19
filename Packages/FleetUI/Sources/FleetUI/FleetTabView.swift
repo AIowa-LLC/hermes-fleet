@@ -24,7 +24,8 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
     /// Build 43 order: Bots / Chats / Kanban / Fleet / Settings — Bots is
     /// the normal launch tab; Kanban is a first-class owning surface; the
     /// Gateways tab is retired (gateway management lives under Fleet).
-    case bots, chats, cron, kanban, fleet, settings
+    /// ADR-0010: Groups is a first-class tab directly under Chats.
+    case bots, chats, groups, cron, kanban, fleet, settings
     public var id: String { rawValue }
     /// Drawer: the four primary destinations render in the Navigate section;
     /// Settings renders as the drawer's dedicated last row.
@@ -33,6 +34,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         switch self {
         case .bots: "Bots"
         case .chats: "Chats"
+        case .groups: "Groups"
         case .cron: "Scheduled"
         case .kanban: "Kanban"
         case .fleet: "Fleet"
@@ -43,6 +45,7 @@ public enum FleetTab: String, Hashable, Sendable, CaseIterable, Identifiable, Co
         switch self {
         case .bots: "cpu"
         case .chats: "bubble.left.and.bubble.right"
+        case .groups: "person.3"
         case .cron: "clock"
         case .kanban: "rectangle.split.3x1"
         case .fleet: "square.grid.2x2"
@@ -358,6 +361,7 @@ public struct FleetTabView: View {
         switch tab {
         case .fleet: FleetDashboardView(environment: environment)
         case .chats: FleetChatsView(environment: environment)
+        case .groups: GroupsHomeView(environment: environment)
         case .bots: FleetRosterView(environment: environment)
         case .kanban: KanbanHomeView(environment: environment)
         case .cron: CronHomeView(environment: environment)
@@ -443,6 +447,7 @@ public struct FleetTabView: View {
         if autoNav == "command-center" { showingCommandCenter = true }
         // Build 43: "settings" selects the Settings TAB (was: the sheet).
         if autoNav == "settings" { navigation.selection = .settings }
+        if autoNav == "groups" { navigation.selection = .groups }
         if autoNav == "kanban" { navigation.open(.kanban) }
         // Test automation specifies a stable fixture identity; it never picks a machine by order.
         if let gateway = environment.gateways.first(where: { $0.id.rawValue == "workstation" }) {

@@ -154,17 +154,12 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         app.launch()
         _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
 
-        // The glass cluster surfaces to AX by LABEL (the Menu/glass wrapper
-        // can mask the identifier); label is stable and localized.
+        // ADR-0010: New Group moved to the Groups tab — the Chats FAB is a
+        // direct New-conversation button (no menu wrapper). The glass
+        // cluster surfaces to AX by LABEL; label is stable and localized.
         let newChat = firstMatch(in: app, identifier: "fleet.chats.new")
         XCTAssertTrue(newChat.waitForExistence(timeout: 10), "floating new-chat control must render")
         newChat.tap()
-        // The menu keeps BOTH entry points (direct + group).
-        let direct = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New conversation")).firstMatch
-        XCTAssertTrue(direct.waitForExistence(timeout: 5), "direct conversation entry offered")
-        let group = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New Group")).firstMatch
-        XCTAssertTrue(group.exists, "group entry offered")
-        direct.tap()
         let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
         XCTAssertTrue(candidate.waitForExistence(timeout: 10), "direct opens the bot picker")
 
@@ -258,13 +253,11 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Codex-style cluster: floating new-chat opens a menu first.
+        // ADR-0010: the FAB opens the source-qualified bot picker DIRECTLY
+        // (the New conversation / New Group menu is retired).
         let newChat2 = firstMatch(in: app, identifier: "fleet.chats.new")
         XCTAssertTrue(newChat2.waitForExistence(timeout: 10))
         newChat2.tap()
-        let direct = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New conversation")).firstMatch
-        XCTAssertTrue(direct.waitForExistence(timeout: 5), "direct entry offered")
-        direct.tap()
         let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
         XCTAssertTrue(
             candidate.waitForExistence(timeout: 10),
@@ -280,16 +273,16 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
     func testChatsNewGroupCreatesAndOpensCrossGatewayRoom() throws {
         let app = XCUIApplication()
         self.app = app
-        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "groups"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // New Group rides the floating new-chat menu now.
-        let newChat3 = firstMatch(in: app, identifier: "fleet.chats.new")
-        XCTAssertTrue(newChat3.waitForExistence(timeout: 10), "floating new-chat cluster renders")
-        newChat3.tap()
-        let newGroup = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "New Group")).firstMatch
-        XCTAssertTrue(newGroup.waitForExistence(timeout: 5), "Chats exposes fleet-wide New Group")
+        // ADR-0010: New Group lives on the Groups tab now (moved from the
+        // Chats new-chat menu). The Groups FAB opens CreateRoomSheet.
+        let groupsSurface = firstMatch(in: app, identifier: "fleet.groups")
+        XCTAssertTrue(groupsSurface.waitForExistence(timeout: 10), "Groups tab root renders")
+        let newGroup = firstMatch(in: app, identifier: "fleet.groups.new")
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 10), "Groups exposes New Group")
         newGroup.tap()
 
         let name = app.textFields["fleet.room.create.name"]
