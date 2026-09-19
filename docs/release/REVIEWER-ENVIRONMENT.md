@@ -22,6 +22,25 @@ Nothing in this file or the scripts commits an endpoint, credential, QR
 payload, or secret. Every secret is resolved at runtime into 0600 storage
 outside any repository.
 
+## Readiness status for the first beta
+
+As of the 2026-09-18 repository-preparation pass:
+
+- The v2 architecture, secret-free launcher, provider allowlist, containment
+  probes, and off-network pre-submission check are present in the repository.
+- No reviewer container, public endpoint, tunnel, demo credential, or model
+  provider key was provisioned by this pass. Nothing in this repository should
+  be represented as an active Apple review environment.
+- The executed QA evidence later in this document is historical evidence for
+  the checked-in hardening work. It is not current review-window availability
+  evidence and must be re-run on the actual dedicated host/image before
+  submission.
+- The remaining operator gate is to provision the existing architecture on a
+  dedicated non-maintainer container host, run the containment and off-network
+  checks, and keep the environment available through the review window.
+
+The maintainer Mac and Tony's production Hermes gateways remain out of scope.
+
 ## Architecture (v2)
 
 ```
@@ -215,7 +234,7 @@ rest) by **merging** into the existing config so the plugin state survives.
 | `scripts/reviewer_env_check.sh` | off-network pre-submission reachability check (health → providers → login → ws-ticket → unauthenticated-negative) following Fleet's exact wire sequence |
 | `scripts/reviewer_env_assets/` | synthetic demo SOUL/SKILL content (demo material only — NOT a security control) |
 
-### Executed QA evidence (re-verified post-fix 2026-09-10 20:58 CDT = 2026-09-11 01:58 UTC, dedicated container host, image `hermes-agent:0.21.1-reviewer` @ `sha256:55d51bf97414…`)
+### Historical QA evidence (re-verified post-fix 2026-09-10 20:58 CDT = 2026-09-11 01:58 UTC, dedicated container host, image `hermes-agent:0.21.1-reviewer` @ `sha256:55d51bf97414…`)
 
 An **independent `apple-qa` challenge** attacked the previous head and
 returned `CONTAINMENT CHALLENGE: FALSIFIED`: the runtime containment, auth
