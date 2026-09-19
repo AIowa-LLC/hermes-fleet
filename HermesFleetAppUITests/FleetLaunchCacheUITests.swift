@@ -26,7 +26,9 @@ final class FleetLaunchCacheUITests: XCTestCase {
         // Phase 2: RELAUNCH keeping the launch cache — the fleet paints
         // before the network settles (fixture knob skips the reset).
         app.terminate()
-        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = nil
+        // NAV_RESET is SAFE here: the fixture knob exempts the launch cache
+        // from the reset hook — nav state resets (hermetic landing on Bots)
+        // while the cache survives to paint.
         app.launchEnvironment["HERMES_FLEET_LAUNCH_CACHE_FIXTURE"] = "1"
         app.launch()
         UITabNavigation.shellReady(app, timeout: 30)
@@ -40,6 +42,8 @@ final class FleetLaunchCacheUITests: XCTestCase {
     func testUpdatingPillRendersWhileStaleAndDisappears() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        // Hermetic: NAV_RESET + fixture exemption (cache survives the reset).
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_LAUNCH_CACHE_FIXTURE"] = "1"
         app.launch()
         UITabNavigation.shellReady(app, timeout: 30)

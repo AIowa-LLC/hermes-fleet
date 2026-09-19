@@ -475,10 +475,14 @@ enum FleetMarkdownRenderConfiguration {
                 font: small.normal,
                 textColor: theme.textSecondary,
                 backgroundColor: theme.surfaceElevated),
+            // Dogfood r6 (G3): code renders as a DEDICATED card — a
+            // near-black fill in dark mode (Hermex's measured recipe),
+            // the elevated token in light — visually distinct from the
+            // canvas instead of same-fill-as-everything.
             codeBlockConfig: .init(
                 theme: .xcode,
-                backgroundColor: theme.surfaceElevated,
-                foregroundColor: theme.textSecondary,
+                backgroundColor: fleetCodeCardBackground,
+                foregroundColor: theme.textPrimary,
                 codeTextFonts: code,
                 chromeTextFonts: small),
             blockSpacing: FleetTheme.spacingMd,
@@ -487,6 +491,21 @@ enum FleetMarkdownRenderConfiguration {
             imageConfig: .disabled)
     }
 }
+
+/// Dogfood r6 (G3): the code-card fill — adaptive WITHOUT a live
+/// colorScheme (the config builder is static): dark = near-black
+/// rgb(0.04,0.05,0.07) (Hermex measured), light = the elevated token.
+private let fleetCodeCardBackground: Color = {
+    #if canImport(UIKit)
+    Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1)
+            : UIColor.tertiarySystemBackground
+    })
+    #else
+    FleetTheme.surfaceElevated
+    #endif
+}()
 
 private enum FleetMarkdownFonts {
     #if canImport(UIKit)

@@ -64,6 +64,16 @@ public struct ConversationView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingFileImporter = false
     @FocusState private var composerFocused: Bool
+    /// Dogfood r6 (G1): appearance for the composer's adaptive glass +
+    /// shadow, and the focus signal driving the pill→card morph.
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// The composer morphs: stadium when idle (fully-rounded pill), a soft
+    /// 26pt card when focused/expanding — ChatGPT/Hermex's presentation
+    /// recipe. Driven by focus (the honest signal the keyboard is up).
+    private var composerPillRadius: CGFloat {
+        composerFocused ? 26 : 22
+    }
     /// R10-T4: voice transcript review confirmation (sheet). Presented when a
     /// transcript lands for review (submit-on-silence OFF).
     @State private var showingTranscriptReview = false
@@ -966,6 +976,12 @@ enum ConversationHeaderChips {
                !model.isListening {
                 transcriptReviewChip(model, transcript: transcript)
             }
+            // Dogfood r6 (G1): ONE floating composer pill (ChatGPT
+            // anatomy) — +, field, mic, and send/stop live INSIDE the
+            // stadium; it morphs to a soft card when focused/expanded
+            // (Hermex's ChatComposerPresentation recipe: continuous
+            // corners, ultraThinMaterial glass, hairline + soft shadow).
+            // All controls keep their identifiers (zero test edits).
             HStack(spacing: FleetTheme.spacingSm) {
                 // R10-T1: "+" affordance — Photos picker (images) + Files
                 // importer (PDF/any). Hidden while a turn streams (the
@@ -1002,12 +1018,13 @@ enum ConversationHeaderChips {
                         }
                         .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
                     } label: {
+                        // r6: bare glyph inside the pill (the pill is the
+                        // surface; 44pt target via the frame).
                         Image(systemName: "plus")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(theme.highlight)
-                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(theme.surfaceElevated))
-                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
+                            .foregroundStyle(theme.textSecondary)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel("Attach")
@@ -1022,12 +1039,13 @@ enum ConversationHeaderChips {
                     Button {
                         Task { await model.toggleMic() }
                     } label: {
+                        // r6: bare glyph inside the pill; listening stays
+                        // destructive-red (the working-state signal).
                         Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.highlight))
-                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
-                            .background(Circle().fill(theme.surfaceElevated))
-                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
+                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textSecondary))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
                     .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
@@ -1035,21 +1053,14 @@ enum ConversationHeaderChips {
                 }
 
                 TextField("Message", text: $composerText, axis: .vertical)
-                    .lineLimit(1...4)
+                    .lineLimit(1...5)
                     .focused($composerFocused)
                     .font(.body)
                     .foregroundStyle(theme.textPrimary)
                     .tint(theme.highlight)
-                    .padding(.horizontal, FleetTheme.spacingMd)
+                    // r6: the pill is the field's surface — transparent
+                    // inside, no own chrome.
                     .padding(.vertical, FleetTheme.spacingSm)
-                    .background(
-                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .fill(theme.background)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                            .strokeBorder(theme.border, lineWidth: 1)
-                    )
                     .disabled(model.phase != .ready && model.phase != .streaming)
                     .accessibilityIdentifier("fleet.conversation.composer")
                     .onSubmit {
@@ -1082,10 +1093,12 @@ enum ConversationHeaderChips {
                         // The glyph ink is derived from the HIGHLIGHT fill
                         // (not the canvas) so it stays legible for any user
                         // highlight, including white or near-black.
+                        // r6: the accent ORB rides inside the pill —
+                        // the single interactive accent (ChatGPT's send).
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 20, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(theme.onHighlight)
-                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .frame(width: 30, height: 30)
                             .background(Circle().fill(theme.highlight))
                     }
                     .buttonStyle(.fleetPressable)
@@ -1094,15 +1107,23 @@ enum ConversationHeaderChips {
                     .accessibilityIdentifier("fleet.conversation.send")
                 }
             }
-            .padding(.horizontal, FleetTheme.spacingLg)
-            .padding(.vertical, FleetTheme.spacingSm)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .background(
+                .ultraThinMaterial,
+                in: RoundedRectangle(cornerRadius: composerPillRadius, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: composerPillRadius, style: .continuous)
+                    .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
+            )
+            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.20 : 0.08), radius: 10, y: 4)
+            .padding(.horizontal, FleetTheme.spacingMd)
+            .padding(.vertical, 6)
         }
-        .background(theme.surface)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(theme.border)
-                .frame(height: 1)
-        }
+        // r6: the composer floats on the canvas — no full-width surface
+        // band, no top hairline (the de-glass contract).
+        .background(theme.background.ignoresSafeArea())
         // R10-T1: pickers.
         .onChange(of: selectedPhoto) { _, item in
             guard let item else { return }
@@ -1300,7 +1321,10 @@ enum ConversationHeaderChips {
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, 6)
-        .background(theme.surfaceElevated)
+        // r6 G4: flat on canvas + hairline, no boxed card.
+        .overlay(alignment: .top) {
+            Rectangle().fill(FleetTheme.statusDestructive.opacity(0.35)).frame(height: 1)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("fleet.conversation.attachment.error")
     }
@@ -1763,21 +1787,19 @@ private struct ConversationBubbleView: View {
     private var bubbleContent: some View {
         switch row.kind {
         case .user:
-            // V3 (Nous Direction A): FLAT elevated-surface capsule with the
-            // pale-cyan accent text — right-aligned, hairline-bordered, no
-            // gradient (accent discipline: one pale-cyan accent).
+            // Dogfood r6 (G2, supersedes V3 Direction A per owner approval
+            // 2026-09-19): NEUTRAL user capsule — ChatGPT/Hermex pattern.
+            // neutralFill (the proven per-appearance token), normal label
+            // ink, no accent hairline: the accent belongs to interactive
+            // chrome (send pill, links), not message content.
             Text(row.text)
                 .font(.body)
-                .foregroundStyle(theme.highlight)
+                .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
-                    theme.surfaceElevated,
-                    in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
-                        .strokeBorder(theme.highlight.opacity(0.35), lineWidth: 1)
+                    FleetTheme.neutralFill,
+                    in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble, style: .continuous)
                 )
         case .assistant:
             VStack(alignment: .leading, spacing: 4) {

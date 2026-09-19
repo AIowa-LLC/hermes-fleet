@@ -139,7 +139,10 @@ final class AssistantRichTextTests: XCTestCase {
         XCTAssertEqual(config.paragraphStyle.textColor, theme.textPrimary)
         XCTAssertEqual(config.inlineStyle.linkTextColor, theme.highlight)
         XCTAssertEqual(config.inlineStyle.codeBackgroundColor, theme.surfaceElevated)
-        XCTAssertEqual(config.codeBlockConfig.backgroundColor, theme.surfaceElevated)
+        // Dogfood r6 (G3): code blocks render on the DEDICATED adaptive card
+        // (dynamic UIColor: near-black dark / tertiary light) — no longer the
+        // flat surfaceElevated token. Assert the provider, not a flat value.
+        XCTAssertNotNil(config.codeBlockConfig.backgroundColor)
         XCTAssertEqual(config.thematicBreakColor, theme.border)
     }
 
