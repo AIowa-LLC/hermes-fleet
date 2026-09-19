@@ -188,19 +188,8 @@ struct FleetNavigationDrawer: View {
 
             Spacer(minLength: 0)
 
-            Button { onSelectTab(.about) } label: {
-                Image(systemName: FleetTab.about.systemImage)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("About")
-            .accessibilityValue(selection == .about ? "Selected" : "")
-            .accessibilityAddTraits(selection == .about ? .isSelected : [])
-            .accessibilityIdentifier("fleet.drawer.destination.about")
+            // Dogfood round 2: the About drawer circle is retired — About
+            // is reached from the Settings root's About row (ADR-0011).
 
             Button { onSelectTab(.settings) } label: {
                 Image(systemName: FleetTab.settings.systemImage)

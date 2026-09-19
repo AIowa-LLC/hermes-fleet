@@ -12,15 +12,20 @@ import SwiftUI
 public struct FleetSettingsView: View {
     private let appearanceController: FleetAppearanceController
     private let themeController: FleetThemeController
+    /// Dogfood round 2 (ADR-0011): the About row selects the About TAB
+    /// (the drawer circle is retired — Settings is About's entry point).
+    private let onSelectAbout: () -> Void
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
     @Environment(\.fleetTheme) private var theme
 
     public init(appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
-                themeController: FleetThemeController = FleetThemeController.shared) {
+                themeController: FleetThemeController = FleetThemeController.shared,
+                onSelectAbout: @escaping () -> Void = {}) {
         self.appearanceController = appearanceController
         self.themeController = themeController
+        self.onSelectAbout = onSelectAbout
     }
 
     public var body: some View {
@@ -140,6 +145,30 @@ public struct FleetSettingsView: View {
             // ADR-0011 W8: version + legal + support rows moved to the
             // About tab (FleetAboutView) — retired ids are pinned by
             // source guards in the hosted composition tests.
+            //
+            // Dogfood round 2: the About tab's entry point is HERE (the
+            // drawer circle is retired). The chevron reads as "more"; the
+            // row selects the About tab.
+            Section {
+                // Same Button shape as the proven C2 setup-prompt row
+                // (trailing-closure action, single Label, .plain style) —
+                // the HStack/Spacer/chevron label variant did not fire in
+                // Form on iOS 26 (measured: action never invoked).
+                Button {
+                    onSelectAbout()
+                } label: {
+                    Label("About", systemImage: "info.circle")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("fleet.settings.about")
+            } header: {
+                Text("About")
+                    .foregroundStyle(theme.textSecondary)
+            } footer: {
+                Text("Version, terms, privacy, and support.")
+                    .foregroundStyle(theme.textSecondary)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())

@@ -299,9 +299,20 @@ enum UITabNavigation {
                       "the Security row must push its sub-screen")
     }
 
-    /// ADR-0011: open the About tab (identity / version / legal / support).
+    /// ADR-0011 + dogfood round 2: open the About tab via the Settings
+    /// root's About row (the drawer circle is retired).
     static func openAbout(_ app: XCUIApplication) {
-        _ = openTab(app, label: "About", expectedBar: "About", timeout: 15)
+        openSettings(app)
+        let row = app.buttons["fleet.settings.about"].firstMatch
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 10),
+                      "Settings must expose the About row")
+        if !row.isHittable { app.swipeUp() }
+        row.tap()
+        XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10),
+                      "the Settings About row must select the About tab")
     }
     static func openActivity(_ app: XCUIApplication) {
         // FOS-3: Control's cross-fleet diagnostics links are owned by the

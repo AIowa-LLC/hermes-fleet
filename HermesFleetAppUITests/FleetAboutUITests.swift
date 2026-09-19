@@ -2,7 +2,9 @@ import XCTest
 
 /// ADR-0011: the About tab — identity, version, and the official legal
 /// surface (Terms of Use / Privacy Policy on hermes-fleet.aiowa.dev,
-/// Support unchanged). Deterministic scripted-fleet suite: no live gateway.
+/// Support unchanged). Dogfood round 2: About's entry point is the Settings
+/// root's About row (the drawer circle is retired).
+/// Deterministic scripted-fleet suite: no live gateway.
 final class FleetAboutUITests: XCTestCase {
 
     func testAboutTabRendersIdentityVersionAndLegalRows() throws {
@@ -31,20 +33,27 @@ final class FleetAboutUITests: XCTestCase {
         attachScreenshot(of: app, name: "about-tab")
     }
 
-    func testAboutReachableFromDrawerAndDedicatedRowRenders() throws {
+    func testAboutReachableFromSettingsRow() throws {
         let app = launchApp()
-        _ = UITabNavigation.openDrawer(app)
-        let aboutRow = app.descendants(matching: .any)
-            .matching(identifier: "fleet.drawer.destination.about").firstMatch
+        UITabNavigation.openSettings(app)
+        // Dogfood round 2: About's entry point is the Settings root's About
+        // row (the drawer circle is retired).
+        let aboutRow = app.buttons["fleet.settings.about"].firstMatch
         XCTAssertTrue(aboutRow.waitForExistence(timeout: 10),
-                      "the drawer must carry the About destination row")
+                      "the Settings root must carry the About row")
+        for _ in 0..<4 where !(aboutRow.exists && aboutRow.isHittable) {
+            app.swipeUp(velocity: .fast)
+        }
         aboutRow.tap()
-        // The destination row dismisses the drawer and selects About.
-        let drawer = app.descendants(matching: .any)["fleet.drawer"]
-        for _ in 0..<12 where drawer.exists { usleep(500_000) }
         XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10),
-                      "the drawer About row must select the About tab")
-        attachScreenshot(of: app, name: "about-from-drawer")
+                      "the Settings About row must select the About tab")
+        // The retired drawer control must be gone.
+        _ = UITabNavigation.openDrawer(app)
+        XCTAssertFalse(app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer.destination.about").firstMatch.exists,
+            "the drawer About circle must be retired")
+        UITabNavigation.closeDrawer(app)
+        attachScreenshot(of: app, name: "about-from-settings")
     }
 
     func testSettingsSecurityAndDataSubScreensPush() throws {

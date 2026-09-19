@@ -45,7 +45,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
         } else if app.buttons["fleet.drawer.open"].exists {
             _ = UITabNavigation.openDrawer(app)
-            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings", "about"] {
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
                 XCTAssertTrue(app.descendants(matching: .any)
                     .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
             }

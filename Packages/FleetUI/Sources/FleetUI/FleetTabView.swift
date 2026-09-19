@@ -12,9 +12,21 @@ struct FleetDrawerMenu: ToolbarContent {
     var body: some ToolbarContent {
         if let openDrawer {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Menu", systemImage: "sidebar.leading", action: openDrawer)
-                    .accessibilityIdentifier("fleet.drawer.open")
-                    .keyboardShortcut("m", modifiers: .command)
+                // Dogfood round 2: the ChatGPT menu control — the small
+                // two-line hamburger (SF Symbol `equals`) in a glass circle.
+                // `.ultraThinMaterial` keeps XCUITest taps working (the
+                // .glassEffect() look computes hit point {-1,-1}).
+                Button(action: openDrawer) {
+                    Image(systemName: "equals")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 34, height: 34)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                }
+                .accessibilityLabel("Menu")
+                .accessibilityIdentifier("fleet.drawer.open")
+                .keyboardShortcut("m", modifiers: .command)
             }
         }
     }
@@ -350,7 +362,10 @@ public struct FleetTabView: View {
     private var rootShellToolbar: some ToolbarContent {
         FleetDrawerMenu()
         ToolbarItem(placement: .topBarTrailing) {
+            // Dogfood round 2: chrome icons are NEUTRAL ink — the root
+            // .tint(theme.highlight) must not paint toolbar chrome.
             Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
+                .foregroundStyle(.primary)
                 .accessibilityIdentifier("fleet.command-center.open")
                 .keyboardShortcut("k", modifiers: .command)
         }
@@ -373,7 +388,9 @@ public struct FleetTabView: View {
         // sheet). The tab IS the settings destination; its stack stays at
         // the root screen. ADR-0011: the App Lock toggle moved into the
         // Security sub-screen; the root no longer needs the controllers.
-        case .settings: FleetSettingsView()
+        case .settings: FleetSettingsView(onSelectAbout: {
+            navigation.selection = .about
+        })
         // ADR-0011: About — identity, version, Terms / Privacy / Support.
         case .about: FleetAboutView()
         }

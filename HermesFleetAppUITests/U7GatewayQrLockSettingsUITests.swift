@@ -193,10 +193,11 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
             XCTAssertTrue(app.buttons[label].waitForExistence(timeout: 5),
                           "Appearance must offer \(label) in its menu")
         }
-        // ADR-0011 W8: the version row moved to the About tab.
-        let aboutEntry = app.descendants(matching: .any)
-            .matching(identifier: "fleet.drawer.destination.about").firstMatch
-        _ = aboutEntry // (the drawer carries About; asserted in FOS3About suites)
+        // ADR-0011 W8 + dogfood round 2: the version row moved to the About
+        // tab, whose entry point is the Settings root's About row.
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.about").firstMatch.exists,
+            "Settings must expose the About row (the About tab's entry point)")
         attachScreenshot(of: app, name: "u7-settings-appearance")
     }
 
