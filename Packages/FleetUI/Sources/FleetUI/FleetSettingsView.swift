@@ -15,7 +15,6 @@ public struct FleetSettingsView: View {
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
-    @State private var showingThemeEditor = false
     @State private var showingCacheClearConfirmation = false
     @State private var cacheClearFailed = false
     @State private var cacheClearError = ""
@@ -90,19 +89,47 @@ public struct FleetSettingsView: View {
             }
 
             Section {
-                Button {
-                    showingThemeEditor = true
+                // ChatGPT-style accent picker (dogfood: the full theme
+                // editor is retired from Settings; the picker applies a
+                // curated highlight over Fleet-default colors IMMEDIATELY).
+                Menu {
+                    ForEach(FleetAccent.allCases) { accent in
+                        Button {
+                            applyAccent(accent)
+                        } label: {
+                            HStack {
+                                Text(accent.label)
+                                if accent == currentAccent {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        .accessibilityIdentifier("fleet.settings.accent.\(accent.rawValue)")
+                    }
                 } label: {
-                    Label("Theme", systemImage: "paintpalette")
-                        .foregroundStyle(theme.textPrimary)
+                    HStack {
+                        Circle()
+                            .fill(Color(accentColorHighlight.uiColor))
+                            .frame(width: 18, height: 18)
+                            .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
+                            .accessibilityHidden(true)
+                        Text(currentAccentLabel)
+                            .foregroundStyle(theme.textSecondary)
+                        Spacer()
+                        Text(currentAccent?.label ?? "Custom")
+                            .foregroundStyle(theme.textSecondary)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("fleet.settings.theme")
+                .accessibilityLabel("Accent, \(currentAccent?.label ?? "Custom")")
+                .accessibilityIdentifier("fleet.settings.accent")
             } header: {
                 Text("Theme")
                     .foregroundStyle(theme.textSecondary)
             } footer: {
-                Text("Choose an opaque Highlight, Text, and Background color. Changes stay in a preview until you apply them.")
+                Text("Pick an accent color. It applies immediately.")
                     .foregroundStyle(theme.textSecondary)
             }
 
@@ -161,11 +188,6 @@ public struct FleetSettingsView: View {
         .sheet(isPresented: $showingSetupPrompt) {
             SetupPromptSheet()
         }
-        .sheet(isPresented: $showingThemeEditor) {
-            NavigationStack {
-                FleetThemeEditorView(controller: themeController)
-            }
-        }
         .confirmationDialog("Delete local cache?", isPresented: $showingCacheClearConfirmation, titleVisibility: .visible) {
             Button("Delete Cache", role: .destructive) {
                 guard let environment else { return }
@@ -191,6 +213,27 @@ public struct FleetSettingsView: View {
         }
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
+    }
+
+    // MARK: - Accent picker support (ChatGPT-style)
+
+    private var currentAccent: FleetAccent? {
+        FleetAccent.matching(active: themeController.activePalette)
+    }
+
+    private var currentAccentLabel: String {
+        currentAccent?.label ?? "Accent"
+    }
+
+    private var accentColorHighlight: FleetStoredColor {
+        currentAccent?.highlight ?? themeController.activePalette.highlight
+    }
+
+    private func applyAccent(_ accent: FleetAccent) {
+        // Immediate apply — the ChatGPT contract. The controller's
+        // invisible-pair guard still runs (all 7 pass over Fleet-default
+        // backgrounds by construction).
+        themeController.apply(accent.palette)
     }
 
     /// Marketing/build version from the main bundle (no invented values).

@@ -20,6 +20,24 @@ final class AppCompositionTests: XCTestCase {
 
     /// QA round-3: every tab's SF Symbol must be a REAL symbol — a bad name
     /// renders a silent blank icon (build 49's `clock.badge.circle` ghost).
+    /// ChatGPT-style accent picker: every one of the 7 curated accents maps
+    /// to a palette the FleetThemeController's invisible-pair guard ACCEPTS
+    /// (they apply cleanly over the Fleet-default backgrounds).
+    func testAccentPickerPalettesAllApply() {
+        for accent in FleetAccent.allCases {
+            let palette = accent.palette
+            XCTAssertFalse(palette.hasInvisiblePair,
+                           "\(accent.label) must not be an invisible pair")
+            XCTAssertNotNil(try? JSONEncoder().encode(palette),
+                           "\(accent.label) palette must be encodable")
+        }
+        // The matching() reverse lookup finds each accent from its palette.
+        for accent in FleetAccent.allCases {
+            XCTAssertEqual(FleetAccent.matching(active: accent.palette), accent,
+                           "matching() must round-trip \(accent.label)")
+        }
+    }
+
     func testEveryTabSystemImageResolvesToRealSFSymbol() {
         for tab in FleetTab.allCases {
             XCTAssertNotNil(UIImage(systemName: tab.systemImage),

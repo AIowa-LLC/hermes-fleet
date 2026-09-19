@@ -21,7 +21,7 @@ final class FleetThemeTests: XCTestCase {
     override func setUp() {
         super.setUp()
         savedAccentRaw = UserDefaults.standard.string(forKey: FleetAccentController.persistKey)
-        FleetAccentController.shared.selection = .gold
+        FleetAccentController.shared.selection = .orange
     }
 
     override func tearDown() {
@@ -286,9 +286,9 @@ final class FleetThemeTests: XCTestCase {
         suite.removePersistentDomain(forName: "testFOS7AccentRollback")
         let controller = FleetAccentController(defaults: suite)
         XCTAssertEqual(controller.selection, .blue, "fresh install default")
-        controller.selection = .gold
-        XCTAssertEqual(suite.string(forKey: FleetAccentController.persistKey), "gold")
-        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .gold, "stored rollback value survives")
+        controller.selection = .orange
+        XCTAssertEqual(suite.string(forKey: FleetAccentController.persistKey), "orange")
+        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .orange, "stored rollback value survives")
         suite.set("teal-not-a-real-accent", forKey: FleetAccentController.persistKey)
         XCTAssertEqual(FleetAccentController(defaults: suite).selection, .blue, "stale raw falls back")
     }
@@ -415,16 +415,16 @@ final class FleetThemeTests: XCTestCase {
     func testLegacyAccentMigrationKeepsDefaultTextAndBackgroundAdaptive() {
         let defaults = UserDefaults(suiteName: "testFleetThemeMigrationAppearance")!
         defaults.removePersistentDomain(forName: "testFleetThemeMigrationAppearance")
-        defaults.set(FleetAccent.gold.rawValue, forKey: FleetAccentController.persistKey)
+        defaults.set(FleetAccent.orange.rawValue, forKey: FleetAccentController.persistKey)
 
         let controller = FleetThemeController(defaults: defaults)
         let light = controller.resolvedTheme(isDarkAppearance: false, isIncreasedContrast: false)
         let dark = controller.resolvedTheme(isDarkAppearance: true, isIncreasedContrast: false)
 
-        XCTAssertEqual(light.resolvedPalette.highlight, FleetAccent.gold.legacyHighlight)
+        XCTAssertEqual(light.resolvedPalette.highlight, FleetAccent.orange.legacyHighlight)
         XCTAssertEqual(light.resolvedPalette.text, FleetThemePalette.fleetDefault.text)
         XCTAssertEqual(light.resolvedPalette.background, FleetThemePalette.fleetDefault.background)
-        XCTAssertEqual(dark.resolvedPalette.highlight, FleetAccent.gold.legacyHighlight)
+        XCTAssertEqual(dark.resolvedPalette.highlight, FleetAccent.orange.legacyHighlight)
         XCTAssertEqual(dark.resolvedPalette.text, FleetThemePalette.fleetDefaultDark.text)
         XCTAssertEqual(dark.resolvedPalette.background, FleetThemePalette.fleetDefaultDark.background)
     }
