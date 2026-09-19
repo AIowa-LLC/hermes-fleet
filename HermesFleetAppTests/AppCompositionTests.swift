@@ -23,6 +23,38 @@ final class AppCompositionTests: XCTestCase {
     /// ChatGPT-style accent picker: every one of the 8 curated accents maps
     /// to a palette the FleetThemeController's invisible-pair guard ACCEPTS
     /// (they apply cleanly over the Fleet-default backgrounds).
+    func testShellChromeInkAndMenuGlyphGuards() throws {
+        // Dogfood r3 (blank menu glyph + themed search icon on build 57):
+        // pin the shell chrome contracts at the source level.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Packages/FleetUI/Sources/FleetUI/FleetTabView.swift"),
+            encoding: .utf8)
+        // `equals` is NOT a real SF Symbol (verified against CoreGlyphs
+        // 2026-09-19) — Image(systemName:) renders BLANK. The menu glyph is
+        // custom-drawn capsule bars; the retired name may not return.
+        XCTAssertFalse(source.contains("systemName: \"equals\""),
+                      "the menu glyph must stay custom-drawn — 'equals' renders blank")
+        XCTAssertTrue(source.contains("Capsule().fill(Color.primary)"),
+                      "the menu glyph must be the two custom capsule bars")
+        // The search (Command Center) icon's neutral ink must be INSIDE the
+        // label (on the Image); a Button-level style loses to the root tint.
+        let toolbarStart = source.range(of: "private var rootShellToolbar")
+        let toolbarEnd = source.range(of: "private var destinationShellToolbar")
+        if let s = toolbarStart, let e = toolbarEnd, s.lowerBound < e.lowerBound {
+            let block = String(source[s.lowerBound..<e.lowerBound])
+            XCTAssertTrue(block.contains("Image(systemName: \"magnifyingglass\")"),
+                          "the search chrome must use the magnifyingglass image")
+            XCTAssertTrue(block.contains(".foregroundStyle(Color.primary)"),
+                          "the search icon ink must be set on the Image inside the label")
+            XCTAssertFalse(block.contains("Button(\"Command Center\", systemImage:"),
+                          "the titled-button form cannot carry in-label ink — keep the explicit label")
+        } else {
+            XCTFail("rootShellToolbar block not found for the chrome guard")
+        }
+    }
+
     func testAccentPickerPalettesAllApply() {
         for accent in FleetAccent.allCases {
             let palette = accent.palette

@@ -12,17 +12,20 @@ struct FleetDrawerMenu: ToolbarContent {
     var body: some ToolbarContent {
         if let openDrawer {
             ToolbarItem(placement: .topBarLeading) {
-                // Dogfood round 2: the ChatGPT menu control — the small
-                // two-line hamburger (SF Symbol `equals`) in a glass circle.
+                // Dogfood r3: the ChatGPT two-line mark, CUSTOM-DRAWN —
+                // `equals` is not a real SF Symbol (CoreGlyphs check
+                // 2026-09-19) and rendered as a blank glyph inside the
+                // glass. Two capsule bars render identically on every OS.
                 // `.ultraThinMaterial` keeps XCUITest taps working (the
                 // .glassEffect() look computes hit point {-1,-1}).
                 Button(action: openDrawer) {
-                    Image(systemName: "equals")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .frame(width: 34, height: 34)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                    VStack(spacing: 5) {
+        Capsule().fill(Color.primary).frame(width: 15, height: 2.5)
+        Capsule().fill(Color.primary).frame(width: 15, height: 2.5)
+                    }
+                    .frame(width: 34, height: 34)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
                 }
                 .accessibilityLabel("Menu")
                 .accessibilityIdentifier("fleet.drawer.open")
@@ -362,12 +365,19 @@ public struct FleetTabView: View {
     private var rootShellToolbar: some ToolbarContent {
         FleetDrawerMenu()
         ToolbarItem(placement: .topBarTrailing) {
-            // Dogfood round 2: chrome icons are NEUTRAL ink — the root
-            // .tint(theme.highlight) must not paint toolbar chrome.
-            Button("Command Center", systemImage: "magnifyingglass") { showingCommandCenter = true }
-                .foregroundStyle(.primary)
-                .accessibilityIdentifier("fleet.command-center.open")
-                .keyboardShortcut("k", modifiers: .command)
+            // Dogfood r3: chrome icons are NEUTRAL ink. The style must sit
+            // on the Image INSIDE the label — a Button-level style loses to
+            // the root .tint(theme.highlight) on toolbar items (measured on
+            // build 57: button-level .primary still rendered themed).
+            Button {
+                showingCommandCenter = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(Color.primary)
+            }
+            .accessibilityLabel("Command Center")
+            .accessibilityIdentifier("fleet.command-center.open")
+            .keyboardShortcut("k", modifiers: .command)
         }
     }
 
