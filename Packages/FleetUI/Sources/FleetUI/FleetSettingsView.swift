@@ -226,7 +226,9 @@ public struct FleetSettingsView: View {
     }
 
     private var accentColorHighlight: FleetStoredColor {
-        currentAccent?.highlight ?? themeController.activePalette.highlight
+        // ADR-0009: the swatch shows the ACTIVE appearance's resolution
+        // (the mono White accent renders near-black in light, white in dark).
+        theme.resolvedPalette.highlight
     }
 
     private func applyAccent(_ accent: FleetAccent) {

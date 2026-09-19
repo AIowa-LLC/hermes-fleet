@@ -56,6 +56,7 @@ All drawer edits are in `Packages/FleetUI/Sources/FleetUI/FleetNavigationDrawer.
 - Acceptance: gear trailing edge aligned to drawer trailing inset; vertically centered with pill; frosted translucency visible over scrolled rows.
 
 ### WI-6 — Compose pill
+*Reversed 2026-09-19 by [ADR-0009](adr/0009-compose-pill-theme-coupling-and-white-accent.md): the pill fill now follows the active theme highlight with `onHighlight` ink; the `composeFill` token is removed. Spec: [`theme-coupled-pill-and-white-accent.md`](theme-coupled-pill-and-white-accent.md).*
 - Label text: `"New Chat"` → `"Chat"` (identifier `fleet.drawer.new-chat` unchanged).
 - Ink: `.foregroundStyle(theme.background)` → `.foregroundStyle(.white)`.
 - Fill: `theme.highlight` → new fixed token `FleetTheme.composeFill` = `#5B35D5` (fixed in both appearances).

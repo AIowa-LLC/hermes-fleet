@@ -170,18 +170,18 @@ struct FleetNavigationDrawer: View {
     /// Codex-parity pinned footer (ADR-0008): the compose pill leads, the
     /// glass Settings control sits at the drawer's trailing edge.
     /// Identifiers are unchanged (contract stability) — only position moved.
-    /// The pill is the fixed deep Fleet violet with white content in both
-    /// appearances (white-on-#5B35D5 = 7.2:1); the pale dark-mode violet
-    /// stays reserved for tint/status use.
+    /// The pill follows the active theme highlight (ADR-0009): fill
+    /// theme.highlight, ink theme.onHighlight — the guaranteed-legible ink
+    /// seam, so any accent (incl. the mono White) renders >= 4.5:1 content.
     private var footer: some View {
         HStack(spacing: FleetTheme.spacingMd) {
             Button(action: onNewChat) {
                 Label("Chat", systemImage: "square.and.pencil")
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.onHighlight)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
-                    .background(FleetTheme.composeFill, in: Capsule())
+                    .background(theme.highlight, in: Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("fleet.drawer.new-chat")

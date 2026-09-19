@@ -197,17 +197,38 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetTheme.spacingXxl, 32)
     }
 
-    // MARK: - Compose pill (ADR-0008 round-3 Codex parity)
 
-    /// composeFill is FIXED — #5B35D5 in both appearances (white content on
-    /// it is 7.2:1). Not appearance-adaptive, unlike every status token.
-    func testComposeFillIsFixedDeepViolet() {
-        for appearance in [UIUserInterfaceStyle.light, .dark] {
-            assertResolvedHex(
-                FleetTheme.composeFill, hex: 0x5B35D5,
-                traits: UITraitCollection(userInterfaceStyle: appearance),
-                name: "composeFill \(appearance)")
-        }
+    // MARK: - Compose pill theme coupling (ADR-0009)
+
+    /// White is the mono accent: stored #1C1C1E in light (16.16:1 on the
+    /// light canvas), resolved #FFFFFF in dark over the Fleet-default dark
+    /// text/background (18.75:1).
+    func testWhiteAccentResolvesPerAppearance() {
+        XCTAssertEqual(FleetAccent.white.highlight, FleetStoredColor(hex: 0x1C1C1E))
+        XCTAssertEqual(
+            FleetAccent.white.palette.palette(forDarkAppearance: false).highlight,
+            FleetStoredColor(hex: 0x1C1C1E),
+            "White keeps its stored light representation in light mode")
+        XCTAssertEqual(
+            FleetAccent.white.palette.palette(forDarkAppearance: true).highlight,
+            FleetStoredColor(hex: 0xFFFFFF),
+            "White resolves to pure white in dark mode")
+        XCTAssertEqual(
+            FleetAccent.white.palette.palette(forDarkAppearance: true).background,
+            FleetThemePalette.fleetDefaultDark.background,
+            "mono dark adopts the Fleet-default dark background")
+    }
+
+    /// The invisible-pair guard accepts the mono palette in BOTH resolutions
+    /// (light 16.16:1, dark 18.75:1 on their canvases).
+    func testWhiteAccentPaletteIsNotAnInvisiblePair() {
+        XCTAssertFalse(FleetAccent.white.palette.hasInvisiblePair)
+    }
+
+    /// matching() round-trips White from its stored triple (no collision
+    /// with Black's #2C2C2E).
+    func testWhiteAccentMatchingRoundTrip() {
+        XCTAssertEqual(FleetAccent.matching(active: FleetAccent.white.palette), .white)
     }
 
     /// neutralFill keeps the selection visible on the canvas in BOTH modes

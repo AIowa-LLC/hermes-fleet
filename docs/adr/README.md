@@ -11,6 +11,8 @@ ADRs document durable architectural choices and important constraints. They are 
 | [0005](0005-credential-failure-semantics.md) | Make Keychain writes failure-safe and deletion failures visible | Accepted |
 | [0006](0006-ats-cleartext-raw-ip-hosts.md) | Do not ship maintainer-specific ATS host exceptions | Superseded decision, current policy documented |
 | [0007](0007-last-event-id-resume.md) | Track applied event IDs and recover stream gaps explicitly | Accepted |
+| [0008](0008-drawer-parity-selection-pill-dismissal.md) | Drawer neutral selection, fixed compose pill, swipe dismissal (round-3 Codex parity) | Decision 2 superseded by ADR-0009 |
+| [0009](0009-compose-pill-theme-coupling-and-white-accent.md) | Compose pill theme coupling and the White (mono) accent | Accepted, implementation pending |
 
 ## ADR status language
 

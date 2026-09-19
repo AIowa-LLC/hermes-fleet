@@ -12,6 +12,7 @@ SPEC §14 currently assigns the fixed Fleet violet to “interactive tint **and 
 
 1. **Selected navigation uses a neutral fill** (`FleetTheme.neutralFill` — light `#E4E4E9` / dark `#2C2C2E`) with primary-label content; weight (semibold) remains the non-color selection cue. (Round-1 QA: the system tertiary background is invisible on the light canvas, so the fill is explicit per-appearance.) Fleet violet stays the interactive tint for links, controls, and the compose affordance.
 2. **The compose pill is fixed deep violet `#5B35D5` with white content in both appearances** (contrast 7.2:1) and reads “Chat”.
+   *Superseded 2026-09-19 by [ADR-0009](0009-compose-pill-theme-coupling-and-white-accent.md): the pill fill now follows the active theme highlight with `onHighlight` ink.*
 3. **The ✕ close button is removed for strict parity.** Dismissal = scrim tap (existing), destination-select auto-dismiss (existing), and a new interactive left-swipe with spring-back; Reduce Motion gets instant dismiss without follow.
 4. The settings (gear) control moves to the drawer's trailing edge and adopts the floating-glass layer (`.ultraThinMaterial` circle — chosen over `.glassEffect()` because glassEffect computes AX hit points at `{-1,-1}` and breaks XCUITest taps).
 

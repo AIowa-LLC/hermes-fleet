@@ -20,7 +20,7 @@ final class AppCompositionTests: XCTestCase {
 
     /// QA round-3: every tab's SF Symbol must be a REAL symbol — a bad name
     /// renders a silent blank icon (build 49's `clock.badge.circle` ghost).
-    /// ChatGPT-style accent picker: every one of the 7 curated accents maps
+    /// ChatGPT-style accent picker: every one of the 8 curated accents maps
     /// to a palette the FleetThemeController's invisible-pair guard ACCEPTS
     /// (they apply cleanly over the Fleet-default backgrounds).
     func testAccentPickerPalettesAllApply() {

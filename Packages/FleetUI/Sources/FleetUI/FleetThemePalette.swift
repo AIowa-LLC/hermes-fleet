@@ -175,6 +175,10 @@ public enum FleetThemePaletteAppearance: String, Codable, Equatable, Sendable {
     case adaptiveFleetDefault
     case adaptiveCustomHighlight
     case fixed
+    /// ADR-0009 mono accent (White): keeps the stored highlight in light
+    /// mode and resolves it to pure white in dark mode, over the
+    /// Fleet-default dark text/background.
+    case adaptiveMono
 }
 
 /// Versioned persisted user palette. V1 intentionally stores exactly one
@@ -277,6 +281,16 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
                 highlight: highlight,
                 text: dark.text,
                 background: dark.background,
+                version: version,
+                appearance: .fixed)
+        case .adaptiveMono:
+            // ADR-0009: the mono accent resolves its highlight to pure
+            // white in dark mode over the Fleet-default dark text and
+            // background (light keeps the stored near-black representation).
+            return FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0xFFFFFF),
+                text: Self.fleetDefaultDark.text,
+                background: Self.fleetDefaultDark.background,
                 version: version,
                 appearance: .fixed)
         case .fixed:

@@ -21,6 +21,8 @@ public enum FleetAccent: String, CaseIterable, Identifiable, Sendable {
     case orange
     case purple
     case black
+    /// ADR-0009 mono accent: near-black in light mode, white in dark mode.
+    case white
 
     public var id: String { rawValue }
 
@@ -41,6 +43,7 @@ extension FleetAccent {
         case .orange: FleetStoredColor(hex: 0xFF8A00)
         case .purple: FleetStoredColor(hex: 0x8B5CF6)
         case .black: FleetStoredColor(hex: 0x2C2C2E)
+        case .white: FleetStoredColor(hex: 0x1C1C1E)
         }
     }
 
@@ -54,18 +57,20 @@ extension FleetAccent {
         case .orange: "Orange"
         case .purple: "Purple"
         case .black: "Black"
+        case .white: "White"
         }
     }
 
     /// The palette this accent applies: its highlight over the Fleet-default
     /// text/background, adaptive — the existing contrast/ink pipeline and the
-    /// FleetThemeController apply-guard keep working unchanged.
+    /// FleetThemeController apply-guard keep working unchanged. White is the
+    /// mono exception (ADR-0009): its highlight resolves per appearance.
     public var palette: FleetThemePalette {
         FleetThemePalette(
             highlight: highlight,
             text: FleetThemePalette.fleetDefault.text,
             background: FleetThemePalette.fleetDefault.background,
-            appearance: .adaptiveCustomHighlight)
+            appearance: self == .white ? .adaptiveMono : .adaptiveCustomHighlight)
     }
 
     /// The accent whose palette matches (for showing the current pick when a

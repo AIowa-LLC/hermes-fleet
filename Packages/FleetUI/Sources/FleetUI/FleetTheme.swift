@@ -25,10 +25,6 @@ public enum FleetColors {
     public static let interactiveHighContrastLight: UInt32 = 0x422093
     public static let interactiveHighContrastDark: UInt32 = 0xD5C7FF
 
-    /// Drawer compose pill (ADR-0008 round-3 Codex parity): FIXED deep
-    /// Fleet violet in both appearances — white content on it is 7.2:1.
-    public static let composeFill: UInt32 = 0x5B35D5
-
     // MARK: - Status (SPEC §14 token table)
 
     public static let onlineLight: UInt32 = 0x176B46
@@ -182,17 +178,6 @@ public enum FleetTheme {
         highContrastDark: FleetColors.interactiveHighContrastDark,
         highContrastLight: FleetColors.interactiveHighContrastLight
     )
-
-    /// Drawer compose pill (ADR-0008): FIXED deep violet #5B35D5 in BOTH
-    /// appearances — the one filled affordance that keeps white content in
-    /// dark mode (white-on-#5B35D5 = 7.2:1; §14 contrast-note exception).
-    public static let composeFill: Color = {
-        #if canImport(UIKit)
-        return Color(uiColor: UIColor { _ in Self.rgb(FleetColors.composeFill) })
-        #else
-        return Color(red: 0x5B / 255.0, green: 0x35 / 255.0, blue: 0xD5 / 255.0)
-        #endif
-    }()
 
     // MARK: - Status (semantic, SPEC §14 table)
 
