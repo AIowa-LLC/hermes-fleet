@@ -16,3 +16,11 @@ Restore: `git clone hermes-fleet-ios-history.bundle <dir>` (complete
 history), or fetch from it into an existing repo. The GitHub archive
 AIowa-LLC/hermes-fleet-ios (read-only since 2026-09-07) holds only the
 pre-archival pushed history.
+
+## Bob the Timer (`bob-the-timer.bundle`, added 2026-09-19)
+
+Tony's first-ever app — the IntervalTimer ("Bob") SwiftUI project,
+~/Developer/IntervalTimer, deleted at owner request ("just for fun" app).
+No remote ever existed; the bundle is the only copy. 20 commits
+(v1.0 → v1.1.0 Bob v2 sprite face + release-readiness gate). Restore:
+`git clone bob-the-timer.bundle <dir>`.
