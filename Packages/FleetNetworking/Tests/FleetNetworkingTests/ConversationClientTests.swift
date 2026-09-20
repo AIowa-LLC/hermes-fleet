@@ -151,7 +151,7 @@ final class ConversationClientTests: XCTestCase {
 
     // MARK: session.resume
 
-    func testResumeSessionSendsSessionIDAndDecodes() async throws {
+    func testResumeSessionSendsSessionIDAndProfileAndDecodes() async throws {
         let captured = ConversationParamCapture()
         let script = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
@@ -178,12 +178,13 @@ final class ConversationClientTests: XCTestCase {
         defer { Task { await transport.disconnect() } }
 
         let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
-        let session = try await client.resumeSession(sessionID: "sess-001")
+        let session = try await client.resumeSession(sessionID: "sess-001", profile: "researcher")
         XCTAssertEqual(session.sessionID, "sess-001")
         XCTAssertEqual(session.storedSessionID, "stored-001")
         XCTAssertEqual(session.messageCount, 1)
         XCTAssertEqual(session.messages[0].text, "hello")
         XCTAssertEqual(captured.sessionID, "sess-001")
+        XCTAssertEqual(captured.profile, "researcher")
     }
 
     func testResumeSessionNotFoundMaps4007() async throws {
@@ -749,6 +750,19 @@ final class ConversationClientTests: XCTestCase {
             XCTFail("expected invalidSessionKey")
         } catch let error as ConversationError {
             XCTAssertEqual(error, .invalidSessionKey("session_id is not a safe session key: ../x"))
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
+
+    func testResumeSessionRejectsUnsafeProfileBeforeTransport() async {
+        let client = GatewayConversationClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: makeTransport(serverPort: 1))
+        do {
+            _ = try await client.resumeSession(sessionID: "s-1", profile: "../worker")
+            XCTFail("expected invalidSessionKey")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .invalidSessionKey("profile is not a safe routing key: ../worker"))
         } catch {
             XCTFail("unexpected error \(error)")
         }

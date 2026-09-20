@@ -1559,7 +1559,7 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
         )
     }
 
-    func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+    func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
         // R10-T2: fixture durable rows (row_id-stamped, one carrying a
         // seeded reaction) so long-press Tapback targets DURABLE rows in
         // the simulator + UI tests — mirroring what a real session.resume

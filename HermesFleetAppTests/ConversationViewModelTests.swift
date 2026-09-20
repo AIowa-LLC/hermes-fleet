@@ -47,6 +47,7 @@ final class ConversationViewModelTests: XCTestCase {
             .success(ConversationSession(sessionID: "s-1", profileName: "default"))
         var createCallCount = 0
         var resumeCallCount = 0
+        var resumedProfiles: [String?] = []
         var submittedTexts: [String] = []
         var submitError: ConversationError?
         var interruptError: ConversationError?
@@ -116,8 +117,9 @@ final class ConversationViewModelTests: XCTestCase {
             createCallCount += 1
             return try createResult.get()
         }
-        func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
             resumeCallCount += 1
+            resumedProfiles.append(profile)
             return try resumeResult.get()
         }
         /// t_8401d3c3 — captured gap-recovery requests + scripted responses.
@@ -524,6 +526,7 @@ final class ConversationViewModelTests: XCTestCase {
 
         XCTAssertEqual(scripted.connectCount, 1)
         XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(scripted.resumedProfiles, ["default"], "existing-session resume must preserve the route profile")
         // Authoritative resume messages supersede cache.
         XCTAssertEqual(viewModel.transcript.count, 1)
         XCTAssertEqual(viewModel.transcript.first?.kind, .user)

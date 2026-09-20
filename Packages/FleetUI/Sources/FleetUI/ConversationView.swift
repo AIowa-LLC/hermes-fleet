@@ -2010,7 +2010,7 @@ private struct PreviewConversation: ConversationProviding {
     func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
         ConversationSession(sessionID: "preview")
     }
-    func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+    func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
         ConversationSession(sessionID: sessionID)
     }
     func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

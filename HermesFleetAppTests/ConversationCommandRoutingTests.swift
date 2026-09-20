@@ -49,7 +49,7 @@ final class ConversationCommandRoutingTests: XCTestCase {
             createdTitles.append(title)
             return ConversationSession(sessionID: "fresh-\(createdTitles.count)", profileName: profile)
         }
-        func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
             ConversationSession(sessionID: sessionID, profileName: "default")
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

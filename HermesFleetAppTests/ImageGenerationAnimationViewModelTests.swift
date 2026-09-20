@@ -283,7 +283,7 @@ final class ImageGenerationAnimationViewModelTests: XCTestCase {
         func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
             ConversationSession(sessionID: "s-1", profileName: "default")
         }
-        func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
             ConversationSession(sessionID: sessionID, profileName: "default")
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

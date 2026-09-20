@@ -130,7 +130,7 @@ final class ConversationToolingTests: XCTestCase {
                 provider: provider ?? "nous", profileName: profile)
         }
 
-        func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
             recordMethod("session.resume")
             return ConversationSession(sessionID: sessionID)
         }

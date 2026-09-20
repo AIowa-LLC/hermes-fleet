@@ -93,7 +93,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             throw GatewayConnectivityError.unreachable
         }
         func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
-        func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
             throw GatewayConnectivityError.unreachable
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

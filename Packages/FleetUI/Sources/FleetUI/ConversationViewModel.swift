@@ -157,7 +157,7 @@ public final class ConversationViewModel {
     private let session: any ConversationSessionProviding
     private let cache: any CacheStoring
     public let route: Route
-    /// The runtime session id to resume, or nil to create a new conversation.
+    /// The stored/list session id to resume, or nil to create a new conversation.
     public let sessionID: String?
     /// R9-T1/T2/T3 — biometric seam for the approval gate (FaceID-gated
     /// approve, confirmed YOLO enable). Injected by the composition root;
@@ -568,7 +568,8 @@ public final class ConversationViewModel {
                     // subscription itself.
                     let resumed = try await session.conversation.resumeSession(
                         sessionID: sessionID,
-                        lastEventID: lastAppliedEventID
+                        lastEventID: lastAppliedEventID,
+                        profile: route.profileSlug.rawValue
                     )
                     guard isCurrent(token) else { return false }
                     openedSessionID = resumed.sessionID

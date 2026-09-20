@@ -66,13 +66,17 @@ public struct GatewayConversationClient: ConversationProviding {
         }
     }
 
-    public func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+    public func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
         // M9 fail-closed guard (precedes the connected-state check on purpose).
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
+        if let profile, !RoutingGuard.isValidRouteComponent(profile) {
+            throw ConversationError.invalidSessionKey("profile is not a safe routing key: \(profile)")
+        }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         var params: [String: JSONValue] = ["session_id": .string(sessionID)]
+        if let profile { params["profile"] = .string(profile) }
         // t_8401d3c3 (Last-Event-ID subscribe): declare the resume point on
         // every subscribe/reconnect. The gateway reads only known keys on
         // `session.resume` and ignores extras (verified methods_session.py),
