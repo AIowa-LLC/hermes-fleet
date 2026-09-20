@@ -12,6 +12,7 @@ import FleetCore
 /// stamps read (decision 1).
 enum FleetUnreadStore {
     private static let key = "fleet.chats.readwatermarks.v1"
+    private static let baselinedRoutesKey = "fleet.chats.readwatermarks.baselined-routes.v1"
 
     static func watermarks(defaults: UserDefaults = .standard) -> [String: Double] {
         guard let data = defaults.data(forKey: key),
@@ -19,6 +20,41 @@ enum FleetUnreadStore {
             return [:]
         }
         return decoded
+    }
+
+    static func baselinedRoutes(defaults: UserDefaults = .standard) -> Set<String> {
+        guard let data = defaults.data(forKey: baselinedRoutesKey),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(decoded)
+    }
+
+    static func isRouteBaselined(_ route: Route,
+                                 defaults: UserDefaults = .standard) -> Bool {
+        baselinedRoutes(defaults: defaults).contains(route.id)
+    }
+
+    /// First observation is read for the sessions returned by this route.
+    /// Later sessions on the same route are new observations and therefore
+    /// remain unread until opened. This prevents a new install from lighting
+    /// every historical session while preserving future-activity semantics.
+    static func baseline(route: Route, sessions: [SessionSummary],
+                         defaults: UserDefaults = .standard) {
+        var routes = baselinedRoutes(defaults: defaults)
+        guard routes.insert(route.id).inserted else { return }
+
+        var marks = watermarks(defaults: defaults)
+        for session in sessions where session.lastActive > 0 {
+            let id = "\(route.id)/\(session.id)"
+            if marks[id] == nil {
+                marks[id] = session.lastActive
+            }
+        }
+        persistWatermarks(marks, defaults: defaults)
+        if let data = try? JSONEncoder().encode(Array(routes).sorted()) {
+            defaults.set(data, forKey: baselinedRoutesKey)
+        }
     }
 
     static func isUnread(route: Route, session: SessionSummary,
@@ -37,6 +73,11 @@ enum FleetUnreadStore {
         guard lastActive > 0 else { return }
         var marks = watermarks(defaults: defaults)
         marks["\(route.id)/\(sessionID)"] = lastActive
+        persistWatermarks(marks, defaults: defaults)
+    }
+
+    private static func persistWatermarks(_ marks: [String: Double],
+                                          defaults: UserDefaults) {
         if let data = try? JSONEncoder().encode(marks) {
             defaults.set(data, forKey: key)
         }
@@ -46,5 +87,6 @@ enum FleetUnreadStore {
     /// across suite runs (the pin-store leak lesson).
     static func resetForUITests(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: baselinedRoutesKey)
     }
 }

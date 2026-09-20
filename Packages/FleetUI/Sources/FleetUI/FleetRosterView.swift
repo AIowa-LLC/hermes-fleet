@@ -537,7 +537,7 @@ public struct FleetRosterView: View {
                 // stack, and share the shell's Menu action on this destination.
                 NavigationLink {
                     RoomChatView(room: room, environment: environment)
-                        .toolbar { FleetDrawerMenu() }
+                        .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
                 } label: {
                     RoomRowView(room: room)
                 }

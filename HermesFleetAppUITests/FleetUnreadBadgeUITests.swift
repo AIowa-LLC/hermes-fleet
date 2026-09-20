@@ -1,19 +1,25 @@
 import XCTest
 
-/// Dogfood r4 (ChatGPT parity): unread dots on Chats rows, the menu-button
-/// badge, drawer-only search, and the neutral chrome ink batch.
+/// Dogfood r4 (ChatGPT parity): unread dots on Chats rows and drawer
+/// Recents, the menu-button badge, drawer-only search, and neutral chrome.
 /// Deterministic scripted-fleet suite: no live gateway.
 final class FleetUnreadBadgeUITests: XCTestCase {
 
-    func testMenuButtonRendersGlassWithoutBadgeWhenNoUnread() throws {
+    func testMenuButtonRendersGlassWithThemeBadge() throws {
         let app = launchApp()
-        // NAV_RESET clears watermarks; the scripted fleet's sessions have
-        // lastActive stamps but nothing marks them read — aggregate state
-        // depends on store contents, so assert the CONTROL renders and the
-        // badge identifier exists-or-not without assuming which.
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "fleet.chats.unread."))
+                .firstMatch
+                .waitForExistence(timeout: 10),
+            "Chats must load the unread fixture before the menu aggregate is checked")
         XCTAssertTrue(app.buttons["fleet.drawer.open"].waitForExistence(timeout: 10),
                       "the menu button must render")
-        _ = app.descendants(matching: .any).matching(identifier: "fleet.menu.unread-badge").firstMatch.exists
+        XCTAssertTrue(
+            app.buttons["fleet.drawer.open"].label.localizedCaseInsensitiveContains("unread conversations"),
+            "the menu button must expose the unread aggregate")
         attachScreenshot(of: app, name: "r4-menu-button")
     }
 
@@ -46,54 +52,76 @@ final class FleetUnreadBadgeUITests: XCTestCase {
         UITabNavigation.selectTab(app, label: "Chats")
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
 
-        // The scripted fleet's ordinary sessions carry lastActive stamps
-        // (FleetSimulator seeds them); with NAV_RESET-clear watermarks every
-        // listed session with lastActive > 0 renders a dot.
+        // The unread fixture deliberately skips first-observation baselining so
+        // the scripted lastActive row exercises the indicator and clear path.
         let dotPrefix = "fleet.chats.unread."
-        var dotQuery: XCUIElement {
-            app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", dotPrefix)).firstMatch
-        }
-        var found = dotQuery.waitForExistence(timeout: 10)
-        if !found {
-            // The Chats list may still be loading — give the read path a
-            // moment and retry once (the dot renders from the session list).
-            sleep(2)
-            found = dotQuery.exists
-        }
-        XCTAssertTrue(found, "at least one Chats row must render an unread dot (scripted lastActive, fresh watermarks)")
+        let dotQuery = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", dotPrefix)).firstMatch
+        XCTAssertTrue(dotQuery.waitForExistence(timeout: 10),
+                      "at least one Chats row must render an unread dot")
 
-        // Open the FIRST dotted conversation — the dot must clear.
-        // Capture the dotted id as a STRING (never hold a stale element
-        // proxy across a navigation round-trip — re-resolution of a
-        // vanished element throws, the allElementsBoundByIndex trap).
-        let dotted = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", dotPrefix))
-            .allElementsBoundByIndex
-        if let dotID = dotted.first?.identifier {
-            let sessID = dotID.replacingOccurrences(of: dotPrefix, with: "")
-            let row = app.buttons["fleet.chats.session.\(sessID)"].firstMatch
-            XCTAssertTrue(row.waitForExistence(timeout: 10), "the dotted session row must exist")
-            row.tap()
-            // Conversation chrome owns its header (system bar hidden) — the
-            // custom back control pops the stack. The read stamp fires on
-            // open; re-check the dot on the returned Chats list.
-            let back = app.buttons["fleet.conversation.back"].firstMatch
-            XCTAssertTrue(back.waitForExistence(timeout: 10),
-                          "the conversation's custom back control must render")
-            back.tap()
-            XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
-            // Re-query by the EXACT identifier each poll; disappearance of
-            // the query result is the pass condition. (NSPredicate is not
-            // Sendable — mint it INSIDE the loop under Swift 6 isolation.)
-            var stillThere = true
-            for _ in 0..<10 where stillThere {
-                stillThere = app.descendants(matching: .any)
-                    .matching(NSPredicate(format: "identifier == %@", dotID)).firstMatch.exists
-                if stillThere { usleep(500_000) }
-            }
-            XCTAssertFalse(stillThere, "opening the conversation must clear its unread dot")
+        // Capture the dotted id as a STRING (never hold a stale element proxy
+        // across a navigation round-trip).
+        let dotID = try XCTUnwrap(
+            app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH %@", dotPrefix))
+                .allElementsBoundByIndex.first?.identifier)
+        let sessID = dotID.replacingOccurrences(of: dotPrefix, with: "")
+        let row = app.buttons["fleet.chats.session.\(sessID)"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "the dotted session row must exist")
+        row.tap()
+
+        let back = app.buttons["fleet.conversation.back"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 10),
+                      "the conversation's custom back control must render")
+        back.tap()
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+
+        // Re-query by the exact identifier each poll; disappearance is the
+        // pass condition.
+        var stillThere = true
+        for _ in 0..<10 where stillThere {
+            stillThere = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier == %@", dotID)).firstMatch.exists
+            if stillThere { usleep(500_000) }
         }
+        XCTAssertFalse(stillThere, "opening the conversation must clear its unread dot")
         attachScreenshot(of: app, name: "r4-chats-dot")
+    }
+
+    func testDrawerRecentsUnreadDotRendersAndClearsOnOpen() throws {
+        let app = launchApp()
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+        usleep(1_000_000)
+
+        UITabNavigation.openDrawer(app)
+        let dotPrefix = "fleet.drawer.recent.unread."
+        let dot = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", dotPrefix)).firstMatch
+        XCTAssertTrue(dot.waitForExistence(timeout: 10),
+                      "drawer Recents must render an unread dot")
+        let dotID = try XCTUnwrap(dot.identifier)
+        let entryID = dotID.replacingOccurrences(of: dotPrefix, with: "")
+        let row = app.buttons["fleet.drawer.recent.\(entryID)"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10),
+                      "the unread drawer Recents row must exist")
+        row.tap()
+
+        let back = app.buttons["fleet.conversation.back"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        back.tap()
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+        UITabNavigation.openDrawer(app)
+
+        var stillThere = true
+        for _ in 0..<10 where stillThere {
+            stillThere = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier == %@", dotID)).firstMatch.exists
+            if stillThere { usleep(500_000) }
+        }
+        XCTAssertFalse(stillThere, "opening from drawer Recents must clear its unread dot")
+        attachScreenshot(of: app, name: "r4-drawer-recents-dot")
     }
 
     // MARK: - Helpers
@@ -102,6 +130,7 @@ final class FleetUnreadBadgeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_UNREAD_FIXTURE"] = "1"
         app.launch()
         UITabNavigation.shellReady(app)
         return app

@@ -474,7 +474,7 @@ public struct RoomChatView: View {
             }
             .navigationDestination(item: $continuedRoom) { room in
                 RoomChatView(room: room, environment: environment)
-                    .toolbar { FleetDrawerMenu() }
+                    .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
             }
             .onChange(of: viewModel.transcript.count) { _, _ in
                 // FOS-8 (SPEC §16 Focus): new events never steal the user's

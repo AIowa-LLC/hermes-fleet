@@ -298,7 +298,7 @@ struct FleetChatsView: View {
                                 // of the title — no count.
                                 if environment.isConversationUnread(route: entry.route, session: entry.session) {
                                     Circle()
-                                        .fill(Color.blue)
+                                        .fill(theme.highlight)
                                         .frame(width: 8, height: 8)
                                         .accessibilityLabel("Unread")
                                         .accessibilityIdentifier("fleet.chats.unread.\(entry.id)")

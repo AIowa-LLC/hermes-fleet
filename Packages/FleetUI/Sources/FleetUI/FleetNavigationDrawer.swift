@@ -273,15 +273,19 @@ struct FleetNavigationDrawer: View {
     private func recentRow(_ entry: FleetChatEntry) -> some View {
         let identity = FleetConversationIdentity.individual(route: entry.route, sessionID: entry.session.id)
         let title = entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title
+        let isUnread = environment.isConversationUnread(route: entry.route, session: entry.session)
         return HStack(spacing: FleetTheme.spacingSm) {
             Button { onOpenConversation(entry.route, entry.session.id) } label: {
                 conversationLabel(
                     title: title,
                     identity: identity,
-                    unavailable: false
+                    unavailable: false,
+                    isUnread: isUnread,
+                    unreadIdentifier: "fleet.drawer.recent.unread.\(entry.id)"
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("fleet.drawer.recent.\(entry.id)")
         }
         .accessibilityElement(children: .contain)
     }
@@ -289,7 +293,9 @@ struct FleetNavigationDrawer: View {
     private func conversationLabel(
         title: String,
         identity: FleetConversationIdentity,
-        unavailable: Bool
+        unavailable: Bool,
+        isUnread: Bool,
+        unreadIdentifier: String
     ) -> some View {
         HStack(spacing: FleetTheme.spacingSm) {
             VStack(alignment: .leading, spacing: 1) {
@@ -303,11 +309,19 @@ struct FleetNavigationDrawer: View {
                         .foregroundStyle(theme.textSecondary)
                 }
             }
+            if isUnread {
+                Circle()
+                    .fill(theme.highlight)
+                    .frame(width: 8, height: 8)
+                    .accessibilityLabel("Unread")
+                    .accessibilityIdentifier(unreadIdentifier)
+            }
             Spacer(minLength: 0)
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .accessibilityLabel(unavailable ? "\(title), unavailable" : title)
+        .accessibilityLabel(
+            unavailable ? "\(title), unavailable" : isUnread ? "\(title), unread" : title)
     }
 
     private func isAvailable(_ pin: FleetConversationPin) -> Bool {

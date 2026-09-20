@@ -8,6 +8,7 @@ extension EnvironmentValues {
 /// Also used by the few locally pushed conversation destinations.
 struct FleetDrawerMenu: ToolbarContent {
     @Environment(\.openFleetDrawer) private var openDrawer
+    @Environment(\.fleetTheme) private var theme
     /// Dogfood r4: the unread aggregate (menu-button badge), supplied by
     /// the OWNING view (FleetTabView holds the AppEnvironment; there is no
     /// environment-object injection on this shell).
@@ -34,9 +35,8 @@ struct FleetDrawerMenu: ToolbarContent {
                     // accent dot at the glass circle's top-right edge.
                     if showsUnreadBadge {
                         Circle()
-                            .fill(Color.red)
+                            .fill(theme.highlight)
                             .frame(width: 10, height: 10)
-                            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
                             .offset(x: 10, y: -10)
                             .accessibilityLabel("Unread conversations")
                             .accessibilityIdentifier("fleet.menu.unread-badge")

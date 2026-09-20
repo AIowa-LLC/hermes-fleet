@@ -360,11 +360,21 @@ public final class ConversationViewModel {
     // MARK: Internal state
 
     private var openedSessionID: String?
-    /// FOS-4: the session id the Continue index may record (the RESOLVED
-    /// open — either the resumed exact session or the freshly created one).
+    private var openedStoredSessionID: String?
+    /// FOS-4: the durable session id the Continue index and device-local
+    /// unread state may record. The transport's runtime id is intentionally
+    /// kept separate: `session.resume` returns both identities.
     /// Exposed read-only so ConversationView records the open only after
     /// the destination actually resolved (SPEC §17).
-    public var resolvedSessionID: String? { openedSessionID ?? sessionID }
+    public var resolvedSessionID: String? {
+        openedStoredSessionID ?? sessionID ?? openedSessionID
+    }
+
+    static func durableSessionID(
+        listedSessionID: String?, opened: ConversationSession
+    ) -> String? {
+        listedSessionID ?? opened.storedSessionID ?? opened.sessionID
+    }
     /// t_8401d3c3 — the client's last APPLIED event id for the open session's
     /// stream (the "last event id" of Last-Event-ID semantics). Advances only
     /// when an event is actually rendered into the transcript; sent as
@@ -562,6 +572,8 @@ public final class ConversationViewModel {
                     )
                     guard isCurrent(token) else { return false }
                     openedSessionID = resumed.sessionID
+                    openedStoredSessionID = Self.durableSessionID(
+                        listedSessionID: sessionID, opened: resumed)
                     applyOpenedSession(resumed)
                 } else {
                     // R9-T2: ride the sticky per-device model pick on
@@ -579,6 +591,8 @@ public final class ConversationViewModel {
                     )
                     guard isCurrent(token) else { return false }
                     openedSessionID = created.sessionID
+                    openedStoredSessionID = Self.durableSessionID(
+                        listedSessionID: nil, opened: created)
                     applyOpenedSession(created)
                 }
             } catch {

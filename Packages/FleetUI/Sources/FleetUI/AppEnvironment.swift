@@ -705,6 +705,7 @@ public final class AppEnvironment {
         cachedBotsByGateway = botsByGateway
         for list in lists where knownIDs.contains(list.route.gatewayID) {
             sessionsByRoute[list.route] = list.sessions
+            baselineUnreadStateIfNeeded(route: list.route, sessions: list.sessions)
         }
         recomputeUnreadAggregate()
         isViewingCachedFleet = true
@@ -2164,6 +2165,23 @@ public final class AppEnvironment {
     }
 
     // MARK: Dogfood r4 — unread watermarks
+
+    /// First observation of a route establishes the device-local read baseline
+    /// for the sessions currently returned by that route. Later session IDs on
+    /// an already-baselined route remain unread until the user opens them.
+    private func baselineUnreadStateIfNeeded(route: Route, sessions: [SessionSummary]) {
+        #if DEBUG
+        // The unread UI suite deliberately starts with an unread fixture so it
+        // can exercise both indicators and the clear-on-open path. Production
+        // and ordinary tests always use the first-observation baseline.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_UNREAD_FIXTURE"] == "1" {
+            return
+        }
+        #endif
+        guard !FleetUnreadStore.isRouteBaselined(route) else { return }
+        FleetUnreadStore.baseline(route: route, sessions: sessions)
+        readWatermarks = FleetUnreadStore.watermarks()
+    }
 
     /// Decision 1: opening a conversation marks it read. `lastActive` is
     /// the gateway's CURRENT stamp for the session (server clock — device

@@ -196,7 +196,7 @@ public struct ConversationView: View {
                 route: route,
                 sessionID: forkTargetSessionID
             )
-            .toolbar { FleetDrawerMenu() }
+            .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
         }
         // Slash parity: command-driven navigation. /new pushes a fresh
         // conversation on the SAME route (gateway/profile preserved);
@@ -222,7 +222,7 @@ public struct ConversationView: View {
                 route: route,
                 sessionID: newChatTargetSessionID
             )
-            .toolbar { FleetDrawerMenu() }
+            .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
         }
         // (Toolbar intentionally empty: the former principal StatusPill and
         // the trailing timeline/latest items now live in compactHeader and
