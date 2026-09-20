@@ -123,7 +123,6 @@ public final class ReasoningViewModel {
 /// is unchanged from the r8 chip (id + value carry the word) — zero test
 /// edits by design.
 public struct ReasoningChip: View {
-    @Environment(\.fleetTheme) private var theme
     @Bindable var model: ReasoningViewModel
     let onOpen: () -> Void
 
@@ -132,28 +131,33 @@ public struct ReasoningChip: View {
         self.onOpen = onOpen
     }
 
-    /// Level-encoding gauge: the needle position IS the level.
-    private var symbolName: String {
+    /// Level → arc fraction of the dial (the strip length IS the level).
+    /// Anchored so the resting default (medium) reads ~half — the ChatGPT
+    /// reference's visual weight — with high nearly full and none empty.
+    private var fraction: CGFloat {
         switch model.level {
-        case .off: return "dial.min"
-        case .minimal, .low: return "gauge.low"
-        case .medium: return "gauge.medium"
-        case .high: return "gauge.high"
-        case nil: return "gauge.medium"
+        case .off: return 0
+        case .minimal: return 0.2
+        case .low: return 0.35
+        case .medium: return 0.5
+        case .high: return 0.85
+        case nil: return 0.5
         }
     }
 
     public var body: some View {
         Button(action: onOpen) {
-            // r8.2 (Tony's dogfood): the gauge is ALWAYS theme-highlight —
-            // like ChatGPT's always-purple dial, the accent marks the
-            // control while the needle marks the level. And the SF gauge
-            // family renders optically small (thin arc + inner whitespace)
-            // next to 20pt neighbors — a 24pt glyph restores equal visual
-            // weight (measured on the ChatGPT reference: gauge ≈ plus ≈ mic).
-            Image(systemName: symbolName)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(theme.highlight)
+            // r8.3 (Tony's dogfood): the icon is a DRAWN DIAL, not an SF
+            // Symbol — ChatGPT's is a thin neutral ring + an accent ARC
+            // STRIP whose fill length encodes the reasoning level (≈half
+            // the ring at medium, sweeping counterclockwise from 12
+            // o'clock) + a small hub dot. The accent marks the control;
+            // the STRIP is the level readout, and it re-renders live as
+            // the slider applies a new stop.
+            ReasoningGaugeDial(
+                fraction: fraction,
+                active: model.level != .off
+            )
                 .frame(width: 36, height: 36)
                 .contentShape(Circle())
         }
@@ -162,6 +166,32 @@ public struct ReasoningChip: View {
         .accessibilityValue(model.displayWord)
         .accessibilityHint("Adjust how much this session reasons")
         .accessibilityIdentifier("fleet.conversation.reasoning.chip")
+    }
+}
+
+/// The ChatGPT-style reasoning dial: neutral track ring, theme-highlight
+/// arc strip (level fraction, rounded caps, counterclockwise from 12),
+/// center hub dot. All colors from `.fleetTheme`.
+struct ReasoningGaugeDial: View {
+    @Environment(\.fleetTheme) private var theme
+    let fraction: CGFloat
+    let active: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(theme.textSecondary.opacity(0.55), lineWidth: 2)
+            Circle()
+                .trim(from: 1 - fraction, to: 1)
+                .stroke(theme.highlight,
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Circle()
+                .fill(active ? theme.highlight : theme.textSecondary.opacity(0.55))
+                .frame(width: 4.5, height: 4.5)
+        }
+        .padding(4)
+        .accessibilityHidden(true)
     }
 }
 
