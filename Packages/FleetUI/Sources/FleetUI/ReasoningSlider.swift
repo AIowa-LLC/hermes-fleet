@@ -140,7 +140,10 @@ public struct ReasoningChip: View {
         case .minimal: return 0.2
         case .low: return 0.35
         case .medium: return 0.5
-        case .high: return 0.85
+        case .high: return 0.65
+        case .xhigh: return 0.78
+        case .max: return 0.9
+        case .ultra: return 1.0
         case nil: return 0.5
         }
     }

@@ -2,18 +2,20 @@ import XCTest
 @testable import FleetCore
 
 /// Dogfood r8 (reasoning slider) — the level model must match the gateway
-/// wire EXACTLY: `hermes_constants.parse_reasoning_effort` accepts
-/// none | minimal | low | medium | high (verified live 2026-09-20); anything
-/// else is rejected server-side with 4002. The enum is the single source of
-/// the five words Fleet ever puts on the wire.
+/// wire EXACTLY: `hermes_constants.parse_reasoning_effort` +
+/// `VALID_REASONING_EFFORTS` accept
+/// none | minimal | low | medium | high | xhigh | max | ultra
+/// (re-verified live 2026-09-20, r8.4); anything else is rejected
+/// server-side with 4002. The enum is the single source of the words Fleet
+/// ever puts on the wire.
 final class ConversationReasoningTests: XCTestCase {
 
     // MARK: wire words
 
-    func testRawValuesAreExactlyTheFiveAcceptedWireWords() {
+    func testRawValuesAreExactlyTheEightAcceptedWireWords() {
         XCTAssertEqual(
             FleetReasoningLevel.allCases.map(\.rawValue),
-            ["none", "minimal", "low", "medium", "high"],
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
             "rawValues must equal the gateway's accepted effort words in stop order"
         )
     }
@@ -21,13 +23,16 @@ final class ConversationReasoningTests: XCTestCase {
     func testStopOrderIsLeastToMostThinking() {
         XCTAssertEqual(
             FleetReasoningLevel.allCases.map(\.stopIndex),
-            Array(0..<5),
+            Array(0..<8),
             "cases must be declared in stop order so stopIndex is monotonic"
         )
         XCTAssertTrue(FleetReasoningLevel.off.stopIndex < FleetReasoningLevel.minimal.stopIndex)
         XCTAssertTrue(FleetReasoningLevel.minimal.stopIndex < FleetReasoningLevel.low.stopIndex)
         XCTAssertTrue(FleetReasoningLevel.low.stopIndex < FleetReasoningLevel.medium.stopIndex)
         XCTAssertTrue(FleetReasoningLevel.medium.stopIndex < FleetReasoningLevel.high.stopIndex)
+        XCTAssertTrue(FleetReasoningLevel.high.stopIndex < FleetReasoningLevel.xhigh.stopIndex)
+        XCTAssertTrue(FleetReasoningLevel.xhigh.stopIndex < FleetReasoningLevel.max.stopIndex)
+        XCTAssertTrue(FleetReasoningLevel.max.stopIndex < FleetReasoningLevel.ultra.stopIndex)
     }
 
     func testLabelsArePlainEnglishTitleCase() {
@@ -36,6 +41,9 @@ final class ConversationReasoningTests: XCTestCase {
         XCTAssertEqual(FleetReasoningLevel.low.label, "Low")
         XCTAssertEqual(FleetReasoningLevel.medium.label, "Medium")
         XCTAssertEqual(FleetReasoningLevel.high.label, "High")
+        XCTAssertEqual(FleetReasoningLevel.xhigh.label, "Extra High")
+        XCTAssertEqual(FleetReasoningLevel.max.label, "Max")
+        XCTAssertEqual(FleetReasoningLevel.ultra.label, "Ultra")
     }
 
     // MARK: Codable round-trip (the wire word "none" is not the case name)

@@ -13,10 +13,12 @@ import Foundation
 ///   scope}`. SESSION-SCOPED by design — "a menu pick must not rewrite the
 ///   global" (the gateway's own comment). The global
 ///   `agent.reasoning_effort` stays the owner's knob, never the app's.
-/// - Accepted values — `hermes_constants.parse_reasoning_effort`, executed
-///   live: `none | minimal | low | medium | high` (and `false → none`).
-///   Anything else — including numerics like "5.6" — returns None and the
-///   setter errors 4002. The five words are the ENTIRE control surface.
+/// - Accepted values — `hermes_constants.parse_reasoning_effort` +
+///   `VALID_REASONING_EFFORTS`, executed live (re-verified 2026-09-20,
+///   r8.4): `none | minimal | low | medium | high | xhigh | max | ultra`
+///   (and `false → none`). Anything else — including numerics like "5.6" —
+///   returns None and the setter errors 4002. The eight words are the
+///   ENTIRE control surface, mirrored here in wire order.
 public enum FleetReasoningLevel: String, CaseIterable, Codable, Sendable, Hashable {
     /// Thinking disabled. The wire word is `none` (NOT the case name).
     case off = "none"
@@ -24,8 +26,11 @@ public enum FleetReasoningLevel: String, CaseIterable, Codable, Sendable, Hashab
     case low
     case medium
     case high
+    case xhigh
+    case max
+    case ultra
 
-    /// Stop index along the slider (0…4) — `allCases` order is stop order.
+    /// Stop index along the slider (0…7) — `allCases` order is stop order.
     public var stopIndex: Int {
         Self.allCases.firstIndex(of: self) ?? 0
     }
@@ -38,6 +43,9 @@ public enum FleetReasoningLevel: String, CaseIterable, Codable, Sendable, Hashab
         case .low: return "Low"
         case .medium: return "Medium"
         case .high: return "High"
+        case .xhigh: return "Extra High"
+        case .max: return "Max"
+        case .ultra: return "Ultra"
         }
     }
 

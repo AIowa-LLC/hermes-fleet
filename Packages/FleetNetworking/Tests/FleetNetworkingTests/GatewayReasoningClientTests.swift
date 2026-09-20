@@ -114,7 +114,7 @@ final class GatewayReasoningClientTests: XCTestCase {
             onText: { frame in
                 guard let (id, method, _) = Self.extractRequest(frame) else { return [] }
                 if method == "config.get" {
-                    return [Self.responseFrame(id: id, result: ["value": "ultra"])]
+                    return [Self.responseFrame(id: id, result: ["value": "turbo"])]
                 }
                 return []
             }
@@ -130,7 +130,7 @@ final class GatewayReasoningClientTests: XCTestCase {
         let client = GatewayReasoningClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let state = try await client.reasoning(sessionID: "abc12345")
         XCTAssertNil(state.level, "an unknown word is an honest unknown, never a guessed mapping")
-        XCTAssertEqual(state.rawValue, "ultra")
+        XCTAssertEqual(state.rawValue, "turbo")
     }
 
     // MARK: 3. write RPC shape + reported-value readback

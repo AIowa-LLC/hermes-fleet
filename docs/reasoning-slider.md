@@ -38,8 +38,9 @@ and instantly reversible).
 
 ## Design
 
-**Five stops, one axis.** `none | minimal | low | medium | high`, ordered
-least→most. The control is a drag-anywhere capsule slider presented as an
+**Eight stops, one axis.** `none | minimal | low | medium | high | xhigh | max | ultra`, ordered
+least→most (the gateway's full `VALID_REASONING_EFFORTS` ladder, re-verified
+live r8.4 — Tony's gateway runs at `max`). The control is a drag-anywhere capsule slider presented as an
 overlay directly above the composer — not a sheet, not a menu — so the
 keyboard and composer state are untouched and no presentation animation can
 drop taps (verified lane trap: menu-item taps drop while presenting).
@@ -82,9 +83,9 @@ sticky-pick coloring).
 **File (new):** `Packages/FleetCore/Sources/FleetCore/ConversationReasoning.swift`
 
 - `public enum FleetReasoningLevel: String, CaseIterable, Codable, Sendable` —
-  `none, minimal, low, medium, high`; `var isSuccessor: Bool` (`none` is not a
+  `none, minimal, low, medium, high, xhigh, max, ultra`; `var isSuccessor: Bool` (`none` is not a
   thinking level but IS a legal wire value and slider stop); `index`,
-  `label` ("None/Minimal/Low/Medium/High"), `init?(wireValue:)` strict.
+  `label` ("None/Minimal/Low/Medium/High/Extra High/Max/Ultra"), `init?(wireValue:)` strict.
 - `public struct ReasoningState: Equatable, Sendable` — `{level: FleetReasoningLevel?, rawValue: String, display: String?}` (level nil ⇒ unknown/custom readback; the chip then shows `rawValue` and the slider marks no stop).
 - `public protocol ReasoningControl: Sendable` —
   `func reasoning(sessionID: String) async throws -> ReasoningState`;
@@ -173,7 +174,7 @@ that choice here.
 
 - This spec's Status flips to implemented, riding the implementation commit.
 - `docs/features.md`: conversation section gains one line (session-scoped
-  thinking level, five stops, session-scoped only).
+  thinking level, eight stops, session-scoped only).
 - No ADR: nothing decided here reverses a prior ADR (ADR-0009 untouched; no
   new token enters FleetTheme).
 
@@ -200,7 +201,7 @@ that choice here.
    (full class name incl. suffix); verdict = the `Executed N tests` line.
 5. Full unit gate: `HermesFleetAppUnitTests` scheme with
    `-skipMacroValidation`, fresh DerivedData.
-6. Screenshot evidence: overlay open at each of the five stops (light +
+6. Screenshot evidence: overlay open at each of the eight stops (light +
    default palette), plus one dark-appearance shot — sample the fill pixel =
    active highlight, handle = onHighlight (programmatic sample, ±3/channel,
    `scripts/measure_drawer_screenshot.py` pattern). One accent-switched shot

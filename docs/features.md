@@ -38,7 +38,8 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 - session thinking level: a composer gauge button (right cluster, between
   the field and the mic — ChatGPT placement; the needle encodes the level)
   opens a drag slider (overlay above the composer) that sets how much this
-  session reasons — five stops (None/Minimal/Low/Medium/High),
+  session reasons — eight stops (None/Minimal/Low/Medium/High/Extra
+  High/Max/Ultra — the gateway's full effort ladder, verified live),
   session-scoped only, theme-highlight colored; failures surface inline,
   never silent
 - attachments and message reactions

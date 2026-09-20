@@ -115,9 +115,10 @@ final class ReasoningSliderUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: end)
 
         // The readout flips to the snapped stop's word (a staticText whose
-        // label is exactly the word).
-        XCTAssertTrue(app.staticTexts["High"].waitForExistence(timeout: 10),
-                      "readout should show High after the drag")
+        // label is exactly the word) — far-right drag = Ultra, the true
+        // top of the 8-stop ladder (r8.4).
+        XCTAssertTrue(app.staticTexts["Ultra"].waitForExistence(timeout: 10),
+                      "readout should show Ultra after the drag")
 
         // Dismiss via the scrim edge (the panel covers the center).
         let scrim = firstMatch(in: app, identifier: "fleet.conversation.reasoning.scrim")
@@ -126,9 +127,9 @@ final class ReasoningSliderUITests: XCTestCase {
         // The chip carries the applied stop (config.get readback through
         // the scripted box: the served level flipped with the set call).
         let chipAfter = firstMatch(in: app, identifier: "fleet.conversation.reasoning.chip")
-        XCTAssertTrue(chipWord(chipAfter).contains("High"),
-                      "chip should show High after apply + dismiss: \(chipWord(chipAfter))")
-        attachScreenshot(of: app, name: "r8-reasoning-chip-high")
+        XCTAssertTrue(chipWord(chipAfter).contains("Ultra"),
+                      "chip should show Ultra after apply + dismiss: \(chipWord(chipAfter))")
+        attachScreenshot(of: app, name: "r8-reasoning-chip-ultra")
     }
 
     func testAdjustableActionStepsLevel() throws {
@@ -146,14 +147,15 @@ final class ReasoningSliderUITests: XCTestCase {
         // The slider is one AX adjustable element. The AX-adjust API
         // (adjust(toNormalizedSliderPosition:)) needs a real .slider
         // element; the custom capsule is an adjustable Other, so the AX
-        // path is driven with a SHORT controlled coordinate drag toward the
-        // next stop (the ADR-0011 exposed-zone pattern) — Medium→High.
+        // path is driven with a SHORT controlled coordinate drag up the
+        // ladder (the ADR-0011 exposed-zone pattern) — several stops up
+        // from Medium with 8-stop spacing (r8.4).
         let start = slider.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5))
-        let end = slider.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        let end = slider.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: end)
 
-        XCTAssertTrue(app.staticTexts["High"].waitForExistence(timeout: 10),
-                      "the drag should reach High")
+        XCTAssertTrue(app.staticTexts["Max"].waitForExistence(timeout: 10),
+                      "the drag should reach Max")
         attachScreenshot(of: app, name: "r8-reasoning-ax-adjust")
     }
 
