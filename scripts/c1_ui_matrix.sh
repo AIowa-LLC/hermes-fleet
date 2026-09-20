@@ -39,6 +39,7 @@ UI_CLASSES=(
   F3Onboarding F4FirstRunGate C2SetupPrompt KanbanBoard KanbanInteractive R9ApprovalBanner
   R9ConversationTooling R9ManagementPanes R9MemoryGraph R10AttachmentTray
   R10MessageReactions R10ProjectsBrowser R10Voice R10MemoryGraphEdit
+  ReasoningSlider
   Issue4SlashSkill Issue5StreamingRichText
   # Registered retroactively (Build 41): the slash-parity merge (8e477fe)
   # landed SlashCommandParityUITests without its inventory row — the audit

@@ -1164,7 +1164,7 @@ private extension String {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
@@ -1183,6 +1183,10 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// Issue #4: scripted Hermes skill discovery/completion/dispatch so the
     /// slash palette is walkable in simulator UI tests without a gateway.
     let slashCommandsBox: ScriptedSlashCommandBox
+    /// Dogfood r8: scripted reasoning seam (serves config.get, records
+    /// config.set calls + a scriptable starting level so the thinking
+    /// slider is fully walkable in the simulator + UI tests).
+    let reasoningBox = ScriptedReasoningBox()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
@@ -1232,6 +1236,11 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
 
     var approvals: any ApprovalsProviding {
         approvalsBox
+    }
+
+    /// Dogfood r8: scripted reasoning seam.
+    var reasoning: any ReasoningProviding {
+        reasoningBox
     }
 
     /// R9-T2/T3/T4: scripted tooling seam.
@@ -1856,6 +1865,59 @@ final class ScriptedApprovalsBox: ApprovalsProviding, @unchecked Sendable {
     /// demo approval arrives as a push event, not a reconnect restore).
     func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
         []
+    }
+}
+
+/// Dogfood r8: scripted reasoning seam (DEBUG simulator). Serves the
+/// scriptable current level on read, records every set call (thread-safe),
+/// and flips the served value so the chip reflects the applied stop without
+/// a real gateway. The default served level is the gateway's documented
+/// default (`medium`).
+final class ScriptedReasoningBox: ReasoningProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _level: FleetReasoningLevel = .defaultLevel
+    private var _setLevels: [FleetReasoningLevel] = []
+
+    /// The served current level (config.get readback).
+    var level: FleetReasoningLevel {
+        lock.lock(); defer { lock.unlock() }
+        return _level
+    }
+
+    /// Every setReasoning call in order (UI-test assertion material).
+    var setLevels: [FleetReasoningLevel] {
+        lock.lock(); defer { lock.unlock() }
+        return _setLevels
+    }
+
+    /// Scriptable starting level (fixture knob for tests that need a
+    /// non-default anchor).
+    func seed(_ level: FleetReasoningLevel) {
+        lock.lock(); defer { lock.unlock() }
+        _level = level
+    }
+
+    // Sync-record helpers (NSLock is unavailable from async contexts —
+    // the ScriptedApprovalsBox pattern).
+    private func syncLevel() -> FleetReasoningLevel {
+        lock.lock(); defer { lock.unlock() }
+        return _level
+    }
+
+    private func syncSet(_ level: FleetReasoningLevel) {
+        lock.lock(); defer { lock.unlock() }
+        _setLevels.append(level)
+        _level = level
+    }
+
+    func reasoning(sessionID: String) async throws -> ReasoningState {
+        let current = syncLevel()
+        return ReasoningState(level: current, rawValue: current.rawValue, display: "show")
+    }
+
+    func setReasoning(_ level: FleetReasoningLevel, sessionID: String) async throws -> FleetReasoningLevel {
+        syncSet(level)
+        return level
     }
 }
 

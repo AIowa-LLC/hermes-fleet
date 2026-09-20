@@ -52,6 +52,9 @@ public struct ConversationView: View {
     @State private var sendPulse = 0
     /// R9-T2: model picker sheet presentation.
     @State private var showingModelPicker = false
+
+    /// Dogfood r8: thinking-level overlay presentation.
+    @State private var showingReasoningSlider = false
     /// R9-T3: context breakdown sheet presentation.
     @State private var showingContextBreakdown = false
     @State private var showingFolderPath = false
@@ -169,6 +172,17 @@ public struct ConversationView: View {
             }
             transcriptList(model)
             composer(model)
+        }
+        // Dogfood r8: thinking-level overlay — presented above the composer
+        // (NOT a sheet: no presentation animation can drop taps; the scrim
+        // keeps the composer visible below the panel).
+        .overlay {
+            if showingReasoningSlider, let reasoningModel = model.reasoningViewModel {
+                ReasoningSliderOverlay(model: reasoningModel) {
+                    showingReasoningSlider = false
+                }
+                .transition(.opacity)
+            }
         }
         // R9-T2/T3/T4 sheets.
         .sheet(isPresented: $showingModelPicker) {
@@ -368,6 +382,11 @@ public struct ConversationView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: FleetTheme.spacingSm) {
                         modelChipButton(model)
+                        if let reasoningModel = model.reasoningViewModel {
+                            ReasoningChip(model: reasoningModel) {
+                                showingReasoningSlider = true
+                            }
+                        }
                         folderChip(model)
                         profileChip(model)
                         if let toolingModel = model.toolingViewModel {

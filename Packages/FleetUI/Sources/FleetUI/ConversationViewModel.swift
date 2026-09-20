@@ -249,6 +249,11 @@ public final class ConversationViewModel {
     /// Lazily built once the session opens; nil when the concrete session
     /// exposes no approvals seam (fail-soft feature detection).
     public private(set) var approvalViewModel: ApprovalViewModel?
+
+    /// Dogfood r8: reasoning (thinking level) VM — session-scoped
+    /// config.get/set `reasoning`. nil until the session opens with a
+    /// reasoning seam (chip hidden, fail-closed absence).
+    public private(set) var reasoningViewModel: ReasoningViewModel?
     /// R9-T2/T3/T4 — the conversation-tooling state (sticky model pick,
     /// live context meter, steer/rename/fork). Lazily built once the
     /// session opens; nil when the concrete session exposes no tooling seam.
@@ -1745,6 +1750,17 @@ public final class ConversationViewModel {
             }
         } else {
             toolingViewModel?.bind(sessionID: opened.sessionID)
+        }
+        // Dogfood r8: same one-cast build for the reasoning seam (thinking
+        // level slider — config.get/set reasoning, session-scoped).
+        if reasoningViewModel == nil {
+            if let capable = session as? ReasoningCapable {
+                let vm = ReasoningViewModel(reasoning: capable.reasoning)
+                vm.bind(sessionID: opened.sessionID)
+                reasoningViewModel = vm
+            }
+        } else {
+            reasoningViewModel?.bind(sessionID: opened.sessionID)
         }
         // Slash parity: a different session may expose a different command
         // surface — invalidate the cached catalog so the next `/` refetches
