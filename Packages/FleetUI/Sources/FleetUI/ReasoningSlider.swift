@@ -145,9 +145,15 @@ public struct ReasoningChip: View {
 
     public var body: some View {
         Button(action: onOpen) {
+            // r8.2 (Tony's dogfood): the gauge is ALWAYS theme-highlight —
+            // like ChatGPT's always-purple dial, the accent marks the
+            // control while the needle marks the level. And the SF gauge
+            // family renders optically small (thin arc + inner whitespace)
+            // next to 20pt neighbors — a 24pt glyph restores equal visual
+            // weight (measured on the ChatGPT reference: gauge ≈ plus ≈ mic).
             Image(systemName: symbolName)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(model.userAdjusted ? AnyShapeStyle(theme.highlight) : AnyShapeStyle(theme.textSecondary))
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(theme.highlight)
                 .frame(width: 36, height: 36)
                 .contentShape(Circle())
         }
