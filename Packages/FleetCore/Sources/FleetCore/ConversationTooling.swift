@@ -202,6 +202,30 @@ public protocol ConversationToolingProviding: Sendable {
     /// - Returns: the new conversation session (same projection as
     ///   create/resume; `sessionID` is the NEW runtime id to resume).
     func branchSession(sessionID: String, name: String?) async throws -> ConversationSession
+
+    /// `session.cwd.set {session_id, cwd}` — change the session's working
+    /// directory (r9 toolbelt). The gateway rejects a busy session (4009)
+    /// and an invalid path (4017); both map to ConversationError cases.
+    /// - Returns: the session-info readback after the change (cwd, branch,
+    ///   project) so the caller can refresh its header state.
+    func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo
+}
+
+/// Readback shape of `session.cwd.set` / lazy `session.info` — `_cwd_info`
+/// (methods_session.py:109): `{cwd, branch, project?, lazy}`.
+public struct SessionCWDInfo: Equatable, Sendable {
+    /// The new absolute working directory.
+    public let cwd: String
+    /// Git branch at the cwd (nil when the folder isn't a repo).
+    public let branch: String?
+    /// Lazy project descriptor (nil on the full agent view).
+    public let project: String?
+
+    public init(cwd: String, branch: String?, project: String?) {
+        self.cwd = cwd
+        self.branch = branch
+        self.project = project
+    }
 }
 
 /// Sessions whose concrete type carries a conversation-tooling seam.
@@ -244,6 +268,10 @@ public struct UnsupportedConversationTooling: ConversationToolingProviding {
     }
 
     public func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
+        throw ConversationError.notConnected
+    }
+
+    public func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
         throw ConversationError.notConnected
     }
 }

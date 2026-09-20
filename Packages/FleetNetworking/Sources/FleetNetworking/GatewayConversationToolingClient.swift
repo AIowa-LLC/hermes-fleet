@@ -181,6 +181,47 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
         }
     }
 
+    public func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw ConversationError.invalidSessionKey(
+                "session_id is not a safe session key: \(sessionID)")
+        }
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ConversationError.invalidRequest("cwd required")
+        }
+        guard case .connected = transport.state else { throw ConversationError.notConnected }
+        let params: JSONValue = .object([
+            "session_id": .string(sessionID),
+            "cwd": .string(trimmed),
+        ])
+        do {
+            let result = try await transport.request(method: "session.cwd.set", params: params)
+            // `_cwd_info` readback: {cwd, branch?, project?, lazy?}. The cwd
+            // echo is the only required member; branch/project are best
+            // effort (a non-repo folder has no branch).
+            guard let echoed = result["cwd"]?.stringValue, !echoed.isEmpty else {
+                throw ConversationError.malformedPayload("session.cwd.set result missing 'cwd'")
+            }
+            let project: String?
+            if let p = result["project"]?.objectValue,
+               let name = p["name"]?.stringValue {
+                project = name
+            } else {
+                project = result["project"]?.stringValue
+            }
+            return SessionCWDInfo(
+                cwd: echoed,
+                branch: result["branch"]?.stringValue,
+                project: project
+            )
+        } catch let error as JSONRPCError {
+            throw Self.mapError(error)
+        } catch let error as TransportError {
+            throw Self.mapTransportError(error)
+        }
+    }
+
     // MARK: decoding (wire → domain)
 
     /// `model.options` → flat, stable-ordered `[ModelChoice]`.

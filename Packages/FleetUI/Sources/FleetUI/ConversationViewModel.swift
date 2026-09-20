@@ -159,6 +159,12 @@ public final class ConversationViewModel {
     public let route: Route
     /// The stored/list session id to resume, or nil to create a new conversation.
     public let sessionID: String?
+
+    /// r9 toolbelt: apply a `session.cwd.set` readback — refreshes the
+    /// working-folder chip (and any derived header state) after a change.
+    public func refreshCWD(_ info: SessionCWDInfo) {
+        sessionCWD = info.cwd
+    }
     /// R9-T1/T2/T3 — biometric seam for the approval gate (FaceID-gated
     /// approve, confirmed YOLO enable). Injected by the composition root;
     /// defaults to the app-lock provider's seam.
@@ -262,6 +268,12 @@ public final class ConversationViewModel {
     /// observes this, replaces the open conversation, and clears it
     /// (`consumeForkedSession()`).
     public private(set) var forkedSession: ConversationSession?
+
+    /// r9 toolbelt: adopt a branch created from the dossier sheet (the
+    /// existing view routing consumes it identically).
+    public func adoptFork(_ branch: ConversationSession) {
+        forkedSession = branch
+    }
     /// True when the current transcript was hydrated from the persisted cache
     /// (M10 cold-start) rather than a live server fetch.
     public private(set) var hydratedFromCache = false

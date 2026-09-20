@@ -204,6 +204,32 @@ public final class ConversationToolingViewModel {
             return nil
         }
     }
+
+    // MARK: Working folder (r9 toolbelt)
+
+    /// Transient cwd-change surfaces (non-secret).
+    public private(set) var cwdError: String?
+    public private(set) var cwdNotice: String?
+
+    /// Change the session's working directory (`session.cwd.set`). Returns
+    /// the readback so the caller can refresh its header state; nil on
+    /// failure (cwdError set — e.g. 4009 busy, 4017 invalid path).
+    @discardableResult
+    public func changeWorkingFolder(to cwd: String) async -> SessionCWDInfo? {
+        guard let sid = boundSessionID else { return nil }
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        do {
+            let info = try await tooling.setCWD(sessionID: sid, cwd: trimmed)
+            cwdError = nil
+            cwdNotice = "Working folder set to \(info.cwd)"
+            return info
+        } catch {
+            cwdError = "Could not change folder: \(ConversationViewModel.nonSecret(error))"
+            cwdNotice = nil
+            return nil
+        }
+    }
 }
 
 extension ModelChoice: Codable {

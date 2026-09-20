@@ -116,12 +116,16 @@ final class ConversationCompactChromeUITests: XCTestCase {
         let profile = reveal("fleet.conversation.header.profile")
         XCTAssertTrue(profile.waitForExistence(timeout: 5), "profile chip must render")
 
-        // Full path popover on folder tap.
+        // Switcher sheet on folder tap (r9 toolbelt — the chip now changes
+        // the working folder; copy-path lives on long-press).
         if folder.isHittable {
             folder.tap()
-            let path = app.staticTexts["/home/dev/hermes-fleet"]
-            XCTAssertTrue(path.waitForExistence(timeout: 5), "folder popover shows the full cwd")
-            tap(app.buttons["Copy path"])
+            let field = firstMatch(in: app, identifier: "fleet.conversation.folder.field")
+            XCTAssertTrue(field.waitForExistence(timeout: 5),
+                          "folder sheet must render the path field")
+            // Dismiss by swiping the sheet down (no system Close on a
+            // detent sheet without an explicit dismiss button).
+            field.swipeDown()
         }
     }
 

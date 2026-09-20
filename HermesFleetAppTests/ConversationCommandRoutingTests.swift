@@ -156,6 +156,10 @@ final class ConversationCommandRoutingTests: XCTestCase {
             branchNames.append(name)
             return ConversationSession(sessionID: "branched-1", profileName: "default")
         }
+
+        func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+            SessionCWDInfo(cwd: cwd, branch: nil, project: nil)
+        }
     }
 
     // MARK: - Fixture

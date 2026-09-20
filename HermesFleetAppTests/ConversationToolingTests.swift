@@ -17,6 +17,7 @@ final class ConversationToolingTests: XCTestCase {
         private var _steerTexts: [String] = []
         private var _renames: [String] = []
         private var _branches: [String?] = []
+        private var _cwdSets: [String] = []
         var usageResult: Result<SessionUsageSnapshot, Error> =
             .success(SessionUsageSnapshot(
                 model: "hermes", input: 100, output: 20, total: 120, calls: 2,
@@ -81,6 +82,11 @@ final class ConversationToolingTests: XCTestCase {
                     SessionMessage(role: .assistant, text: "hello"),
                 ],
                 model: "hermes", provider: "nous", profileName: nil)
+        }
+
+        func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+            record { $0._cwdSets.append(cwd) }
+            return SessionCWDInfo(cwd: cwd, branch: "main", project: nil)
         }
 
         /// Async-safe scoped recorder (NSLock is unavailable from async
@@ -416,6 +422,9 @@ final class ConversationToolingTests: XCTestCase {
             func renameSession(sessionID: String, title: String) async throws -> String { title }
             func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
                 throw ConversationError.invalidRequest("nothing to branch — send a message first")
+            }
+            func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+                throw ConversationError.invalidRequest("invalid path")
             }
         }
         let failing = ConversationToolingViewModel(

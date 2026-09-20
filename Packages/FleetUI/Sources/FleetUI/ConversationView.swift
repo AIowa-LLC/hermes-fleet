@@ -58,6 +58,9 @@ public struct ConversationView: View {
     /// R9-T3: context breakdown sheet presentation.
     @State private var showingContextBreakdown = false
     @State private var showingFolderPath = false
+    // r9 toolbelt sheet state.
+    @State private var showingWorkingFolder = false
+    @State private var showingDossier = false
     /// R9-T4: fork navigation — the new session id to route to.
     @State private var forkTargetSessionID: String?
     /// Slash parity: pending command-driven navigation (new chat / model
@@ -374,31 +377,8 @@ public struct ConversationView: View {
             .accessibilityLabel("\(name), status \(status.label)")
             .accessibilityIdentifier("fleet.conversation.header.identity")
 
-            // Scrollable chip zone: model · working folder · profile ·
-            // context. Overflow scrolls (never truncates); Hermex-style but
-            // docked at the TOP. Hidden at accessibility sizes (the ⋯ menu
-            // carries model + context there — established policy).
-            if !dynamicTypeSize.isAccessibilitySize {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: FleetTheme.spacingSm) {
-                        modelChipButton(model)
-                        folderChip(model)
-                        profileChip(model)
-                        if let toolingModel = model.toolingViewModel {
-                            ContextMeterView(model: toolingModel) {
-                                showingContextBreakdown = true
-                            }
-                        }
-                    }
-                    .padding(.horizontal, FleetTheme.spacingXs)
-                    .frame(minHeight: 32)
-                }
-                .frame(maxWidth: .infinity)
-                .defaultScrollAnchor(.center)
-                .accessibilityIdentifier("fleet.conversation.header.chipzone")
-                .scrollBounceBehavior(.basedOnSize)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
+            // r9: the chip zone moved UNDER the composer (the Toolbelt) —
+            // nothing renders here anymore.
             if let toolingModel = model.toolingViewModel {
                 SessionSteerControls(
                     model: toolingModel,
@@ -430,30 +410,6 @@ public struct ConversationView: View {
 
     /// 28pt avatar with a 10pt status dot pinned bottom-trailing. The dot is
     /// decorative (the identity element carries the spoken status).
-    /// Full-path popover for the folder chip (copyable — TextSelection).
-    private func folderPopover(_ cwd: String) -> some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-            Label("Working folder", systemImage: "folder")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(theme.textPrimary)
-            Text(cwd)
-                .font(FleetTheme.monoCaptionFont)
-                .foregroundStyle(theme.textSecondary)
-                .textSelection(.enabled)
-            Button {
-                UIPasteboard.general.string = cwd
-            } label: {
-                Label("Copy path", systemImage: "doc.on.doc")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(theme.highlight)
-        }
-        .padding(FleetTheme.spacingMd)
-        .frame(maxWidth: 320, alignment: .leading)
-        .presentationDetents([.height(140)])
-    }
-
     private func avatarWithStatus(bot: FleetBot?, status: FleetStatus) -> some View {
         BotAvatar(bot: bot, management: environment.botManagement)
             .frame(width: 28, height: 28)
@@ -471,8 +427,10 @@ public struct ConversationView: View {
     @ViewBuilder
     private func folderChip(_ model: ConversationViewModel) -> some View {
         if let cwd = model.sessionCWD {
+            // r9 toolbelt: the folder chip now opens the working-folder
+            // SWITCHER (session.cwd.set) — copy-path moved to a long-press.
             Button {
-                showingFolderPath = true
+                showingWorkingFolder = true
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "folder")
@@ -489,12 +447,24 @@ public struct ConversationView: View {
                 .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
             }
             .buttonStyle(.fleetPressable)
+            .simultaneousGesture(LongPressGesture().onEnded { _ in
+                UIPasteboard.general.string = cwd
+            })
             .accessibilityLabel("Working folder")
             .accessibilityValue(cwd)
-            .accessibilityHint("Shows the session's full working directory")
+            .accessibilityHint("Changes the session's working directory")
             .accessibilityIdentifier("fleet.conversation.header.folder")
-            .popover(isPresented: $showingFolderPath, arrowEdge: .bottom) {
-                folderPopover(cwd)
+            .sheet(isPresented: $showingWorkingFolder) {
+                if let toolingModel = model.toolingViewModel {
+                    WorkingFolderSheet(
+                        model: toolingModel,
+                        currentCWD: cwd,
+                        onChanged: { info in
+                            model.refreshCWD(info)
+                        }
+                    )
+                    .presentationDetents([.medium])
+                }
             }
         }
     }
@@ -504,22 +474,45 @@ public struct ConversationView: View {
     @ViewBuilder
     private func profileChip(_ model: ConversationViewModel) -> some View {
         if let profile = model.sessionProfileName {
-            HStack(spacing: 4) {
-                Image(systemName: "person.crop.circle")
-                    .font(.caption2)
-                    .foregroundStyle(theme.textSecondary)
-                Text(profile)
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
+            // r9 toolbelt: the profile chip opens the session DOSSIER —
+            // identity card + rename + branch (wires that already existed).
+            Button {
+                showingDossier = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.caption2)
+                        .foregroundStyle(theme.textSecondary)
+                    Text(profile)
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(theme.background, in: Capsule())
+                .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(theme.background, in: Capsule())
-            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
+            .buttonStyle(.fleetPressable)
             .accessibilityLabel("Profile")
             .accessibilityValue(profile)
+            .accessibilityHint("Session details, rename, and branch")
             .accessibilityIdentifier("fleet.conversation.header.profile")
+            .sheet(isPresented: $showingDossier) {
+                if let toolingModel = model.toolingViewModel {
+                    SessionDossierSheet(
+                        model: toolingModel,
+                        profileName: profile,
+                        gatewayName: model.route.gatewayID.rawValue,
+                        sessionID: model.sessionID ?? "—",
+                        sessionTitle: model.sessionTitle ?? "Session",
+                        onBranch: { branch in
+                            model.adoptFork(branch)
+                        }
+                    )
+                    .presentationDetents([.medium])
+                }
+            }
         }
     }
 
@@ -1144,6 +1137,15 @@ enum ConversationHeaderChips {
             .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.20 : 0.08), radius: 10, y: 4)
             .padding(.horizontal, FleetTheme.spacingMd)
             .padding(.vertical, 6)
+            // Scrollable chip zone: model · working folder · profile ·
+            // context — the r9 TOOLBELT, docked UNDER the composer (moved
+            // from the header in r9; actions live next to the input they
+            // affect). Overflow scrolls (never truncates). Hidden at
+            // accessibility sizes (the ⋯ menu carries model + context
+            // there — established policy).
+            if !dynamicTypeSize.isAccessibilitySize {
+                toolbeltZone(model)
+            }
         }
         // r6: the composer floats on the canvas — no full-width surface
         // band, no top hairline (the de-glass contract).
@@ -1164,6 +1166,32 @@ enum ConversationHeaderChips {
             }
             Task { await loadPickedFile(url, model: model) }
         }
+    }
+
+    /// r9 toolbelt — the chip zone UNDER the composer: model · folder ·
+    /// context · profile (actions left → identity right). Extracted from
+    /// the composer body (kept the parent expression type-checkable).
+    private func toolbeltZone(_ model: ConversationViewModel) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: FleetTheme.spacingSm) {
+                modelChipButton(model)
+                folderChip(model)
+                if let toolingModel = model.toolingViewModel {
+                    ContextMeterView(model: toolingModel) {
+                        showingContextBreakdown = true
+                    }
+                }
+                profileChip(model)
+            }
+            .padding(.horizontal, FleetTheme.spacingXs)
+            .frame(minHeight: 32)
+        }
+        .frame(maxWidth: .infinity)
+        .defaultScrollAnchor(.center)
+        .accessibilityIdentifier("fleet.conversation.header.chipzone")
+        .scrollBounceBehavior(.basedOnSize)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.top, 2)
     }
 
     /// Compact, touch-friendly skill palette backed entirely by the active

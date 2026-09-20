@@ -1794,6 +1794,10 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             // session.info carrying cwd + profile_name (the live gateway's
             // end-of-turn shape) so the folder/profile chips are testable.
             if ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_INFO_FIXTURE"] == "1" {
+                // Literal cwd (matches ScriptedToolingBox's default): the
+                // client has no tooling-box reference; the r9 folder-switch
+                // test drives a change through the sheet and asserts the
+                // chip readback before any next-turn fixture fires.
                 streamBox.yield(.sessionInfo(
                     sessionID: sessionID,
                     model: "glm-4.6-flash", provider: "zai",
@@ -1929,6 +1933,10 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
     private var _steerTexts: [String] = []
     private var _renames: [String] = []
     private var _branches: [String?] = []
+    private var _cwdSets: [String] = []
+    /// The cwd the box currently serves (seeded by session-info fixture;
+    /// flipped by each setCWD call — the UI test asserts the chip follows).
+    private var _servedCWD: String = "/home/dev/hermes-fleet"
 
     var steerTexts: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -1941,6 +1949,14 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
     var branches: [String?] {
         lock.lock(); defer { lock.unlock() }
         return _branches
+    }
+    var cwdSets: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _cwdSets
+    }
+    var servedCWD: String {
+        lock.lock(); defer { lock.unlock() }
+        return _servedCWD
     }
 
     private func recordSteer(_ text: String) {
@@ -2025,6 +2041,23 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
             provider: "simulator",
             profileName: nil
         )
+    }
+
+    /// r9 toolbelt: flip the served cwd + record the write (UI tests assert
+    /// the chip's value follows the readback).
+    func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+        recordCWD(cwd)
+        return SessionCWDInfo(cwd: serveCWD(cwd), branch: "main", project: nil)
+    }
+
+    private func recordCWD(_ cwd: String) {
+        lock.lock(); defer { lock.unlock() }
+        _cwdSets.append(cwd)
+    }
+    private func serveCWD(_ cwd: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        _servedCWD = cwd
+        return _servedCWD
     }
 }
 
