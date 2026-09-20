@@ -35,10 +35,12 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 - approvals and per-session control surfaces
 - model selection and context information
 - steer, rename, and fork workflows where supported
-- session thinking level: a header chip opens a drag slider (overlay above
-  the composer) that sets how much this session reasons — five stops
-  (None/Minimal/Low/Medium/High), session-scoped only, theme-highlight
-  colored; failures surface inline, never silent
+- session thinking level: a composer gauge button (right cluster, between
+  the field and the mic — ChatGPT placement; the needle encodes the level)
+  opens a drag slider (overlay above the composer) that sets how much this
+  session reasons — five stops (None/Minimal/Low/Medium/High),
+  session-scoped only, theme-highlight colored; failures surface inline,
+  never silent
 - attachments and message reactions
 - generated-image artifacts: an `image_generate` result is retrieved through
   the owning gateway's authenticated media API and renders inline on the tool

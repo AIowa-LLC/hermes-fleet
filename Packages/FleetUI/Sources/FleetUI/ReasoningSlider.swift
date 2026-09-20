@@ -111,8 +111,17 @@ public final class ReasoningViewModel {
     }
 }
 
-/// r8 chip — the entry affordance in the conversation header chip zone.
-/// `brain` symbol existence verified on this host (2026-09-20).
+/// r8.1 — the composer's thinking-level button (ChatGPT placement: right
+/// cluster, first position — between the field and the mic). Icon-only,
+/// level-encoding gauge (Tony's pick B): the gauge needle itself carries
+/// the session's current level. Symbols verified on this host (2026-09-20):
+/// dial.min, gauge.low, gauge.medium, gauge.high all exist.
+///
+/// Ink follows the r6 pill rule: bare glyph, themed highlight when the
+/// user adjusted the level this session (the accent-active signal, like
+/// ChatGPT's purple Search toggle), secondary at default. The AX contract
+/// is unchanged from the r8 chip (id + value carry the word) — zero test
+/// edits by design.
 public struct ReasoningChip: View {
     @Environment(\.fleetTheme) private var theme
     @Bindable var model: ReasoningViewModel
@@ -123,20 +132,24 @@ public struct ReasoningChip: View {
         self.onOpen = onOpen
     }
 
+    /// Level-encoding gauge: the needle position IS the level.
+    private var symbolName: String {
+        switch model.level {
+        case .off: return "dial.min"
+        case .minimal, .low: return "gauge.low"
+        case .medium: return "gauge.medium"
+        case .high: return "gauge.high"
+        case nil: return "gauge.medium"
+        }
+    }
+
     public var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: 4) {
-                Image(systemName: "brain")
-                    .font(.caption2)
-                    .foregroundStyle(theme.textSecondary)
-                Text(model.displayWord)
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(model.userAdjusted ? theme.highlight : theme.textSecondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(theme.background, in: Capsule())
+            Image(systemName: symbolName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(model.userAdjusted ? AnyShapeStyle(theme.highlight) : AnyShapeStyle(theme.textSecondary))
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
         }
         .buttonStyle(.fleetPressable)
         .accessibilityLabel("Thinking level")

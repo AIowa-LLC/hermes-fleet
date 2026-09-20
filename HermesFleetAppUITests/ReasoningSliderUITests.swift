@@ -62,15 +62,30 @@ final class ReasoningSliderUITests: XCTestCase {
         // The chip renders in the header chip zone with the gateway default.
         let chip = firstMatch(in: app, identifier: "fleet.conversation.reasoning.chip")
         XCTAssertTrue(chip.waitForExistence(timeout: 10),
-                      "reasoning chip should render in the conversation header chip zone")
+                      "reasoning gauge should render in the composer right cluster")
         XCTAssertTrue(chipWord(chip).contains("Medium"),
                       "chip reads the scripted default level: \(chipWord(chip))")
+
+        // r8.1: the gauge sits in the composer RIGHT cluster — after the
+        // field, before the mic and send (ChatGPT order). Asserted BEFORE
+        // opening the overlay (the scrim must not be in the way). HStack
+        // frames are deterministic left-to-right.
+        let field = app.textFields["fleet.conversation.composer"]
+        let mic = firstMatch(in: app, identifier: "fleet.conversation.mic")
+        let send = firstMatch(in: app, identifier: "fleet.conversation.send")
+        XCTAssertTrue(chip.frame.minX > field.frame.maxX,
+                      "gauge must sit right of the field: \(chip.frame) vs \(field.frame)")
+        XCTAssertTrue(mic.exists && mic.frame.minX > chip.frame.maxX,
+                      "mic must sit right of the gauge (gauge, mic, send)")
+        XCTAssertTrue(send.frame.minX > mic.frame.maxX,
+                      "send must be the last element")
 
         // Tapping opens the overlay (not a sheet): value + slider + scrim.
         chip.tap()
         let slider = firstMatch(in: app, identifier: "fleet.conversation.reasoning.slider")
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.reasoning.value").exists,
                       "value readout should render")
+
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.reasoning.slider").exists,
                       "slider capsule should render")
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.reasoning.value").exists,

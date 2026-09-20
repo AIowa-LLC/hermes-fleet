@@ -382,11 +382,6 @@ public struct ConversationView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: FleetTheme.spacingSm) {
                         modelChipButton(model)
-                        if let reasoningModel = model.reasoningViewModel {
-                            ReasoningChip(model: reasoningModel) {
-                                showingReasoningSlider = true
-                            }
-                        }
                         folderChip(model)
                         profileChip(model)
                         if let toolingModel = model.toolingViewModel {
@@ -1050,27 +1045,6 @@ enum ConversationHeaderChips {
                     .accessibilityIdentifier("fleet.conversation.attach")
                 }
 
-                // R10-T4: mic button — on-device transcription (Speech
-                // framework) into the composer. Hidden entirely when no
-                // voice engine is wired (fail-closed). While listening, the
-                // button becomes a stop control (best-partial capture).
-                if model.isVoiceAvailable {
-                    Button {
-                        Task { await model.toggleMic() }
-                    } label: {
-                        // r6: bare glyph inside the pill; listening stays
-                        // destructive-red (the working-state signal).
-                        Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textSecondary))
-                            .frame(width: 36, height: 36)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.fleetPressable)
-                    .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
-                    .accessibilityIdentifier("fleet.conversation.mic")
-                }
-
                 TextField("Message", text: $composerText, axis: .vertical)
                     .lineLimit(1...5)
                     .focused($composerFocused)
@@ -1085,6 +1059,37 @@ enum ConversationHeaderChips {
                     .onSubmit {
                         Task { await submit(model) }
                     }
+
+                // r8.1: thinking-level gauge — right cluster, FIRST
+                // position (ChatGPT placement: field … gauge, mic, send).
+                // Level-encoding needle; highlight ink once adjusted.
+                if let reasoningModel = model.reasoningViewModel {
+                    ReasoningChip(model: reasoningModel) {
+                        showingReasoningSlider = true
+                    }
+                }
+
+                // R10-T4: mic button — on-device transcription (Speech
+                // framework) into the composer. Hidden entirely when no
+                // voice engine is wired (fail-closed). While listening, the
+                // button becomes a stop control (best-partial capture).
+                // r8.1: moved to the RIGHT cluster (ChatGPT order:
+                // gauge, mic, send); idle ink is pure white (textPrimary)
+                // per Tony — the neutral among two accent buttons.
+                if model.isVoiceAvailable {
+                    Button {
+                        Task { await model.toggleMic() }
+                    } label: {
+                        Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.fleetPressable)
+                    .accessibilityLabel(model.isListening ? "Stop Listening" : "Transcribe Voice")
+                    .accessibilityIdentifier("fleet.conversation.mic")
+                }
 
                 if model.phase == .streaming || model.isStreaming {
                     Button {
