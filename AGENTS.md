@@ -63,3 +63,23 @@ Live gateway, physical-device, signing, and deployment checks are environmental 
 ## Documentation
 
 Current public documentation starts at `docs/README.md`. Historical milestone files are retained only as stable references and must not be treated as current product or release status.
+
+---
+
+## DOGFOOD LANE GROUND TRUTH (build-41 worktree — read before ANY change)
+
+**This worktree carries ~50 unpushed commits of shipped work. The wrong-tree mistake is THE regression vector.**
+
+| Tree | Path | State | Role |
+|---|---|---|---|
+| **LANE (the work)** | `/Users/tonysimons/code/hermes-fleet/.worktrees/build-41` | `dogfood/build-41-integration`, 50 commits ahead of `origin/main`, **nothing pushed** | ALL shipped dogfood work (ADR-0011/0012, r2–r7). Build 61 (0.2.0) on Tony's iPhone came from here. |
+| MAIN | `/Users/tonysimons/code/hermes-fleet` | `main` @ `f081da3`, synced with origin | Landing target only — do NOT build dogfood features there. |
+
+- **Orient before writing**: `git branch --show-current` must say `dogfood/build-41-integration`; HEAD must sit at or after tag **`fleet-dogfood-baseline-61`** (`18debb9`). If you see `main`/`f081da3`, you are in the wrong tree — `cd` to the lane path.
+- **Never push, never PR, never touch origin** from this lane without Tony's word-for-word instruction. 50 unpushed commits is the normal state.
+- **Commit discipline**: explicit paths only (no `-A`), author Tony Simons <tony@aiowa.dev>, message via `git commit -F /tmp/msg.txt`, `~/.local/bin/gitleaks protect --staged` before committing. `xcodegen generate` (binary `~/.local/bin/xcodegen`) after any file add/remove — pbxproj diff belongs in the same commit. A new `*UITests.swift` class needs its `scripts/c1_ui_matrix.sh` `UI_CLASSES` row in the same change.
+- **UI-test hygiene**: every persisted store (pins, read watermarks, launch cache) resets under `HERMES_FLEET_NAV_RESET=1` BEFORE first hydration; UI-rendered state reads `@Observable` environment properties, never raw UserDefaults.
+- **Verified SwiftUI traps on this codebase**: Form `Button` with `HStack{Label;Spacer;Image}` label never fires (use `Button{}label:{Label}` + `.plain`); toolbar ink goes INSIDE the label (`Image.foregroundStyle`), root `.tint` wins otherwise; SF Symbol names must exist in the host `symbol_order.plist` (bad names render silent blanks that pass AX tests); flat (unfilled) rows need a background-host for long-press context menus (text-selection steals glyph presses).
+- **Testing gates**: fresh dedicated sim per task (`xcrun simctl create QA<name> "iPhone 18 Pro"`, own `-derivedDataPath`, delete after; never share a sim across xcodebuilds); full unit scheme `HermesFleetAppUnitTests` with `-skipMacroValidation`; `-only-testing:` needs the full class name incl. `UITests` suffix; the verdict is the `Executed N tests` line, never TEST SUCCEEDED alone.
+- **Gateway context**: `last_active` now projects on `session.list` across all fleet machines (upstream PR NousResearch/hermes-agent#116548, local patch ahead of merge) — do not "fix" missing `last_active` client-side.
+
