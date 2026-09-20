@@ -1689,7 +1689,11 @@ private struct ConversationBubbleView: View {
             if row.kind == .user { Spacer(minLength: 60) }
             VStack(alignment: row.kind == .user ? .trailing : .leading, spacing: FleetTheme.spacingXs) {
                 bubbleContent
-                    .frame(maxWidth: 420, alignment: row.kind == .user ? .trailing : .leading)
+                    // Dogfood r7 (decision 2): the width cap is USER-ONLY
+                    // (the capsule stays compact); assistant output spans
+                    // the full content width like ChatGPT/Hermex.
+                    .frame(maxWidth: row.kind == .user ? 420 : nil,
+                           alignment: row.kind == .user ? .trailing : .leading)
                 if let reactions = row.reactions, !reactions.isEmpty {
                     reactionChips(reactions)
                 }
@@ -1705,8 +1709,24 @@ private struct ConversationBubbleView: View {
         .transition(row.kind == .user ? entrance : .identity)
         // R10-T2: long-press Tapback menu — small palette + Clear. Only
         // user/assistant rows are reactable (tool/status/system rows are
-        // not addressable on the wire).
-        .contextMenu { reactionMenu }
+        // not addressable on the wire). r7: the FLAT assistant row has no
+        // bubble fill, so a glyph-landing long-press can be claimed by the
+        // text system before the menu fires — the ASSISTANT row attaches
+        // its menu to a CLEAR BACKGROUND HOST covering the row (the Hermex
+        // #208 pattern, SwiftUI-light form): the host owns the interaction,
+        // text stays selectable where it renders, nothing is painted. The
+        // USER row keeps the direct attachment — its capsule fill is the
+        // proven press target (measured: a host behind the capsule loses).
+        .background(
+            Group {
+                if row.kind == .assistant {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .contextMenu { reactionMenu }
+                }
+            }
+        )
+        .contextMenu { if row.kind != .assistant { reactionMenu } }
         // Rich assistant content contains links, code-copy controls, lists,
         // and tables. Keep those descendants independently reachable while
         // preserving the existing single-element semantics for user/status/
@@ -1840,13 +1860,12 @@ private struct ConversationBubbleView: View {
                     .accessibilityHidden(true)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(theme.surfaceElevated, in: RoundedRectangle(cornerRadius: FleetTheme.radiusBubble))
-            .overlay(
-                RoundedRectangle(cornerRadius: FleetTheme.radiusBubble)
-                    .strokeBorder(theme.border, lineWidth: 1)
-            )
+            // Dogfood r7 (decision 1, ChatGPT/Hermex parity): the assistant
+            // output is FLAT — no capsule. No fill, no border, no wrapper
+            // padding: markdown renders directly on the canvas at full
+            // content width; only EMBEDDED content draws surfaces (r6 code
+            // cards, artifacts). Pinned by the hosted chrome guard.
+            //
         case .tool:
             VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 FleetToolActivityView(title: row.text, detail: row.detail)

@@ -57,6 +57,33 @@ final class AppCompositionTests: XCTestCase {
         }
     }
 
+    func testAssistantOutputIsFlatNotCapsuled() throws {
+        // Dogfood r7: ChatGPT/Hermex parity — the assistant transcript row
+        // renders markdown directly on the canvas (no surfaceElevated fill,
+        // no border overlay, no wrapper padding). Embedded content (code
+        // cards, artifacts) keeps its own surfaces; the USER capsule and
+        // tool rows are untouched by this guard.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Packages/FleetUI/Sources/FleetUI/ConversationView.swift"),
+            encoding: .utf8)
+        guard let assistantStart = source.range(of: "case .assistant:") else {
+            return XCTFail("assistant case not found in ConversationView")
+        }
+        guard let toolStart = source.range(of: "case .tool:", range: assistantStart.lowerBound..<source.endIndex) else {
+            return XCTFail("tool case not found after assistant case")
+        }
+        let assistantBlock = String(source[assistantStart.lowerBound..<toolStart.lowerBound])
+        XCTAssertFalse(assistantBlock.contains("theme.surfaceElevated"),
+                      "the assistant row must not paint a capsule fill (r7 flat output)")
+        XCTAssertFalse(assistantBlock.contains("strokeBorder(theme.border"),
+                      "the assistant row must not draw a capsule border")
+        // The user capsule (still present in the file) keeps its neutralFill.
+        XCTAssertTrue(source.contains("FleetTheme.neutralFill"),
+                      "the user capsule must keep its neutral fill (r6 G2)")
+    }
+
     func testAccentPickerPalettesAllApply() {
         for accent in FleetAccent.allCases {
             let palette = accent.palette
