@@ -48,7 +48,9 @@ struct HostedRoomProvider: FleetRoomProviding {
             throw error
         }
         guard let caps else { return [] }
-        let page = try await client.listRooms()
+        // Include tombstones so FleetRoomUnion can remember authoritative
+        // disbands and prevent stale Desktop mirrors from resurrecting rows.
+        let page = try await client.listRooms(includeDisbanded: true)
         return page.rooms.map { row in
             FleetRoom(
                 id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: row.roomID),
@@ -70,7 +72,6 @@ struct HostedRoomProvider: FleetRoomProviding {
                 )
             )
         }
-        .filter { !$0.isDeleted }
     }
 }
 
@@ -197,8 +198,21 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
     }
 
     func send(roomID: String, text: String, threadID: String?) async throws -> Int {
+        try await send(roomID: roomID, text: text, threadID: threadID, idempotencyKey: nil)
+    }
+
+    func send(
+        roomID: String,
+        text: String,
+        threadID: String?,
+        idempotencyKey: String?
+    ) async throws -> Int {
         do {
-            return try await client.send(roomID: roomID, text: text, threadID: threadID).seq
+            return try await client.send(
+                roomID: roomID,
+                text: text,
+                threadID: threadID,
+                eventID: idempotencyKey).seq
         } catch {
             throw Self.map(error)
         }

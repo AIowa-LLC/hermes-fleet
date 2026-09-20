@@ -13,16 +13,26 @@ struct GroupsHomeView: View {
     @State private var gatewayID: GatewayID?
     @State private var showingGroupCompose = false
 
-    /// Flat fleet-wide room set (Chats' former filter, unchanged): gateway
-    /// scope + query over name and member names, stable order by canonical
-    /// identity.
+    /// Reconciled interactive rooms only. Legacy projections are intentionally
+    /// searched separately in the historical archive below.
     private var groups: [FleetRoom] {
         environment.allRooms
             .filter { room in
                 (gatewayID == nil || room.id.gatewayID == gatewayID)
-                    && (query.isEmpty || "\(room.name) \(room.members.map(\.name).joined(separator: " "))".localizedCaseInsensitiveContains(query))
+                    && (query.isEmpty || (room.name + " " + room.members.map(\.name).joined(separator: " ")).localizedCaseInsensitiveContains(query))
             }
             .sorted { $0.canonicalIdentity < $1.canonicalIdentity }
+    }
+
+    /// Source-preserving Desktop snapshots remain intentionally accessible,
+    /// but never appear as ordinary interactive groups.
+    private var archiveRooms: [FleetRoom] {
+        environment.legacyRoomArchive
+            .filter { room in
+                (gatewayID == nil || room.id.gatewayID == gatewayID)
+                    && (query.isEmpty || (room.name + " " + room.members.map(\.name).joined(separator: " ")).localizedCaseInsensitiveContains(query))
+            }
+            .sorted { $0.id.description < $1.id.description }
     }
 
     private var hasActiveFilter: Bool {
@@ -40,8 +50,8 @@ struct GroupsHomeView: View {
                 }
                 .accessibilityIdentifier("fleet.groups.gateway-filter")
             }
-            Section {
-                if groups.isEmpty {
+            if groups.isEmpty && archiveRooms.isEmpty {
+                Section {
                     ContentUnavailableView(
                         hasActiveFilter ? "No matching groups" : "No groups yet",
                         systemImage: "person.3",
@@ -52,7 +62,9 @@ struct GroupsHomeView: View {
                         )
                     )
                     .accessibilityIdentifier("fleet.groups.empty")
-                } else {
+                }
+            } else if !groups.isEmpty {
+                Section("Groups") {
                     ForEach(groups, id: \.canonicalIdentity) { room in
                         NavigationLink(value: FleetScreen.room(room.id)) {
                             VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
@@ -66,6 +78,20 @@ struct GroupsHomeView: View {
                             }
                         }
                         .accessibilityIdentifier("fleet.groups.row.\(room.canonicalIdentity)")
+                    }
+                }
+            }
+            if !archiveRooms.isEmpty {
+                Section("Desktop history archive") {
+                    Text("Desktop snapshots are preserved here as historical, read-only conversations.")
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
+                        .listRowSeparator(.hidden)
+                    ForEach(archiveRooms, id: \.id) { room in
+                        NavigationLink(value: FleetScreen.room(room.id)) {
+                            RoomRowView(room: room)
+                        }
+                        .accessibilityIdentifier("fleet.groups.archive.row.\(room.id.description)")
                     }
                 }
             }

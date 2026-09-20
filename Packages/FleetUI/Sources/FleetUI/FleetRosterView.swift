@@ -528,13 +528,11 @@ public struct FleetRosterView: View {
     /// from the room union (hosted + desktop legacy).
     @ViewBuilder
     private func roomsGroup(for gateway: FleetGateway) -> some View {
-        let visible = filteredRooms(for: gateway)
-        if !visible.isEmpty {
+        let rows = filteredRooms(for: gateway) + filteredArchiveRooms(for: gateway)
+        if !rows.isEmpty {
             SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
-            ForEach(visible) { room in
-                // Preserve the explicit group push used by the adaptive iPad
-                // stack, and share the shell's Menu action on this destination.
+            ForEach(rows) { room in
                 NavigationLink {
                     RoomChatView(room: room, environment: environment)
                         .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
@@ -549,9 +547,21 @@ public struct FleetRosterView: View {
     }
 
     private func filteredRooms(for gateway: FleetGateway) -> [FleetRoom] {
-        let unifiedIDs = Set(environment.allRooms.map(\.id))
-        let rooms = environment.rooms(for: gateway.id).filter {
-            unifiedIDs.contains($0.id)
+        let rooms = environment.rooms(for: gateway.id)
+        guard !searchText.isEmpty else { return rooms }
+        return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private func filteredArchiveRooms(for gateway: FleetGateway) -> [FleetRoom] {
+        let primaryKeys = Set(environment.allRooms.map(\.id.key))
+        let rooms = environment.legacyRoomArchive.filter { room in
+            guard room.id.gatewayID == gateway.id else { return false }
+            guard let durableID = LegacyRoomContinuation.durableHostedRoomID(for: room) else {
+                return true
+            }
+            // Linked projections remain recoverable in GroupsHomeView's
+            // explicit archive, but do not duplicate the hosted row here.
+            return !primaryKeys.contains(durableID)
         }
         guard !searchText.isEmpty else { return rooms }
         return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
@@ -909,9 +919,9 @@ struct RoomRowView: View {
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
-                    if let authority = room.hosted?.authorityGatewayID, !authority.isEmpty {
-                        Text("Authority host · \(authority)")
-                            .font(FleetTheme.monoCaptionFont)
+                    if room.id.provenance == .hosted {
+                        Text(String(room.members.count) + " member" + (room.members.count == 1 ? "" : "s") + " · Hosted group")
+                            .font(FleetTheme.secondaryFont)
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
@@ -934,9 +944,9 @@ extension FleetRoom {
     /// The Group row's single VoiceOver read: name, member count, authority
     /// gateway (when observed), read-only marker, then member names.
     var voiceOverLabel: String {
-        var parts: [String] = ["\(name), \(members.count) member\(members.count == 1 ? "" : "s")"]
-        if let authority = hosted?.authorityGatewayID, !authority.isEmpty {
-            parts.append("Authority \(authority)")
+        var parts: [String] = [name + ", " + String(members.count) + " member" + (members.count == 1 ? "" : "s")]
+        if id.provenance == .hosted {
+            parts.append("Hosted group")
         }
         if isManagedByDesktop {
             parts.append("Managed by Hermes Desktop, read only")

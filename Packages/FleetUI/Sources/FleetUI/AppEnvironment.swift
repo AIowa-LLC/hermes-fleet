@@ -299,13 +299,30 @@ public final class AppEnvironment {
     /// seam; empty until first load, honest absence otherwise.
     public private(set) var roomsByGateway: [GatewayID: [FleetRoom]] = [:]
 
-    /// Unified room roster. Hosted advertisements are deduplicated only when
-    /// they carry the same verified authority installation and room id;
-    /// legacy and ambiguous rows remain source-scoped.
+    /// Reconciled normal-list roster. Hosted rooms are the interactive
+    /// primary when a verified Desktop relationship exists; legacy-only
+    /// projections are intentionally excluded from this list.
     public var allRooms: [FleetRoom] {
+        roomUnion.primaryRooms
+    }
+
+    /// Recoverable Desktop bounded-history projections. This is deliberately
+    /// separate from `allRooms` so historical records never masquerade as
+    /// interactive hosted rooms or create duplicate navigation rows.
+    public var legacyRoomArchive: [FleetRoom] {
+        roomUnion.legacyArchiveRooms
+    }
+
+    /// Source-preserving union for diagnostics and gateway health surfaces.
+    /// No caller should use this as the normal interactive room list.
+    public var sourceRoomRepresentations: [FleetRoom] {
+        roomUnion.allRooms
+    }
+
+    private var roomUnion: FleetRoomUnion {
         var union = FleetRoomUnion()
         union.ingest(roomsByGateway.values.flatMap { $0 })
-        return union.allRooms
+        return union
     }
 
     /// Non-secret synchronization warnings keyed by canonical room identity.
@@ -1057,9 +1074,10 @@ public final class AppEnvironment {
         }
     }
 
-    /// Rooms for one gateway (empty when unknown — honest absence).
+    /// Reconciled interactive rooms for one gateway. A legacy projection is
+    /// available through `legacyRoomArchive`, not as a normal group row.
     public func rooms(for gatewayID: GatewayID) -> [FleetRoom] {
-        roomsByGateway[gatewayID] ?? []
+        allRooms.filter { $0.id.gatewayID == gatewayID }
     }
 
     /// Resolves a navigation identity from the unified cache. The exact
@@ -1316,7 +1334,7 @@ public final class AppEnvironment {
                         authorityEpoch: 1,
                         advertisedMethods: nil,
                         driverAvailable: false))
-                var updated = rooms(for: gatewayID).filter {
+                var updated = (roomsByGateway[gatewayID] ?? []).filter {
                     !($0.id.provenance == .hosted && $0.id.key == roomID)
                 }
                 updated.append(revealed)
@@ -1449,7 +1467,7 @@ public final class AppEnvironment {
     }
 
     private func retainRoomIfAbsent(_ room: FleetRoom) {
-        var rows = rooms(for: room.id.gatewayID)
+        var rows = roomsByGateway[room.id.gatewayID] ?? []
         if let index = rows.firstIndex(where: { $0.id == room.id }) {
             // A create response is authoritative even when the immediate
             // groups.list refresh is eventually consistent. Enrich an empty

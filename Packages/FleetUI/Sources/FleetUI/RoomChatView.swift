@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import Observation
 import FleetCore
@@ -62,6 +63,10 @@ public final class RoomChatViewModel {
     private let commands: (any RoomChatCommanding)?
     private let driverStatus: (any RoomDriverStatusProviding)?
     private var cache = RoomTranscriptCache()
+    /// Reused when a transport error leaves delivery indeterminate. The
+    /// gateway's event_id contract makes a user retry idempotent.
+    private var pendingSendID: String?
+    private var pendingSendText: String?
 
     public init(
         room: FleetRoom,
@@ -116,10 +121,23 @@ public final class RoomChatViewModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            let page = try await commands.replay(
-                roomID: room.id.key, sinceSeq: cache.nextSinceSeq, limit: 100)
-            cache.merge(page)
-            applyProjection()
+            // Drain bounded gateway pages. The cursor is authoritative; the
+            // progress guard prevents a broken/replayed page from spinning.
+            var since = cache.nextSinceSeq
+            var page = try await commands.replay(
+                roomID: room.id.key, sinceSeq: since, limit: 100)
+            var pageCount = 0
+            while true {
+                cache.merge(page)
+                applyProjection()
+                guard page.hasMore, pageCount < 100 else { break }
+                let next = max(page.cursor, cache.nextSinceSeq)
+                guard next > since else { break }
+                since = next
+                page = try await commands.replay(
+                    roomID: room.id.key, sinceSeq: since, limit: 100)
+                pageCount += 1
+            }
         } catch {
             errorMessage = Self.explain(error)
         }
@@ -163,6 +181,15 @@ public final class RoomChatViewModel {
             disabledExplanation = "No room connection is available on this gateway."
             return false
         }
+        // A second tap while the first request is in flight is not another
+        // logical message. A retry after an indeterminate failure reuses the
+        // same event id, which the gateway deduplicates.
+        guard !isSending else { return false }
+        if pendingSendText != text {
+            pendingSendText = text
+            pendingSendID = "fleet-" + UUID().uuidString.lowercased()
+        }
+        let eventID = pendingSendID
         isSending = true
         defer { isSending = false }
         attemptedWriteCount += 1
@@ -173,7 +200,10 @@ public final class RoomChatViewModel {
             // wire — the room's main thread id is stable per room.
             _ = try await commands.send(
                 roomID: room.id.key, text: text,
-                threadID: Self.mainThreadID(for: room.id.key))
+                threadID: Self.mainThreadID(for: room.id.key),
+                idempotencyKey: eventID)
+            pendingSendID = nil
+            pendingSendText = nil
             errorMessage = nil
             await refresh()
             return true
@@ -355,6 +385,31 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
     }
 }
 
+private enum RoomDraftStore {
+    private static let prefix = "fleet.room.draft.v1."
+
+    static func load(for id: FleetRoomID) -> String {
+        UserDefaults.standard.string(forKey: key(for: id)) ?? ""
+    }
+
+    static func save(_ draft: String, for id: FleetRoomID) {
+        let key = key(for: id)
+        if draft.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(draft, forKey: key)
+        }
+    }
+
+    static func clear(for id: FleetRoomID) {
+        UserDefaults.standard.removeObject(forKey: key(for: id))
+    }
+
+    private static func key(for id: FleetRoomID) -> String {
+        prefix + id.storageKey
+    }
+}
+
 // MARK: - Screen
 
 /// One room, generation-agnostic: hosted rooms render interactive (per
@@ -395,6 +450,7 @@ public struct RoomChatView: View {
     public init(room: FleetRoom, environment: AppEnvironment) {
         self.environment = environment
         _viewModel = State(initialValue: environment.makeRoomChatViewModel(room: room))
+        _draft = State(initialValue: RoomDraftStore.load(for: room.id))
     }
 
     public var body: some View {
@@ -428,6 +484,9 @@ public struct RoomChatView: View {
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarControls }
+            .onChange(of: draft) { _, value in
+                RoomDraftStore.save(value, for: viewModel.room.id)
+            }
             .task {
                 await viewModel.start()
                 // FOS-4 (SPEC §7/§17): the room's open resolved and its scoped
@@ -1002,6 +1061,7 @@ public struct RoomChatView: View {
     private func submit() async {
         let text = draft
         guard await viewModel.send(text) else { return }
+        RoomDraftStore.clear(for: viewModel.room.id)
         draft = ""
         composing = false
     }

@@ -184,13 +184,14 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         roomID: String,
         text: String,
         threadID: String? = nil,
-        profile: String? = nil
+        profile: String? = nil,
+        eventID: String? = nil
     ) async throws -> SentRoomEvent {
         var payload: [String: JSONValue] = ["text": .string(text)]
         if let threadID { payload["thread_id"] = .string(threadID) }
         var params: [String: JSONValue] = [
             "room_id": .string(roomID),
-            "event_id": .string(Self.mintEventID()),
+            "event_id": .string(eventID ?? Self.mintEventID()),
             "payload": .object(payload),
         ]
         if let profile { params["profile"] = .string(profile) }

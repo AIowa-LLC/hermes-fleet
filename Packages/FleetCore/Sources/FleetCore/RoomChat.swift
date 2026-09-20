@@ -22,6 +22,10 @@ public protocol RoomChatCommanding: Sendable {
     func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice
     /// `groups.send` with a client-minted event id.
     func send(roomID: String, text: String, threadID: String?) async throws -> Int
+    /// Idempotent send variant used when a request may have reached the
+    /// gateway before transport failure. Existing test seams inherit the
+    /// compatibility implementation below.
+    func send(roomID: String, text: String, threadID: String?, idempotencyKey: String?) async throws -> Int
     /// `groups.rename`.
     func rename(roomID: String, name: String) async throws
     /// `groups.disband` (tombstone — final).
@@ -38,6 +42,12 @@ public protocol RoomChatCommanding: Sendable {
     /// legacy-continuation flow passes the projection's durable id so
     /// Desktop ↔ hosted identity is equality-by-construction.
     func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String
+}
+
+public extension RoomChatCommanding {
+    func send(roomID: String, text: String, threadID: String?, idempotencyKey: String?) async throws -> Int {
+        try await send(roomID: roomID, text: text, threadID: threadID)
+    }
 }
 
 /// Client-facing copy of the `groups.log` page (FleetNetworking decodes the
@@ -364,6 +374,7 @@ public struct RoomTranscriptProjection: Sendable {
 /// through provider replay (D17 support; gateway remains authoritative).
 public struct RoomTranscriptCache: Sendable {
     public private(set) var eventsBySeq: [Int: HostedRoomEventValue] = [:]
+    private var eventIDs = Set<String>()
     public private(set) var cursor = 0
     public private(set) var latestSeq = 0
 
@@ -373,7 +384,11 @@ public struct RoomTranscriptCache: Sendable {
     @discardableResult
     public mutating func merge(_ page: RoomLogPageSlice) -> Bool {
         var added = false
-        for event in page.events where eventsBySeq[event.seq] == nil {
+        for event in page.events {
+            let identity = event.eventID.isEmpty
+                ? "seq:" + String(event.seq)
+                : event.eventID
+            guard eventIDs.insert(identity).inserted else { continue }
             eventsBySeq[event.seq] = event
             added = true
         }

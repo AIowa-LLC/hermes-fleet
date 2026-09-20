@@ -31,24 +31,35 @@ public protocol FleetRoomProviding: Sendable {
 /// provider outputs, never from names.
 public struct FleetRoomUnion: Sendable {
     public private(set) var roomsByID: [FleetRoomID: FleetRoom] = [:]
+    private var deletedCanonicalIdentities: Set<String> = []
+    private var deletedHostedRoomIDs: Set<String> = []
 
     public init() {}
 
-    /// Ingest provider output. Same-name rooms with different identities
-    /// coexist; an exact duplicate identity is replaced by the incoming row
-    /// (providers are authoritative for their own keys).
+    /// Ingest provider output. Source records remain individually addressable;
+    /// hosted tombstones are retained as negative knowledge so stale Desktop
+    /// mirrors cannot resurrect a disbanded room.
     public mutating func ingest(_ rooms: [FleetRoom]) {
-        for room in rooms where !room.isDeleted {
+        for room in rooms {
+            if room.isDeleted {
+                deletedCanonicalIdentities.insert(room.canonicalIdentity)
+                if room.id.provenance == .hosted {
+                    deletedHostedRoomIDs.insert(room.id.key)
+                }
+                roomsByID.removeValue(forKey: room.id)
+                continue
+            }
+            guard !isTombstoned(room) else { continue }
             roomsByID[room.id] = room
         }
     }
 
-    /// All live rooms, deterministic order (name then identity). Verified
-    /// hosted advertisements are collapsed by canonical authority + room id;
-    /// unverified rows retain their source-scoped identity.
+    /// Source-union view retained for diagnostics and archive consumers. Hosted
+    /// advertisements with one verified authority collapse deterministically;
+    /// legacy records remain source-scoped here and are never transcript-merged.
     public var allRooms: [FleetRoom] {
         var canonical: [String: FleetRoom] = [:]
-        for room in roomsByID.values {
+        for room in roomsByID.values where !isTombstoned(room) {
             let key = room.canonicalIdentity
             guard let current = canonical[key] else {
                 canonical[key] = room
@@ -62,27 +73,54 @@ public struct FleetRoomUnion: Sendable {
         }
     }
 
+    /// Reconciled normal-list rows. Hosted rooms are primary when a verified
+    /// Desktop relationship exists; legacy-only records are archive-only.
+    public var primaryRooms: [FleetRoom] {
+        reconciliation.primaryRooms
+    }
+
+    /// Every live Desktop projection that remains recoverable through the
+    /// historical archive, including projections related to a hosted room.
+    public var legacyArchiveRooms: [FleetRoom] {
+        reconciliation.legacyArchiveRooms
+    }
+
+    public var reconciliation: FleetRoomReconciliationSnapshot {
+        FleetRoomReconciler.reconcile(
+            rooms: Array(roomsByID.values),
+            deletedCanonicalIdentities: deletedCanonicalIdentities,
+            deletedHostedRoomIDs: deletedHostedRoomIDs)
+    }
+
+    private func isTombstoned(_ room: FleetRoom) -> Bool {
+        if deletedCanonicalIdentities.contains(room.canonicalIdentity) { return true }
+        guard room.id.provenance == .desktopLegacy,
+              let durableID = LegacyRoomContinuation.durableHostedRoomID(for: room) else {
+            return false
+        }
+        return deletedHostedRoomIDs.contains(durableID)
+    }
+
     private func preferred(_ lhs: FleetRoom, over rhs: FleetRoom) -> FleetRoom {
         if rhs.revision != lhs.revision { return rhs.revision > lhs.revision ? rhs : lhs }
         if (rhs.hosted?.latestSeq ?? -1) != (lhs.hosted?.latestSeq ?? -1) {
             return (rhs.hosted?.latestSeq ?? -1) > (lhs.hosted?.latestSeq ?? -1) ? rhs : lhs
         }
-        // Prefer the row with the richer event/member projection, then use a
-        // stable source id so refresh order cannot change the UI.
+        if rhs.hosted?.driverAvailable != lhs.hosted?.driverAvailable {
+            return rhs.hosted?.driverAvailable == true ? rhs : lhs
+        }
         let lhsRichness = lhs.members.count + lhs.recentLog.count
         let rhsRichness = rhs.members.count + rhs.recentLog.count
         if lhsRichness != rhsRichness { return rhsRichness > lhsRichness ? rhs : lhs }
         return rhs.id.description < lhs.id.description ? rhs : lhs
     }
 
-    /// Rooms grouped by provenance — UI never branches on generation inside
-    /// a row; it reads `capabilities` / `isManagedByDesktop`.
+    /// Rooms grouped by provenance for source-level diagnostics and tests.
     public func rooms(provenance: RoomProvenance) -> [FleetRoom] {
         allRooms.filter { $0.id.provenance == provenance }
     }
 
-    /// Acceptance test hook (addendum §8.3): two same-name rooms of
-    /// different generations must both be present and distinct.
+    /// Acceptance hook: unrelated same-name source records remain distinct.
     public func containsSameNameDistinctPair() -> Bool {
         let names = Dictionary(grouping: allRooms) { $0.name }
         return names.values.contains { group in
