@@ -219,7 +219,13 @@ public enum RoomCommandFailure: Error, Equatable, Sendable {
     /// Plain-language explanation shown to the user (non-secret).
     public var explanation: String {
         switch self {
-        case .unsupportedMethod:
+        case .unsupportedMethod(let reason):
+            // The payload is honest guidance whenever it is OUR app-side
+            // selection copy (host selection / RoomLink eligibility); only a
+            // bare method name from a -32601 keeps the update-gateway copy.
+            if reason.hasPrefix("No connected gateway") {
+                return reason
+            }
             return "This gateway doesn't support that yet — update the gateway to use it."
         case .foreignAuthority:
             return "Another gateway now owns this room. Reload to see its new authority."

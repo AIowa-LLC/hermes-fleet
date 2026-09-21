@@ -155,7 +155,7 @@ public struct CreateRoomSheet: View {
                                 .accessibilityIdentifier("fleet.room.create.linked-note")
                         } else {
                             Text(eligibilityReady
-                                 ? "Each Bot keeps its owning gateway identity. Offline or unsupported participants remain visible with the reason they cannot be selected."
+                                 ? fleetWideNote
                                  : "Checking connected gateways and RoomLink eligibility…")
                                 .font(FleetTheme.monoCaptionFont)
                                 .foregroundStyle(theme.textSecondary)
@@ -214,6 +214,17 @@ public struct CreateRoomSheet: View {
                 Text(errorMessage ?? "")
             }
         }
+    }
+
+    /// Honest fleet-wide note: same-gateway groups always work; mixing
+    /// gateways needs RoomLink direct endpoints (a gateway-side setting) —
+    /// surfaced up front instead of failing at create time.
+    private var fleetWideNote: String {
+        let crossGateway = Set(draft.members.map { $0.route.gatewayID }).count > 1
+        if crossGateway {
+            return "Mixing Bots from different gateways needs RoomLink (direct endpoints) enabled on those gateways. Same-gateway groups always work."
+        }
+        return "Each Bot keeps its owning gateway identity. Offline or unsupported participants remain visible with the reason they cannot be selected."
     }
 
     private func candidateRow(_ candidate: RoomMemberCandidate) -> some View {

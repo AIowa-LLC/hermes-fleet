@@ -1115,25 +1115,46 @@ public final class AppEnvironment {
             return lhs.id.rawValue < rhs.id.rawValue
         }
 
+        var skipReasons: [String] = []
         for host in orderedHosts {
             let remoteMembers = members.filter { $0.route.gatewayID != host.id }
             if remoteMembers.isEmpty {
-                guard canCreateRooms(on: host.id) || roomCommandSeam(for: host.id) != nil else { continue }
+                // Cold start: the roster loop may not have a definitive
+                // capability answer yet (.unknown). Await ONE fresh probe so
+                // a ready gateway is never skipped for being unprobed — and
+                // record the definitive truth (F1 rule).
+                var hostCanCreate = canCreateRooms(on: host.id)
+                if !hostCanCreate, let source = roomSources[host.id],
+                   await source.createRoomCapability() == .supported {
+                    hostCanCreate = true
+                    canCreateRoomsByGateway[host.id] = true
+                }
+                guard hostCanCreate || roomCommandSeam(for: host.id) != nil else {
+                    skipReasons.append("\(host.displayName): gateway not offering hosted Group creation")
+                    continue
+                }
                 return try await createRoom(
                     gatewayID: host.id, name: name, members: members, setupID: setupID)
             }
-            guard let _ = roomLinkSeam(for: host.id) as? any CrossGatewayRoomCommanding else { continue }
-            guard (try? await validateLinkedRoomHost(gatewayID: host.id, members: members)) != nil else { continue }
+            guard roomLinkSeam(for: host.id) as? any CrossGatewayRoomCommanding != nil else {
+                skipReasons.append("\(host.displayName): RoomLink not connected")
+                continue
+            }
+            guard (try? await validateLinkedRoomHost(gatewayID: host.id, members: members)) != nil else {
+                skipReasons.append("\(host.displayName): cross-gateway RoomLink not available (peer endpoints or profiles)")
+                continue
+            }
             return try await createRoom(
                 gatewayID: host.id, name: name, members: members, setupID: setupID)
         }
 
-        if remoteExists {
-            throw RoomCommandFailure.unsupportedMethod(
-                "No connected gateway can host this fleet-wide Group with the selected participants. Check RoomLink, persistent storage, and peer permissions on the affected gateways.")
-        }
+        let detail = skipReasons.isEmpty
+            ? (remoteExists
+                ? "Mixing gateways needs RoomLink (direct endpoints) enabled on the affected gateways."
+                : "No connected gateways host the selected Bots.")
+            : skipReasons.joined(separator: "; ")
         throw RoomCommandFailure.unsupportedMethod(
-            "No connected gateway currently supports hosted Group creation.")
+            "No connected gateway can host this Group right now. \(detail)")
     }
 
     // MARK: Slice 4 — room chat (D15/D16)

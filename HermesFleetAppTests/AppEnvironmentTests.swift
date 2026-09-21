@@ -1049,6 +1049,134 @@ final class AppEnvironmentTests: XCTestCase {
                       "unprobed gateway with an advertising hosted room keeps the legacy path")
     }
 
+    // MARK: Fleet-wide create honesty (GC2 follow-up)
+
+    /// Scripted command seam: records creates, never hits a transport.
+    private final class ScriptedCreateCommands: RoomChatCommanding, @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock()
+        private var _created: [(roomID: String, name: String)] = []
+        var created: [(roomID: String, name: String)] { lock.withLock { _created } }
+
+        func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
+            RoomLogPageSlice(events: [], cursor: 0, latestSeq: 0, hasMore: false,
+                             authorityGatewayID: "fresh-gateway", authorityEpoch: 1)
+        }
+        func send(roomID: String, text: String, threadID: String?) async throws -> Int { 0 }
+        func rename(roomID: String, name: String) async throws {}
+        func disband(roomID: String) async throws {}
+        func stop(roomID: String) async throws -> Int { 0 }
+        func retry(roomID: String, taskID: String) async throws {}
+        func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws {}
+        func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
+            lock.withLock { _created.append((roomID, name)) }
+            return roomID
+        }
+    }
+
+    /// Create-path environment: one gateway, two reachable roster bots,
+    /// scripted capability source + command seam.
+    private func makeCreateEnvironment(
+        source: any FleetRoomSourceProviding,
+        commands: (any RoomChatCommanding)?
+    ) async -> (AppEnvironment, GatewayID) {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        let rosterProfiles: [ProfileDescriptor] = [
+            ProfileDescriptor(
+                name: "alpha", path: "~/.hermes/profiles/alpha", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Alpha"),
+            ProfileDescriptor(
+                name: "beta", path: "~/.hermes/profiles/beta", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Beta"),
+        ]
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: rosterProfiles)
+            }
+        )
+        let gateway = registration("fresh-gateway", name: "Fresh Gateway")
+        let commandFactory: FleetRoomCommandFactory?
+        if let commands {
+            commandFactory = { _ in commands }
+        } else {
+            commandFactory = nil
+        }
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            roomSourceFactory: { _ in source },
+            roomCommandFactory: commandFactory,
+            health: TestHealthAccumulator(),
+            seedRegistrations: [gateway]
+        )
+        await environment.load()
+        return (environment, gateway.id ?? GatewayID(rawValue: "fresh-gateway"))
+    }
+
+    /// Cold start (.unknown probe, empty cache): create must await ONE
+    /// definitive capability answer instead of skipping the host — the path
+    /// that produced the false "update the gateway" alert on device.
+    func testFleetWideCreateAwaitsDefinitiveCapabilityOnColdStart() async throws {
+        let source = FlippingProbeSource(.unknown)
+        let commands = ScriptedCreateCommands()
+        let (environment, gatewayID) = await makeCreateEnvironment(source: source, commands: commands)
+
+        // loadRooms with .unknown: the source registers but the cache stays empty.
+        await environment.loadRooms()
+        XCTAssertNil(environment.canCreateRoomsByGateway[gatewayID], "fixture: no definitive truth yet")
+
+        let members = [
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "alpha")), displayName: "Alpha"),
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "beta")), displayName: "Beta"),
+        ]
+
+        // The awaited probe now answers definitively.
+        source.setCapability(.supported)
+        let room = try await environment.createRoom(name: "Cold Start Crew", members: members)
+        XCTAssertEqual(room.id.provenance, .hosted, "cold-start create reaches the capable host")
+        let created = await MainActor.run { commands.created }
+        XCTAssertEqual(created.map(\.name), ["Cold Start Crew"], "create rode the command seam")
+    }
+
+    /// No host can serve the selection: the thrown copy carries the host
+    /// diagnostic and never the fixed update-gateway string.
+    func testFleetWideCreateFallthroughNamesHostsWithReasons() async throws {
+        let source = CapabilityProbeSource(capability: .unsupported)
+        let (environment, gatewayID) = await makeCreateEnvironment(source: source, commands: nil)
+        await environment.loadRooms()
+
+        let members = [
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "alpha")), displayName: "Alpha"),
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "beta")), displayName: "Beta"),
+        ]
+
+        do {
+            _ = try await environment.createRoom(name: "No Host Crew", members: members)
+            XCTFail("create must throw when the only host is definitively unsupported")
+        } catch let failure as RoomCommandFailure {
+            guard case .unsupportedMethod = failure else {
+                return XCTFail("expected unsupportedMethod, got: \(failure)")
+            }
+            XCTAssertFalse(
+                failure.explanation.contains("update the gateway"),
+                "app-side selection failure must never show the update-gateway copy")
+            XCTAssertTrue(failure.explanation.contains("Fresh Gateway"),
+                          "diagnostic names the skipped host: \(failure.explanation)")
+        }
+    }
+
     // MARK: Build 46 recovery — connection-restore isolation
 
     /// One unreachable gateway must not abort restore for the others
