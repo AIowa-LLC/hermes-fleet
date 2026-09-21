@@ -1077,7 +1077,8 @@ final class AppEnvironmentTests: XCTestCase {
     /// scripted capability source + command seam.
     private func makeCreateEnvironment(
         source: any FleetRoomSourceProviding,
-        commands: (any RoomChatCommanding)?
+        commands: (any RoomChatCommanding)?,
+        bridgedStoreURL: URL? = nil
     ) async -> (AppEnvironment, GatewayID) {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
@@ -1119,7 +1120,8 @@ final class AppEnvironmentTests: XCTestCase {
             roomSourceFactory: { _ in source },
             roomCommandFactory: commandFactory,
             health: TestHealthAccumulator(),
-            seedRegistrations: [gateway]
+            seedRegistrations: [gateway],
+            bridgedStoreURL: bridgedStoreURL
         )
         await environment.load()
         return (environment, gateway.id ?? GatewayID(rawValue: "fresh-gateway"))
@@ -1154,7 +1156,10 @@ final class AppEnvironmentTests: XCTestCase {
     /// diagnostic and never the fixed update-gateway string.
     func testFleetWideCreateFallthroughNamesHostsWithReasons() async throws {
         let source = CapabilityProbeSource(capability: .unsupported)
-        let (environment, gatewayID) = await makeCreateEnvironment(source: source, commands: nil)
+        let (environment, gatewayID) = await makeCreateEnvironment(
+            source: source, commands: nil,
+            bridgedStoreURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("bridged-fallthrough-\(UUID().uuidString).json"))
         await environment.loadRooms()
 
         let members = [
@@ -1162,19 +1167,15 @@ final class AppEnvironmentTests: XCTestCase {
             RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "beta")), displayName: "Beta"),
         ]
 
-        do {
-            _ = try await environment.createRoom(name: "No Host Crew", members: members)
-            XCTFail("create must throw when the only host is definitively unsupported")
-        } catch let failure as RoomCommandFailure {
-            guard case .unsupportedMethod = failure else {
-                return XCTFail("expected unsupportedMethod, got: \(failure)")
-            }
-            XCTAssertFalse(
-                failure.explanation.contains("update the gateway"),
-                "app-side selection failure must never show the update-gateway copy")
-            XCTAssertTrue(failure.explanation.contains("Fresh Gateway"),
-                          "diagnostic names the skipped host: \(failure.explanation)")
-        }
+        // Build 72 contract: no eligible host anywhere → the phone bridges
+        // the Group locally instead of dead-ending the user. Same-gateway
+        // capability gating is unchanged (host selection above the
+        // fallthrough); only the terminal outcome differs.
+        let room = try await environment.createRoom(name: "No Host Crew", members: members)
+        XCTAssertEqual(room.id.gatewayID, BridgedRooms.gatewayScope,
+                       "definitively-unsupported hosts fall back to a bridged room")
+        XCTAssertEqual(room.members.map(\.name), ["Alpha", "Beta"])
+        XCTAssertNotNil(environment.room(for: room.id), "bridged room renders in the union")
     }
 
     // MARK: Build 46 recovery — connection-restore isolation
@@ -1270,6 +1271,77 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertTrue(afterRemoval.isPinned(identity))
         XCTAssertEqual(afterRemoval.pinnedConversations.first?.authoritativeGatewayID,
                        route.gatewayID)
+    }
+
+    /// GC2 bridged fallback: a mixed-gateway selection that no gateway can
+    /// host creates a phone-bridged room instead of failing — the room is
+    /// local, renders in the union, and never shows update-gateway copy.
+    func testCreateRoomMixedGatewaysFallsBackToBridged() async throws {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        let rosterProfiles: [ProfileDescriptor] = [
+            ProfileDescriptor(
+                name: "alpha", path: "~/.hermes/profiles/alpha", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Alpha"),
+            ProfileDescriptor(
+                name: "beta", path: "~/.hermes/profiles/beta", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Beta"),
+        ]
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: rosterProfiles)
+            }
+        )
+        let macGateway = registration("mac-home", name: "Mac Hermes")
+        let archGateway = registration("arch-home", name: "Arch Hermes")
+        let source = FlippingProbeSource(.supported)
+        let bridgedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bridged-fallback-\(UUID().uuidString).json")
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            roomSourceFactory: { _ in source },
+            roomCommandFactory: nil,
+            health: TestHealthAccumulator(),
+            seedRegistrations: [macGateway, archGateway],
+            bridgedStoreURL: bridgedURL
+        )
+        await environment.load()
+
+        // Mixed selection: one member per gateway. With no command seam and
+        // no RoomLink, every host fails eligibility → bridged fallback.
+        let memberA = RoomMemberCandidate(
+            route: Route(gatewayID: GatewayID(rawValue: "mac-home"), profileSlug: ProfileSlug(rawValue: "alpha")),
+            displayName: "Alpha")
+        let memberB = RoomMemberCandidate(
+            route: Route(gatewayID: GatewayID(rawValue: "arch-home"), profileSlug: ProfileSlug(rawValue: "beta")),
+            displayName: "Beta")
+
+        let room = try await environment.createRoom(
+            name: "Mixed Group", members: [memberA, memberB])
+
+        // The room is bridged: local scope, not a real gateway.
+        XCTAssertEqual(room.id.gatewayID, BridgedRooms.gatewayScope)
+        XCTAssertEqual(room.id.provenance, .hosted)
+        XCTAssertEqual(room.members.count, 2)
+        XCTAssertEqual(room.members.map(\.name), ["Alpha", "Beta"])
+        // It resolves through the union and renders.
+        XCTAssertNotNil(environment.room(for: room.id))
+        XCTAssertTrue(environment.allRooms.contains {
+            $0.id.gatewayID == BridgedRooms.gatewayScope
+        })
     }
 
 }

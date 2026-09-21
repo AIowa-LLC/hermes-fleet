@@ -319,6 +319,9 @@ public final class AppEnvironment {
         roomUnion.allRooms
     }
 
+    /// Device-local store for phone-bridged rooms (non-secret JSON).
+    private let bridgedStore: BridgedRooms.Store
+
     private var roomUnion: FleetRoomUnion {
         var union = FleetRoomUnion()
         union.ingest(roomsByGateway.values.flatMap { $0 })
@@ -557,6 +560,7 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
+        bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
         connectionIntentDefaults: UserDefaults? = nil,
         gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
@@ -585,6 +589,7 @@ public final class AppEnvironment {
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
+        self.bridgedStore = BridgedRooms.Store(url: bridgedStoreURL ?? BridgedRooms.Store.defaultURL())
         self.voiceEngineFactory = voiceEngineFactory
         self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
         self.gatewaySessionInvalidator = gatewaySessionInvalidator
@@ -991,6 +996,7 @@ public final class AppEnvironment {
     /// Slice 2: rooms per gateway from the room-source seam (best-effort;
     /// failures leave previous state — honest absence, no fabricated rows).
     public func loadRooms() async {
+        await loadBridgedRooms()
         guard let roomSourceFactory else { return }
         for gateway in gateways {
             let source: any FleetRoomSourceProviding
@@ -1148,13 +1154,68 @@ public final class AppEnvironment {
                 gatewayID: host.id, name: name, members: members, setupID: setupID)
         }
 
+        // Bridged fallback (GC2 follow-up): no gateway can host this
+        // selection, but every member has a working conversation connection
+        // on this device. Create a phone-bridged room instead of failing —
+        // mixed-gateway Groups must never require gateway-side RoomLink work.
         let detail = skipReasons.isEmpty
             ? (remoteExists
                 ? "Mixing gateways needs RoomLink (direct endpoints) enabled on the affected gateways."
                 : "No connected gateways host the selected Bots.")
             : skipReasons.joined(separator: "; ")
-        throw RoomCommandFailure.unsupportedMethod(
-            "No connected gateway can host this Group right now. \(detail)")
+        return try await createBridgedRoom(
+            name: name, members: members,
+            reason: "No connected gateway can host this Group right now. \(detail)")
+    }
+
+    /// Create (or re-open) a phone-bridged room. Cannot fail on gateway
+    /// grounds — the record is device-local; relaying happens per send.
+    private func createBridgedRoom(
+        name: String, members: [RoomMemberCandidate], reason: String
+    ) async throws -> FleetRoom {
+        let timestamp = Date().timeIntervalSince1970
+        let memberRefs = members.map { member in
+            BridgedRooms.MemberRef(
+                gatewayID: member.route.gatewayID.rawValue,
+                profile: member.route.profileSlug.rawValue,
+                displayName: member.displayName,
+                routeID: member.route.id)
+        }
+        let record = BridgedRooms.RoomRecord(
+            roomKey: "fleet-bridged-" + UUID().uuidString.lowercased(),
+            name: name,
+            members: memberRefs,
+            createdAt: timestamp)
+        await bridgedStore.upsert(record)
+        // Note the honest reason in the transcript — the room works, but the
+        // user should know why it is bridged (system note, not an error).
+        let note = BridgedRooms.EventRecord(
+            seq: 1,
+            eventID: "fleet-bridged-\(record.roomKey)-note",
+            kind: "room.activity",
+            actorKind: "system",
+            actorID: "bridge",
+            actorDisplayName: nil,
+            actorProfile: nil,
+            payloadText: "Group runs on this iPhone — gateways couldn't host it (\(reason))",
+            reasonCode: nil,
+            createdAt: timestamp)
+        await bridgedStore.append(events: [note], to: record.roomKey)
+        await loadBridgedRooms()
+        let room = BridgedRooms.fleetRoom(
+            for: await bridgedStore.record(roomKey: record.roomKey) ?? record)
+        retainRoomIfAbsent(room)
+        return room
+    }
+
+    /// Load bridged rooms into the roomsByGateway union under the bridged
+    /// scope so the Groups list and `room(for:)` resolve them.
+    private func loadBridgedRooms() async {
+        let snapshot = await bridgedStore.roomsSnapshot()
+        let rooms = snapshot
+            .filter { $0.disbandedAt == nil }
+            .map { BridgedRooms.fleetRoom(for: $0) }
+        roomsByGateway[BridgedRooms.gatewayScope] = rooms
     }
 
     // MARK: Slice 4 — room chat (D15/D16)
@@ -1163,6 +1224,17 @@ public final class AppEnvironment {
     /// controls hidden/disabled-with-explanation).
     public func roomCommandSeam(for gatewayID: GatewayID) -> (any RoomChatCommanding)? {
         if let existing = roomCommands[gatewayID] { return existing }
+        // Phone-bridged rooms: one relay per room, resolved from the local
+        // store — no gateway involved.
+        if gatewayID == BridgedRooms.gatewayScope {
+            let relay = BridgedRoomRelay(
+                store: bridgedStore,
+                resolver: { [weak self] gatewayID in
+                    await self?.conversationSession(for: gatewayID)
+                })
+            roomCommands[gatewayID] = relay
+            return relay
+        }
         guard let factory = roomCommandFactory,
               let gateway = gateways.first(where: { $0.id == gatewayID }),
               let seam = factory(gateway) else { return nil }

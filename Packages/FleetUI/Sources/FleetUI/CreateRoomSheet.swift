@@ -222,7 +222,7 @@ public struct CreateRoomSheet: View {
     private var fleetWideNote: String {
         let crossGateway = Set(draft.members.map { $0.route.gatewayID }).count > 1
         if crossGateway {
-            return "Mixing Bots from different gateways needs RoomLink (direct endpoints) enabled on those gateways. Same-gateway groups always work."
+            return "Mixing Bots from different gateways runs this Group on your iPhone — every member still replies. Same-gateway groups run on a gateway."
         }
         return "Each Bot keeps its owning gateway identity. Offline or unsupported participants remain visible with the reason they cannot be selected."
     }
