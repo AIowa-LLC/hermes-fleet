@@ -83,8 +83,17 @@ final class FOS3FourRootShellTests: XCTestCase {
     }
 
     @MainActor
-    private func makeEnvironment(sessions: [Route: [SessionSummary]]) async -> AppEnvironment {
+    private func makeEnvironment(
+        sessions: [Route: [SessionSummary]],
+        bridgedStoreURL: URL? = nil
+    ) async -> AppEnvironment {
         var roster = FleetRoster()
+        // Register the gateways too: presence derives from the OWNING
+        // gateway's roster row (FleetRosterSnapshot.botPresence(on:) fails
+        // closed when the gateway is absent), so without these the live-
+        // member validation in createRoom reports every bot unavailable.
+        roster.upsertGateway(FleetGateway(id: workstation, displayName: "Workstation", endpoint: nil))
+        roster.upsertGateway(FleetGateway(id: laptop, displayName: "Laptop", endpoint: nil))
         roster.upsertBot(FleetBot(route: route(workstation, "default"),
                                   displayName: "Default",
                                   canonicalSession: CanonicalSessionRef(id: "canonical-s0")))
@@ -104,7 +113,8 @@ final class FOS3FourRootShellTests: XCTestCase {
             cache: try! SwiftDataCacheStore.makeInMemory(),
             sessionList: SeededSessionList(sessions: sessions),
             connectionFactory: { gateway, _ in StubConnection(gatewayID: gateway.id) },
-            health: StubHealth()
+            health: StubHealth(),
+            bridgedStoreURL: bridgedStoreURL
         )
         await environment.load()
         _ = await environment.refreshRoster()
@@ -171,6 +181,47 @@ final class FOS3FourRootShellTests: XCTestCase {
         XCTAssertTrue(results.items.contains { $0.kind == .bot })
         XCTAssertTrue(results.items.contains { $0.kind == .gateway })
         XCTAssertFalse(results.items.contains { $0.kind == .group })
+    }
+
+    @MainActor
+    func testPhoneBridgedGroupCreatesRestoresAndRoutesWithoutGateway() async throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fos3-bridged-\(UUID().uuidString).json")
+        defer {
+            if FileManager.default.fileExists(atPath: storeURL.path) {
+                try? FileManager.default.removeItem(at: storeURL)
+            }
+        }
+
+        let first = await makeEnvironment(sessions: [:], bridgedStoreURL: storeURL)
+        let members = [
+            RoomMemberCandidate(
+                route: route(workstation, "default"), displayName: "Default"),
+            RoomMemberCandidate(
+                route: route(laptop, "writer"), displayName: "Writer"),
+        ]
+
+        // No RoomLink/host command seam is wired in this fixture, so the
+        // fleet-wide create path must use the device-local bridge.
+        let created = try await first.createRoom(name: "Phone Crew", members: members)
+        XCTAssertEqual(created.id.gatewayID, BridgedRooms.gatewayScope)
+        await first.loadRooms()
+        XCTAssertNotNil(first.room(for: created.id), "created bridge resolves immediately")
+
+        var navigation = FleetNavigationState()
+        navigation.open(.room(created.id))
+        XCTAssertEqual(navigation.selection, .groups)
+        XCTAssertTrue(
+            FleetScreen.room(created.id).isDeviceLocalRoom,
+            "synthetic bridged scope must bypass registered-gateway rejection")
+
+        // A fresh environment over the same store models relaunch. The exact
+        // room identity must remain resolvable from the device-local record.
+        let relaunched = await makeEnvironment(sessions: [:], bridgedStoreURL: storeURL)
+        await relaunched.loadRooms()
+        XCTAssertNotNil(
+            relaunched.room(for: created.id),
+            "phone-bridged group survives relaunch and resolves its destination")
     }
 
     // MARK: 2. Appearance preference
