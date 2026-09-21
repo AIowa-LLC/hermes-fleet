@@ -190,7 +190,20 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                   live.members.contains(where: { $0.routeID == member.routeID }) else { return }
             let seen = live.deliveryWatermarks[member.routeID] ?? 0
             let delta = live.events.filter { $0.seq > seen }
-            guard !delta.isEmpty else { return }
+            // Desktop's room log holds only conversation entries; Fleet's
+            // event list also carries local notes (turn.failed,
+            // room.activity). A delta of notes alone is not a turn — skip
+            // it (the anchor below still consumes them, so they never
+            // re-trigger this check).
+            let hasConversation = delta.contains {
+                $0.kind == "message.user" || $0.kind == "message.member"
+            }
+            guard hasConversation else {
+                try await store.advanceDeliveryWatermark(
+                    roomKey: roomID, routeID: member.routeID,
+                    to: live.events.last?.seq ?? 0)
+                return
+            }
             // The frozen submit boundary (Desktop `anchorId`): a failure or
             // timeout never advances past this seq; a late reply that lands
             // after newer events does not acknowledge them.
