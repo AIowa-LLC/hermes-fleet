@@ -128,6 +128,18 @@ public final class RoomChatViewModel {
                 roomID: room.id.key, sinceSeq: since, limit: 100)
             var pageCount = 0
             while true {
+                // Gateway-authority fence (QA P1; mirrors RoomReplicator):
+                // a replay page is history only if the room's hosted
+                // authority produced it. A foreign gateway or a regressed
+                // epoch means authority moved — surface the typed reload
+                // prompt WITHOUT merging the page into the transcript.
+                if let hosted = room.hosted,
+                   page.authorityGatewayID != hosted.authorityGatewayID
+                    || page.authorityEpoch < hosted.authorityEpoch {
+                    errorMessage = RoomCommandFailure.foreignAuthority(
+                        page.authorityGatewayID).explanation
+                    break
+                }
                 cache.merge(page)
                 applyProjection()
                 guard page.hasMore, pageCount < 100 else { break }

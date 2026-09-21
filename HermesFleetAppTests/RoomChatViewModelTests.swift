@@ -23,14 +23,22 @@ final class RoomChatViewModelTests: XCTestCase {
 
         func seed(_ events: [HostedRoomEventValue]) { self.events = events }
 
+        var replayAuthorityGatewayID = "workstation"
+        var replayAuthorityEpoch = 1
+
+        func setReplayAuthority(gatewayID: String, epoch: Int) {
+            replayAuthorityGatewayID = gatewayID
+            replayAuthorityEpoch = epoch
+        }
+
         func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
             RoomLogPageSlice(
                 events: events.filter { $0.seq > sinceSeq },
                 cursor: events.map(\.seq).max() ?? 0,
                 latestSeq: events.map(\.seq).max() ?? 0,
                 hasMore: false,
-                authorityGatewayID: "workstation",
-                authorityEpoch: 1)
+                authorityGatewayID: replayAuthorityGatewayID,
+                authorityEpoch: replayAuthorityEpoch)
         }
 
         func send(roomID: String, text: String, threadID: String?) async throws -> Int {
@@ -283,5 +291,64 @@ final class RoomChatViewModelTests: XCTestCase {
         _ = await vm.send("hello")
         XCTAssertEqual(vm.attemptedWriteCount, 0)
         XCTAssertNotNil(vm.disabledExplanation)
+    }
+
+    // MARK: Gateway-authority fence on replay (QA P1)
+
+    func testReplayRejectsForeignAuthorityPage() async throws {
+        let commands = makeCommands()
+        await commands.seed([
+            HostedRoomEventValue(
+                roomID: "room-alpha", seq: 1, eventID: "e-1", kind: "message.member",
+                actorKind: "member", actorID: "researcher", payloadText: "foreign text",
+                createdAt: 1_757_000_000)
+        ])
+        await commands.setReplayAuthority(gatewayID: "rogue-gateway", epoch: 1)
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: nil)
+        await vm.start()
+
+        XCTAssertTrue(
+            vm.transcript.isEmpty,
+            "a foreign-authority replay page must never render as authoritative history")
+        XCTAssertEqual(
+            vm.errorMessage,
+            RoomCommandFailure.foreignAuthority("rogue-gateway").explanation,
+            "typed authority-drift reload prompt surfaces")
+    }
+
+    func testReplayRejectsEpochRegression() async throws {
+        let commands = makeCommands()
+        await commands.seed([
+            HostedRoomEventValue(
+                roomID: "room-alpha", seq: 1, eventID: "e-1", kind: "message.member",
+                actorKind: "member", actorID: "researcher", payloadText: "stale page",
+                createdAt: 1_757_000_000)
+        ])
+        await commands.setReplayAuthority(gatewayID: "workstation", epoch: 0)
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: nil)
+        await vm.start()
+
+        XCTAssertTrue(
+            vm.transcript.isEmpty,
+            "an epoch-regressed page must never render as authoritative history")
+        XCTAssertNotNil(vm.errorMessage, "authority-drift copy surfaces on epoch regression")
+    }
+
+    func testReplayAcceptsMatchingAndAdvancedAuthority() async throws {
+        let commands = makeCommands()
+        await commands.seed([
+            HostedRoomEventValue(
+                roomID: "room-alpha", seq: 1, eventID: "e-1", kind: "message.member",
+                actorKind: "member", actorID: "researcher", payloadText: "current",
+                createdAt: 1_757_000_000)
+        ])
+        // Same gateway, advanced epoch (legitimate authority advance) merges.
+        await commands.setReplayAuthority(gatewayID: "workstation", epoch: 5)
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: nil)
+        await vm.start()
+
+        XCTAssertEqual(vm.transcript.count, 1, "matching-authority page still merges")
+        XCTAssertEqual(vm.transcript.first?.text, "current")
+        XCTAssertNil(vm.errorMessage)
     }
 }
