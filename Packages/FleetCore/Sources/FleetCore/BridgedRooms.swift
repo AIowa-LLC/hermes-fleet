@@ -20,18 +20,30 @@ public enum BridgedRooms {
     // MARK: - Identity + persistence record
 
     /// One bridged member: enough to route sends and render identity.
+    /// `gatewayLabel` (Build 76) is the human connection label (Desktop
+    /// `connectionLabel`) used to qualify same-named bots across gateways;
+    /// absent on Build 75 records — code falls back to `gatewayID`.
     public struct MemberRef: Hashable, Sendable, Codable {
         public let gatewayID: String
         public let profile: String
         public let displayName: String
         public let routeID: String
+        public let gatewayLabel: String?
 
-        public init(gatewayID: String, profile: String, displayName: String, routeID: String) {
+        public init(
+            gatewayID: String, profile: String, displayName: String, routeID: String,
+            gatewayLabel: String? = nil
+        ) {
             self.gatewayID = gatewayID
             self.profile = profile
             self.displayName = displayName
             self.routeID = routeID
+            self.gatewayLabel = gatewayLabel
         }
+
+        /// Desktop `connectionLabel || connectionId`: the stable
+        /// source-qualified token for cross-gateway identity.
+        public var sourceLabel: String { gatewayLabel ?? gatewayID }
 
         public var route: Route? { Route(validating: GatewayID(rawValue: gatewayID), profileSlug: ProfileSlug(rawValue: profile)) }
     }
@@ -46,16 +58,22 @@ public enum BridgedRooms {
         public var renamedAt: Double?
         public var events: [EventRecord] = []
         public var bridgeSessionIDs: [String: String] = [:]
+        /// Per-member delivery watermarks (Build 76, FR-04): routeID -> the
+        /// highest room event `seq` included in that member's submitted group
+        /// context. Absent on Build 75 records; decode falls back to `[:]`
+        /// (every event is new). Advanced ONLY after an accepted submission.
+        public var deliveryWatermarks: [String: Int] = [:]
 
         private enum CodingKeys: String, CodingKey {
             case roomKey, name, members, createdAt, disbandedAt, renamedAt,
-                 events, bridgeSessionIDs
+                 events, bridgeSessionIDs, deliveryWatermarks
         }
 
         public init(
             roomKey: String, name: String, members: [MemberRef], createdAt: Double,
             disbandedAt: Double? = nil, renamedAt: Double? = nil, events: [EventRecord] = [],
-            bridgeSessionIDs: [String: String] = [:]
+            bridgeSessionIDs: [String: String] = [:],
+            deliveryWatermarks: [String: Int] = [:]
         ) {
             self.roomKey = roomKey
             self.name = name
@@ -65,6 +83,7 @@ public enum BridgedRooms {
             self.renamedAt = renamedAt
             self.events = events
             self.bridgeSessionIDs = bridgeSessionIDs
+            self.deliveryWatermarks = deliveryWatermarks
         }
 
         public init(from decoder: Decoder) throws {
@@ -77,6 +96,7 @@ public enum BridgedRooms {
             renamedAt = try values.decodeIfPresent(Double.self, forKey: .renamedAt)
             events = try values.decodeIfPresent([EventRecord].self, forKey: .events) ?? []
             bridgeSessionIDs = try values.decodeIfPresent([String: String].self, forKey: .bridgeSessionIDs) ?? [:]
+            deliveryWatermarks = try values.decodeIfPresent([String: Int].self, forKey: .deliveryWatermarks) ?? [:]
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -89,6 +109,7 @@ public enum BridgedRooms {
             try values.encodeIfPresent(renamedAt, forKey: .renamedAt)
             try values.encode(events, forKey: .events)
             try values.encode(bridgeSessionIDs, forKey: .bridgeSessionIDs)
+            try values.encode(deliveryWatermarks, forKey: .deliveryWatermarks)
         }
     }
 
@@ -264,15 +285,47 @@ public enum BridgedRooms {
         /// Append events and return the updated record.
         @discardableResult
         public func append(events newEvents: [EventRecord], to roomKey: String) throws -> RoomRecord? {
+            try append(events: newEvents, to: roomKey, advancingWatermarkFor: nil)
+        }
+
+        /// Append events; when `advancingWatermarkFor` names a member whose
+        /// watermark already sits at the log's tail, the append extends that
+        /// member's watermark past its own reply (Desktop's contiguous
+        /// own-reply advance — the member never re-receives its own words).
+        @discardableResult
+        public func append(
+            events newEvents: [EventRecord], to roomKey: String,
+            advancingWatermarkFor routeID: String?
+        ) throws -> RoomRecord? {
             loadIfNeeded()
             guard var record = rooms[roomKey] else { return nil }
             record.events.append(contentsOf: newEvents)
+            if let routeID,
+               let last = record.events.last?.seq,
+               record.deliveryWatermarks[routeID] == last - newEvents.count {
+                record.deliveryWatermarks[routeID] = last
+            }
             var snapshot = rooms
             snapshot[roomKey] = record
             try persist(snapshot)
             rooms = snapshot
             changeHub.emit(roomKey)
             return record
+        }
+
+        /// Advance one member's delivery watermark to `seq` (Build 76,
+        /// FR-04). Monotonic: a stale turn can never move a watermark
+        /// backwards past events another turn already delivered.
+        public func advanceDeliveryWatermark(roomKey: String, routeID: String, to seq: Int) throws {
+            loadIfNeeded()
+            guard var record = rooms[roomKey] else { return }
+            let current = record.deliveryWatermarks[routeID] ?? 0
+            guard seq > current else { return }
+            record.deliveryWatermarks[routeID] = seq
+            var snapshot = rooms
+            snapshot[roomKey] = record
+            try persist(snapshot)
+            rooms = snapshot
         }
 
         public func setBridgeSessionID(roomKey: String, routeID: String, sessionID: String) throws {

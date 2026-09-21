@@ -320,6 +320,306 @@ final class BridgedRoomRelayTests: XCTestCase {
         XCTAssertEqual(record.events.filter { $0.kind == "message.member" }.count, 2)
     }
 
+    // MARK: - Build 76: group-context parity
+
+    /// Captures every prompt submitted to a member's bridge session and
+    /// replies with configurable text (the mock gateway for group-context
+    /// assertions — the SUBMITTED text is the artifact under test).
+    private final class RecordingConversation: ConversationProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var subscribers: [AsyncStream<ConversationEvent>.Continuation] = []
+        private var _submittedTexts: [String] = []
+        private(set) var createCount = 0
+        var replyText: String = "real reply"
+        var submitError: Error?
+
+        var submittedTexts: [String] { lock.withLock { _submittedTexts } }
+
+        var events: AsyncStream<ConversationEvent> {
+            let pair = AsyncStream<ConversationEvent>.makeStream()
+            lock.withLock { subscribers.append(pair.continuation) }
+            return pair.stream
+        }
+        func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+            lock.withLock { createCount += 1 }
+            return ConversationSession(sessionID: profile ?? "default")
+        }
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
+            .init(sessionID: sessionID)
+        }
+        func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            lock.withLock { _submittedTexts.append(text) }
+            if let submitError { throw submitError }
+            let streams = lock.withLock { subscribers }
+            for stream in streams {
+                stream.yield(.messageComplete(sessionID: sessionID, text: replyText, status: nil, error: nil))
+            }
+            return .init(status: "streaming")
+        }
+        func interrupt(sessionID: String) async throws -> InterruptResult { .init(status: "interrupted") }
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
+    }
+
+    /// Blocks `wait()` until `open()` — gates the relay's session resolver so
+    /// store mutations between fan-out and turn start are deterministic.
+    private actor Gate {
+        private var opened = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        func wait() async {
+            if opened { return }
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+        func open() {
+            opened = true
+            for waiter in waiters { waiter.resume() }
+            waiters.removeAll()
+        }
+    }
+
+    private func contextRoom(
+        _ store: BridgedRooms.Store, name: String = "Launch Crew"
+    ) async throws {
+        try await store.upsert(.init(
+            roomKey: "room", name: name,
+            members: [
+                member("alpha", "research"),
+                member("beta", "writer"),
+            ], createdAt: 0))
+    }
+
+    // Test group B: the relay submits the FRAMED group prompt, not raw text.
+
+    func testRelaySubmitsFramedGroupPromptToEveryMember() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        let writer = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: writer)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "Who is in this chat?", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            (research.submittedTexts.count == 1) && (writer.submittedTexts.count == 1)
+        }
+        // Each member's prompt frames the room, its own identity, the peer
+        // roster, and the user message — with itself distinguished from its
+        // peer (FR-01/FR-02).
+        let researchPrompt = try XCTUnwrap(research.submittedTexts.first)
+        XCTAssertTrue(researchPrompt.contains("[Group chat: \"Launch Crew\"]"))
+        XCTAssertTrue(researchPrompt.contains("You are @research,"))
+        XCTAssertTrue(researchPrompt.contains("writer (@writer) [on beta]"))
+        XCTAssertTrue(researchPrompt.contains("User (user): Who is in this chat?"))
+        let writerPrompt = try XCTUnwrap(writer.submittedTexts.first)
+        XCTAssertTrue(writerPrompt.contains("You are @writer,"))
+        XCTAssertTrue(writerPrompt.contains("research (@research) [on alpha]"))
+        // Raw user text must NOT be the submitted payload (FR-06).
+        XCTAssertEqual(researchPrompt == "Who is in this chat?", false)
+    }
+
+    func testRawUserMessagePersistsUnchanged() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: RecordingConversation())]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "plain words only", threadID: nil)
+        try await waitUntil(timeout: 5) { research.submittedTexts.count == 1 }
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertEqual(
+            record.events.first { $0.kind == "message.user" }?.payloadText, "plain words only",
+            "the user's original text persists unchanged (FR-06)")
+        XCTAssertFalse(record.events.contains {
+            $0.kind == "message.user" && $0.payloadText?.contains("[Group chat:") == true
+        }, "the internal prompt wrapper must never be persisted as the user's message")
+    }
+
+    // Test group C: shared transcript delivery across turns.
+
+    func testEachMemberReceivesPeerReplyOnNextTurnWithoutRedelivery() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        let writer = RecordingConversation()
+        research.replyText = "from research"
+        writer.replyText = "from writer"
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: writer)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "first turn", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            (research.submittedTexts.count == 1) && (writer.submittedTexts.count == 1)
+        }
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
+        }
+        _ = try await relay.send(roomID: "room", text: "second turn", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            (research.submittedTexts.count == 2) && (writer.submittedTexts.count == 2)
+        }
+        // The researcher's second prompt carries the peer's reply with
+        // attribution and the new user message — but NOT the first turn's
+        // already-delivered user message (no full-history injection). Its
+        // own reply may appear as "(you)" when the peer spoke after it
+        // (Desktop's contiguous-only advance).
+        let second = try XCTUnwrap(research.submittedTexts.last)
+        XCTAssertTrue(second.contains("writer [beta]: from writer"), "peer reply must be delivered with attribution")
+        XCTAssertFalse(second.contains("research:"),
+                      "own already-acknowledged reply must not be re-delivered un-attributed")
+        XCTAssertTrue(second.contains("User (user): second turn"))
+        XCTAssertFalse(second.contains("User (user): first turn"),
+                      "already-delivered events must not be re-injected (FR-04)")
+        XCTAssertEqual(second.components(separatedBy: "User (user):").count - 1, 1,
+                       "exactly one user line in the second delta")
+    }
+
+    // Test group D: persistence and recovery of delivery state.
+
+    func testDeliveryWatermarksSurviveRelayReconstruction() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("rooms.json")
+        let store = BridgedRooms.Store(url: url)
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: RecordingConversation())]
+        let firstRelay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await firstRelay.send(roomID: "room", text: "before restart", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
+        }
+        // A new relay over the SAME persisted file models an app relaunch.
+        let secondRelay = BridgedRoomRelay(
+            store: BridgedRooms.Store(url: url),
+            resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await secondRelay.send(roomID: "room", text: "after restart", threadID: nil)
+        try await waitUntil(timeout: 5) { research.submittedTexts.count == 2 }
+        let postRestart = try XCTUnwrap(research.submittedTexts.last)
+        XCTAssertTrue(postRestart.contains("User (user): after restart"))
+        XCTAssertFalse(postRestart.contains("User (user): before restart"),
+                       "delivery state must survive restart without full-history re-injection")
+        // Own-reply acknowledgment is contiguous-only (Desktop): when the
+        // peer's reply landed first, the member's own reply is legitimately
+        // re-delivered — but always attributed "(you)", never un-attributed.
+        XCTAssertFalse(postRestart.contains("research:"),
+                       "own reply never re-delivered un-attributed")
+    }
+
+    // Test group E: failures, passes, membership.
+
+    func testFailedSubmissionDoesNotDiscardTranscriptEvents() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        research.submitError = ConversationError.notConnected
+        let writer = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: writer)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "lost turn", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains { $0.reasonCode == "gateway_unreachable" } == true
+        }
+        // Recovery: the same member succeeds on the next turn and STILL
+        // receives the missed user message (watermark was not advanced).
+        research.submitError = nil
+        _ = try await relay.send(roomID: "room", text: "recovery turn", threadID: nil)
+        try await waitUntil(timeout: 5) { research.submittedTexts.count == 2 }
+        let recovery = try XCTUnwrap(research.submittedTexts.last)
+        XCTAssertTrue(recovery.contains("User (user): lost turn"),
+                      "a failed submission must not silently discard transcript events (FR-04)")
+        XCTAssertTrue(recovery.contains("User (user): recovery turn"))
+    }
+
+    func testPassReplyIsNotAppendedToTranscript() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        research.replyText = "(pass)"
+        let writer = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: writer)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "anyone?", threadID: nil)
+        try await waitUntil(timeout: 5) { research.submittedTexts.count == 1 }
+        try await Task.sleep(for: .milliseconds(300))
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains {
+            $0.kind == "message.member" && $0.actorID == "alpha/research"
+        }, "a (pass) is silence, not a transcript reply (FR-07)")
+        XCTAssertFalse(record.events.contains {
+            $0.kind == "turn.failed" && $0.actorID == "alpha/research"
+        }, "passing is not a failure")
+        XCTAssertEqual(record.events.filter { $0.kind == "message.member" }.count, 1,
+                       "the non-passing peer still replies")
+    }
+
+    func testMemberWithNoUndeliveredEventsSkipsItsTurn() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: RecordingConversation())]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "one", threadID: nil)
+        try await waitUntil(timeout: 5) { research.submittedTexts.count == 1 }
+        // Force the researcher's watermark past the whole log — every event
+        // already delivered. The next fan-out must SKIP its turn entirely
+        // (Desktop: `if (!delta.length) return null`) — no submission, no
+        // failure note, no transcript churn.
+        try await store.advanceDeliveryWatermark(roomKey: "room", routeID: "alpha/research", to: 999)
+        _ = try await relay.send(roomID: "room", text: "two", threadID: nil)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(research.submittedTexts.count, 1,
+                       "a member with no undelivered events must not be submitted a turn")
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains {
+            $0.kind == "turn.failed" && $0.actorID == "alpha/research"
+        }, "a skipped turn is not a failure")
+    }
+
+    func testRemovedMemberDoesNotReceiveGroupSubmissions() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        let writer = RecordingConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research),
+                        "beta": Session(gatewayID: .init(rawValue: "beta"), client: writer)]
+        let gate = Gate()
+        let relay = BridgedRoomRelay(store: store, resolver: { gatewayID in
+            await gate.wait()
+            return sessions[gatewayID.rawValue]
+        }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "roster changed", threadID: nil)
+        // Remove the researcher from the authoritative roster while the
+        // fan-out is still connecting (FR-09): the fresh record read at turn
+        // start must skip the removed member.
+        let currentRecord = await store.record(roomKey: "room")
+        let current = try XCTUnwrap(currentRecord)
+        try await store.upsert(.init(
+            roomKey: "room", name: current.name,
+            members: current.members.filter { $0.routeID != "alpha/research" },
+            createdAt: current.createdAt, events: current.events,
+            bridgeSessionIDs: current.bridgeSessionIDs,
+            deliveryWatermarks: current.deliveryWatermarks))
+        await gate.open()
+        try await waitUntil(timeout: 5) { writer.submittedTexts.count == 1 }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(research.submittedTexts.count, 0,
+                       "a removed member must not receive future group submissions")
+    }
+
     /// Poll until `condition` holds (bounded) — async store reads make
     /// deterministic event-order assertions brittle otherwise. On timeout,
     /// print the diagnostics string so failures are diagnosable from logs.

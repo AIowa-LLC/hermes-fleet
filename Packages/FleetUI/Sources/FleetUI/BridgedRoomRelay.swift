@@ -130,9 +130,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             let tail = Task<Void, Never> {
                 // The task inherits this @MainActor context; the relay is
                 // environment-owned for the app's lifetime.
-                try? await self.relay(
-                    member: member, text: text, roomID: roomID,
-                    sessionID: sessionID)
+                try? await self.relay(member: member, roomID: roomID, sessionID: sessionID)
             }
             memberTails[roomID, default: [:]][member.routeID] = tail
         }
@@ -140,7 +138,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     }
 
     private func relay(
-        member: BridgedRooms.MemberRef, text: String, roomID: String,
+        member: BridgedRooms.MemberRef, roomID: String,
         sessionID: String?
     ) async throws {
         guard let route = member.route else {
@@ -181,13 +179,37 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                     roomKey: roomID, routeID: member.routeID,
                     sessionID: created.sessionID)
             }
+            // Group-context turn (Build 76): re-read the room at turn start —
+            // the authoritative roster, current name, and the member's
+            // delivery watermark all come from the live record, not the
+            // fan-out snapshot. A member removed from the roster mid-flight
+            // is skipped entirely (FR-09); the delta is everything after the
+            // member's watermark (FR-03/FR-04).
+            guard let live = await store.record(roomKey: roomID),
+                  live.disbandedAt == nil,
+                  live.members.contains(where: { $0.routeID == member.routeID }) else { return }
+            let seen = live.deliveryWatermarks[member.routeID] ?? 0
+            let delta = live.events.filter { $0.seq > seen }
+            guard !delta.isEmpty else { return }
+            // The frozen submit boundary (Desktop `anchorId`): a failure or
+            // timeout never advances past this seq; a late reply that lands
+            // after newer events does not acknowledge them.
+            let anchorSeq = live.events.last?.seq ?? 0
+            let prompt = BridgedRoomTurnPrompt.build(.init(
+                roomName: live.name, viewer: member, members: live.members, delta: delta))
             let startedAt = Date()
             // Subscribe BEFORE submitting so no streamed event between
             // submit and subscription is missed (live-tail stream, no
             // replay). One stream serves both collection phases.
             let events = conversation.events
             _ = try await conversation.submitPrompt(
-                sessionID: created.sessionID, text: text)
+                sessionID: created.sessionID, text: prompt)
+            // Watermark commit (Desktop contract): advance ONLY after the
+            // submit was accepted (the RPC returned without throwing). A
+            // throw above skips this entirely — the missed events are
+            // re-delivered on the member's next turn.
+            try await store.advanceDeliveryWatermark(
+                roomKey: roomID, routeID: member.routeID, to: anchorSeq)
             // Phase 1: collect with an activity-extended window. A member
             // that keeps streaming never expires; only a silent member
             // times out (then phase 2 watches for the late reply).
@@ -196,7 +218,11 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 sessionID: created.sessionID,
                 inactivity: memberTimeout,
                 total: lateCollectionWindow)
-            if let reply, !reply.isEmpty {
+            if let reply {
+                // A completed turn that is exactly "(pass)" — or empty text,
+                // which Desktop's `isGroupPassText` also counts as silence —
+                // is a GOOD turn: no reply row, no failure note.
+                guard !BridgedRoomTurnPrompt.isPassText(reply) else { return }
                 appendMemberMessage(member: member, reply: reply, roomID: roomID, late: false)
                 return
             }
@@ -225,7 +251,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 sessionID: created.sessionID,
                 inactivity: remaining,
                 total: remaining)
-            if let reply, !reply.isEmpty, !Task.isCancelled {
+            if let reply, !Task.isCancelled, !BridgedRoomTurnPrompt.isPassText(reply) {
                 appendMemberMessage(member: member, reply: reply, roomID: roomID, late: true)
             }
         } catch {
@@ -312,7 +338,12 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             actorProfile: member.profile,
             payloadText: reply,
             createdAt: Date().timeIntervalSince1970)
-        Task { try? await store.append(events: [event], to: roomID) }
+        // The contiguous own-reply advance (Desktop `group-round-members.ts`
+        // 249-255): a reply cannot acknowledge entries that arrived during
+        // inference, but when the member's watermark already sits at the
+        // log's tail its own reply extends it — so the member never has its
+        // own words re-delivered on its next turn.
+        Task { try? await store.append(events: [event], to: roomID, advancingWatermarkFor: member.routeID) }
     }
 
     private func appendNote(

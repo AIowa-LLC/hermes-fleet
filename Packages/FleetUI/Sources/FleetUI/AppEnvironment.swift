@@ -1181,7 +1181,8 @@ public final class AppEnvironment {
                 gatewayID: member.route.gatewayID.rawValue,
                 profile: member.route.profileSlug.rawValue,
                 displayName: member.displayName,
-                routeID: member.route.id)
+                routeID: member.route.id,
+                gatewayLabel: gateways.first(where: { $0.id == member.route.gatewayID })?.displayName)
         }
         var record = BridgedRooms.RoomRecord(
             roomKey: "fleet-bridged-" + UUID().uuidString.lowercased(),
