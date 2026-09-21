@@ -87,6 +87,11 @@ final class FOS3FourRootShellTests: XCTestCase {
         sessions: [Route: [SessionSummary]],
         bridgedStoreURL: URL? = nil
     ) async -> AppEnvironment {
+        // Fixture hygiene: never read the CONTAINER's persistent bridged-
+        // rooms store (rooms created by earlier UI-test runs leak in and
+        // break room-union assertions). Fresh temp store per environment.
+        let bridgedStoreURL = bridgedStoreURL ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("fos3-fixture-\(UUID().uuidString).json")
         var roster = FleetRoster()
         // Register the gateways too: presence derives from the OWNING
         // gateway's roster row (FleetRosterSnapshot.botPresence(on:) fails

@@ -63,6 +63,10 @@ public final class RoomChatViewModel {
     private let commands: (any RoomChatCommanding)?
     private let driverStatus: (any RoomDriverStatusProviding)?
     private var cache = RoomTranscriptCache()
+    /// F2: live change tail for bridged rooms. `nonisolated(unsafe)` — the
+    /// established eventTask pattern: created/replaced on the main actor,
+    /// canceled in `deinit` (cancel is thread-safe).
+    nonisolated(unsafe) private var liveTail: Task<Void, Never>?
     /// Reused when a transport error leaves delivery indeterminate. The
     /// gateway's event_id contract makes a user retry idempotent.
     private var pendingSendID: String?
@@ -80,6 +84,10 @@ public final class RoomChatViewModel {
         self.isDisbanded = room.id.provenance == .hosted && room.hosted?.disbandedAt != nil
     }
 
+    deinit {
+        liveTail?.cancel()
+    }
+
     /// Capabilities for this room (hosted: advertised methods; legacy:
     /// observational-only). Views render affordances from THIS.
     public var capabilities: RoomCapabilities { room.capabilities }
@@ -95,7 +103,29 @@ public final class RoomChatViewModel {
     // MARK: Lifecycle
 
     public func start() async {
+        // Subscribe BEFORE the initial pull so no store append can slip
+        // between the replay read and the live tail's registration; an
+        // overlap is harmless (the seq-keyed cache dedupes).
+        startLiveTail()
         await refresh()
+    }
+
+    /// F2: live transcript for bridged rooms — the store notifies on every
+    /// append (user message, member reply, failure note); each notification
+    /// runs the same replay merge the pull path uses. Hosted rooms keep
+    /// their pull model (the gateway owns the log).
+    private func startLiveTail() {
+        guard room.id.gatewayID == BridgedRooms.gatewayScope,
+              let relay = commands as? BridgedRoomRelay else { return }
+        liveTail?.cancel()
+        let roomKey = room.id.key
+        liveTail = Task { [weak self] in
+            guard let changes = relay.transcriptChanges(roomID: roomKey) else { return }
+            for await _ in changes {
+                guard !Task.isCancelled else { break }
+                await self?.refresh()
+            }
+        }
     }
 
     /// Replay the durable log since the merged cursor + refresh driver
@@ -1083,7 +1113,6 @@ public struct RoomChatView: View {
         draft = ""
         composing = false
     }
-
     /// D22: map a typed recovery action to its behavior. Retry-class actions
     /// ride the room command seam; the others explain the honest next step
     /// (this client cannot re-authenticate a provider or edit gateway config

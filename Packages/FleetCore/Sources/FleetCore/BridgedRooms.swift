@@ -141,9 +141,53 @@ public enum BridgedRooms {
         private let url: URL
         private var rooms: [String: RoomRecord] = [:]
         private var loaded = false
+        /// Lock-guarded subscriber hub. Lives OUTSIDE actor isolation so
+        /// `changes()` registers subscribers SYNCHRONOUSLY — an observer
+        /// that subscribes then reads state can never miss the next
+        /// mutation (the async-registration race the live tail hit).
+        private let changeHub = ChangeHub()
+
+        private final class ChangeHub: @unchecked Sendable {
+            private let lock = NSLock()
+            private var subscribers: [UUID: AsyncStream<String>.Continuation] = [:]
+
+            func subscribe() -> AsyncStream<String> {
+                let (stream, continuation) = AsyncStream<String>.makeStream()
+                let id = UUID()
+                lock.lock(); defer { lock.unlock() }
+                subscribers[id] = continuation
+                continuation.onTermination = { [weak self] _ in
+                    self?.remove(id)
+                }
+                return stream
+            }
+
+            private func remove(_ id: UUID) {
+                lock.lock(); defer { lock.unlock() }
+                subscribers.removeValue(forKey: id)
+            }
+
+            func emit(_ key: String) {
+                lock.lock(); defer { lock.unlock() }
+                for continuation in subscribers.values {
+                    continuation.yield(key)
+                }
+            }
+        }
 
         public init(url: URL) {
             self.url = url
+        }
+
+        /// Live change feed (room storage keys). Every mutation yields the
+        /// mutated room's key so observers (the relay's transcriptChanges →
+        /// RoomChatViewModel live tail) can re-read just that room. Yields
+        /// happen AFTER the snapshot is persisted and published in memory.
+        /// Nonisolated + synchronous registration: subscribe, then read
+        /// current state, then iterate — an overlapping mutation is deduped
+        /// by the observer's seq-keyed cache.
+        public nonisolated func changes() -> AsyncStream<String> {
+            changeHub.subscribe()
         }
 
         public static func defaultURL() -> URL {
@@ -191,6 +235,7 @@ public enum BridgedRooms {
             snapshot[record.roomKey] = record
             try persist(snapshot)
             rooms = snapshot
+            changeHub.emit(record.roomKey)
         }
 
         public func disband(roomKey: String, at timestamp: Double) throws {
@@ -201,6 +246,7 @@ public enum BridgedRooms {
             snapshot[roomKey] = record
             try persist(snapshot)
             rooms = snapshot
+            changeHub.emit(roomKey)
         }
 
         public func rename(roomKey: String, to name: String, at timestamp: Double) throws {
@@ -212,6 +258,7 @@ public enum BridgedRooms {
             snapshot[roomKey] = record
             try persist(snapshot)
             rooms = snapshot
+            changeHub.emit(roomKey)
         }
 
         /// Append events and return the updated record.
@@ -224,6 +271,7 @@ public enum BridgedRooms {
             snapshot[roomKey] = record
             try persist(snapshot)
             rooms = snapshot
+            changeHub.emit(roomKey)
             return record
         }
 
@@ -254,7 +302,8 @@ public enum BridgedRooms {
             updatedAt: record.events.last?.createdAt ?? record.createdAt,
             disbandedAt: record.disbandedAt,
             advertisedMethods: [
-                "groups.log", "groups.send", "groups.rename", "groups.disband"
+                "groups.log", "groups.send", "groups.rename", "groups.disband",
+                "groups.stop", "groups.retry"
             ],
             driverAvailable: true)
         let recent = record.events.compactMap { event -> FleetRoomMessage? in

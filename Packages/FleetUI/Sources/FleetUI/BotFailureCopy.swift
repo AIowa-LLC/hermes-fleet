@@ -89,6 +89,9 @@ public enum BotFailureCopy {
         case .contextOverflow: return "Context too long"
         case .missingConfig: return "Missing configuration"
         case .modelUnavailable: return "Model unavailable"
+        case .bridgedMemberTimeout: return "Member didn't answer in time"
+        case .bridgedSessionExpired: return "Member session expired"
+        case .bridgedMemberUnreachable: return "Member unreachable"
         case .unknown: return "Unknown failure"
         }
     }
@@ -121,6 +124,12 @@ public enum BotFailureCopy {
             return "The bot is missing required configuration (model, provider, or credentials). Open its settings to finish setup."
         case .modelUnavailable:
             return "The configured model isn't available right now. Pick another model for this bot."
+        case .bridgedMemberTimeout:
+            return "A member took too long to answer this Group. It may still be working — its reply lands here when it finishes. Retry sends the question again."
+        case .bridgedSessionExpired:
+            return "A member's Group session expired on its gateway, so its earlier context is gone. Create a new Group to start fresh."
+        case .bridgedMemberUnreachable:
+            return "A member's gateway couldn't be reached for this Group. Check that gateway's connection, then retry."
         case .unknown:
             return "Something failed and the gateway didn't say what. Retry, and check the gateway logs if it keeps happening."
         }
@@ -154,6 +163,12 @@ public enum BotFailureCopy {
             return [.openSettings]
         case .modelUnavailable:
             return [.pickModel]
+        case .bridgedMemberTimeout, .bridgedMemberUnreachable:
+            return [.retry]
+        case .bridgedSessionExpired:
+            // Context is gone on the gateway — a plain retry cannot recover
+            // it; the honest action is a fresh Group.
+            return []
         case .unknown:
             return [.retry]
         }

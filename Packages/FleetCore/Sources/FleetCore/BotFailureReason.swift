@@ -23,6 +23,11 @@ public enum BotFailureReason: String, Hashable, Sendable, Codable, CaseIterable 
     case missingConfig = "missing_config"
     case modelUnavailable = "model_unavailable"
     case unknown = "unknown"
+    // Phone-bridged Group relays (BridgedRoomRelay reason codes — client
+    // owned, never on the gateway wire): a member's reply window closed.
+    case bridgedMemberTimeout = "member_timeout"
+    case bridgedSessionExpired = "bridge_session_expired_context_lost"
+    case bridgedMemberUnreachable = "bridge_member_unreachable"
     // Relay refusal (methods_bot_relay.py:143) — not in ALL_REASONS but a
     // structured reason on the wire; modeled separately here.
     public static let targetBusyRawValue = "target_busy"
@@ -43,9 +48,14 @@ public enum BotFailureReason: String, Hashable, Sendable, Codable, CaseIterable 
             return .resume
         case .contextOverflow:
             return .compressThenResume
+        case .bridgedMemberTimeout:
+            // Person-driven retry only — the member may still complete and
+            // land its reply through the late-collection tail.
+            return .none
         case .queuedExpired, .agentBlocked, .cancelled,
              .providerAuthOrAccess, .providerQuotaLimit,
-             .missingConfig, .modelUnavailable, .unknown:
+             .missingConfig, .modelUnavailable, .unknown,
+             .bridgedSessionExpired, .bridgedMemberUnreachable:
             return .none
         }
     }
@@ -58,6 +68,18 @@ public enum BotFailureReason: String, Hashable, Sendable, Codable, CaseIterable 
     public var requiresAttention: Bool {
         switch self {
         case .agentBlocked, .providerAuthOrAccess, .providerQuotaLimit, .missingConfig:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Phone-bridged Group relay failures: never auto-retry themselves (a
+    /// timed-out member may STILL be working — see the late-reply tail);
+    /// the person decides via Retry.
+    public var isBridgedRelayFailure: Bool {
+        switch self {
+        case .bridgedMemberTimeout, .bridgedSessionExpired, .bridgedMemberUnreachable:
             return true
         default:
             return false

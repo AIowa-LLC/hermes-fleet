@@ -292,6 +292,10 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
         remote: ScriptedCrossGatewaySeam,
         profilesByGateway: [String: [ProfileDescriptor]] = [:]
     ) async -> AppEnvironment {
+        // Fixture hygiene: isolate from the container's persistent bridged-
+        // rooms store (earlier UI-test rooms otherwise leak into the union).
+        let bridgedStoreURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crossgw-fixture-\(UUID().uuidString).json")
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
@@ -322,7 +326,8 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
                                     endpoint: URL(string: "http://127.0.0.1:1")!),
                 GatewayRegistration(id: GatewayID(rawValue: "remotegw"), displayName: "Remote",
                                     endpoint: URL(string: "http://127.0.0.1:2")!),
-            ]
+            ],
+            bridgedStoreURL: bridgedStoreURL
         )
         await environment.load()
         return environment
