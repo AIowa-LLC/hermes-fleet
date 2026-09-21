@@ -224,6 +224,24 @@ final class FOS3FourRootShellTests: XCTestCase {
             "phone-bridged group survives relaunch and resolves its destination")
     }
 
+    @MainActor
+    func testFailedLocalGroupSaveDoesNotPublishSuccessfulCreation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // A directory cannot be atomically replaced with the room JSON file.
+        let environment = await makeEnvironment(sessions: [:], bridgedStoreURL: directory)
+        do {
+            _ = try await environment.createRoom(name: "Must not appear", members: [
+                RoomMemberCandidate(route: route(workstation, "default"), displayName: "Default"),
+                RoomMemberCandidate(route: route(laptop, "writer"), displayName: "Writer"),
+            ])
+            XCTFail("creation must surface its persistence failure")
+        } catch {
+            XCTAssertTrue(environment.allRooms.isEmpty)
+        }
+    }
+
     // MARK: 2. Appearance preference
 
     func testAppearanceDefaultsToSystemAndPersists() {

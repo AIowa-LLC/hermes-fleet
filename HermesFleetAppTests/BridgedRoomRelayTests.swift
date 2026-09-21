@@ -21,7 +21,7 @@ final class BridgedRoomRelayTests: XCTestCase {
         let second = ImmediateConversation()
         let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: first),
                         "beta": Session(gatewayID: .init(rawValue: "beta"), client: second)]
-        await store.upsert(.init(roomKey: "room", name: "Test", members: [member("alpha", "research"), member("beta", "writer")], createdAt: 0))
+        try await store.upsert(.init(roomKey: "room", name: "Test", members: [member("alpha", "research"), member("beta", "writer")], createdAt: 0))
         let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
         _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
         let stored = await store.record(roomKey: "room")
@@ -33,13 +33,63 @@ final class BridgedRoomRelayTests: XCTestCase {
         XCTAssertFalse(record.events.contains { $0.kind == "turn.failed" })
     }
 
+    func testMemberSessionsResumeAcrossReload() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("rooms.json")
+        let store = BridgedRooms.Store(url: url)
+        let conversation = ImmediateConversation()
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+
+        let firstRelay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await firstRelay.send(roomID: "room", text: "First", threadID: nil)
+
+        // A new relay instance models app relaunch; the persisted route map
+        // must select resumeSession rather than creating a fresh context.
+        let secondRelay = BridgedRoomRelay(
+            store: BridgedRooms.Store(url: url),
+            resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await secondRelay.send(roomID: "room", text: "Second", threadID: nil)
+        XCTAssertEqual(conversation.createCount, 1)
+        XCTAssertEqual(conversation.resumeIDs, ["research"])
+    }
+
+    func testExpiredMemberSessionStaysExplicitlyFailed() async throws {
+        let store = store()
+        let conversation = ImmediateConversation()
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "First", threadID: nil)
+        conversation.expireOnResume = true
+        _ = try await relay.send(roomID: "room", text: "Second", threadID: nil)
+        _ = try await relay.send(roomID: "room", text: "Third", threadID: nil)
+        XCTAssertEqual(conversation.createCount, 1, "expired context is never silently replaced")
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertEqual(
+            record.events.filter { $0.reasonCode == "bridge_session_expired_context_lost" }.count,
+            2)
+    }
+
     func testReplayDrainsAllPagesOnReentry() async throws {
         let store = store()
         let events = (1...205).map { seq in
             BridgedRooms.EventRecord(seq: seq, eventID: "event-\(seq)", kind: "message.user", actorKind: "user", actorID: "user", payloadText: "Message \(seq)", createdAt: Double(seq))
         }
         let record = BridgedRooms.RoomRecord(roomKey: "room", name: "Test", members: [], createdAt: 0, events: events)
-        await store.upsert(record)
+        try await store.upsert(record)
         let relay = BridgedRoomRelay(store: store, resolver: { _ in nil })
         let first = try await relay.replay(roomID: "room", sinceSeq: 0, limit: 100)
         XCTAssertEqual(first.events.count, 100)
@@ -52,7 +102,7 @@ final class BridgedRoomRelayTests: XCTestCase {
 
     func testUITestResetClearsPersistedRoomsBeforeHydration() async throws {
         let store = store()
-        await store.upsert(.init(roomKey: "old", name: "Old", members: [], createdAt: 0))
+        try await store.upsert(.init(roomKey: "old", name: "Old", members: [], createdAt: 0))
         await store.resetForUITests()
         let rooms = await store.roomsSnapshot()
         XCTAssertTrue(rooms.isEmpty)
@@ -71,7 +121,7 @@ final class BridgedRoomRelayTests: XCTestCase {
 
     func testUnavailableMemberIsAnAttributedFailure() async throws {
         let store = store()
-        await store.upsert(.init(roomKey: "room", name: "Test", members: [member("missing", "writer")], createdAt: 0))
+        try await store.upsert(.init(roomKey: "room", name: "Test", members: [member("missing", "writer")], createdAt: 0))
         let relay = BridgedRoomRelay(store: store, resolver: { _ in nil })
         _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
         let stored = await store.record(roomKey: "room")
@@ -83,15 +133,23 @@ final class BridgedRoomRelayTests: XCTestCase {
     private final class ImmediateConversation: ConversationProviding, @unchecked Sendable {
         private let lock = NSLock()
         private var subscribers: [AsyncStream<ConversationEvent>.Continuation] = []
+        private(set) var createCount = 0
+        private(set) var resumeIDs: [String] = []
+        var expireOnResume = false
         var events: AsyncStream<ConversationEvent> {
             let pair = AsyncStream<ConversationEvent>.makeStream()
             lock.withLock { subscribers.append(pair.continuation) }
             return pair.stream
         }
         func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
-            ConversationSession(sessionID: profile ?? "default")
+            lock.withLock { createCount += 1 }
+            return ConversationSession(sessionID: profile ?? "default")
         }
-        func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession { .init(sessionID: sessionID) }
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
+            lock.withLock { resumeIDs.append(sessionID) }
+            if expireOnResume { throw ConversationError.sessionNotFound(sessionID) }
+            return .init(sessionID: sessionID)
+        }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             // Complete before returning, with an unrelated session event first.
             let streams = lock.withLock { subscribers }

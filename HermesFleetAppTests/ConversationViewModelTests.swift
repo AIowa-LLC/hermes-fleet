@@ -29,6 +29,7 @@ final class ConversationViewModelTests: XCTestCase {
         SessionHistoryProviding,
         ApprovalsCapable,
         SlashCommandCapable,
+        AttachmentStagingCapable,
         @unchecked Sendable
     {
         let gatewayID = GatewayID(rawValue: "workstation")
@@ -51,6 +52,7 @@ final class ConversationViewModelTests: XCTestCase {
         var submittedTexts: [String] = []
         var submitError: ConversationError?
         var interruptError: ConversationError?
+        let attachmentDouble = ScriptedAttachmentStaging()
 
         // event stream
         private let streamPair: (AsyncStream<ConversationEvent>, AsyncStream<ConversationEvent>.Continuation)
@@ -107,6 +109,7 @@ final class ConversationViewModelTests: XCTestCase {
         var approvals: any ApprovalsProviding { approvalsBox }
         let approvalsBox = ScriptedPendingApprovals()
         var slashCommands: any SlashCommandProviding { slashBox }
+        var attachments: any AttachmentStagingProviding { attachmentDouble }
         func reauthenticate() async throws {
             reauthenticateCount += 1
             if let connectError { throw connectError }
@@ -174,6 +177,31 @@ final class ConversationViewModelTests: XCTestCase {
         // MARK: event pushing
         func push(_ event: ConversationEvent) {
             streamPair.1.yield(event)
+        }
+    }
+
+    private final class ScriptedAttachmentStaging: AttachmentStagingProviding, @unchecked Sendable {
+        func attachFile(sessionID: String, name: String, dataURL: String) async throws -> StagedFileAttachment {
+            StagedFileAttachment(
+                name: name,
+                path: "fixture/\(name)",
+                refPath: "attachments/\(name)",
+                refText: "@file:attachments/\(name)",
+                uploaded: true)
+        }
+
+        func attachImageBytes(sessionID: String, filename: String, dataURL: String) async throws -> StagedImageAttachment {
+            StagedImageAttachment(path: "fixture/\(filename)", name: filename, count: 1)
+        }
+
+        func attachPDF(sessionID: String, filename: String, dataURL: String) async throws -> StagedPDFAttachment {
+            StagedPDFAttachment(filename: filename, pagesAttached: 1, pages: [
+                StagedPDFPage(path: "fixture/\(filename)-1.png", pageNumber: 1)
+            ], count: 1)
+        }
+
+        func detachImage(sessionID: String, path: String) async throws -> DetachedImageState {
+            DetachedImageState(detached: true, count: 0)
         }
     }
 
@@ -588,6 +616,28 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.errorMessage, "provider rejected")
     }
 
+    func testFailedSubmitReturnsFalseAndPreservesStagedAttachmentsForRetry() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        let payload = Data("fixture".utf8)
+        await viewModel.stageAttachment(
+            name: "notes.md",
+            mime: "text/markdown",
+            byteCount: payload.count,
+            loadBytes: { payload })
+        scripted.submitError = .rpcFailed("temporary submit failure")
+
+        let didSend = await viewModel.send("retry this")
+
+        XCTAssertFalse(didSend, "the composer must retain its draft after a rejected submission")
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(viewModel.pendingAttachments.count, 1)
+        XCTAssertEqual(viewModel.pendingAttachments.first?.refText, "@file:attachments/notes.md")
+        XCTAssertEqual(viewModel.transcript.last?.kind, .user)
+        XCTAssertEqual(viewModel.transcript.last?.text, "retry this\n@file:attachments/notes.md")
+        XCTAssertNotNil(viewModel.errorMessage)
+    }
+
     // MARK: - P0-8 event taxonomy + turn isolation
 
     /// P0-8 (2)/(3): live wire order is reasoning deltas FIRST, then
@@ -705,6 +755,24 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.phase, .ready)
         XCTAssertEqual(viewModel.transcript.last?.text, "par")
         XCTAssertFalse(viewModel.transcript.last?.isStreaming == true)
+    }
+
+    func testFailedInterruptPreservesStreamingStateAndPartialRowForRetry() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        await viewModel.send("hello")
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "partial", rendered: nil))
+        await flush()
+        scripted.interruptError = .rpcFailed("interrupt unavailable")
+
+        await viewModel.interrupt()
+
+        XCTAssertTrue(viewModel.isStreaming, "a failed interrupt cannot prove the turn stopped")
+        XCTAssertEqual(viewModel.phase, .streaming)
+        XCTAssertEqual(viewModel.transcript.last?.text, "partial")
+        XCTAssertTrue(viewModel.transcript.last?.isStreaming == true)
+        XCTAssertNotNil(viewModel.errorMessage)
     }
 
     // MARK: - Cold-start persisted history (M10)

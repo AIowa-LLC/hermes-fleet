@@ -75,7 +75,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
         let userSeq = nextSeq
         nextSeq += 1
-        await store.append(events: [BridgedRooms.EventRecord(
+        try await store.append(events: [BridgedRooms.EventRecord(
             seq: userSeq,
             eventID: "fleet-bridged-\(userSeq)-user",
             kind: "message.user",
@@ -86,37 +86,63 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
         // Fan out — every member receives the text in parallel; replies and
         // failure notes land as they close.
-        await withTaskGroup(of: Void.self) { group in
+        try await withThrowingTaskGroup(of: Void.self) { group in
             for member in record.members {
+                let sessionID = record.bridgeSessionIDs[member.routeID]
                 group.addTask { [weak self] in
-                    await self?.relay(member: member, text: text, roomID: roomID)
+                    try await self?.relay(
+                        member: member, text: text, roomID: roomID,
+                        sessionID: sessionID)
                 }
             }
+            try await group.waitForAll()
         }
         let final = await store.record(roomKey: roomID)
         return final?.events.last?.seq ?? userSeq
     }
 
-    private func relay(member: BridgedRooms.MemberRef, text: String, roomID: String) async {
+    private func relay(
+        member: BridgedRooms.MemberRef, text: String, roomID: String,
+        sessionID: String?
+    ) async throws {
         guard let route = member.route else {
-            await appendFailure(member: member, reason: "invalid_route", roomID: roomID)
+            try await appendFailure(member: member, reason: "invalid_route", roomID: roomID)
             return
         }
         let gatewayID = GatewayID(rawValue: member.gatewayID)
         guard let session = await resolver(gatewayID) else {
-            await appendFailure(member: member, reason: "gateway_unavailable", roomID: roomID)
+            try await appendFailure(member: member, reason: "gateway_unavailable", roomID: roomID)
             return
         }
         do {
             if session.status == .offline {
                 try await session.connect()
             }
-            // A dedicated bridge session per member per send keeps bridge
-            // turns out of the member's canonical 1:1 chat history.
             let conversation = session.conversation
-            let created = try await conversation.createSession(
-                title: "Group: \(roomID)", profile: route.profileSlug.rawValue,
-                model: nil, provider: nil, cols: nil)
+            let created: ConversationSession
+            if let sessionID {
+                do {
+                    created = try await conversation.resumeSession(
+                        sessionID: sessionID, lastEventID: nil,
+                        profile: route.profileSlug.rawValue)
+                } catch ConversationError.sessionNotFound {
+                    try await appendFailure(
+                        member: member,
+                        reason: "bridge_session_expired_context_lost",
+                        roomID: roomID)
+                    return
+                }
+            } else {
+                // One durable bridge session per source-qualified member
+                // keeps turns contextual while remaining separate from the
+                // member's canonical 1:1 chat history.
+                created = try await conversation.createSession(
+                    title: "Group: \(roomID)", profile: route.profileSlug.rawValue,
+                    model: nil, provider: nil, cols: nil)
+                try await store.setBridgeSessionID(
+                    roomKey: roomID, routeID: member.routeID,
+                    sessionID: created.sessionID)
+            }
             // Subscribe the collector BEFORE submitting so no streamed
             // event between submit and subscription is missed (live-tail
             // stream, no replay). The submit task parks after success; the
@@ -159,9 +185,9 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                     reasonCode: "member_timeout",
                     createdAt: Date().timeIntervalSince1970)
             }
-            await store.append(events: [event], to: roomID)
+            try await store.append(events: [event], to: roomID)
         } catch {
-            await appendFailure(member: member, reason: Self.reason(for: error), roomID: roomID)
+            try await appendFailure(member: member, reason: Self.reason(for: error), roomID: roomID)
         }
     }
 
@@ -192,10 +218,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         }
     }
 
-    private func appendFailure(member: BridgedRooms.MemberRef, reason: String, roomID: String) async {
+    private func appendFailure(member: BridgedRooms.MemberRef, reason: String, roomID: String) async throws {
         let seq = nextSeq
         nextSeq += 1
-        await store.append(events: [BridgedRooms.EventRecord(
+        let text = reason == "bridge_session_expired_context_lost"
+            ? "\(member.displayName)'s bridge session expired; context was lost. Create a new Group to continue."
+            : "\(member.displayName) couldn't be reached for this Group (\(reason))."
+        try await store.append(events: [BridgedRooms.EventRecord(
             seq: seq,
             eventID: "fleet-bridged-\(seq)-\(member.routeID)-failed",
             kind: "turn.failed",
@@ -203,17 +232,17 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             actorID: member.routeID,
             actorDisplayName: member.displayName,
             actorProfile: member.profile,
-            payloadText: "\(member.displayName) couldn't be reached for this Group (\(reason)).",
+            payloadText: text,
             reasonCode: reason,
             createdAt: Date().timeIntervalSince1970)], to: roomID)
     }
 
     public func rename(roomID: String, name: String) async throws {
-        await store.rename(roomKey: roomID, to: name, at: Date().timeIntervalSince1970)
+        try await store.rename(roomKey: roomID, to: name, at: Date().timeIntervalSince1970)
     }
 
     public func disband(roomID: String) async throws {
-        await store.disband(roomKey: roomID, at: Date().timeIntervalSince1970)
+        try await store.disband(roomKey: roomID, at: Date().timeIntervalSince1970)
     }
 
     public func stop(roomID: String) async throws -> Int { 0 }

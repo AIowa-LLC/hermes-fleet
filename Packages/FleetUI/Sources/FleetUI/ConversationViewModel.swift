@@ -1131,23 +1131,26 @@ public final class ConversationViewModel {
         let visibleText = modelText == displayText ? prepared.text : displayText
         let displayPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: visibleText)
         guard !modelPayload.isEmpty else { return false }
+        let submittedAttachmentIDs = Set(pendingAttachments.map(\.id))
 
         appendRow(.init(id: nextRowID(), kind: .user, text: displayPayload))
         // Turn clock: starts at submit — the user waits from HERE, through
         // tools/reasoning, until the turn completes.
         turnStartedAt = Date()
-        // The refs were staged successfully at pick time — the tray clears
-        // with the send (image/PDF bytes are already queued server-side;
-        // removing them here would orphan the upload).
-        pendingAttachments = []
         do {
             let submission = try await session.conversation.submitPrompt(sessionID: sid, text: modelPayload)
+            // The refs were staged successfully at pick time. Keep them in
+            // the tray until submit succeeds so a rejected prompt remains
+            // retryable with the same attachment references. An upload staged
+            // while submitPrompt was in flight belongs to the next draft.
+            pendingAttachments.removeAll { submittedAttachmentIDs.contains($0.id) }
             guard submission.isStreaming else {
                 phase = .ready
                 return true
             }
         } catch {
             classifyTurnFailure(error)
+            return false
         }
         return true
     }
@@ -1460,7 +1463,10 @@ public final class ConversationViewModel {
                 await persistTranscript()
             }
         } catch {
-            classifyTurnFailure(error)
+            // A failed interrupt does not prove that the gateway stopped the
+            // turn. Keep the streaming state and partial row intact so Stop
+            // remains retryable and the UI never claims the turn is ready.
+            errorMessage = Self.nonSecret(error)
         }
     }
 

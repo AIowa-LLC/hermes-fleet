@@ -54,3 +54,20 @@ worktree, and this change does not modify Hermes Desktop, Hermes Agent, or
 wire protocols. Full cross-client hosted-room round-trip remains a separately
 authorized release dependency; Fleet does not copy hosted rooms into Desktop
 metadata or claim Desktop compatibility without an actual round trip.
+
+## Phone-bridged groups
+
+When connected participants cannot share a hosted authority, Fleet can keep a
+phone-local group and relay each message through the participants' existing
+gateway connections. These groups use a device-local navigation scope; they do
+not require a synthetic gateway to be registered. The room and transcript remain
+on this device, and sending requires Fleet to run with access to the selected
+gateways. They do not provide an always-on relay or Desktop synchronization.
+
+Each participant has a separate group session, isolated from its ordinary Bot
+Chat. Subsequent messages resume that session, including after app relaunch.
+A missing remote session is reported rather than silently replacing its history.
+Participants receive the user's messages; this relay does not implement a hosted
+multi-agent turn engine or automatically broadcast one bot's answer to the others.
+Local storage failures must be surfaced before a group mutation is reported as
+successful.

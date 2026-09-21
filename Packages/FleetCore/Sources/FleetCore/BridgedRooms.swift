@@ -45,10 +45,17 @@ public enum BridgedRooms {
         public var disbandedAt: Double?
         public var renamedAt: Double?
         public var events: [EventRecord] = []
+        public var bridgeSessionIDs: [String: String] = [:]
+
+        private enum CodingKeys: String, CodingKey {
+            case roomKey, name, members, createdAt, disbandedAt, renamedAt,
+                 events, bridgeSessionIDs
+        }
 
         public init(
             roomKey: String, name: String, members: [MemberRef], createdAt: Double,
-            disbandedAt: Double? = nil, renamedAt: Double? = nil, events: [EventRecord] = []
+            disbandedAt: Double? = nil, renamedAt: Double? = nil, events: [EventRecord] = [],
+            bridgeSessionIDs: [String: String] = [:]
         ) {
             self.roomKey = roomKey
             self.name = name
@@ -57,6 +64,31 @@ public enum BridgedRooms {
             self.disbandedAt = disbandedAt
             self.renamedAt = renamedAt
             self.events = events
+            self.bridgeSessionIDs = bridgeSessionIDs
+        }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            roomKey = try values.decode(String.self, forKey: .roomKey)
+            name = try values.decode(String.self, forKey: .name)
+            members = try values.decode([MemberRef].self, forKey: .members)
+            createdAt = try values.decode(Double.self, forKey: .createdAt)
+            disbandedAt = try values.decodeIfPresent(Double.self, forKey: .disbandedAt)
+            renamedAt = try values.decodeIfPresent(Double.self, forKey: .renamedAt)
+            events = try values.decodeIfPresent([EventRecord].self, forKey: .events) ?? []
+            bridgeSessionIDs = try values.decodeIfPresent([String: String].self, forKey: .bridgeSessionIDs) ?? [:]
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(roomKey, forKey: .roomKey)
+            try values.encode(name, forKey: .name)
+            try values.encode(members, forKey: .members)
+            try values.encode(createdAt, forKey: .createdAt)
+            try values.encodeIfPresent(disbandedAt, forKey: .disbandedAt)
+            try values.encodeIfPresent(renamedAt, forKey: .renamedAt)
+            try values.encode(events, forKey: .events)
+            try values.encode(bridgeSessionIDs, forKey: .bridgeSessionIDs)
         }
     }
 
@@ -130,10 +162,9 @@ public enum BridgedRooms {
             }
         }
 
-        private func persist() {
-            let encoder = JSONEncoder()
-            guard let data = try? encoder.encode(rooms) else { return }
-            try? data.write(to: url, options: .atomic)
+        private func persist(_ snapshot: [String: RoomRecord]) throws {
+            let data = try JSONEncoder().encode(snapshot)
+            try data.write(to: url, options: .atomic)
         }
 
         /// Test launches reset before hydration, so previous rooms cannot
@@ -154,39 +185,58 @@ public enum BridgedRooms {
             return rooms[roomKey]
         }
 
-        public func upsert(_ record: RoomRecord) {
+        public func upsert(_ record: RoomRecord) throws {
             loadIfNeeded()
-            rooms[record.roomKey] = record
-            persist()
+            var snapshot = rooms
+            snapshot[record.roomKey] = record
+            try persist(snapshot)
+            rooms = snapshot
         }
 
-        public func disband(roomKey: String, at timestamp: Double) {
+        public func disband(roomKey: String, at timestamp: Double) throws {
             loadIfNeeded()
             guard var record = rooms[roomKey] else { return }
             record.disbandedAt = timestamp
-            rooms[roomKey] = record
-            persist()
+            var snapshot = rooms
+            snapshot[roomKey] = record
+            try persist(snapshot)
+            rooms = snapshot
         }
 
-        public func rename(roomKey: String, to name: String, at timestamp: Double) {
+        public func rename(roomKey: String, to name: String, at timestamp: Double) throws {
             loadIfNeeded()
             guard var record = rooms[roomKey] else { return }
             record.name = name
             record.renamedAt = timestamp
-            rooms[roomKey] = record
-            persist()
+            var snapshot = rooms
+            snapshot[roomKey] = record
+            try persist(snapshot)
+            rooms = snapshot
         }
 
         /// Append events and return the updated record.
         @discardableResult
-        public func append(events newEvents: [EventRecord], to roomKey: String) -> RoomRecord? {
+        public func append(events newEvents: [EventRecord], to roomKey: String) throws -> RoomRecord? {
             loadIfNeeded()
             guard var record = rooms[roomKey] else { return nil }
             record.events.append(contentsOf: newEvents)
-            rooms[roomKey] = record
-            persist()
+            var snapshot = rooms
+            snapshot[roomKey] = record
+            try persist(snapshot)
+            rooms = snapshot
             return record
         }
+
+        public func setBridgeSessionID(roomKey: String, routeID: String, sessionID: String) throws {
+            loadIfNeeded()
+            guard var record = rooms[roomKey] else { return }
+            record.bridgeSessionIDs[routeID] = sessionID
+            var snapshot = rooms
+            snapshot[roomKey] = record
+            try persist(snapshot)
+            rooms = snapshot
+        }
+
     }
 
     // MARK: - Projection to FleetRoom

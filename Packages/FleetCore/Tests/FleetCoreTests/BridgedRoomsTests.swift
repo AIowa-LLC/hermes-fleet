@@ -18,14 +18,14 @@ final class BridgedRoomsTests: XCTestCase {
         super.tearDown()
     }
 
-    func testStoreRoundTripsRecordsAndEvents() async {
+    func testStoreRoundTripsRecordsAndEvents() async throws {
         let store = BridgedRooms.Store(url: storeURL)
         let member = BridgedRooms.MemberRef(
             gatewayID: "gw-a", profile: "default", displayName: "Atlas", routeID: "gw-a#default")
         let record = BridgedRooms.RoomRecord(
             roomKey: "fleet-bridged-1", name: "Mixed Crew", members: [member], createdAt: 100)
-        await store.upsert(record)
-        await store.append(events: [BridgedRooms.EventRecord(
+        try await store.upsert(record)
+        try await store.append(events: [BridgedRooms.EventRecord(
             seq: 1, eventID: "e1", kind: "message.user", actorKind: "user",
             actorID: "local-user", payloadText: "hello", createdAt: 101)], to: "fleet-bridged-1")
 
@@ -37,13 +37,36 @@ final class BridgedRoomsTests: XCTestCase {
         XCTAssertEqual(read?.events.first?.payloadText, "hello")
     }
 
-    func testDisbandTombstonesAndRenameUpdates() async {
+    func testOldRecordDecodesWithoutBridgeSessionMap() throws {
+        let json = """
+        {"roomKey":"old","name":"Old","members":[],"createdAt":1,"events":[]}
+        """.data(using: .utf8)!
+        let record = try JSONDecoder().decode(BridgedRooms.RoomRecord.self, from: json)
+        XCTAssertEqual(record.bridgeSessionIDs, [:])
+    }
+
+    func testWriteFailureDoesNotPublishRoom() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bridged-unwritable-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = BridgedRooms.Store(url: directory)
+        do {
+            try await store.upsert(.init(roomKey: "room", name: "Room", members: [], createdAt: 1))
+            XCTFail("upsert should report an unwritable destination")
+        } catch {
+            let read = await store.record(roomKey: "room")
+            XCTAssertNil(read)
+        }
+    }
+
+    func testDisbandTombstonesAndRenameUpdates() async throws {
         let store = BridgedRooms.Store(url: storeURL)
         let record = BridgedRooms.RoomRecord(
             roomKey: "fleet-bridged-2", name: "Before", members: [], createdAt: 1)
-        await store.upsert(record)
-        await store.rename(roomKey: "fleet-bridged-2", to: "After", at: 2)
-        await store.disband(roomKey: "fleet-bridged-2", at: 3)
+        try await store.upsert(record)
+        try await store.rename(roomKey: "fleet-bridged-2", to: "After", at: 2)
+        try await store.disband(roomKey: "fleet-bridged-2", at: 3)
         let read = await store.record(roomKey: "fleet-bridged-2")
         XCTAssertEqual(read?.name, "After")
         XCTAssertEqual(read?.disbandedAt, 3)

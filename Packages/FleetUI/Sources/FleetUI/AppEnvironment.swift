@@ -1183,12 +1183,11 @@ public final class AppEnvironment {
                 displayName: member.displayName,
                 routeID: member.route.id)
         }
-        let record = BridgedRooms.RoomRecord(
+        var record = BridgedRooms.RoomRecord(
             roomKey: "fleet-bridged-" + UUID().uuidString.lowercased(),
             name: name,
             members: memberRefs,
             createdAt: timestamp)
-        await bridgedStore.upsert(record)
         // Note the honest reason in the transcript — the room works, but the
         // user should know why it is bridged (system note, not an error).
         let note = BridgedRooms.EventRecord(
@@ -1202,7 +1201,9 @@ public final class AppEnvironment {
             payloadText: "Group runs on this iPhone — gateways couldn't host it (\(reason))",
             reasonCode: nil,
             createdAt: timestamp)
-        await bridgedStore.append(events: [note], to: record.roomKey)
+        record.events = [note]
+        // Commit the complete creation atomically before publishing its row.
+        try await bridgedStore.upsert(record)
         await loadBridgedRooms()
         let room = BridgedRooms.fleetRoom(
             for: await bridgedStore.record(roomKey: record.roomKey) ?? record)

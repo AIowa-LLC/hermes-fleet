@@ -390,6 +390,18 @@ final class RoomChatUITests: XCTestCase {
                 .waitForExistence(timeout: 10),
             "bridged user message is persisted in the local transcript")
 
+        for seq in [3, 4] {
+            let reply = app.descendants(matching: .any)["fleet.room.entry.\(seq)"]
+            XCTAssertTrue(reply.waitForExistence(timeout: 15), "each selected bot replies")
+            // Rich-text member replies carry the assistant-response AX
+            // contract (RoomTranscriptAccessibilityModifier overrides the
+            // label); failure notes and user rows COMBINE speaker + copy
+            // instead. The contract label is the discriminator that this row
+            // is a real member reply, not a timeout/failure note.
+            XCTAssertTrue(reply.label.contains("Assistant response from"),
+                          "a member reply must not be a timeout/failure note")
+        }
+
         app.terminate()
         self.app = nil
         let relaunched = launch(
@@ -406,5 +418,9 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertFalse(
             relaunched.staticTexts["Gateway unavailable"].exists,
             "reopened bridged room must not be treated as a missing gateway")
+        let restoredReply = relaunched.descendants(matching: .any)["fleet.room.entry.4"]
+        XCTAssertTrue(restoredReply.waitForExistence(timeout: 10))
+        XCTAssertTrue(restoredReply.label.contains("Assistant response from"),
+                      "member transcript survives relaunch")
     }
 }
