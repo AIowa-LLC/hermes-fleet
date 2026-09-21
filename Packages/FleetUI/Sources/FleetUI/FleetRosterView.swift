@@ -553,18 +553,33 @@ public struct FleetRosterView: View {
     }
 
     private func filteredArchiveRooms(for gateway: FleetGateway) -> [FleetRoom] {
-        let primaryKeys = Set(environment.allRooms.map(\.id.key))
+        let hostedRooms = environment.allRooms
         let rooms = environment.legacyRoomArchive.filter { room in
             guard room.id.gatewayID == gateway.id else { return false }
-            guard let durableID = LegacyRoomContinuation.durableHostedRoomID(for: room) else {
-                return true
-            }
             // Linked projections remain recoverable in GroupsHomeView's
             // explicit archive, but do not duplicate the hosted row here.
-            return !primaryKeys.contains(durableID)
+            // The continuation anchor is gateway-scoped; a matching bare id
+            // on another gateway is an unrelated room and must remain visible.
+            return Self.shouldShowLegacyArchiveRoom(room, hostedRooms: hostedRooms)
         }
         guard !searchText.isEmpty else { return rooms }
         return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    /// Suppress only a projection with a verified same-gateway hosted anchor.
+    /// Bare room IDs are not fleet-global identities.
+    static func shouldShowLegacyArchiveRoom(
+        _ room: FleetRoom,
+        hostedRooms: [FleetRoom]
+    ) -> Bool {
+        guard let durableID = LegacyRoomContinuation.durableHostedRoomID(for: room) else {
+            return true
+        }
+        return !hostedRooms.contains {
+            $0.id.provenance == .hosted
+                && $0.id.gatewayID == room.id.gatewayID
+                && $0.id.key == durableID
+        }
     }
 
     private func gatewayHeader(_ section: RosterSection) -> some View {

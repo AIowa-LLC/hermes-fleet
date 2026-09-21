@@ -289,6 +289,11 @@ final class BotModeNetworkingTests: XCTestCase {
     {"room_id":"room-1","name":"Research Crew","members":"[{\"display_name\":\"Researcher\",\"profile\":\"researcher\",\"handle\":\"fleet-r\",\"target\":{\"kind\":\"peer\",\"peer_id\":\"install:arch\",\"installation_id\":\"install:arch\"}},{\"name\":\"writer\"}]","authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
     """#
 
+    /// Current gateway shape: members is an array, not a JSON-encoded string.
+    static let currentRoomRow = #"""
+    {"room_id":"room-current","name":"Current Shape","members":[{"display_name":"Researcher","profile":"researcher","handle":"fleet-r","target":{"kind":"peer","peer_id":"install:arch","installation_id":"install:arch"}},{"name":"writer"}],"authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
+    """#
+
     // MARK: - groups.create wire contract (legacy continuation + create)
 
     /// The create wire path must carry a client-supplied room_id (upstream
@@ -400,6 +405,50 @@ final class BotModeNetworkingTests: XCTestCase {
         XCTAssertTrue(room.members[0].sourceScoped)
         XCTAssertEqual(room.authorityEpoch, 1)
         XCTAssertEqual(room.latestSeq, 12)
+    }
+
+    func testGroupsListDecodesCurrentArrayMembersShape() throws {
+        let json = try JSONDecoder().decode(JSONValue.self,
+                                            from: Data(#"{"rooms":[\#(Self.currentRoomRow)],"next_offset":null}"#.utf8))
+        let (rooms, next) = try GatewayGroupsClient.decodeRoomList(json)
+        let room = try XCTUnwrap(rooms.first)
+        XCTAssertNil(next)
+        XCTAssertEqual(room.members.count, 2)
+        XCTAssertEqual(room.members[0].connectionID, "install:arch")
+        XCTAssertTrue(room.members[0].sourceScoped)
+        XCTAssertEqual(room.members[1].name, "writer")
+    }
+
+    func testGroupsListPageCarriesOffsetAndNextOffset() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame), method == "groups.list" else { return [] }
+                let params = (try? JSONSerialization.jsonObject(with: Data(frame.utf8)) as? [String: Any])?["params"] as? [String: Any]
+                let offset = params?["offset"] as? NSNumber
+                if offset?.intValue == 200 {
+                    return [Self.responseFrame(id: id, resultObject: #"{"rooms":[],"next_offset":null}"#)]
+                }
+                return [Self.responseFrame(id: id, resultObject: #"{"rooms":[],"next_offset":200}"#)]
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayGroupsClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        let first = try await client.listRooms(offset: 0)
+        XCTAssertEqual(first.nextOffset, 200)
+        let second = try await client.listRooms(offset: first.nextOffset ?? -1)
+        XCTAssertNil(second.nextOffset)
+        let offsets = log.params(of: "groups.list").compactMap { ($0["offset"] as? NSNumber)?.intValue }
+        XCTAssertEqual(offsets, [0, 200])
     }
 
     func testGroupsLogDecode() throws {

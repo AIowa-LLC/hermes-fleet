@@ -255,6 +255,26 @@ final class FOS5BotsGroupsChatsTests: XCTestCase {
         XCTAssertEqual(key1, "gw1|sec-1")
     }
 
+    func testLegacyArchiveSuppressionIsGatewayScoped() {
+        let hosted = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: ws, key: "room-collision"),
+            name: "Planning",
+            hosted: HostedRoomState(authorityGatewayID: "install:workstation", authorityEpoch: 1))
+        let foreignProjection = FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: lab, key: "id:room-collision"),
+            name: "Planning")
+        let sameGatewayProjection = FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: ws, key: "id:room-collision"),
+            name: "Planning")
+
+        XCTAssertTrue(FleetRosterView.shouldShowLegacyArchiveRoom(
+            foreignProjection, hostedRooms: [hosted]),
+            "a bare room id on another gateway is an unrelated archive record")
+        XCTAssertFalse(FleetRosterView.shouldShowLegacyArchiveRoom(
+            sameGatewayProjection, hostedRooms: [hosted]),
+            "only the verified same-gateway continuation is suppressed")
+    }
+
     // MARK: 5/6. SessionSummary.lastActive + Chats semantics unchanged
 
     func testSessionSummaryCarriesLastActiveWithoutChangingSort() {

@@ -136,6 +136,14 @@ public enum BridgedRooms {
             try? data.write(to: url, options: .atomic)
         }
 
+        /// Test launches reset before hydration, so previous rooms cannot
+        /// leak into a later UI journey. Normal launches never call this.
+        public func resetForUITests() {
+            rooms.removeAll()
+            loaded = true
+            try? FileManager.default.removeItem(at: url)
+        }
+
         public func roomsSnapshot() -> [RoomRecord] {
             loadIfNeeded()
             return Array(rooms.values)

@@ -22,14 +22,20 @@ final class RoomChatUITests: XCTestCase {
         app = nil
     }
 
-    private func launch(extraEnv: [String: String] = [:]) -> XCUIApplication {
+    private func launch(
+        extraEnv: [String: String] = [:],
+        autoNav: String = "roster",
+        resetNavigation: Bool = true
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         self.app = app
-        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "roster"
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = autoNav
         for (key, value) in extraEnv {
             app.launchEnvironment[key] = value
         }
-        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        if resetNavigation {
+            app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        }
         app.launch()
         return app
     }
@@ -349,5 +355,56 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertTrue(
             createdRow.waitForExistence(timeout: 10),
             "created room appears in roster")
+    }
+
+    // Phone-bridged fallback: the opt-in simulator fixture disables hosted
+    // Group/RoomLink seams, forcing AppEnvironment.createRoom to persist a
+    // device-local room. The second launch deliberately omits NAV_RESET so
+    // the persisted bridged record is the thing being reopened.
+    func testPhoneBridgedGroupCreatesOpensSendsAndSurvivesRelaunch() throws {
+        let fixture = ["HERMES_FLEET_BRIDGED_ROOM": "1"]
+        let app = launch(extraEnv: fixture, autoNav: "groups")
+
+        let newGroup = app.buttons["fleet.groups.new"]
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 10), "Groups create control renders")
+        newGroup.tap()
+
+        let name = app.textFields["fleet.room.create.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10), "Group create sheet renders")
+        name.tap()
+        name.typeText("Phone Crew")
+        app.buttons["fleet.room.create.candidate.workstation#researcher"].tap()
+        app.buttons["fleet.room.create.candidate.workstation#default"].tap()
+        app.buttons["fleet.room.create.submit"].tap()
+
+        let composer = app.textFields["fleet.room.composer.field"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "bridged room opens after creation")
+        XCTAssertFalse(
+            app.staticTexts["Gateway unavailable"].exists,
+            "device-local room must bypass the registered-gateway guard")
+        composer.tap()
+        composer.typeText("Bridge check-in")
+        app.buttons["fleet.room.send"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.entry.2"]
+                .waitForExistence(timeout: 10),
+            "bridged user message is persisted in the local transcript")
+
+        app.terminate()
+        self.app = nil
+        let relaunched = launch(
+            extraEnv: fixture, autoNav: "groups", resetNavigation: false)
+        let row = relaunched.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Phone Crew"))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "bridged room survives relaunch")
+        row.tap()
+        XCTAssertTrue(
+            relaunched.textFields["fleet.room.composer.field"]
+                .waitForExistence(timeout: 10),
+            "persisted bridged room opens after relaunch")
+        XCTAssertFalse(
+            relaunched.staticTexts["Gateway unavailable"].exists,
+            "reopened bridged room must not be treated as a missing gateway")
     }
 }

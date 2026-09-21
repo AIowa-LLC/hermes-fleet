@@ -661,6 +661,8 @@ public final class AppEnvironment {
         #if DEBUG
         if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
             UserDefaultsConversationPinStore.resetForUITests()
+            await bridgedStore.resetForUITests()
+            RoomDraftStore.resetForUITests()
         }
         #endif
         // P0-4: FIRST rebuild the registry from the durable record store so a
@@ -1135,7 +1137,7 @@ public final class AppEnvironment {
                     hostCanCreate = true
                     canCreateRoomsByGateway[host.id] = true
                 }
-                guard hostCanCreate || roomCommandSeam(for: host.id) != nil else {
+                guard hostCanCreate else {
                     skipReasons.append("\(host.displayName): gateway not offering hosted Group creation")
                     continue
                 }
@@ -1917,8 +1919,8 @@ public final class AppEnvironment {
     }
 
     /// Returns a non-secret explanation when a Bot cannot currently
-    /// participate in any supported hosted Group. This is a capability
-    /// explanation for the picker only; the selected routes are still
+    /// participate in any supported hosted Group or phone-bridged Group.
+    /// This is a capability explanation for the picker only; selected routes
     /// revalidated by `createRoom` immediately before creation.
     public func roomEligibilityMessage(for route: Route) async -> String? {
         switch botPresence(for: route) {
@@ -1927,10 +1929,14 @@ public final class AppEnvironment {
         case .reachable: break
         }
 
-        // A local command seam alone is not enough for a fleet-wide picker:
-        // the selected route must either be a viable authority or be
-        // reachable through a verified RoomLink target on another viable
-        // authority. The final selected set is checked again before create.
+        // A local conversation seam is sufficient for the device-local
+        // bridge. Otherwise the selected route must either be a viable
+        // hosted authority or be reachable through a verified RoomLink target
+        // on another viable authority. The final selected set is checked
+        // again before create.
+        if conversationSession(for: route.gatewayID) != nil {
+            return nil
+        }
         if canCreateRooms(on: route.gatewayID) {
             return nil
         }

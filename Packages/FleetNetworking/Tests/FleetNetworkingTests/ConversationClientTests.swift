@@ -66,6 +66,40 @@ final class ConversationClientTests: XCTestCase {
         return String(data: data, encoding: .utf8)!
     }
 
+    func testEventsBufferBeforeConsumerStarts() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, _) = Self.extractRequest(frame), method == "prompt.submit" else { return [] }
+                return [
+                    Self.eventFrame(type: "message.complete", sessionID: "instant", payload: ["text": "Buffered reply"]),
+                    Self.responseFrame(id: id, result: ["status": "streaming"]),
+                ]
+            })
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayConversationClient(gatewayID: .init(rawValue: "fixture"), transport: transport)
+        let events = client.events
+        _ = try await client.submitPrompt(sessionID: "instant", text: "Hello")
+        let received = expectation(description: "reply buffered before iteration")
+        let consumer = Task {
+            for await event in events {
+                if case .messageComplete(let id, let text, _, _, _) = event {
+                    XCTAssertEqual(id, "instant")
+                    XCTAssertEqual(text, "Buffered reply")
+                    received.fulfill()
+                    return
+                }
+            }
+        }
+        defer { consumer.cancel() }
+        await fulfillment(of: [received], timeout: 3)
+    }
+
     // MARK: session.create
 
     func testCreateSessionSendsParamsAndDecodesSession() async throws {

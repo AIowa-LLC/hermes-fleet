@@ -135,10 +135,16 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
 
     // MARK: - rooms
 
-    /// `groups.list` (single page).
-    public func listRooms(limit: Int = 200, includeDisbanded: Bool = false) async throws -> (rooms: [HostedRoomRow], nextOffset: Int?) {
+    /// `groups.list` page. The caller owns pagination because the gateway
+    /// returns an offset cursor rather than a token.
+    public func listRooms(
+        limit: Int = 200,
+        offset: Int = 0,
+        includeDisbanded: Bool = false
+    ) async throws -> (rooms: [HostedRoomRow], nextOffset: Int?) {
         let params: [String: JSONValue] = [
             "limit": .number(Double(limit)),
+            "offset": .number(Double(offset)),
             "include_disbanded": .bool(includeDisbanded),
         ]
         let result = try await request(method: "groups.list", params: .object(params))
@@ -334,7 +340,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         return HostedRoomRow(
             roomID: roomID,
             name: o["name"]?.stringValue ?? "",
-            membersJSON: o["members"]?.stringValue ?? "[]",
+            membersJSON: Self.decodeMembersJSON(o["members"]),
             authorityGatewayID: o["authority_gateway_id"]?.stringValue ?? "",
             authorityEpoch: o["authority_epoch"]?.numberValue.map(Int.init) ?? 0,
             revision: o["revision"]?.numberValue.map(Int.init) ?? 0,
@@ -343,6 +349,16 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
             disbandedAt: o["disbanded_at"]?.numberValue,
             latestSeq: o["latest_seq"]?.numberValue.map(Int.init)
         )
+    }
+
+    /// Current gateways return members as a JSON array. Keep accepting the
+    /// older string-encoded shape so mixed gateway versions remain readable.
+    private static func decodeMembersJSON(_ value: JSONValue?) -> String {
+        if let string = value?.stringValue { return string }
+        guard let array = value?.arrayValue,
+              let data = try? JSONRPCCodec.encode(.array(array)),
+              let string = String(data: data, encoding: .utf8) else { return "[]" }
+        return string
     }
 
     static func decodeLogPage(_ result: JSONValue) throws -> RoomLogPage {

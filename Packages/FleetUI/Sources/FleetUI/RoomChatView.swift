@@ -397,8 +397,14 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
     }
 }
 
-private enum RoomDraftStore {
+enum RoomDraftStore {
     private static let prefix = "fleet.room.draft.v1."
+
+    static func resetForUITests(defaults: UserDefaults = .standard) {
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
 
     static func load(for id: FleetRoomID) -> String {
         UserDefaults.standard.string(forKey: key(for: id)) ?? ""

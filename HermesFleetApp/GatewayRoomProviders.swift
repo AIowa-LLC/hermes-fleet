@@ -50,8 +50,16 @@ struct HostedRoomProvider: FleetRoomProviding {
         guard let caps else { return [] }
         // Include tombstones so FleetRoomUnion can remember authoritative
         // disbands and prevent stale Desktop mirrors from resurrecting rows.
-        let page = try await client.listRooms(includeDisbanded: true)
-        return page.rooms.map { row in
+        // Drain every bounded page; the gateway's room list is offset-based.
+        var rows: [HostedRoomRow] = []
+        var offset = 0
+        while true {
+            let page = try await client.listRooms(offset: offset, includeDisbanded: true)
+            rows.append(contentsOf: page.rooms)
+            guard let next = page.nextOffset, next > offset else { break }
+            offset = next
+        }
+        return rows.map { row in
             FleetRoom(
                 id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: row.roomID),
                 name: row.name,

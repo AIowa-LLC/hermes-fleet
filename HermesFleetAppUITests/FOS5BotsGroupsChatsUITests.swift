@@ -142,6 +142,49 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
             "legacy row carries the read-only label (got: \(legacy.label))")
     }
 
+    func testOfflineGhostDisablesNewSession() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_ROSTER_BLIP": "1"])
+
+        // Own the scripted workstation connection, then disconnect it so the
+        // next roster refresh produces the cached ghost path.
+        UITabNavigation.selectTab(app, label: "Fleet")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        let manage = app.descendants(matching: .any)["fleet.dashboard.gateways.manage"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        manage.tap()
+        let gateway = app.descendants(matching: .any)["fleet.gateways.row.workstation"]
+        XCTAssertTrue(gateway.waitForExistence(timeout: 10))
+        gateway.tap()
+        let connect = app.descendants(matching: .any)["fleet.gateway-detail.connect.workstation"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 10))
+        connect.tap()
+        sleep(2)
+        app.navigationBars.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 10))
+        let rowMenu = app.descendants(matching: .any)["fleet.gateways.row.workstation.menu"]
+        XCTAssertTrue(rowMenu.waitForExistence(timeout: 10))
+        rowMenu.tap()
+        XCTAssertTrue(app.buttons["Disconnect"].waitForExistence(timeout: 5))
+        app.buttons["Disconnect"].tap()
+
+        UITabNavigation.selectTab(app, label: "Bots")
+        let refresh = app.buttons["fleet.roster.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 10))
+        refresh.tap()
+        let outage = app.descendants(matching: .any)["fleet.roster.outage.workstation"]
+        XCTAssertTrue(outage.waitForExistence(timeout: 15))
+        let ghost = app.descendants(matching: .any)["fleet.roster.row.workstation#default"]
+        XCTAssertTrue(ghost.waitForExistence(timeout: 10))
+        ghost.tap()
+
+        let newSession = app.descendants(matching: .any)["fleet.bot-detail.sessions.new"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 10),
+                      "ghost detail keeps New Session discoverable")
+        XCTAssertFalse(newSession.isEnabled,
+                       "ghost detail must disable the session-create write")
+        XCTAssertTrue(newSession.label.localizedCaseInsensitiveContains("New Session"))
+    }
+
     // MARK: 4a. Codex-style chat menu cleanup (dogfood)
 
     /// The floating cluster: new-chat (menu: direct + group) and settings

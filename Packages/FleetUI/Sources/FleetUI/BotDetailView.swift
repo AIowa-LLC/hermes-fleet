@@ -213,6 +213,10 @@ public struct BotDetailView: View {
                 .padding(.vertical, FleetTheme.spacingSm)
         }
         .buttonStyle(.fleetPressable)
+        .disabled(isGhost)
+        .accessibilityHint(isGhost
+            ? "Reconnect \(gatewayName) before starting a new session."
+            : "Starts a new conversation with this bot.")
         .accessibilityIdentifier("fleet.bot-detail.sessions.new")
 
         let sessions = environment.sessions(for: route)

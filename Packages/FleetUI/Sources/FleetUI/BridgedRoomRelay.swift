@@ -62,7 +62,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             events: Array(page),
             cursor: page.last?.seq ?? sinceSeq,
             latestSeq: record.events.last?.seq ?? 0,
-            hasMore: false,
+            hasMore: record.events.contains { $0.seq > (page.last?.seq ?? sinceSeq) },
             authorityGatewayID: BridgedRooms.gatewayScope.rawValue,
             authorityEpoch: 1)
     }
@@ -121,11 +121,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             // event between submit and subscription is missed (live-tail
             // stream, no replay). The submit task parks after success; the
             // collector decides completion (terminal event or deadline).
+            let events = conversation.events
             let collector = Task<String?, Never> {
                 await Self.collectReply(
-                    conversation: conversation, sessionID: created.sessionID,
+                    events: events, sessionID: created.sessionID,
                     timeout: self.memberTimeout)
             }
+            defer { collector.cancel() }
             _ = try await conversation.submitPrompt(
                 sessionID: created.sessionID, text: text)
             let reply = await collector.value
@@ -167,11 +169,11 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     /// the member's bridge session, raced against a deadline so a silent
     /// stream cannot hang the fan-out.
     private static func collectReply(
-        conversation: any ConversationProviding, sessionID: String, timeout: TimeInterval
+        events: AsyncStream<ConversationEvent>, sessionID: String, timeout: TimeInterval
     ) async -> String? {
         await withTaskGroup(of: String?.self) { group in
             group.addTask {
-                var iterator = conversation.events.makeAsyncIterator()
+                var iterator = events.makeAsyncIterator()
                 while let event = await iterator.next() {
                     guard let sid = event.sessionID, sid == sessionID else { continue }
                     if case let .messageComplete(_, text, status, _, _) = event {
@@ -181,7 +183,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 return nil
             }
             group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeout) * 1_000_000_000)
+                try? await Task.sleep(for: .seconds(max(0, timeout)))
                 return nil
             }
             let first = await group.next() ?? nil

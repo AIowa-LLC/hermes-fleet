@@ -23,6 +23,12 @@ import FleetUI
 /// simulator. Release builds use the real production graph
 /// (`FleetServiceGraph.makeProductionEnvironment`).
 extension FleetServiceGraph {
+    /// UI-test knob: force fleet-wide Group creation through the device-local
+    /// bridge so creation, navigation, send, and relaunch can be exercised
+    /// without changing the default hosted fixture.
+    nonisolated static var bridgedRoomEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_BRIDGED_ROOM"] == "1"
+    }
 
     /// P2-5 UI-test knob: `HERMES_FLEET_ZERO_BOTS=1` makes EVERY scripted
     /// gateway report a healthy roster with ZERO bots, so the all-healthy
@@ -129,7 +135,9 @@ extension FleetServiceGraph {
             // HERMES_FLEET_ROOMLINK=unsupported renders the honest
             // unsupported state; default is a supported direct/TLS catalog.
             roomLinkFactory: { gateway in
-                ScriptedRoomLinkEngine(gatewayID: gateway.id)
+                FleetServiceGraph.bridgedRoomEnabled
+                    ? nil
+                    : ScriptedRoomLinkEngine(gatewayID: gateway.id)
             },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled
@@ -2985,6 +2993,7 @@ struct ScriptedRoomSource: FleetRoomSourceProviding {
     /// `groups.capabilities` probe (driver + groups.create advertised);
     /// other scripted gateways fail closed (.unknown).
     func createRoomCapability() async -> GroupsCreateCapability {
+        if FleetServiceGraph.bridgedRoomEnabled { return .unsupported }
         guard gatewayID.rawValue == "workstation" else { return .unknown }
         return .supported
     }

@@ -420,7 +420,10 @@ public struct FleetTabView: View {
 
     @ViewBuilder
     private func destination(_ screen: FleetScreen) -> some View {
-        if let id = screen.gatewayID, !environment.gateways.contains(where: { $0.id == id }), screen != .gatewayConnection(id) {
+        if let id = screen.gatewayID,
+           !screen.isDeviceLocalRoom,
+           !environment.gateways.contains(where: { $0.id == id }),
+           screen != .gatewayConnection(id) {
             ContentUnavailableView("Gateway unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer registered."))
         } else {
         switch screen {

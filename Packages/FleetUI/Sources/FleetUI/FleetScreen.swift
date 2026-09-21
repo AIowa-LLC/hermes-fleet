@@ -70,6 +70,15 @@ public enum FleetScreen: Hashable, Sendable, Codable {
         }
     }
 
+    /// Device-local bridged rooms use a synthetic gateway scope and remain
+    /// navigable without a registered gateway connection.
+    public var isDeviceLocalRoom: Bool {
+        if case .room(let id) = self {
+            return id.gatewayID == BridgedRooms.gatewayScope
+        }
+        return false
+    }
+
     /// Focused-path intent for Projects routes (transcript file references).
     public var focusPath: String? {
         if case .projects(_, _, let path) = self { return path }
