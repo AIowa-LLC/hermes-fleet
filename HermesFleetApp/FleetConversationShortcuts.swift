@@ -15,12 +15,21 @@ struct FleetConversationShortcutEntity: AppEntity {
     let route: Route
     let sessionID: String
     let canonical: Bool
+    /// Non-secret display labels carried from the continue index (the same
+    /// minimum-needed row metadata the cached row renders). Without them every
+    /// entry in the Shortcuts/Siri entity picker reads one constant title, so
+    /// the user cannot tell which conversation they are choosing.
+    var title: String = ""
+    var subtitle: String = ""
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: "Fleet conversation",
+            title: LocalizedStringResource(
+                stringLiteral: title.isEmpty ? "Fleet conversation" : title),
             subtitle: LocalizedStringResource(
-                stringLiteral: canonical ? "Bot Chat" : "Saved conversation")
+                stringLiteral: subtitle.isEmpty
+                    ? (canonical ? "Bot Chat" : "Saved conversation")
+                    : subtitle)
         )
     }
 }
@@ -49,7 +58,9 @@ struct FleetConversationShortcutQuery: EntityQuery {
                 id: entry.id,
                 route: route,
                 sessionID: sessionID,
-                canonical: entry.kind == .canonicalBotChat)
+                canonical: entry.kind == .canonicalBotChat,
+                title: entry.title,
+                subtitle: entry.subtitle)
         }
     }
 }

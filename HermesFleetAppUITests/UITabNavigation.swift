@@ -36,13 +36,13 @@ enum UITabNavigation {
             XCTAssertTrue(app.tabBars.buttons[label].isSelected,
                           "\(label) destination must be selected")
         } else {
-            let tabRaw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
-                        "Fleet": "fleet", "Settings": "settings", "About": "about"][label] ?? label.lowercased()
+            let tabRaw = Self.drawerDestinationRaw(label)
             let stack = app.descendants(matching: .any)["fleet.tab.\(tabRaw)"]
-            if stack.waitForExistence(timeout: 2) {
-                XCTAssertTrue(stack.exists,
-                              "\(label) destination must be visible")
-            } else {
+            // A successful `waitForExistence` already proves `exists`, so the
+            // wait IS the visibility verdict; the nav-bar fallback (a
+            // destination whose stack element is not mounted) remains the
+            // failure path.
+            if !stack.waitForExistence(timeout: 2) {
                 let title = navigationTitle ?? label
                 XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: timeout),
                               "\(label) destination must be visible")
@@ -68,6 +68,20 @@ enum UITabNavigation {
         // their semantic labels remain the navigation contract even though
         // UIKit does not expose them as Button elements.
         return app.cells[label].firstMatch
+    }
+
+    /// Drawer destination identifier slug for a destination label.
+    ///
+    /// `About` deliberately has NO entry: the drawer has no such row
+    /// (`FleetNavigationDrawer` renders `fleet.drawer.destination.<tab>`,
+    /// `.artifacts`, `.settings` only, and `FleetAboutUITests` asserts
+    /// `fleet.drawer.destination.about` must NOT exist — ADR-0011/dogfood r2
+    /// reaches About through the Settings root's `fleet.settings.about` row).
+    /// A table entry for it would mislead callers into expecting a drawer row
+    /// that the product removed.
+    private static func drawerDestinationRaw(_ label: String) -> String {
+        ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
+         "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
     }
 
     /// Select a destination through the current device's navigation shell.
@@ -100,8 +114,7 @@ enum UITabNavigation {
             return tab
         }
         menu.tap()
-        let raw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
-                   "Fleet": "fleet", "Settings": "settings", "About": "about"][label] ?? label.lowercased()
+        let raw = Self.drawerDestinationRaw(label)
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
         XCTAssertTrue(destination.waitForExistence(timeout: timeout), "drawer must expose \(label)")
@@ -120,6 +133,13 @@ enum UITabNavigation {
             // so this cannot be mistaken for a pop-to-root reselect).
             if !destination.waitForExistence(timeout: 3) { break }
         }
+        // The landing signal is the drawer DISMISSING (see above). Falling out
+        // of the loop without it means every tap was dropped — a presenting
+        // drawer swallows synthesized taps — so fail HERE, naming the true
+        // cause, instead of returning as success and surfacing later as an
+        // unrelated assertion in the caller.
+        XCTAssertFalse(drawer.exists,
+                       "\(label) destination never dismissed the drawer (tap dropped on every attempt)")
         return destination
     }
 
@@ -179,9 +199,11 @@ enum UITabNavigation {
     /// call `selectTab` instead (the U3 retention journeys do).
     ///
     /// Non-compact (tab bar / iPad sidebar): retrying a tap is safe — a
-    /// system tab control never re-fires on an already-selected tab. On iPad
-    /// the adaptive control does not expose UITabBar's selected-state
-    /// contract, so the retry loop falls back to bounded re-taps.
+    /// system tab control never re-fires on an already-selected tab — and the
+    /// SAME reselect gesture is the shell's pop-to-root recovery when the
+    /// destination holds a retained pushed stack. On iPad the adaptive
+    /// control does not expose UITabBar's selected-state contract, so the
+    /// retry loop falls back to bounded re-taps.
     @discardableResult
     private static func openTab(
         _ app: XCUIApplication,
@@ -208,7 +230,14 @@ enum UITabNavigation {
             // cross-fade and be dropped. Retry up to five times.
             for _ in 0..<5 {
                 if bar.waitForExistence(timeout: 6) { break }
-                if tab.elementType == .button && tab.isSelected { continue }
+                // Build 43 retention contract: a destination that KEEPS its
+                // pushed stack shows that screen's bar, never the root bar.
+                // Re-tapping the destination is the shell's pop-to-root
+                // affordance (the compact drawer implements it explicitly in
+                // `onSelectTab`; system tab/sidebar controls pop on the same
+                // gesture), so a selected destination gets the reselect
+                // attempt instead of being skipped — skipping made the ROOT
+                // contract unreachable on any retaining shell.
                 tab.tap()
             }
         }
@@ -229,8 +258,7 @@ enum UITabNavigation {
         let menu = app.buttons["fleet.drawer.open"].firstMatch
         guard menu.waitForExistence(timeout: 3) else { return }
         menu.tap()
-        let raw = ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
-                   "Fleet": "fleet", "Settings": "settings", "About": "about"][label] ?? label.lowercased()
+        let raw = Self.drawerDestinationRaw(label)
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
         guard destination.waitForExistence(timeout: timeout) else { return }

@@ -9,6 +9,13 @@ import Foundation
 public enum AssistantReplyActionPolicy {
     /// Number of visible user/assistant rows through the selected assistant
     /// reply, suitable for `session.branch { count }`.
+    ///
+    /// The emptiness filter is deliberate and mirrors the GATEWAY's own
+    /// projection: `session.branch` truncates the list produced by
+    /// `_visible_branch_history` (hermes-agent tui_gateway/methods_session.py:
+    /// 1958 — "user/assistant rows with visible text") with `history[:count]`
+    /// (:2027). Counting an empty-text row here would therefore address one
+    /// message PAST the prefix the gateway can copy.
     public static func branchMessageCount(
         rows: [ConversationRow],
         selectedRowID: String

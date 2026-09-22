@@ -31,7 +31,7 @@ final class ConversationPinningTests: XCTestCase {
         let suite = "ConversationPinningTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let store = UserDefaultsConversationPinStore(suiteName: suite)
+        let store = try XCTUnwrap(UserDefaultsConversationPinStore(suiteName: suite))
         let route = Route(
             gatewayID: GatewayID(rawValue: "workstation"),
             profileSlug: ProfileSlug(rawValue: "default")
@@ -68,5 +68,29 @@ final class ConversationPinningTests: XCTestCase {
         XCTAssertEqual(pins.count, 1)
         XCTAssertEqual(pins.first?.identity, first.identity)
         XCTAssertEqual(pins.first?.authoritativeGatewayID?.rawValue, "laptop")
+    }
+
+    /// OCR review t_ba85b063: a suite-scoped store persists into the NAMED
+    /// suite domain. The removed silent `.standard` fallback would have leaked
+    /// pins into the shared defaults (and left the requested suite empty),
+    /// which is exactly the cross-suite bleed `resetForUITests` exists to
+    /// prevent.
+    func testSuiteScopedStoreWritesOnlyItsOwnSuiteDomain() async throws {
+        let suite = "ConversationPinningTests.isolation.\(UUID().uuidString)"
+        let probe = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { probe.removePersistentDomain(forName: suite) }
+        let store = try XCTUnwrap(UserDefaultsConversationPinStore(suiteName: suite))
+        let pin = FleetConversationPin(
+            identity: .group(canonicalID: "room-isolation"),
+            title: "Isolated room"
+        )
+
+        try await store.savePins([pin])
+
+        let restored = try await store.loadPins()
+        XCTAssertEqual(restored, [pin])
+        XCTAssertNotNil(
+            probe.data(forKey: UserDefaultsConversationPinStore.storageKey),
+            "pins must be persisted in the named suite, never in a fallback suite")
     }
 }

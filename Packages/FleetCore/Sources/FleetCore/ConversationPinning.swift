@@ -82,8 +82,15 @@ public actor UserDefaultsConversationPinStore: ConversationPinStoring {
 
     /// Constructs the store without sending a `UserDefaults` reference across
     /// an actor boundary. This is also convenient for isolated test suites.
-    public init(suiteName: String) {
-        self.defaults = UserDefaults(suiteName: suiteName) ?? .standard
+    ///
+    /// Fails (nil) when the named suite cannot be created rather than silently
+    /// writing into the shared standard defaults: the suite exists to keep
+    /// isolated/profile-scoped pins apart, so a silent `.standard` fallback
+    /// would both leak pins across suites (the very thing `resetForUITests`
+    /// exists to prevent) and hide the misconfiguration.
+    public init?(suiteName: String) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return nil }
+        self.defaults = defaults
     }
 
     public func loadPins() async throws -> [FleetConversationPin] {

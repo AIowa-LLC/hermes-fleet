@@ -34,6 +34,17 @@ struct WorkingFolderSheet: View {
         return Array(Set(picks)).sorted()
     }
 
+    /// Stable accessibility id for one quick pick. `String.hashValue` is
+    /// seeded per process (Swift hash randomization), so a hash-derived id
+    /// changes on every launch and automation can never address a pick; this
+    /// derives the key from the path itself.
+    static func pickIdentifier(_ path: String) -> String {
+        let slug = path.lowercased().map { character in
+            character.isLetter || character.isNumber ? String(character) : "-"
+        }.joined()
+        return "fleet.conversation.folder.pick.\(slug)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             Capsule()
@@ -78,7 +89,7 @@ struct WorkingFolderSheet: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityIdentifier("fleet.conversation.folder.pick.\(pick.hashValue)")
+                        .accessibilityIdentifier(Self.pickIdentifier(pick))
                     }
                 }
             }

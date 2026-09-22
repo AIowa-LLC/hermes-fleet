@@ -28,6 +28,10 @@ public final class ReasoningViewModel {
     public private(set) var isApplying = false
     /// Never-silent apply/load failure (rendered inside the overlay).
     public private(set) var errorMessage: String?
+    /// The newest level requested while another apply was in flight. The drag
+    /// already showed this stop, so it must be applied when the in-flight call
+    /// settles instead of being dropped.
+    private var queuedLevel: FleetReasoningLevel?
 
     // MARK: Injected seams
 
@@ -66,8 +70,30 @@ public final class ReasoningViewModel {
 
     /// Apply a level (slider release / AX adjust). Optimistic set, reverted
     /// fail-closed when the gateway disagrees.
+    ///
+    /// A request that arrives while an earlier `config.set` is still in flight
+    /// is the NEWEST user intent: dropping it would leave the session at a stop
+    /// the user never chose (the settled call snaps the UI back to the earlier
+    /// one, silently). It is remembered and applied when the in-flight call
+    /// settles — the never-silent contract.
     public func apply(_ newLevel: FleetReasoningLevel) async {
-        guard !isApplying, newLevel != level else { return }
+        guard !isApplying else {
+            queuedLevel = newLevel
+            return
+        }
+        guard newLevel != level else { return }
+        await performApply(newLevel)
+        // Drain the newest queued request (only the last one can still be
+        // what the user wants). A request that matches the settled level is
+        // already the session's state and is simply dropped.
+        while let queued = queuedLevel {
+            queuedLevel = nil
+            guard queued != level else { continue }
+            await performApply(queued)
+        }
+    }
+
+    private func performApply(_ newLevel: FleetReasoningLevel) async {
         guard let sessionID = boundSessionID else {
             errorMessage = "No session to configure."
             return
@@ -217,8 +243,11 @@ public struct ReasoningSliderOverlay: View {
 
     private var stops: [FleetReasoningLevel] { FleetReasoningLevel.allCases }
 
-    /// The stop currently shown (mid-drag follows the finger; at rest the
-    /// session's level; unknown readback → medium anchor, no snap mark).
+    /// The stop only ANCHORS the slider geometry (unknown readback → the
+    /// medium stop, no snap mark). It must never be rendered as the level:
+    /// `.medium` would fabricate a level the app refuses to guess, and it
+    /// would disagree with the chip and the AX value, which show the raw wire
+    /// word for an unknown readback.
     private var displayLevel: FleetReasoningLevel {
         model.level ?? .defaultLevel
     }
@@ -250,7 +279,11 @@ public struct ReasoningSliderOverlay: View {
             Text("Thinking level")
                 .font(FleetTheme.monoCaptionFont)
                 .foregroundStyle(theme.textSecondary)
-            Text(displayLevel.label)
+            // Honest readout: the mapped label for known levels, the raw wire
+            // word when the gateway reports a level Fleet does not map — the
+            // same value the chip and the AX value carry (never "Medium" for
+            // an unknown readback).
+            Text(model.displayWord)
                 .font(.system(.title2, design: .rounded).weight(.bold))
                 .foregroundStyle(theme.textPrimary)
                 .accessibilityIdentifier("fleet.conversation.reasoning.value")

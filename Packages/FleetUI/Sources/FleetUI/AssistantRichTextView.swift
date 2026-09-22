@@ -476,12 +476,13 @@ enum FleetMarkdownRenderConfiguration {
                 textColor: theme.textSecondary,
                 backgroundColor: theme.surfaceElevated),
             // Dogfood r6 (G3): code renders as a DEDICATED card — a
-            // near-black fill in dark mode (Hermex's measured recipe),
-            // the elevated token in light — visually distinct from the
-            // canvas instead of same-fill-as-everything.
+            // near-black fill for light ink (Hermex's measured recipe),
+            // the elevated token for dark ink — visually distinct from
+            // the canvas instead of same-fill-as-everything, and derived
+            // from THIS palette (see `codeCardBackground`).
             codeBlockConfig: .init(
                 theme: .xcode,
-                backgroundColor: fleetCodeCardBackground,
+                backgroundColor: Self.codeCardBackground(theme: theme),
                 foregroundColor: theme.textPrimary,
                 codeTextFonts: code,
                 chromeTextFonts: small),
@@ -490,22 +491,31 @@ enum FleetMarkdownRenderConfiguration {
             // Hard V1 privacy gate: no arbitrary Markdown image requests.
             imageConfig: .disabled)
     }
-}
 
-/// Dogfood r6 (G3): the code-card fill — adaptive WITHOUT a live
-/// colorScheme (the config builder is static): dark = near-black
-/// rgb(0.04,0.05,0.07) (Hermex measured), light = the elevated token.
-private let fleetCodeCardBackground: Color = {
-    #if canImport(UIKit)
-    Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1)
-            : UIColor.tertiarySystemBackground
-    })
-    #else
-    FleetTheme.surfaceElevated
-    #endif
-}()
+    /// Dogfood r6 (G3) + OCR fix: the code-card fill is derived from the ACTIVE
+    /// palette — never from a raw system color. `FleetThemeValues` is
+    /// user-customizable and a `.fixed` palette returns its stored background
+    /// verbatim, so a system-derived fill can contradict the palette (Background
+    /// = black / Text = white in light appearance → white-on-white code) and it
+    /// silently breaks the "distinct card" contract for every custom theme.
+    ///
+    /// Light ink takes the measured near-black card (this palette's canvas
+    /// pushed toward it); dark ink takes the elevated token. The near-black
+    /// card is contrast-checked against the palette's own text, so a
+    /// pathological palette falls back to the elevated token instead of
+    /// fabricating an unreadable block.
+    static func codeCardBackground(theme: FleetThemeValues) -> Color {
+        let palette = theme.resolvedPalette
+        let nearBlack = FleetStoredColor(red: 0.04, green: 0.05, blue: 0.07)
+        let darkCard = palette.background.blended(toward: nearBlack, amount: 0.75)
+        guard FleetThemeContrast.relativeLuminance(palette.text) > 0.5,
+              FleetThemeContrast.ratio(palette.text, darkCard)
+                >= FleetThemeContrast.normalTextMinimum else {
+            return theme.surfaceElevated
+        }
+        return darkCard.swiftUIColor
+    }
+}
 
 private enum FleetMarkdownFonts {
     #if canImport(UIKit)

@@ -164,15 +164,6 @@ public enum ContextMeterLevel: Hashable, Sendable {
     }
 }
 
-/// R9-T2/T3/T4 seam: model picker, usage/context reads, steer/rename/fork.
-/// Lives in FleetCore so FleetUI never imports FleetNetworking (M0 guard);
-/// the concrete `GatewayConversationToolingClient` is injected at the
-/// composition root.
-///
-/// Selection policy is enforced STRUCTURALLY: this seam exposes NO method
-/// that writes the model to config — the only write path for a model choice
-/// is `session.create {model, provider}` (the per-session override,
-/// methods_session.py:50-53). `config.set` is not part of this seam.
 /// Optional capability for branching a prefix of a conversation. The base
 /// tooling seam keeps its existing whole-session branch contract for older
 /// gateways and scripted sessions; the concrete Hermes gateway advertises this
@@ -185,6 +176,15 @@ public protocol ConversationMessageBranchingProviding: Sendable {
     ) async throws -> ConversationSession
 }
 
+/// R9-T2/T3/T4 seam: model picker, usage/context reads, steer/rename/fork.
+/// Lives in FleetCore so FleetUI never imports FleetNetworking (M0 guard);
+/// the concrete `GatewayConversationToolingClient` is injected at the
+/// composition root.
+///
+/// Selection policy is enforced STRUCTURALLY: this seam exposes NO method
+/// that writes the model to config — the only write path for a model choice
+/// is `session.create {model, provider}` (the per-session override,
+/// methods_session.py:50-53). `config.set` is not part of this seam.
 public protocol ConversationToolingProviding: Sendable {
     /// `model.options` flattened into selectable choices. The sticky-local
     /// rule: the CALLER holds the selection (per-device) and rides it on

@@ -184,6 +184,24 @@ struct ArtifactPreviewSheet: View {
     let image: UIImage?
     var onRetry: () -> Void = {}
 
+    /// The share file is resolved OUTSIDE the body. `shareFileURL` is not a
+    /// pure read: it existence-checks, writes the retrieved payload to disk
+    /// (up to `maxArtifactBytes`) and records the URL in the `@Observable`
+    /// store — doing that during a body evaluation mutates observed state
+    /// mid-update and does the file I/O on the main thread at sheet
+    /// presentation.
+    @State private var shareURL: URL?
+
+    /// Re-resolve only when the retrieval state actually changes (the URL
+    /// exists once the payload is `.loaded`).
+    private var shareStateKey: String {
+        switch state {
+        case .loaded: return "loaded"
+        case .failed: return "failed"
+        case .loading, .none: return "loading"
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -228,11 +246,14 @@ struct ArtifactPreviewSheet: View {
             }
         }
         .accessibilityIdentifier("fleet.artifact.preview")
+        .task(id: shareStateKey) {
+            shareURL = environment.artifactImages.shareFileURL(for: reference)
+        }
     }
 
     @ViewBuilder
     private var shareRow: some View {
-        if let url = environment.artifactImages.shareFileURL(for: reference) {
+        if let url = shareURL {
             ShareLink(item: url, preview: SharePreview(reference.displayName)) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }

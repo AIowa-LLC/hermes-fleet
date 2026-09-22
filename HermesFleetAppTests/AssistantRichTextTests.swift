@@ -263,4 +263,58 @@ final class AssistantRichTextTests: XCTestCase {
         XCTAssertEqual(completedHistory.count, 24)
         XCTAssertTrue(completedHistory.allSatisfy { $0.isFinished && $0.latestSnapshot == stressMarkdown })
     }
+
+    // MARK: - Code-card fill (OCR review t_ba85b063)
+
+    /// The code card must stay legible against the palette's OWN ink. The fill
+    /// used to be system-derived while the foreground was palette-derived, so
+    /// a `.fixed` palette (returned verbatim for any appearance) could pair
+    /// white ink with a light system fill — white-on-white code.
+    func testCodeCardFillStaysLegibleAgainstThePaletteInk() throws {
+        func fill(_ theme: FleetThemeValues) throws -> FleetStoredColor {
+            try XCTUnwrap(
+                FleetStoredColor(color: FleetMarkdownRenderConfiguration.codeCardBackground(theme: theme)))
+        }
+        func ratio(_ theme: FleetThemeValues) throws -> Double {
+            FleetThemeContrast.ratio(
+                try XCTUnwrap(FleetStoredColor(color: theme.textPrimary)),
+                try fill(theme))
+        }
+
+        // Stored black canvas + white ink on a LIGHT device: the exact
+        // `.fixed` contradiction the review reported.
+        let whiteInkOnBlackCanvas = FleetThemeValues(
+            palette: FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0x5B35D5),
+                text: FleetStoredColor(hex: 0xFFFFFF),
+                background: FleetStoredColor(hex: 0x000000)),
+            isDarkAppearance: false,
+            isIncreasedContrast: false)
+        XCTAssertGreaterThanOrEqual(
+            try ratio(whiteInkOnBlackCanvas), FleetThemeContrast.normalTextMinimum,
+            "white code ink must never land on a light fill")
+
+        // The other polarity: stored white canvas + dark ink on a DARK device.
+        let darkInkOnWhiteCanvas = FleetThemeValues(
+            palette: FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0x5B35D5),
+                text: FleetStoredColor(hex: 0x111111),
+                background: FleetStoredColor(hex: 0xFFFFFF)),
+            isDarkAppearance: true,
+            isIncreasedContrast: false)
+        XCTAssertGreaterThanOrEqual(
+            try ratio(darkInkOnWhiteCanvas), FleetThemeContrast.normalTextMinimum,
+            "dark code ink must never land on a dark fill")
+
+        // The shipped dark default still renders the measured near-black card,
+        // derived from THAT canvas (darker than it) rather than a constant.
+        let defaultDark = FleetThemeValues(
+            palette: .fleetDefault, isDarkAppearance: true, isIncreasedContrast: false)
+        XCTAssertGreaterThanOrEqual(
+            try ratio(defaultDark), FleetThemeContrast.normalTextMinimum)
+        XCTAssertLessThan(
+            FleetThemeContrast.relativeLuminance(try fill(defaultDark)),
+            FleetThemeContrast.relativeLuminance(FleetStoredColor(hex: 0x101216)),
+            "the dark default keeps the near-black code card")
+    }
 }

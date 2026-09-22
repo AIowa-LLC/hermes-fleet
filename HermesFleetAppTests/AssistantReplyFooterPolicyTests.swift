@@ -97,6 +97,25 @@ final class AssistantReplyFooterPolicyTests: XCTestCase {
             4)
     }
 
+    /// OCR review t_ba85b063: the emptiness filter is deliberate — it mirrors
+    /// the GATEWAY's own projection. `session.branch` truncates the list built
+    /// by `_visible_branch_history` (user/assistant rows with visible text)
+    /// with `history[:count]`, so a tool-only assistant projection (empty
+    /// text) is not addressable and MUST NOT be counted: counting it would
+    /// copy one message PAST the selected reply.
+    func testBranchCountExcludesEmptyTextRowsLikeTheGatewayProjection() {
+        let rows = [
+            ConversationRow(id: "u1", kind: .user, text: "first"),
+            ConversationRow(id: "a1", kind: .assistant, text: ""),
+            ConversationRow(id: "u2", kind: .user, text: "later"),
+            ConversationRow(id: "a2", kind: .assistant, text: "answer two"),
+        ]
+        XCTAssertEqual(
+            AssistantReplyActionPolicy.branchMessageCount(rows: rows, selectedRowID: "a2"),
+            3,
+            "the count addresses the gateway's visible history, not the rendered row list")
+    }
+
     func testRetryIsLatestCompletedReplyOnly() {
         let rows = [
             ConversationRow(id: "u1", kind: .user, text: "first"),

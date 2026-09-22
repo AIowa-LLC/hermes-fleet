@@ -502,6 +502,12 @@ public final class ConversationViewModel {
         micTask?.cancel()
         readAloudCompletionTask?.cancel()
         slashSuggestionTask?.cancel()
+        // Parity with `teardown()`: a VM released without ever disappearing
+        // (a parent path that skips `onDisappear`, a programmatic owner) must
+        // not leave the notification-listening loop or the delayed retry
+        // running after its owner is gone.
+        foregroundObserver?.cancel()
+        foregroundRetryTask?.cancel()
     }
 
     // MARK: Lifecycle
@@ -1168,11 +1174,23 @@ public final class ConversationViewModel {
             // while submitPrompt was in flight belongs to the next draft.
             pendingAttachments.removeAll { submittedAttachmentIDs.contains($0.id) }
             guard submission.isStreaming else {
+                // The gateway accepted the prompt without a stream, so no
+                // `message.complete` / `.error` will ever arrive for this
+                // turn: the clock must settle HERE. Leaving it set pins
+                // `isWorking == true` forever (Working-for-Ns spins with no
+                // Stop affordance once `phase` is `.ready`, and every action
+                // gated on `!isWorking` stays disabled).
+                turnStartedAt = nil
                 phase = .ready
                 return true
             }
         } catch {
+            // Same non-completing path for a rejected submission: the event
+            // stream carries no terminal frame for a prompt that never
+            // started, so classifyTurnFailure alone would leave the turn
+            // clock running.
             classifyTurnFailure(error)
+            turnStartedAt = nil
             return false
         }
         return true
@@ -1880,8 +1898,11 @@ public final class ConversationViewModel {
     /// immediate attempt + one 2s-delayed retry) and fenced by the normal
     /// operation generation. `.authRequired` is DELIBERATELY untouched — M11:
     /// re-authentication is never silent.
-    private var foregroundObserver: Task<Void, Never>?
-    private var foregroundRetryTask: Task<Void, Never>?
+    /// `nonisolated(unsafe)`: both are only ever CANCELED from `deinit` (the
+    /// established eventTask/statusWatcher pattern); all creation/nil-out
+    /// happens on the main actor.
+    nonisolated(unsafe) private var foregroundObserver: Task<Void, Never>?
+    nonisolated(unsafe) private var foregroundRetryTask: Task<Void, Never>?
     private var isHealingFromForeground = false
 
     public func appBecameActive() async {

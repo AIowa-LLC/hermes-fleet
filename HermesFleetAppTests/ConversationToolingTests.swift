@@ -443,4 +443,106 @@ final class ConversationToolingTests: XCTestCase {
         vm.consumeForkedSession()
         XCTAssertNil(vm.forkedSession, "consumed fork clears the navigation target")
     }
+
+    // MARK: - Reasoning slider (OCR review t_ba85b063)
+
+    /// Scripted `ReasoningProviding` whose FIRST `setReasoning` parks on a
+    /// gate, so a second level request can arrive while the first is in
+    /// flight — the drag-release / AX-adjust window inside one round trip.
+    private final class ScriptedReasoning: ReasoningProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _sets: [FleetReasoningLevel] = []
+        private var gateWaiters: [CheckedContinuation<Void, Never>] = []
+        private var gateOpen = false
+        var readback = ReasoningState(level: .medium, rawValue: "medium", display: nil)
+
+        var sets: [FleetReasoningLevel] {
+            lock.lock(); defer { lock.unlock() }
+            return _sets
+        }
+
+        func openGate() {
+            lock.lock()
+            gateOpen = true
+            let waiters = gateWaiters
+            gateWaiters = []
+            lock.unlock()
+            waiters.forEach { $0.resume() }
+        }
+
+        func reasoning(sessionID: String) async throws -> ReasoningState { readback }
+
+        func setReasoning(
+            _ level: FleetReasoningLevel,
+            sessionID: String
+        ) async throws -> FleetReasoningLevel {
+            let isFirst = recordSet(level)
+            if isFirst {
+                await withCheckedContinuation { continuation in
+                    if !park(continuation) { continuation.resume() }
+                }
+            }
+            return level
+        }
+
+        /// Sync recorders: NSLock is unavailable from asynchronous contexts on
+        /// this toolchain (the file's `record` pattern), so every lock call
+        /// lives in a synchronous helper.
+        private func recordSet(_ level: FleetReasoningLevel) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            _sets.append(level)
+            return _sets.count == 1
+        }
+
+        /// Returns true when the caller must stay parked on the gate.
+        private func park(_ continuation: CheckedContinuation<Void, Never>) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            if gateOpen { return false }
+            gateWaiters.append(continuation)
+            return true
+        }
+    }
+
+    /// The slider's never-silent contract: a level requested while an earlier
+    /// `config.set` is still in flight is the NEWEST user intent and must be
+    /// applied when that call settles. Dropping it left the session at a stop
+    /// the user never chose (the settled call snapped the UI back, silently).
+    func testReasoningSliderAppliesNewestRequestQueuedDuringFlight() async {
+        let reasoning = ScriptedReasoning()
+        let model = ReasoningViewModel(reasoning: reasoning)
+        model.bind(sessionID: "s-1")
+        await waitUntil { model.level == .medium }
+
+        let first = Task { await model.apply(.low) }
+        await waitUntil { reasoning.sets.count == 1 }
+        XCTAssertEqual(reasoning.sets, [.low])
+
+        let second = Task { await model.apply(.high) }
+        await second.value
+        XCTAssertEqual(reasoning.sets, [.low], "no second in-flight wire call")
+        XCTAssertEqual(model.level, .low, "the first optimistic level stands until it settles")
+
+        reasoning.openGate()
+        await first.value
+        await waitUntil { reasoning.sets.count == 2 }
+
+        XCTAssertEqual(reasoning.sets, [.low, .high], "the newest request is applied, never dropped")
+        XCTAssertEqual(model.level, .high, "the session ends at the level the user chose last")
+        XCTAssertTrue(model.userAdjusted)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    /// Poll a main-actor condition with a bounded budget (the VMs settle on
+    /// their own tasks; there is no completion callback to await).
+    private func waitUntil(
+        _ condition: @escaping () -> Bool,
+        timeout: TimeInterval = 3
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
 }

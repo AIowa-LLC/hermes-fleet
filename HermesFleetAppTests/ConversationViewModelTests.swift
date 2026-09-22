@@ -51,6 +51,9 @@ final class ConversationViewModelTests: XCTestCase {
         var resumedProfiles: [String?] = []
         var submittedTexts: [String] = []
         var submitError: ConversationError?
+        /// The `prompt.submit` status the seam answers with. Non-streaming
+        /// ("accepted") reproduces the path with NO terminal event frame.
+        var submissionStatus = "streaming"
         var interruptError: ConversationError?
         let attachmentDouble = ScriptedAttachmentStaging()
 
@@ -135,7 +138,7 @@ final class ConversationViewModelTests: XCTestCase {
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             submittedTexts.append(text)
             if let submitError { throw submitError }
-            return PromptSubmission(status: "streaming")
+            return PromptSubmission(status: submissionStatus)
         }
         func interrupt(sessionID: String) async throws -> InterruptResult {
             if let interruptError { throw interruptError }
@@ -427,6 +430,46 @@ final class ConversationViewModelTests: XCTestCase {
     /// non-streaming submission answer (clock behavior is under test).
     private func sendOrIgnore(_ viewModel: ConversationViewModel, text: String) async -> Bool {
         await viewModel.send(text)
+    }
+
+    /// OCR review t_ba85b063 (HIGH): the turn clock is started at submit, so
+    /// the two paths that produce NO terminal event-stream frame must settle
+    /// it themselves — a non-streaming accepted submission ...
+    func testTurnClockClearsOnNonStreamingSubmission() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.submissionStatus = "accepted"
+
+        let didSend = await viewModel.send("hello")
+
+        XCTAssertTrue(didSend, "the non-streaming seam still accepts the prompt")
+        XCTAssertNil(
+            viewModel.turnStartedAt,
+            "a submission with no stream has no message.complete to clear the clock")
+        XCTAssertFalse(
+            viewModel.isWorking,
+            "isWorking must not spin forever (reply actions gate on it)")
+        XCTAssertEqual(viewModel.phase, .ready)
+    }
+
+    /// ... and a REJECTED submission (the catch path). Both used to leave
+    /// `isWorking == true` permanently: the phase is already `.ready`, so no
+    /// Stop affordance exists and `canBranchReply` / `canRetryReply` /
+    /// `searchWebReply` stay disabled until some later streaming turn.
+    func testTurnClockClearsWhenSubmitFails() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.submitError = .rpcFailed("temporary submit failure")
+
+        let didSend = await viewModel.send("hello")
+
+        XCTAssertFalse(didSend)
+        XCTAssertNil(
+            viewModel.turnStartedAt,
+            "a rejected submission never completes on the stream — the clock must settle here")
+        XCTAssertFalse(viewModel.isWorking)
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertNotNil(viewModel.errorMessage, "the failure stays surfaced, never silent")
     }
 
     /// Foreground auto-heal: a `.disconnected` conversation reconnects on

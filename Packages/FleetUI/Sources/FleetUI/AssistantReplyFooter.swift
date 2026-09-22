@@ -44,6 +44,11 @@ struct AssistantReplyFooter: View {
     ]
 
     @State private var showingCopiedConfirmation = false
+    /// The newest copy tap owns the dismissal. Without this, tapping copy
+    /// twice in quick succession starts two timers whose completion order is
+    /// not guaranteed, so the first tap's timer could hide the badge the user
+    /// just re-triggered.
+    @State private var copiedResetTask: Task<Void, Never>?
 
     var body: some View {
         HStack(spacing: 2) {
@@ -74,8 +79,10 @@ struct AssistantReplyFooter: View {
         Button {
             UIPasteboard.general.string = text
             withAnimation(.easeIn(duration: 0.15)) { showingCopiedConfirmation = true }
-            Task {
+            copiedResetTask?.cancel()
+            copiedResetTask = Task {
                 try? await Task.sleep(for: .seconds(1.2))
+                guard !Task.isCancelled else { return }
                 withAnimation(.easeOut(duration: 0.25)) { showingCopiedConfirmation = false }
             }
         } label: {
