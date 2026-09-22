@@ -196,12 +196,18 @@ final class GroupTurnPromptTests: XCTestCase {
     // MARK: FR-07 — pass contract
 
     func testPassDetectionMatchesDesktopContract() {
-        for text in ["(pass)", "pass", " pass. ", "PASS", ""] {
+        for text in [
+            "(pass)", "pass", " pass. ", "PASS", "", "(pass).", "pass)",
+            "(Pass)", "pass .", "( pass )",
+        ] {
             XCTAssertTrue(BridgedRoomTurnPrompt.isPassText(text), "expected pass: \(text.debugDescription)")
         }
-        // Desktop `/^\(?\s*pass\s*\)?\.?$/i` requires the literal word — a
-        // bare "(" or substantive text is a real reply.
-        for text in ["(", "I'll pass on this but here is the answer", "passing along notes", "password reset done"] {
+        // Desktop `/^\(?\s*pass\s*\)?\.?$/i` requires the literal word and
+        // permits `).`, but not `.)` or whitespace between `)` and `.`.
+        for text in [
+            "(", "pass.)", "(Pass) .", "(pass) .", "pass .)",
+            "I'll pass on this but here is the answer", "passing along notes", "password reset done",
+        ] {
             XCTAssertFalse(BridgedRoomTurnPrompt.isPassText(text), "expected real reply: \(text)")
         }
     }

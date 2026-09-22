@@ -128,9 +128,18 @@ public enum BridgedRoomTurnPrompt {
         if trimmed.isEmpty { return true }
         var body = trimmed
         if body.hasPrefix("(") { body.removeFirst() }
-        if body.hasSuffix(")") { body.removeLast() }
-        if body.hasSuffix(".") { body.removeLast() }
-        return body.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare("pass") == .orderedSame
+
+        // Match Desktop's `/^\(?\s*pass\s*\)?\.?$/i` suffix order:
+        // a period may follow the optional closing paren, but not precede it.
+        if body.hasSuffix(".") {
+            body.removeLast()
+            if body.hasSuffix(")") { body.removeLast() }
+        } else if body.hasSuffix(")") {
+            body.removeLast()
+            if body.hasSuffix(".") { return false }
+        }
+
+        return body.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("pass") == .orderedSame
     }
 
     /// Visibly relabel control-frame openers inside quoted member text so a
