@@ -269,6 +269,14 @@ public final class ConversationViewModel {
     /// (`consumeForkedSession()`).
     public private(set) var forkedSession: ConversationSession?
 
+    /// Assistant-reply toolbar action state. Errors are non-secret and are
+    /// rendered in the conversation rather than silently discarded.
+    public private(set) var replyActionError: String?
+    public private(set) var replyActionInFlight = false
+    /// Non-nil only while the selected reply's web-search prompt is being
+    /// submitted; the normal conversation working indicator covers streaming.
+    public private(set) var searchingWebRowID: String?
+
     /// r9 toolbelt: adopt a branch created from the dossier sheet (the
     /// existing view routing consumes it identically).
     public func adoptFork(_ branch: ConversationSession) {
@@ -456,6 +464,9 @@ public final class ConversationViewModel {
         self.maxDisplayRows = maxDisplayRows
         // R10-T4: fail-closed voice default when no engine is injected.
         self.voice = voice ?? UnsupportedVoiceTranscriber()
+        // Stage 1: the footer's Read Aloud renders only where a real engine
+        // was injected (the fail-closed default throws on every speak).
+        self.voiceCanSpeak = !(self.voice is UnsupportedVoiceTranscriber)
         // R10-T1: one cast at build time (the ApprovalsCapable discipline).
         if let capable = session as? AttachmentStagingCapable {
             self.attachments = capable.attachments
@@ -1117,10 +1128,15 @@ public final class ConversationViewModel {
     /// The shared send path for ordinary messages and expanded skill
     /// invocations. Attachments are appended to both representations so the
     /// transcript remains honest while the model receives the staged refs.
-    private func sendPrepared(modelText: String, displayText: String, sessionID sid: String) async -> Bool {
+    private func sendPrepared(
+        modelText: String,
+        displayText: String,
+        sessionID sid: String,
+        includeAttachments: Bool = true
+    ) async -> Bool {
         guard !isStreaming,
               phase == .ready || phase == .streaming else { return false }
-        let refTexts = pendingAttachments.map(\.refText)
+        let refTexts = includeAttachments ? pendingAttachments.map(\.refText) : []
         let prepared = prepareBotDraft?(modelText, sid) ?? BotConversationDraft(text: modelText)
         botDraftNotice = prepared.notice
         let modelPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: prepared.text)
@@ -1131,7 +1147,9 @@ public final class ConversationViewModel {
         let visibleText = modelText == displayText ? prepared.text : displayText
         let displayPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: visibleText)
         guard !modelPayload.isEmpty else { return false }
-        let submittedAttachmentIDs = Set(pendingAttachments.map(\.id))
+        let submittedAttachmentIDs = includeAttachments
+            ? Set(pendingAttachments.map(\.id))
+            : []
 
         appendRow(.init(id: nextRowID(), kind: .user, text: displayPayload))
         // Turn clock: starts at submit — the user waits from HERE, through
@@ -1443,6 +1461,11 @@ public final class ConversationViewModel {
         attachmentError = nil
     }
 
+    /// Dismiss a non-secret assistant-reply action error.
+    public func clearReplyActionError() {
+        replyActionError = nil
+    }
+
     private func setAttachmentError(_ error: AttachmentStagingError) {
         attachmentError = Redaction.safeText(error.description)
     }
@@ -1556,6 +1579,65 @@ public final class ConversationViewModel {
         }
     }
 
+    // MARK: Stage 1 — assistant-reply footer actions (read aloud)
+
+    /// Row id currently being spoken by an explicit Read Aloud tap (footer
+    /// toggling). Nil = idle. Streaming voice-mode speech does not set this
+    /// (it is not footer-addressable while in flight).
+    public private(set) var readAloudRowID: String?
+
+    /// True when the shared engine has an utterance in flight (footer state
+    /// and the ellipsis Stop affordance read this — ONE source of truth).
+    public var isReadingAloud: Bool { voice.isSpeaking }
+
+    /// Speak one completed assistant reply through the EXISTING R10 engine
+    /// (same SpeechQueue + AVSpeechSynthesizer path as voice mode — no new
+    /// TTS). Re-tapping the same row stops it (toggle); tapping another row
+    /// cuts the old utterance first (mark_speech_interrupted semantics).
+    /// Returns false when no engine can speak (fail-closed wiring).
+    @discardableResult
+    public func readReplyAloud(rowID: String, text: String) async -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard voiceCanSpeak else { return false }
+        if readAloudRowID == rowID {
+            await stopReadingReply()
+            return true
+        }
+        // Do not send a spurious stop to an idle engine on the first tap.
+        // When another row (or voice mode) owns the synthesizer, cut it before
+        // replacing the queued utterance. The explicit footer path awaits the
+        // shared queue so the state and tests do not race a fire-and-forget
+        // streaming TTS task.
+        if readAloudRowID != nil || voice.isSpeaking {
+            await voice.stopSpeaking()
+            await speechQueue.drain()
+        } else {
+            await speechQueue.drain()
+        }
+        readAloudRowID = rowID
+        let voice = self.voice
+        await speechQueue.enqueue {
+            try? await voice.speak(text: text)
+        }
+        return true
+    }
+
+    /// Stop the in-flight Read Aloud utterance and drop queued chunks.
+    public func stopReadingReply() async {
+        await voice.stopSpeaking()
+        await speechQueue.drain()
+        readAloudRowID = nil
+    }
+
+    /// Fail-closed probe: the fail-closed default engine cannot speak; an
+    /// injected real engine can. Memoized at init (one cast, no repeated
+    /// protocol existential checks per row).
+    private let voiceCanSpeak: Bool
+
+    /// Stage 1 footer visibility probe (read-aloud ellipsis renders only
+    /// where a real voice engine was wired).
+    public var voiceCanSpeakFooter: Bool { voiceCanSpeak }
+
     // MARK: R9-T2/T3/T4 — tooling actions (steer/rename/fork/usage)
 
     /// Steer the running turn via the tooling seam (see-through to the
@@ -1578,6 +1660,145 @@ public final class ConversationViewModel {
     public func forkSession() async {
         guard let branch = await toolingViewModel?.fork(name: nil) else { return }
         forkedSession = branch
+    }
+
+    /// Whether the selected completed reply can be branched with the gateway's
+    /// count-aware `session.branch` operation.
+    public func canBranchReply(rowID: String) -> Bool {
+        !isWorking && !replyActionInFlight && toolingViewModel != nil
+            && AssistantReplyActionPolicy.branchMessageCount(rows: allRows, selectedRowID: rowID) != nil
+            && (toolingViewModel?.supportsMessageBranching ?? false)
+    }
+
+    /// Branch the exact visible history prefix through one assistant reply.
+    /// The original session is untouched; the view navigates to the returned
+    /// distinct session through the existing forked-session route.
+    @discardableResult
+    public func branchReply(rowID: String) async -> Bool {
+        guard canBranchReply(rowID: rowID),
+              let count = AssistantReplyActionPolicy.branchMessageCount(
+                rows: allRows, selectedRowID: rowID),
+              let toolingViewModel else { return false }
+        replyActionError = nil
+        replyActionInFlight = true
+        defer { replyActionInFlight = false }
+        guard let branch = await toolingViewModel.fork(name: nil, messageCount: count) else {
+            return false
+        }
+        forkedSession = branch
+        return true
+    }
+
+    /// `/retry` is the gateway-owned regeneration path. It rewinds the latest
+    /// completed user turn, returns the authoritative original prompt, then
+    /// submits that prompt once through the normal send path.
+    public func canRetryReply(rowID: String) -> Bool {
+        !isWorking && !replyActionInFlight
+            && AssistantReplyActionPolicy.canRetry(
+                rows: allRows, selectedRowID: rowID, isStreaming: isStreaming)
+    }
+
+    @discardableResult
+    public func retryReply(rowID: String) async -> Bool {
+        guard canRetryReply(rowID: rowID) else {
+            replyActionError = "Retry is available only for the latest completed assistant reply."
+            return false
+        }
+        guard pendingAttachments.isEmpty else {
+            replyActionError = "Retry is unavailable while an attachment is staged. Send or remove the attachment first."
+            return false
+        }
+        guard let sid = openedSessionID,
+              let selectedIndex = allRows.firstIndex(where: { $0.id == rowID }),
+              let userIndex = allRows[..<selectedIndex].lastIndex(where: { $0.kind == .user }) else {
+            replyActionError = "The original user turn could not be recovered for retry."
+            return false
+        }
+
+        replyActionError = nil
+        replyActionInFlight = true
+        defer { replyActionInFlight = false }
+        let previousRows = allRows
+        let prompt: String
+        do {
+            let execution = try await slashCommands.execute(sessionID: sid, command: "/retry")
+            prompt = try Self.retryPrompt(from: execution)
+        } catch {
+            do {
+                let dispatch = try await slashCommands.dispatch(
+                    sessionID: sid, name: "retry", argument: "")
+                prompt = try Self.retryPrompt(from: dispatch)
+            } catch {
+                replyActionError = Self.nonSecret(error)
+                return false
+            }
+        }
+
+        // The gateway has already rewound its durable history. Mirror that
+        // prefix locally before appending the one new user row, so the old
+        // user/assistant pair is never displayed twice.
+        allRows.removeSubrange(userIndex...)
+        let sent = await sendPrepared(
+            modelText: prompt,
+            displayText: prompt,
+            sessionID: sid,
+            includeAttachments: false)
+        if !sent {
+            allRows = previousRows
+            replyActionError = replyActionError ?? "Retry could not be submitted."
+        }
+        return sent
+    }
+
+    /// Search through the real Hermes agent turn/tool path. The prompt asks
+    /// the gateway to use its configured `web_search` tool and to say plainly
+    /// when that tool is unavailable; Fleet never fabricates search results.
+    @discardableResult
+    public func searchWebReply(rowID: String, text: String) async -> Bool {
+        guard !isWorking, !replyActionInFlight,
+              phase == .ready,
+              let sid = openedSessionID,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        replyActionError = nil
+        replyActionInFlight = true
+        searchingWebRowID = rowID
+        defer {
+            replyActionInFlight = false
+            searchingWebRowID = nil
+        }
+        let prompt = """
+        Use Hermes's configured web_search tool to verify or expand the assistant response below. Return current search results with source URLs. If web_search is unavailable, say that plainly instead of answering from memory.
+
+        Assistant response to verify:
+        \(text)
+        """
+        let display = "Search the Web: \(String(text.prefix(80)))"
+        let sent = await sendPrepared(
+            modelText: prompt,
+            displayText: display,
+            sessionID: sid,
+            includeAttachments: false)
+        if !sent {
+            replyActionError = replyActionError ?? "Web search could not be submitted."
+        }
+        return sent
+    }
+
+    private static func retryPrompt(from execution: HermesSlashExecution) throws -> String {
+        guard let dispatch = execution.dispatch else {
+            throw SlashCommandError.malformedResponse("retry returned no structured prompt")
+        }
+        return try retryPrompt(from: dispatch)
+    }
+
+    private static func retryPrompt(from dispatch: HermesCommandDispatch) throws -> String {
+        guard case .send(let message, _, _) = dispatch,
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SlashCommandError.malformedResponse("retry did not return a user prompt")
+        }
+        return message
     }
 
     /// Clear the pending fork navigation target (view consumed it).

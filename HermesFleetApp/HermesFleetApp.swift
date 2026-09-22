@@ -52,6 +52,12 @@ struct HermesFleetApp: App {
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
+            .onOpenURL { url in
+                guard let target = FleetConversationDeepLink.target(from: url) else { return }
+                environment.openConversationFromShortcut(
+                    route: target.route,
+                    sessionID: target.sessionID)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)

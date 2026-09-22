@@ -354,6 +354,16 @@ public final class AppEnvironment {
         pendingScreenNavigation = screen
     }
 
+    /// App Intents/deep links may arrive before the conversation view exists.
+    /// Validate the source-qualified identity here, then let the normal shell
+    /// open path resolve the live session and surface stale/deleted sessions
+    /// honestly rather than guessing another gateway or title.
+    public func openConversationFromShortcut(route: Route, sessionID: String) {
+        guard route.isRoutingSafe,
+              RoutingGuard.isValidSessionKey(sessionID) else { return }
+        pendingScreenNavigation = .conversation(route, sessionID: sessionID)
+    }
+
     /// Codex-style floating gear: request the Settings TAB from any surface
     /// (the shell selects the tab; no screen push involved).
     public func requestSettingsTab() {
@@ -1261,7 +1271,8 @@ public final class AppEnvironment {
         RoomChatViewModel(
             room: room,
             commands: roomCommandSeam(for: room.id.gatewayID),
-            driverStatus: roomDriverStatusSeam(for: room.id.gatewayID))
+            driverStatus: roomDriverStatusSeam(for: room.id.gatewayID),
+            voice: voiceEngineFactory?())
     }
 
     // MARK: Slice 5 — RoomLink (D19)

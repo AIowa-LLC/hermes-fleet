@@ -287,6 +287,44 @@ final class ConversationCompactChromeUITests: XCTestCase {
                       "session actions must remain reachable at AX sizes")
     }
 
+    /// Completed assistant replies expose the compact action toolbar in the
+    /// required order and More contains every advanced action, including
+    /// honest disabled entries when a simulator seam lacks a capability.
+    func testCompletedAssistantReplyFooterAndMoreActions() throws {
+        let app = launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("reply action toolbar probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let footer = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier ENDSWITH %@", ".footer")
+        ).firstMatch
+        XCTAssertTrue(footer.waitForExistence(timeout: 15),
+                      "a completed assistant reply must render its action footer")
+
+        for suffix in [".copy", ".share", ".more"] {
+            let action = app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier CONTAINS %@", suffix)
+            ).firstMatch
+            XCTAssertTrue(action.waitForExistence(timeout: 5),
+                          "footer action \(suffix) must be discoverable")
+        }
+
+        let more = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier CONTAINS %@", ".more")
+        ).firstMatch
+        XCTAssertTrue(more.isHittable, "More must be hittable")
+        more.tap()
+        for label in ["Branch in New Chat", "Read Aloud", "Retry", "Search the Web"] {
+            XCTAssertTrue(app.buttons[label].waitForExistence(timeout: 5),
+                          "More must contain \(label)")
+        }
+    }
+
     // MARK: - Helpers (same shapes as the U6 suite)
 
     private func tap(_ element: XCUIElement) {

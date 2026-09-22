@@ -173,6 +173,18 @@ public enum ContextMeterLevel: Hashable, Sendable {
 /// that writes the model to config — the only write path for a model choice
 /// is `session.create {model, provider}` (the per-session override,
 /// methods_session.py:50-53). `config.set` is not part of this seam.
+/// Optional capability for branching a prefix of a conversation. The base
+/// tooling seam keeps its existing whole-session branch contract for older
+/// gateways and scripted sessions; the concrete Hermes gateway advertises this
+/// richer count-aware operation when `session.branch { count }` is supported.
+public protocol ConversationMessageBranchingProviding: Sendable {
+    func branchSession(
+        sessionID: String,
+        name: String?,
+        count: Int?
+    ) async throws -> ConversationSession
+}
+
 public protocol ConversationToolingProviding: Sendable {
     /// `model.options` flattened into selectable choices. The sticky-local
     /// rule: the CALLER holds the selection (per-device) and rides it on

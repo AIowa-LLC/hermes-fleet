@@ -62,6 +62,12 @@ public final class RoomChatViewModel {
     public let room: FleetRoom
     private let commands: (any RoomChatCommanding)?
     private let driverStatus: (any RoomDriverStatusProviding)?
+    /// Stage 1: the shared voice engine (fail-closed default when nil).
+    private let voice: any VoiceTranscribing
+    /// Fail-closed probe mirroring ConversationViewModel (footer visibility).
+    private let voiceCanSpeak: Bool
+    /// Entry id currently spoken by an explicit footer Read Aloud tap.
+    public private(set) var readAloudEntryID: String?
     private var cache = RoomTranscriptCache()
     /// F2: live change tail for bridged rooms. `nonisolated(unsafe)` — the
     /// established eventTask pattern: created/replaced on the main actor,
@@ -75,17 +81,50 @@ public final class RoomChatViewModel {
     public init(
         room: FleetRoom,
         commands: (any RoomChatCommanding)? = nil,
-        driverStatus: (any RoomDriverStatusProviding)? = nil
+        driverStatus: (any RoomDriverStatusProviding)? = nil,
+        voice: (any VoiceTranscribing)? = nil
     ) {
         self.room = room
         self.commands = commands
         self.driverStatus = driverStatus
         self.roomName = room.name
         self.isDisbanded = room.id.provenance == .hosted && room.hosted?.disbandedAt != nil
+        // Stage 1: same fail-closed voice default as ConversationViewModel —
+        // the footer's Read Aloud renders only where a real engine exists.
+        self.voice = voice ?? UnsupportedVoiceTranscriber()
+        self.voiceCanSpeak = !(self.voice is UnsupportedVoiceTranscriber)
     }
 
     deinit {
         liveTail?.cancel()
+    }
+
+    // MARK: Stage 1 — assistant-reply footer (read aloud)
+
+    /// Stage 1 footer visibility probe (mirrors ConversationViewModel).
+    public var voiceCanSpeakFooter: Bool { voiceCanSpeak }
+
+    /// Speak one completed member reply through the shared engine
+    /// (same VoiceTranscribing path as conversation read-aloud). Re-tapping
+    /// the same entry stops it; tapping another cuts the old utterance.
+    @discardableResult
+    public func readReplyAloud(entryID: String, text: String) async -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard voiceCanSpeak else { return false }
+        if readAloudEntryID == entryID {
+            await stopReadingReply()
+            return true
+        }
+        await voice.stopSpeaking()
+        readAloudEntryID = entryID
+        try? await voice.speak(text: text)
+        return true
+    }
+
+    /// Stop the in-flight room Read Aloud utterance.
+    public func stopReadingReply() async {
+        await voice.stopSpeaking()
+        readAloudEntryID = nil
     }
 
     /// Capabilities for this room (hosted: advertised methods; legacy:
@@ -1032,6 +1071,25 @@ public struct RoomChatView: View {
                     Label(entry.text ?? "Turn failed", systemImage: "xmark.octagon")
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.statusDestructive)
+                }
+                // Stage 1: footer on completed member (assistant) replies —
+                // copy/share/read-aloud. No thumbs here: the hosted-room
+                // durable log has no reaction wire kind (groups.* events
+                // carry no reactions), so thumbs would be inert buttons.
+                if AssistantReplyFooterPolicy.showsFooter(roomFlavor: entry.flavor, text: entry.text) {
+                    AssistantReplyFooter(
+                        text: entry.text ?? "",
+                        react: nil,
+                        ownReaction: nil,
+                        readAloud: viewModel.voiceCanSpeakFooter
+                            ? { Task { await viewModel.readReplyAloud(entryID: entry.id, text: entry.text ?? "") } }
+                            : nil,
+                        stopReading: viewModel.voiceCanSpeakFooter
+                            ? { Task { await viewModel.stopReadingReply() } }
+                            : nil,
+                        isReading: viewModel.readAloudEntryID == entry.id,
+                        idNamespace: "fleet.room.footer.\(entry.id)"
+                    )
                 }
             }
         }

@@ -166,6 +166,9 @@ public struct ConversationView: View {
             if let toolingModel = model.toolingViewModel {
                 ToolingNoticeBanner(model: toolingModel)
             }
+            if let replyActionError = model.replyActionError {
+                replyActionErrorBanner(model, message: replyActionError)
+            }
             // R9-T1: the mid-session approval banner (danger surface) sits
             // above the transcript; nil model → nothing renders.
             if let approvalModel = model.approvalViewModel {
@@ -747,17 +750,48 @@ enum ConversationHeaderChips {
         seconds < 60 ? "\(seconds) seconds" : String(format: "%d minutes %d seconds", seconds / 60, seconds % 60)
     }
 
+    /// Stage 1 (+ extensions): builds one transcript bubble with its footer
+    /// wiring as a sub-expression — the inline form outgrew the type-checker.
+    private func bubbleView(model: ConversationViewModel, row: ConversationRow) -> some View {
+        ConversationBubbleView(
+            row: row,
+            environment: environment,
+            react: { emoji in
+                Task { await model.react(rowID: row.rowID, kind: row.kind, emoji: emoji) }
+            },
+            clear: {
+                Task { await model.clearReaction(rowID: row.rowID, kind: row.kind) }
+            },
+            onReadAloud: model.voiceCanSpeakFooter
+                ? { Task { await model.readReplyAloud(rowID: row.id, text: row.text) } }
+                : nil,
+            onStopReading: model.voiceCanSpeakFooter
+                ? { Task { await model.stopReadingReply() } }
+                : nil,
+            onBranch: AssistantReplyActionPolicy.branchMessageCount(
+                rows: model.transcript, selectedRowID: row.id) != nil
+                ? { Task { await model.branchReply(rowID: row.id) } }
+                : nil,
+            onRetry: AssistantReplyActionPolicy.canRetry(
+                rows: model.transcript, selectedRowID: row.id, isStreaming: model.isStreaming)
+                ? { Task { await model.retryReply(rowID: row.id) } }
+                : nil,
+            onSearchWeb: model.phase == .ready && !model.isStreaming
+                ? { Task { await model.searchWebReply(rowID: row.id, text: row.text) } }
+                : nil,
+            isSearchInFlight: model.searchingWebRowID == row.id,
+            isReadingThisRow: model.readAloudRowID == row.id
+        )
+    }
+
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(model.transcript) { row in
-                        ConversationBubbleView(row: row, environment: environment) { emoji in
-                            Task { await model.react(rowID: row.rowID, kind: row.kind, emoji: emoji) }
-                        } clear: {
-                            Task { await model.clearReaction(rowID: row.rowID, kind: row.kind) }
-                        }
+                        bubbleView(model: model, row: row)
                         .id(row.id)
+
                         // R10-T3: `@file:`/`@folder:` refs tap through into
                         // the Projects browser. Rendered OUTSIDE the bubble
                         // (the bubble combines its children for a11y — the
@@ -1381,6 +1415,32 @@ enum ConversationHeaderChips {
         .accessibilityIdentifier("fleet.conversation.attachment.error")
     }
 
+    /// Assistant-reply actions are user-initiated network operations; any
+    /// unsupported gateway or failed request stays visible and dismissible.
+    private func replyActionErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(FleetTheme.statusDestructive)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(3)
+            Spacer(minLength: 0)
+            Button {
+                model.clearReplyActionError()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .accessibilityLabel("Dismiss reply action error")
+        }
+        .padding(.horizontal, FleetTheme.spacingLg)
+        .padding(.vertical, 6)
+        .background(theme.surfaceElevated)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.reply-action.error")
+    }
+
     /// R10-T2: reaction error banner — never silent (same mandate).
     private func reactionErrorBanner(_ model: ConversationViewModel, message: String) -> some View {
         HStack(spacing: 8) {
@@ -1721,6 +1781,16 @@ private struct ConversationBubbleView: View {
     /// model reference).
     var react: (String) -> Void = { _ in }
     var clear: () -> Void = {}
+    /// Stage 1: footer action handlers + state from the owning view. Defaults
+    /// keep previews/plain-bubble tests working; nil read-aloud hides the
+    /// ellipsis (fail-closed voice wiring).
+    var onReadAloud: (() -> Void)? = nil
+    var onStopReading: (() -> Void)? = nil
+    var onBranch: (() -> Void)? = nil
+    var onRetry: (() -> Void)? = nil
+    var onSearchWeb: (() -> Void)? = nil
+    var isSearchInFlight: Bool = false
+    var isReadingThisRow: Bool = false
 
     /// V4 motion budget: subtle entrance for user bubbles — opacity + a
     /// 0.97 scale settle, ease-out 0.18s. Under Reduce Motion the scale is
@@ -1754,6 +1824,26 @@ private struct ConversationBubbleView: View {
                     Text(timestampText)
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
+                }
+                // Stage 1: action footer on COMPLETED assistant replies only
+                // (policy gate — streaming/failed/empty rows never render
+                // it, so it can never overlap live turns or placeholders).
+                if AssistantReplyFooterPolicy.showsFooter(
+                    kind: row.kind, text: row.text, isStreaming: row.isStreaming, isFailed: row.isFailed
+                ) {
+                    AssistantReplyFooter(
+                        text: row.text,
+                        react: { emoji in react(emoji) },
+                        ownReaction: row.reactions?.first(where: { $0.author == "user" })?.emoji,
+                        onBranch: onBranch,
+                        onRetry: onRetry,
+                        onSearchWeb: onSearchWeb,
+                        isSearchInFlight: isSearchInFlight,
+                        readAloud: onReadAloud,
+                        stopReading: onStopReading,
+                        isReading: isReadingThisRow,
+                        idNamespace: "fleet.conversation.footer.\(row.id)"
+                    )
                 }
             }
             if row.kind != .user { Spacer(minLength: 60) }

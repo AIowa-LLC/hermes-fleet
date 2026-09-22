@@ -30,7 +30,7 @@ import FleetCore
 ///   `{pending, title}`.
 /// - `session.branch` — methods_session.py:3282: `{session_id, count?,
 ///   name?}` → the full new-session payload (same decode as create/resume).
-public struct GatewayConversationToolingClient: ConversationToolingProviding {
+public struct GatewayConversationToolingClient: ConversationToolingProviding, ConversationMessageBranchingProviding {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
 
@@ -161,12 +161,26 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
     }
 
     public func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
+        try await branchSession(sessionID: sessionID, name: name, count: nil)
+    }
+
+    /// Count-aware branch used by the assistant-reply toolbar. The gateway
+    /// copies only the visible user/assistant prefix through the selected row;
+    /// later turns remain in the original session.
+    public func branchSession(
+        sessionID: String,
+        name: String?,
+        count: Int?
+    ) async throws -> ConversationSession {
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey(
                 "session_id is not a safe session key: \(sessionID)")
         }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         var params: [String: JSONValue] = ["session_id": .string(sessionID)]
+        if let count, count > 0 {
+            params["count"] = .number(Double(count))
+        }
         if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             params["name"] = .string(name.trimmingCharacters(in: .whitespacesAndNewlines))
         }

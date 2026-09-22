@@ -49,6 +49,10 @@ public final class ConversationToolingViewModel {
     // MARK: Injected seams
 
     private let tooling: any ConversationToolingProviding
+    /// Optional richer branch seam. Older scripted sessions retain the
+    /// existing whole-session branch operation but cannot safely branch at a
+    /// selected reply, so the footer disables that action for them.
+    private let messageBranching: (any ConversationMessageBranchingProviding)?
     /// Per-device sticky store key (gateway-scoped so each gateway's pick
     /// is independent — different gateways serve different providers).
     private let persistenceKey: String
@@ -59,6 +63,7 @@ public final class ConversationToolingViewModel {
         gatewayID: GatewayID
     ) {
         self.tooling = tooling
+        self.messageBranching = tooling as? any ConversationMessageBranchingProviding
         self.persistenceKey = "fleet.modelpick.\(gatewayID.rawValue)"
         // Restore the sticky pick (fail-soft: corrupt store → follow default).
         if let data = UserDefaults.standard.data(forKey: persistenceKey),
@@ -72,6 +77,12 @@ public final class ConversationToolingViewModel {
     /// Bind to the open runtime session (usage/context/steer calls ride it).
     public func bind(sessionID: String?) {
         boundSessionID = sessionID
+    }
+
+    /// True only when the concrete gateway exposes the count-aware branch
+    /// operation required by the reply toolbar.
+    public var supportsMessageBranching: Bool {
+        messageBranching != nil
     }
 
     // MARK: Model picker (sticky, per-device, never a config write)
@@ -193,10 +204,20 @@ public final class ConversationToolingViewModel {
     /// Fork the session (`session.branch`). Returns the NEW conversation
     /// session for the caller to navigate to; nil on failure (forkError set
     /// — e.g. 4008 "nothing to branch — send a message first").
-    public func fork(name: String?) async -> ConversationSession? {
+    public func fork(name: String?, messageCount: Int? = nil) async -> ConversationSession? {
         guard let sid = boundSessionID else { return nil }
         do {
-            let branch = try await tooling.branchSession(sessionID: sid, name: name)
+            let branch: ConversationSession
+            if let messageCount {
+                guard messageCount > 0, let messageBranching else {
+                    forkError = "Branching from this reply is unavailable on the connected gateway."
+                    return nil
+                }
+                branch = try await messageBranching.branchSession(
+                    sessionID: sid, name: name, count: messageCount)
+            } else {
+                branch = try await tooling.branchSession(sessionID: sid, name: name)
+            }
             forkError = nil
             return branch
         } catch {
