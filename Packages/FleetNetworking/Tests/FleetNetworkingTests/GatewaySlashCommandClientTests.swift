@@ -70,6 +70,16 @@ final class GatewaySlashCommandClientTests: XCTestCase {
         XCTAssertEqual(catalog.skills["/hermes-change-review"]?.origin, "local")
         // Canon aliases resolve.
         XCTAssertEqual(catalog.canonicalForm(of: "/reset"), "/new")
+        // commandMeta: the registry map for EVERY command AND alias — typed
+        // completion rows (`complete.slash`) carry no disposition, so
+        // `ConversationViewModel.row(_:enrichedWith:)` reads them from here.
+        // An empty map silently no-ops that enrichment on a real gateway.
+        XCTAssertEqual(catalog.commandMeta["/new"]?.argumentMode, .text)
+        XCTAssertEqual(catalog.commandMeta["/redraw"]?.desktopDisposition, "terminal")
+        XCTAssertEqual(catalog.commandMeta["/reset"]?.argumentMode, .text,
+                       "aliases ride the meta map too (no pairs row exists for them)")
+        XCTAssertEqual(catalog.commandMeta["/reset"]?.canonical, "/new")
+        XCTAssertNil(catalog.commandMeta["/deploy-check"], "quick/plugin commands are not registry meta")
         // No warning surfaces when the string is empty.
         XCTAssertNil(catalog.warning)
     }
@@ -241,20 +251,75 @@ final class GatewaySlashCommandClientTests: XCTestCase {
     func testStopProcessesDecodesKilledCount() throws {
         // Wire shape verified: process.stop → {killed: N}.
         let result: JSONValue = .object(["killed": .number(2)])
-        let killed = GatewaySlashCommandClient.intValueForTest(result["killed"])
-        XCTAssertEqual(killed, 2)
+        XCTAssertEqual(GatewaySlashCommandClient.intValue(result["killed"]), 2)
     }
-}
 
-/// Test-only exposure of the private int decoder.
-extension GatewaySlashCommandClient {
-    static func intValueForTest(_ value: JSONValue?) -> Int? {
-        value.flatMap { v in
-            // Mirror of the private intValue implementation.
-            if case .number(let n) = v, n.isFinite, n >= 0, n <= Double(Int.max) {
-                return Int(n)
+    // MARK: integer decoding — the 2^63 trap boundary
+
+    func testIntValueRejectsTheTwoToTheSixtyThreeBoundaryInsteadOfTrapping() {
+        // `Double(Int.max)` rounds UP to exactly 2^63, so it is NOT a valid
+        // upper bound: a finite payload value AT that boundary passed the old
+        // guard and `Int(n)` trapped (fatal error, process death). intValue is
+        // fed from network JSON (`skills` usage, `process.stop` killed), so a
+        // buggy/hostile gateway could crash the app.
+        let boundary = Double(Int.max)
+        XCTAssertEqual(boundary, 9_223_372_036_854_775_808.0, "Double(Int.max) IS 2^63")
+        XCTAssertNil(GatewaySlashCommandClient.intValue(.number(boundary)),
+                     "a value at 2^63 must decode to nil, never reach Int(_:)")
+        XCTAssertNil(GatewaySlashCommandClient.intValue(.number(boundary * 2)),
+                     "and neither must anything above it")
+        // The largest Double below 2^63 still converts exactly.
+        let largestSafe = boundary - 1_024
+        XCTAssertEqual(GatewaySlashCommandClient.intValue(.number(largestSafe)), Int(largestSafe))
+    }
+
+    func testIntValueKeepsItsExistingRejections() {
+        XCTAssertEqual(GatewaySlashCommandClient.intValue(.number(0)), 0)
+        XCTAssertEqual(GatewaySlashCommandClient.intValue(.number(2.9)), 2, "truncates, as before")
+        XCTAssertNil(GatewaySlashCommandClient.intValue(.number(-1)))
+        XCTAssertNil(GatewaySlashCommandClient.intValue(.number(.nan)))
+        XCTAssertNil(GatewaySlashCommandClient.intValue(.number(.infinity)))
+        XCTAssertNil(GatewaySlashCommandClient.intValue(nil))
+        XCTAssertNil(GatewaySlashCommandClient.intValue(.string("2")))
+    }
+
+    func testCatalogSkillUsageAtTheIntegerBoundaryDecodesWithoutTrapping() throws {
+        // End-to-end through the decoder that consumes the value.
+        let result: JSONValue = .object([
+            "pairs": .array([.array([.string("/hermes-change-review"), .string("Review a change")])]),
+            "skills": .object([
+                "/hermes-change-review": .object([
+                    "usage": .number(9_223_372_036_854_775_808.0),
+                    "origin": .string("local"),
+                ]),
+            ]),
+        ])
+        let catalog = try GatewaySlashCommandClient.decodeCatalog(result)
+        XCTAssertEqual(catalog.skills["/hermes-change-review"]?.usage, 0,
+                       "an out-of-range usage count degrades to 0, never a trap")
+        XCTAssertEqual(catalog.commands.first?.usage, 0)
+    }
+
+    // MARK: slash.exec — the stripped command must still name a command
+
+    func testExecuteRejectsSlashOnlyCommandsBeforeAnyRpc() async throws {
+        // The slash-prefix guard validates `trimmed`, but slash.exec is sent
+        // the STRIPPED form (`drop(while: "/")`), so `//` / `///` passed the
+        // guard and shipped an EMPTY command to the gateway.
+        let transport = GatewayWebSocketTransport(
+            baseURL: URL(string: "http://127.0.0.1:1")!,
+            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)))
+        let client = GatewaySlashCommandClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        for command in ["//", "///", " //", "/// "] {
+            do {
+                _ = try await client.execute(sessionID: "abc12345", command: command)
+                XCTFail("\(command) must not reach slash.exec")
+            } catch let error as SlashCommandError {
+                guard case .invalidRequest = error else {
+                    return XCTFail("expected .invalidRequest for \(command), got \(error)")
+                }
             }
-            return nil
         }
     }
 }

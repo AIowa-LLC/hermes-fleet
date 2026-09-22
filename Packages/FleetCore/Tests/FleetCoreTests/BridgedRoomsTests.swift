@@ -72,6 +72,43 @@ final class BridgedRoomsTests: XCTestCase {
         XCTAssertEqual(read?.disbandedAt, 3)
     }
 
+    func testUnreadableStoreIsQuarantinedInsteadOfBeingOverwritten() async throws {
+        // A present-but-undecodable file must never read as "no rooms": every
+        // later mutation persists the in-memory snapshot with `.atomic`, so
+        // treating a decode failure as empty state silently destroyed the
+        // user's only copy of every bridged room.
+        let corrupt = Data("{ this is not a room store".utf8)
+        try corrupt.write(to: storeURL)
+
+        let store = BridgedRooms.Store(url: storeURL)
+        let snapshot = await store.roomsSnapshot()
+        XCTAssertTrue(snapshot.isEmpty)
+
+        let quarantined = await store.quarantinedURL
+        let backup = try XCTUnwrap(quarantined, "an unreadable store is moved aside, never dropped")
+        XCTAssertEqual(try Data(contentsOf: backup), corrupt, "the original bytes survive for recovery")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storeURL.path))
+
+        // The next mutation writes a FRESH store; the quarantined copy stays intact.
+        try await store.upsert(.init(roomKey: "room", name: "Room", members: [], createdAt: 1))
+        XCTAssertEqual(try Data(contentsOf: backup), corrupt)
+        let read = await store.record(roomKey: "room")
+        XCTAssertNotNil(read)
+    }
+
+    func testAbsentStoreIsNotQuarantined() async throws {
+        // A fresh install is NOT a decode failure: no file, no quarantine, no
+        // backup left behind.
+        let store = BridgedRooms.Store(url: storeURL)
+        let snapshot = await store.roomsSnapshot()
+        XCTAssertTrue(snapshot.isEmpty)
+        let quarantined = await store.quarantinedURL
+        XCTAssertNil(quarantined)
+        let files = try FileManager.default.contentsOfDirectory(
+            at: storeURL.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+        XCTAssertTrue(files.isEmpty)
+    }
+
     func testProjectionRendersHostedVocabulary() {
         let member = BridgedRooms.MemberRef(
             gatewayID: "gw-a", profile: "default", displayName: "Atlas", routeID: "gw-a#default")

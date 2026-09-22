@@ -13,8 +13,12 @@ import FleetCore
 ///   `{key, value, scope: "session", session_id}` → `_kv` envelope
 ///   `{key, value, scope}`. Session-scoped like the YOLO toggle
 ///   (`config.set yolo`, server.py:14967) — never a global write.
-/// - Accepted words verified live via `parse_reasoning_effort`:
-///   none|minimal|low|medium|high; anything else errors 4002.
+/// - Accepted words — `hermes_constants.parse_reasoning_effort` +
+///   `VALID_REASONING_EFFORTS` (the authoritative domain is FleetCore's
+///   `FleetReasoningLevel`, re-verified live r8.4):
+///   none|minimal|low|medium|high|xhigh|max|ultra — the slider's eight
+///   stops. `setReasoning` forwards `level.rawValue` verbatim; anything
+///   outside that set (numerics included) errors 4002.
 public struct GatewayReasoningClient: ReasoningProviding {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport

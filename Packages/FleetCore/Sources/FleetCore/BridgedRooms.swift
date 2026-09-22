@@ -162,6 +162,10 @@ public enum BridgedRooms {
         private let url: URL
         private var rooms: [String: RoomRecord] = [:]
         private var loaded = false
+        /// Set when a present store file could not be read/decoded and was
+        /// moved aside (`<name>.unreadable-<stamp>.json`) instead of being
+        /// overwritten by the next mutation. Nil = nothing was quarantined.
+        public private(set) var quarantinedURL: URL?
         /// Lock-guarded subscriber hub. Lives OUTSIDE actor isolation so
         /// `changes()` registers subscribers SYNCHRONOUSLY — an observer
         /// that subscribes then reads state can never miss the next
@@ -220,11 +224,37 @@ public enum BridgedRooms {
         private func loadIfNeeded() {
             guard !loaded else { return }
             loaded = true
-            guard let data = try? Data(contentsOf: url) else { return }
-            let decoder = JSONDecoder()
-            if let decoded = try? decoder.decode([String: RoomRecord].self, from: data) {
-                rooms = decoded
+            // "No file yet" (fresh install) and "a file we cannot read" are
+            // DIFFERENT states, and only the first may leave `rooms` empty:
+            // every later mutation persists the in-memory snapshot with
+            // `.atomic`, so reading an unreadable file as "no rooms" would
+            // overwrite the user's only copy with an empty one. A path that is
+            // not a regular file at all is not our store: leave it in place so
+            // writes keep failing loudly.
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                rooms = try JSONDecoder().decode([String: RoomRecord].self, from: data)
+            } catch {
+                quarantineUnreadableStore()
             }
+        }
+
+        /// Move a present-but-unreadable store aside so its bytes survive for
+        /// recovery, and surface the quarantine. A decode failure can then
+        /// never be silently converted into authoritative empty state that the
+        /// next mutation persists over.
+        private func quarantineUnreadableStore() {
+            let backup = url.deletingPathExtension()
+                .appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970)).json")
+            do {
+                try FileManager.default.moveItem(at: url, to: backup)
+            } catch {
+                return
+            }
+            quarantinedURL = backup
         }
 
         private func persist(_ snapshot: [String: RoomRecord]) throws {

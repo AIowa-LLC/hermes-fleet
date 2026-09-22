@@ -754,6 +754,153 @@ final class BridgedRoomRelayTests: XCTestCase {
                        "a removed member must not receive future group submissions")
     }
 
+    // MARK: - OCR findings: relay ordering, tail lifecycle, tombstones, registration
+
+    /// HIGH: the timeout note is an AWAITED append, so it is durable before
+    /// phase 2 can land a late reply. Worst case exercised here: the reply is
+    /// already buffered when phase 2 subscribes.
+    func testTimeoutNoteIsDurableAheadOfTheLateReply() async throws {
+        let store = store()
+        let conversation = BufferedLateReplyConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")], createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 0.2, lateCollectionWindow: 30)
+        let userSeq = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 5, diagnostics: { await self.debugEvents(store) }) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains { $0.kind == "message.member" } == true
+        }
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        let note = try XCTUnwrap(record.events.first { $0.reasonCode == "member_timeout" })
+        let reply = try XCTUnwrap(record.events.first { $0.kind == "message.member" })
+        XCTAssertLessThan(note.seq, reply.seq, "the interim note precedes the late reply")
+        XCTAssertEqual(reply.seq, note.seq + 1, "no event slipped between the note and the reply")
+        XCTAssertEqual(record.events.map(\.seq), [userSeq, note.seq, reply.seq],
+                       "the log is appended in seq order, note first")
+        XCTAssertEqual(record.deliveryWatermarks["alpha/research"], userSeq,
+                       "a late reply never acknowledges the note it was not shown")
+    }
+
+    /// MEDIUM: a finished turn's tail is removed from the live map — no
+    /// retained Task per completed turn, and Stop never reports phantom
+    /// cancellations.
+    func testCompletedTailsArePrunedAndNotReportedAsCancellable() async throws {
+        let store = store()
+        let conversation = ImmediateConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")], createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
+        }
+        let cancelled = try await relay.stop(roomID: "room")
+        XCTAssertEqual(cancelled, 0, "a finished tail is not a live tail")
+    }
+
+    /// MEDIUM: the prune is token-guarded — a superseded tail unwinding must
+    /// not evict the newer tail that replaced it.
+    func testSupersededTailDoesNotPruneItsReplacement() async throws {
+        let store = store()
+        let blocking = BlockingSubmitConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: blocking)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")], createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 3600, lateCollectionWindow: 7200)
+        _ = try await relay.send(roomID: "room", text: "one", threadID: nil)
+        _ = try await relay.send(roomID: "room", text: "two", threadID: nil)
+        // The replaced tail unwinds on cancellation (its cancellation failure
+        // note is the observable) — and its cleanup runs AFTER the newer tail
+        // was registered, which is exactly the eviction window under test.
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains { $0.kind == "turn.failed" } == true
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let cancelled = try await relay.stop(roomID: "room")
+        XCTAssertEqual(cancelled, 1, "only the newest tail for the member stays live")
+    }
+
+    /// MEDIUM: disband is a final tombstone — the seam refuses the write
+    /// (the projection keeps the room readable, so nothing upstream stops it).
+    func testSendIntoADisbandedRoomIsRefusedBeforeAnyWrite() async throws {
+        let store = store()
+        let conversation = ImmediateConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")], createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "before disband", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
+        }
+        try await relay.disband(roomID: "room")
+        do {
+            _ = try await relay.send(roomID: "room", text: "after disband", threadID: nil)
+            XCTFail("a disbanded room must not accept sends")
+        } catch let failure as RoomCommandFailure {
+            guard case .rpcFailed = failure else {
+                return XCTFail("expected a typed refusal, got \(failure)")
+            }
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains { $0.payloadText == "after disband" },
+                       "a tombstoned room gains no new events")
+        XCTAssertEqual(conversation.createCount, 1, "and no member turn is spawned")
+        // Retry re-sends through the same seam: also refused.
+        do {
+            try await relay.retry(roomID: "room", taskID: "latest")
+            XCTFail("retry into a disbanded room must not re-send")
+        } catch {}
+    }
+
+    /// MEDIUM: `store.changes()` registration is synchronous with the call, so
+    /// a subscribe-then-read caller cannot miss the next mutation.
+    func testTranscriptChangesRegistersSynchronouslyWithTheCall() async throws {
+        let store = store()
+        try await store.upsert(.init(roomKey: "room", name: "Test", members: [], createdAt: 0))
+        let relay = BridgedRoomRelay(store: store, resolver: { _ in nil })
+        let stream = try XCTUnwrap(relay.transcriptChanges(roomID: "room"))
+        // Append from OUTSIDE the main actor while it stays busy: a deferred
+        // registration (the old inner `Task`) cannot have run yet, so its
+        // notification is dropped outright — the feed has no replay.
+        let append = Task.detached {
+            try? await store.append(events: [.init(
+                seq: 1, eventID: "e1", kind: "message.member", actorKind: "member",
+                actorID: "alpha/research", payloadText: "hi", createdAt: 1)], to: "room")
+        }
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline {}
+        _ = await append.value
+        let received: Bool = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next() != nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(3))
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+        XCTAssertTrue(received, "a subscriber registered synchronously cannot miss the next mutation")
+    }
+
     /// Poll until `condition` holds (bounded) — async store reads make
     /// deterministic event-order assertions brittle otherwise. On timeout,
     /// print the diagnostics string so failures are diagnosable from logs.
@@ -871,6 +1018,66 @@ final class BridgedRoomRelayTests: XCTestCase {
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             .init(status: "streaming")
+        }
+        func interrupt(sessionID: String) async throws -> InterruptResult { .init(status: "interrupted") }
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
+    }
+
+    /// A conversation whose terminal event is ALREADY on the wire when phase 2
+    /// subscribes (the SECOND stream a caller takes) — the worst case for the
+    /// note/reply ordering: the collector can consume the reply on its first
+    /// iteration, with no time for a deferred note append to land first.
+    private final class BufferedLateReplyConversation: ConversationProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var subscriptions = 0
+        private var sessionID: String?
+        var events: AsyncStream<ConversationEvent> {
+            let pair = AsyncStream<ConversationEvent>.makeStream()
+            let (index, session): (Int, String?) = lock.withLock {
+                subscriptions += 1
+                return (subscriptions, sessionID)
+            }
+            if index >= 2, let session {
+                pair.continuation.yield(.messageComplete(
+                    sessionID: session, text: "late-reply", status: nil, error: nil))
+            }
+            return pair.stream
+        }
+        func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+            let created = ConversationSession(sessionID: profile ?? "default")
+            lock.withLock { sessionID = created.sessionID }
+            return created
+        }
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
+            lock.withLock { self.sessionID = sessionID }
+            return .init(sessionID: sessionID)
+        }
+        func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            .init(status: "streaming")
+        }
+        func interrupt(sessionID: String) async throws -> InterruptResult { .init(status: "interrupted") }
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
+    }
+
+    /// A member whose turn is still RUNNING at the gateway: `submitPrompt`
+    /// blocks (cancellable) and nothing streams back, so the delivery
+    /// watermark is never advanced and the next fan-out still has undelivered
+    /// events — the shape that keeps a replacement tail alive.
+    private final class BlockingSubmitConversation: ConversationProviding, @unchecked Sendable {
+        var events: AsyncStream<ConversationEvent> {
+            // Nothing streams: the continuation is dropped, so the stream is
+            // already finished for whoever iterates it.
+            AsyncStream<ConversationEvent>.makeStream().stream
+        }
+        func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+            ConversationSession(sessionID: profile ?? "default")
+        }
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
+            .init(sessionID: sessionID)
+        }
+        func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            try await Task.sleep(for: .seconds(3600))
+            return .init(status: "streaming")
         }
         func interrupt(sessionID: String) async throws -> InterruptResult { .init(status: "interrupted") }
         func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }

@@ -65,8 +65,14 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
             throw SlashCommandError.invalidRequest("command must be a slash-prefixed invocation")
         }
         // slash.exec takes the command WITHOUT the leading slash (Desktop:
-        // `command.replace(/^\/+/, '')`).
+        // `command.replace(/^\/+/, '')`). The strip is a `drop(while:)` over
+        // EVERY leading slash, so the slash-prefixed guard above cannot vouch
+        // for the payload: `//` / `///` strip to an empty command. Validate
+        // the STRIPPED form before it can be sent.
         let bare = String(trimmed.drop(while: { $0 == "/" }))
+        guard !bare.isEmpty else {
+            throw SlashCommandError.invalidRequest("command must name a command after the slash")
+        }
         let result = try await request(
             method: "slash.exec",
             params: .object([
@@ -195,10 +201,29 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
         let warning = object["warning"]?.stringValue
         let warningValue = (warning?.isEmpty == false) ? warning : nil
 
+        // commandMeta: `/name` → argument mode + desktop disposition, for
+        // every registry command AND alias (the wire `commands` map carries
+        // aliases too). `complete.slash` rows carry NO disposition, so
+        // `ConversationViewModel.row(_:enrichedWith:)` reads them from HERE —
+        // an empty map silently no-ops that enrichment on every real gateway
+        // (the simulator populated it, which is why only network clients were
+        // affected).
+        var commandMeta: [String: SlashCommandSuggestion] = [:]
+        for key in Set(argumentModes.keys).union(desktopDispositions.keys) {
+            let canonicalKey = canon[key]
+            let isAlias = canonicalKey.map { $0.lowercased() != key } ?? false
+            commandMeta[key] = SlashCommandSuggestion(
+                text: key,
+                kind: .command,
+                argumentMode: argumentModes[key].flatMap(SlashCommandSuggestion.ArgumentMode.init(rawValue:)),
+                canonical: isAlias ? canonicalKey : nil,
+                desktopDisposition: desktopDispositions[key])
+        }
+
         return HermesCommandCatalog(
             commands: commands,
             canon: canon,
-            commandMeta: [:],  // meta is folded into the rows above
+            commandMeta: commandMeta,
             skills: skillEntries,
             warning: warningValue)
     }
@@ -328,9 +353,14 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
     }
 
     /// `JSONValue` stores numbers as Double; usage counts are small integers.
-    private static func intValue(_ value: JSONValue?) -> Int? {
+    ///
+    /// The upper bound is 2^63 EXCLUSIVE, not `Double(Int.max)`: that value
+    /// rounds UP to exactly 2^63, so `n <= Double(Int.max)` admits 2^63 and
+    /// `Int(2^63)` traps. Every representable `n` below 2^63 converts without
+    /// trapping (Int truncates the fraction).
+    static func intValue(_ value: JSONValue?) -> Int? {
         guard case .number(let n)? = value else { return nil }
-        guard n.isFinite, n >= 0, n <= Double(Int.max) else { return nil }
+        guard n.isFinite, n >= 0, n < 9_223_372_036_854_775_808.0 else { return nil }
         return Int(n)
     }
 

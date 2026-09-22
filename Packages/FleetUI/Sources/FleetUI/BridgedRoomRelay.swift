@@ -37,10 +37,18 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     /// Whole-turn budget (from submit) for which a member stays watched,
     /// including the late-collection phase after a timeout note.
     private let lateCollectionWindow: TimeInterval
-    /// Live fan-out tails: room storage key -> route id -> task. A new send
+    /// Live fan-out tails: room storage key -> route id -> tail. A new send
     /// for the same member cancels its previous tail (the newest turn
-    /// supersedes); `stop` cancels every tail for the room.
-    private var memberTails: [String: [String: Task<Void, Never>]] = [:]
+    /// supersedes); `stop` cancels every tail for the room. A tail REMOVES its
+    /// own slot when it finishes (token-guarded, so a superseded tail can
+    /// never prune the newer one that replaced it) — a completed turn must not
+    /// be retained for the relay's lifetime.
+    private struct MemberTail {
+        let task: Task<Void, Never>
+        let token: UUID
+    }
+
+    private var memberTails: [String: [String: MemberTail]] = [:]
     private var nextSeq = 1
 
     public init(
@@ -85,11 +93,17 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     /// Live transcript feed for one bridged room: the store's change
     /// notification, filtered to this room. `RoomChatViewModel` subscribes
     /// so member replies render without re-entering the screen.
+    ///
+    /// `store.changes()` is nonisolated and registers its subscriber
+    /// SYNCHRONOUSLY, so it is taken HERE — on the caller's turn — not inside
+    /// the iteration task: the caller (`RoomChatView.start()`) subscribes and
+    /// then immediately reads the store, and an append landing between that
+    /// read and a deferred registration would be missed outright (the feed
+    /// has no replay).
     public func transcriptChanges(roomID: String) -> AsyncStream<Void>? {
-        let store = self.store
+        let changes = store.changes()
         return AsyncStream<Void> { continuation in
             let task = Task {
-                let changes = await store.changes()
                 for await key in changes {
                     guard !Task.isCancelled else { break }
                     if key == roomID {
@@ -105,6 +119,15 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     public func send(roomID: String, text: String, threadID: String?) async throws -> Int {
         guard let record = await store.record(roomKey: roomID) else {
             throw RoomCommandFailure.notConnected
+        }
+        // Disband is a FINAL tombstone (the hosted contract). The record stays
+        // projected (`isDeleted: false`) so the room remains readable, so the
+        // seam — not the projection — has to refuse the write: without this a
+        // send into a tombstone persists a user message and spawns tails that
+        // can never answer.
+        guard record.disbandedAt == nil else {
+            throw RoomCommandFailure.rpcFailed(
+                "This Group was disbanded — it no longer accepts messages.", 0)
         }
         syncSeq(roomID: roomID, latest: record.events.last?.seq)
 
@@ -126,15 +149,27 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         // can run for minutes).
         for member in record.members {
             let sessionID = record.bridgeSessionIDs[member.routeID]
-            memberTails[roomID]?[member.routeID]?.cancel()
+            memberTails[roomID]?[member.routeID]?.task.cancel()
+            let token = UUID()
             let tail = Task<Void, Never> {
                 // The task inherits this @MainActor context; the relay is
                 // environment-owned for the app's lifetime.
                 try? await self.relay(member: member, roomID: roomID, sessionID: sessionID, rosterAtSend: record.members)
+                self.pruneTail(roomID: roomID, routeID: member.routeID, token: token)
             }
-            memberTails[roomID, default: [:]][member.routeID] = tail
+            memberTails[roomID, default: [:]][member.routeID] = MemberTail(task: tail, token: token)
         }
         return userSeq
+    }
+
+    /// Drop a FINISHED tail's slot. Token-guarded: a tail that a newer send
+    /// already replaced (cancel + replace) must not prune its successor.
+    private func pruneTail(roomID: String, routeID: String, token: UUID) {
+        guard memberTails[roomID]?[routeID]?.token == token else { return }
+        memberTails[roomID]?[routeID] = nil
+        if memberTails[roomID]?.isEmpty == true {
+            memberTails[roomID] = nil
+        }
     }
 
     private func relay(
@@ -269,9 +304,14 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             // Honest interim state. The late stream is subscribed BEFORE the
             // note is appended (subscription registers synchronously with the
             // transport), so no terminal event can slip through the gap
-            // between phase 1 expiring and phase 2 iterating.
+            // between phase 1 expiring and phase 2 iterating — and the note
+            // append is AWAITED, so it is durable before phase 2 can land a
+            // late reply (the documented order: the note first, the reply
+            // after; an unstructured append has no ordering guarantee against
+            // the reply's awaited append, and `try?`-ing it away would drop
+            // the note silently).
             let lateEvents = conversation.events
-            appendNote(member: member, roomID: roomID,
+            try await appendNote(member: member, roomID: roomID,
                        text: "\(member.displayName) didn't answer in time. If it is still working, its reply will appear here.",
                        reason: "member_timeout")
             let remaining = lateCollectionWindow - Date().timeIntervalSince(startedAt)
@@ -417,9 +457,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             createdAt: Date().timeIntervalSince1970)], to: roomID)
     }
 
+    /// Durable member-failure/interim note. `async throws` (like
+    /// `appendActivityNote`/`appendFailure`) so the caller can ORDER it
+    /// against the late reply's append — the relay's contract is "the note
+    /// lands first, the late reply appends after".
     private func appendNote(
         member: BridgedRooms.MemberRef, roomID: String, text: String, reason: String
-    ) {
+    ) async throws {
         let seq = nextSeq
         nextSeq += 1
         let event = BridgedRooms.EventRecord(
@@ -433,7 +477,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             payloadText: text,
             reasonCode: reason,
             createdAt: Date().timeIntervalSince1970)
-        Task { try? await store.append(events: [event], to: roomID) }
+        try await store.append(events: [event], to: roomID)
     }
 
     private func appendFailure(member: BridgedRooms.MemberRef, reason: String, roomID: String) async throws {
@@ -468,8 +512,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
     public func stop(roomID: String) async throws -> Int {
         var cancelled = 0
-        for (_, task) in memberTails[roomID] ?? [:] {
-            task.cancel()
+        for (_, tail) in memberTails[roomID] ?? [:] {
+            tail.task.cancel()
             cancelled += 1
         }
         memberTails[roomID] = nil
