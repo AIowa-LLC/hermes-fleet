@@ -95,19 +95,23 @@ public struct GatewayAttachmentClient: AttachmentStagingProviding {
         guard let o = result.objectValue else {
             throw AttachmentStagingError.malformedResponse(detail: "image.attach_bytes result was not an object")
         }
+        // `intValue` bounds each conversion (2^63-exclusive): an unrepresentable
+        // count/pages_attached fails with this function's existing typed
+        // malformedResponse instead of trapping, and the optional metadata
+        // reads as absent.
         guard o["attached"]?.boolValue == true,
               let path = o["path"]?.stringValue,
-              let count = o["count"]?.numberValue.map(Int.init) else {
+              let count = o["count"]?.intValue else {
             throw AttachmentStagingError.malformedResponse(detail: "image.attach_bytes result missing attached/path/count")
         }
         return StagedImageAttachment(
             path: path,
             name: o["name"]?.stringValue,
             count: count,
-            byteCount: o["bytes"]?.numberValue.map(Int.init),
-            width: o["width"]?.numberValue.map(Int.init),
-            height: o["height"]?.numberValue.map(Int.init),
-            tokenEstimate: o["token_estimate"]?.numberValue.map(Int.init))
+            byteCount: o["bytes"]?.intValue,
+            width: o["width"]?.intValue,
+            height: o["height"]?.intValue,
+            tokenEstimate: o["token_estimate"]?.intValue)
     }
 
     // MARK: - pdf.attach
@@ -125,20 +129,20 @@ public struct GatewayAttachmentClient: AttachmentStagingProviding {
         }
         guard o["attached"]?.boolValue == true,
               let filename = o["filename"]?.stringValue,
-              let pagesAttached = o["pages_attached"]?.numberValue.map(Int.init),
-              let count = o["count"]?.numberValue.map(Int.init) else {
+              let pagesAttached = o["pages_attached"]?.intValue,
+              let count = o["count"]?.intValue else {
             throw AttachmentStagingError.malformedResponse(detail: "pdf.attach result missing attached/filename/pages_attached/count")
         }
         let pages = (o["pages"]?.arrayValue ?? []).compactMap { row -> StagedPDFPage? in
             guard let page = row.objectValue,
                   let path = page["path"]?.stringValue,
-                  let pageNumber = page["page"]?.numberValue.map(Int.init) else { return nil }
+                  let pageNumber = page["page"]?.intValue else { return nil }
             return StagedPDFPage(
                 path: path,
                 pageNumber: pageNumber,
                 name: page["name"]?.stringValue,
-                width: page["width"]?.numberValue.map(Int.init),
-                height: page["height"]?.numberValue.map(Int.init))
+                width: page["width"]?.intValue,
+                height: page["height"]?.intValue)
         }
         return StagedPDFAttachment(
             filename: filename,
@@ -157,7 +161,7 @@ public struct GatewayAttachmentClient: AttachmentStagingProviding {
                 "path": .string(path),
             ]))
         guard let o = result.objectValue,
-              let count = o["count"]?.numberValue.map(Int.init) else {
+              let count = o["count"]?.intValue else {
             throw AttachmentStagingError.malformedResponse(detail: "image.detach result missing count")
         }
         return DetachedImageState(

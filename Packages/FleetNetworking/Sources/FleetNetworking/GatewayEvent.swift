@@ -75,7 +75,12 @@ public struct GatewayEvent: Sendable, Hashable {
         self.rawType = raw
         self.type = EventType(rawValue: raw) ?? .unknown
         self.sessionID = params["session_id"]?.stringValue
-        self.seq = params["seq"]?.numberValue.map(Int.init)
+        // The 2^63 trap class: `Int(_:)` on an out-of-range Double kills the
+        // process, so every integer read of gateway JSON goes through
+        // `JSONValue.intValue` (bound owned by `JSONValue.boundedInt`). An
+        // unrepresentable `seq` reads as absent — the same shape as a missing
+        // key, never an invented sequence number.
+        self.seq = params["seq"]?.intValue
         self.payload = params["payload"]
     }
 

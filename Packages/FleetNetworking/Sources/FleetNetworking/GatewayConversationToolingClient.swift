@@ -268,16 +268,18 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding, Co
     /// (unknown), never a fabricated 0.
     static func decodeUsage(_ result: JSONValue) -> SessionUsageSnapshot {
         let o = result.objectValue ?? [:]
-        func int(_ key: String) -> Int { o[key]?.numberValue.map(Int.init) ?? 0 }
+        // `intValue` owns the 2^63-exclusive bound; an unrepresentable number
+        // degrades to this helper's existing missing-value default (0).
+        func int(_ key: String) -> Int { o[key]?.intValue ?? 0 }
         return SessionUsageSnapshot(
             model: o["model"]?.stringValue,
             input: int("input"),
             output: int("output"),
             total: int("total"),
             calls: int("calls"),
-            contextUsed: o["context_used"]?.numberValue.map(Int.init),
-            contextMax: o["context_max"]?.numberValue.map(Int.init),
-            contextPercent: o["context_percent"]?.numberValue.map(Int.init)
+            contextUsed: o["context_used"]?.intValue,
+            contextMax: o["context_max"]?.intValue,
+            contextPercent: o["context_percent"]?.intValue
         )
     }
 
@@ -291,15 +293,15 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding, Co
             return ContextBreakdownCategory(
                 id: id,
                 label: co["label"]?.stringValue ?? id,
-                tokens: co["tokens"]?.numberValue.map(Int.init) ?? 0
+                tokens: co["tokens"]?.intValue ?? 0
             )
         } ?? []
         return ContextBreakdown(
             categories: categories,
-            contextMax: o["context_max"]?.numberValue.map(Int.init) ?? 0,
-            contextPercent: o["context_percent"]?.numberValue.map(Int.init) ?? 0,
-            contextUsed: o["context_used"]?.numberValue.map(Int.init) ?? 0,
-            estimatedTotal: o["estimated_total"]?.numberValue.map(Int.init) ?? 0,
+            contextMax: o["context_max"]?.intValue ?? 0,
+            contextPercent: o["context_percent"]?.intValue ?? 0,
+            contextUsed: o["context_used"]?.intValue ?? 0,
+            estimatedTotal: o["estimated_total"]?.intValue ?? 0,
             model: o["model"]?.stringValue ?? ""
         )
     }

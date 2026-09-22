@@ -205,7 +205,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         guard let event = result["event"]?.objectValue else {
             throw GroupsError.malformedPayload("groups.send missing 'event'")
         }
-        let seq = event["seq"]?.numberValue.map(Int.init) ?? 0
+        let seq = event["seq"]?.intValue ?? 0
         let eventID = event["event_id"]?.stringValue ?? ""
         return SentRoomEvent(roomID: roomID, seq: seq, eventID: eventID)
     }
@@ -249,7 +249,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         let result = try await request(method: "groups.stop", params: .object([
             "room_id": .string(roomID),
         ]))
-        return result["cancelled"]?.numberValue.map(Int.init) ?? 0
+        return result["cancelled"]?.intValue ?? 0
     }
 
     /// `groups.retry {room_id, task_id}`.
@@ -307,11 +307,18 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
     }
 
     // MARK: - decoding
+    //
+    // Every integer read below goes through `JSONValue.intValue`, whose bound
+    // (2^63-EXCLUSIVE, owned by `JSONValue.boundedInt`) keeps a buggy or
+    // hostile gateway from trapping the process through `Int(_:)`. An
+    // unrepresentable number reads exactly like a missing key at each site
+    // (`?? 0`, or an optional's nil) — never a clamped/invented seq, epoch or
+    // revision the caller would act on.
 
     static func decodeCapabilities(_ result: JSONValue) -> GroupsCapabilities {
         let roomLink = result["room_link"]?.objectValue
         return GroupsCapabilities(
-            protocolVersion: result["protocol_version"]?.numberValue.map(Int.init) ?? 0,
+            protocolVersion: result["protocol_version"]?.intValue ?? 0,
             driver: result["driver"]?.boolValue ?? false,
             persistentProcess: result["persistent_process"]?.boolValue ?? false,
             authorityGatewayID: result["authority_gateway_id"]?.stringValue ?? "",
@@ -319,7 +326,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
             roomLinkDisabledReason: roomLink?["reason"]?.stringValue,
             features: result["features"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             methods: result["methods"]?.arrayValue?.compactMap(\.stringValue) ?? [],
-            maxLogLimit: result["max_log_limit"]?.numberValue.map(Int.init) ?? 0
+            maxLogLimit: result["max_log_limit"]?.intValue ?? 0
         )
     }
 
@@ -327,7 +334,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         guard let rooms = result["rooms"]?.arrayValue else {
             throw GroupsError.malformedPayload("groups.list missing 'rooms'")
         }
-        let nextOffset = result["next_offset"]?.numberValue.map(Int.init)
+        let nextOffset = result["next_offset"]?.intValue
         let decoded = rooms.compactMap { try? Self.decodeRoom($0) }
         return (decoded, nextOffset)
     }
@@ -342,12 +349,12 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
             name: o["name"]?.stringValue ?? "",
             membersJSON: Self.decodeMembersJSON(o["members"]),
             authorityGatewayID: o["authority_gateway_id"]?.stringValue ?? "",
-            authorityEpoch: o["authority_epoch"]?.numberValue.map(Int.init) ?? 0,
-            revision: o["revision"]?.numberValue.map(Int.init) ?? 0,
+            authorityEpoch: o["authority_epoch"]?.intValue ?? 0,
+            revision: o["revision"]?.intValue ?? 0,
             createdAt: o["created_at"]?.numberValue ?? 0,
             updatedAt: o["updated_at"]?.numberValue ?? 0,
             disbandedAt: o["disbanded_at"]?.numberValue,
-            latestSeq: o["latest_seq"]?.numberValue.map(Int.init)
+            latestSeq: o["latest_seq"]?.intValue
         )
     }
 
@@ -365,13 +372,13 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         guard let events = result["events"]?.arrayValue else {
             throw GroupsError.malformedPayload("groups.log missing 'events'")
         }
-        let cursor = result["cursor"]?.numberValue.map(Int.init) ?? 0
-        let latestSeq = result["latest_seq"]?.numberValue.map(Int.init) ?? 0
+        let cursor = result["cursor"]?.intValue ?? 0
+        let latestSeq = result["latest_seq"]?.intValue ?? 0
         let hasMore = result["has_more"]?.boolValue ?? false
         let authorityObj = result["authority"]?.objectValue
         let authority = RoomAuthority(
             gatewayID: authorityObj?["gateway_id"]?.stringValue ?? "",
-            epoch: authorityObj?["epoch"]?.numberValue.map(Int.init) ?? 0
+            epoch: authorityObj?["epoch"]?.intValue ?? 0
         )
         let decodedEvents: [HostedRoomEvent] = events.compactMap(Self.decodeEvent)
         return RoomLogPage(
@@ -390,7 +397,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         let actorObj = o["actor"]?.objectValue
         return HostedRoomEvent(
             roomID: o["room_id"]?.stringValue ?? "",
-            seq: o["seq"]?.numberValue.map(Int.init) ?? 0,
+            seq: o["seq"]?.intValue ?? 0,
             eventID: eventID,
             kind: kind,
             actorKind: actorObj?["kind"]?.stringValue ?? "",

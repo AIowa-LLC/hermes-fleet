@@ -198,7 +198,7 @@ public struct GatewayConversationClient: ConversationProviding {
         }
         let messages = result["messages"]?.arrayValue?
             .compactMap(GatewaySessionHistoryClient.decodeMessage) ?? []
-        let count = result["message_count"]?.numberValue.map(Int.init) ?? messages.count
+        let count = result["message_count"]?.intValue ?? messages.count
         let info = result["info"]?.objectValue ?? [:]
         return ConversationSession(
             sessionID: sessionID,
