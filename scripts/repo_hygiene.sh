@@ -37,12 +37,26 @@ echo "== 2. worktree topology =="
 MAP="$(git worktree list --porcelain)"
 COUNT=$(grep -c '^worktree ' <<<"$MAP")
 if [ "$COUNT" -le 4 ]; then ok "$COUNT worktrees (lean)"; else bad "$COUNT worktrees (bloat — prune stale ones)"; fi
-grep -q "^worktree ${REPO_HOME}/hermes-fleet\$" <<<"$MAP" && ok "root worktree present (${REPO_HOME}/hermes-fleet)"
+if grep -q "^worktree ${REPO_HOME}/hermes-fleet\$" <<<"$MAP"; then
+  ok "root worktree present (${REPO_HOME}/hermes-fleet)"
+else
+  bad "root worktree MISSING (${REPO_HOME}/hermes-fleet) — run: git worktree add <path>"
+fi
 
 echo "== 3. every worktree clean =="
 while IFS= read -r wt; do
   wt="${wt#worktree }"
-  dirty=$(git -C "$wt" status --porcelain 2>/dev/null | grep -v '^?? build/' | wc -l | tr -d ' ')
+  # A listed worktree whose directory is gone (prunable) makes `git status`
+  # fail: that failure IS the hygiene drift this check exists to surface, so
+  # it must be reported — never silently counted as clean.
+  if ! status_out="$(git -C "$wt" status --porcelain 2>/dev/null)"; then
+    bad "unreadable worktree: $wt (directory missing/stale — run: git worktree prune)"
+    continue
+  fi
+  dirty=0
+  if [ -n "$status_out" ]; then
+    dirty="$(grep -v '^?? build/' <<<"$status_out" | wc -l | tr -d ' ')"
+  fi
   if [ "$dirty" -eq 0 ]; then ok "clean: $wt"; else bad "$dirty uncommitted path(s) in $wt (commit or recover them)"; fi
 done < <(grep '^worktree ' <<<"$MAP")
 
