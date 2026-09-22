@@ -325,6 +325,11 @@ public extension SwiftDataCacheStore {
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
                  CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
                  ProjectsSnapshotRow.self,
+                 // ADR-0012 launch cache rides THIS container (FleetServiceGraph
+                 // hands SwiftDataLaunchCacheStore(container:) the shared one),
+                 // so its row models must be in the schema or every fetch on
+                 // them throws / raises (OCR review, 2026-09-22).
+                 LaunchRosterRow.self, LaunchSessionListRow.self,
             configurations: config
         )
         return SwiftDataCacheStore(container: container)
@@ -343,6 +348,11 @@ public extension SwiftDataCacheStore {
             for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
                  CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
                  ProjectsSnapshotRow.self,
+                 // ADR-0012 launch cache rides THIS container (FleetServiceGraph
+                 // hands SwiftDataLaunchCacheStore(container:) the shared one),
+                 // so its row models must be in the schema or every fetch on
+                 // them throws / raises (OCR review, 2026-09-22).
+                 LaunchRosterRow.self, LaunchSessionListRow.self,
             configurations: config
         )
         // The store file is created eagerly at container init (verified); apply
