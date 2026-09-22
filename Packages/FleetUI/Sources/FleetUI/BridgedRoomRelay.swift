@@ -14,6 +14,9 @@ import FleetCore
 /// - `send` persists the user message and returns IMMEDIATELY (the composer
 ///   never blocks on member turns); the fan-out runs as detached per-member
 ///   tails that land replies and failure notes in the store as they close.
+/// - `send` HONORS the caller's idempotency key (at-most-once): the key is
+///   the local event id, so a retry of one logical message neither appends a
+///   second user event nor re-runs the member fan-out.
 /// - Reply collection is an INACTIVITY window, not a turn cap: any streamed
 ///   event on the member's session extends the deadline (real agentic turns
 ///   run 3-4 minutes while streaming). A timed-out member stays watched for
@@ -116,7 +119,29 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         }
     }
 
+    /// `send` without a caller-supplied key: the relay mints its own local
+    /// event id (the pre-key behavior, unchanged).
     public func send(roomID: String, text: String, threadID: String?) async throws -> Int {
+        try await send(roomID: roomID, text: text, threadID: threadID, idempotencyKey: nil)
+    }
+
+    /// Key-bearing send — the `RoomChatCommanding` at-most-once overload. The
+    /// caller's `idempotencyKey` IS this message's local event id, so a retry
+    /// of ONE logical message finds its event already durable and returns it
+    /// WITHOUT a second `message.user` append and WITHOUT re-running the
+    /// member fan-out (the obligation the protocol's compatibility default
+    /// cannot meet).
+    ///
+    /// The lookup reads the STORE, not relay memory, so the guarantee holds
+    /// across relay reconstruction (gateway reconnect / app relaunch) — the
+    /// retry that matters most is the one after an indeterminate transport
+    /// failure, which is exactly when the relay may be a new instance.
+    /// Same-key sends are the caller's SEQUENTIAL retries (`RoomChatView`
+    /// reuses one pending id per logical message and never overlaps them);
+    /// the key alone identifies the message, so the text is not re-matched.
+    public func send(
+        roomID: String, text: String, threadID: String?, idempotencyKey: String?
+    ) async throws -> Int {
         guard let record = await store.record(roomKey: roomID) else {
             throw RoomCommandFailure.notConnected
         }
@@ -124,18 +149,29 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         // projected (`isDeleted: false`) so the room remains readable, so the
         // seam — not the projection — has to refuse the write: without this a
         // send into a tombstone persists a user message and spawns tails that
-        // can never answer.
+        // can never answer. The refusal guards run BEFORE the dedupe: a
+        // tombstoned room accepts no write, keyed or not.
         guard record.disbandedAt == nil else {
             throw RoomCommandFailure.rpcFailed(
                 "This Group was disbanded — it no longer accepts messages.", 0)
         }
         syncSeq(roomID: roomID, latest: record.events.last?.seq)
 
+        // At-most-once: a keyed retry whose event is already in the log is a
+        // no-op that reports the original seq — no append, no fan-out, no
+        // new member turn.
+        if let idempotencyKey,
+           let landed = record.events.last(where: {
+               $0.kind == "message.user" && $0.eventID == idempotencyKey
+           }) {
+            return landed.seq
+        }
+
         let userSeq = nextSeq
         nextSeq += 1
         try await store.append(events: [BridgedRooms.EventRecord(
             seq: userSeq,
-            eventID: "fleet-bridged-\(userSeq)-user",
+            eventID: idempotencyKey ?? "fleet-bridged-\(userSeq)-user",
             kind: "message.user",
             actorKind: "user",
             actorID: "local-user",

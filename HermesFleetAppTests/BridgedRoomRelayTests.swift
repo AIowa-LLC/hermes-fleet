@@ -327,6 +327,119 @@ final class BridgedRoomRelayTests: XCTestCase {
         XCTAssertEqual(record.events.filter { $0.kind == "message.member" }.count, 2)
     }
 
+    // MARK: - At-most-once sends (RoomChatCommanding idempotency key)
+
+    /// The key-bearing overload: a retry of ONE logical message (same key)
+    /// appends exactly one `message.user` event and does NOT re-run the
+    /// member fan-out.
+    func testRepeatedIdempotencyKeyAppendsOneUserEventAndOneFanOut() async throws {
+        let store = store()
+        let conversation = ImmediateConversation()
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        // The LIVE path is the protocol existential (`RoomChatViewModel` holds
+        // `any RoomChatCommanding`): calling through it proves the class
+        // implements the key-bearing requirement itself instead of inheriting
+        // the key-DISCARDING compatibility default.
+        let seam: any RoomChatCommanding = relay
+        let key = "fleet-" + UUID().uuidString.lowercased()
+        let firstSeq = try await seam.send(
+            roomID: "room", text: "Hello", threadID: nil, idempotencyKey: key)
+        // Let the detached fan-out finish first: the retry under test is a
+        // SEQUENTIAL retry, not a race with the initial turn.
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
+        }
+        let retrySeq = try await seam.send(
+            roomID: "room", text: "Hello", threadID: nil, idempotencyKey: key)
+        XCTAssertEqual(retrySeq, firstSeq, "a deduped retry reports the original event")
+        // Bounded settle: a re-run fan-out would land a second reply quickly.
+        try await Task.sleep(for: .milliseconds(300))
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        let userEvents = record.events.filter { $0.kind == "message.user" }
+        XCTAssertEqual(userEvents.count, 1, "one logical message = one user event")
+        XCTAssertEqual(userEvents.first?.eventID, key, "the key IS the local event id")
+        XCTAssertEqual(record.events.filter { $0.kind == "message.member" }.count, 1,
+                       "a deduped retry must not re-run the member fan-out")
+        XCTAssertEqual(conversation.createCount, 1)
+        XCTAssertTrue(conversation.resumeIDs.isEmpty,
+                      "a deduped retry performs no member turn at all")
+        XCTAssertFalse(record.events.contains { $0.kind == "turn.failed" })
+        _ = try? await relay.stop(roomID: "room")
+    }
+
+    /// A DIFFERENT key is a different logical message: it appends a new user
+    /// event. The nil-key (3-arg) path keeps minting the relay's own ids —
+    /// the pre-key behavior, unchanged.
+    func testFreshKeyAppendsANewUserEventAndNilKeyKeepsLocalIDs() async throws {
+        let store = store()
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [], createdAt: 0))
+        let relay = BridgedRoomRelay(store: store, resolver: { _ in nil })
+        let first = try await relay.send(
+            roomID: "room", text: "One", threadID: nil, idempotencyKey: "key-one")
+        let second = try await relay.send(
+            roomID: "room", text: "Two", threadID: nil, idempotencyKey: "key-two")
+        let third = try await relay.send(roomID: "room", text: "Three", threadID: nil)
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertEqual(record.events.map { $0.seq }, [first, second, third])
+        XCTAssertEqual(record.events.map { $0.seq }, [1, 2, 3])
+        XCTAssertEqual(record.events.map { $0.eventID },
+                       ["key-one", "key-two", "fleet-bridged-3-user"],
+                       "a fresh key appends; the nil key keeps the local id shape")
+        XCTAssertEqual(record.events.map { $0.payloadText }, ["One", "Two", "Three"])
+    }
+
+    /// The dedupe is DURABLE, not relay memory: a rebuilt relay (gateway
+    /// reconnect / app relaunch) still folds a retry of the same key. The
+    /// rebuilt relay has NO reachable member, so a re-run fan-out would have
+    /// appended a failure note — its absence is the proof no member turn was
+    /// attempted.
+    func testIdempotencyKeyDedupesAcrossRelayReconstruction() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("rooms.json")
+        let store = BridgedRooms.Store(url: url)
+        let conversation = ImmediateConversation()
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        let key = "fleet-" + UUID().uuidString.lowercased()
+        let firstSeq = try await relay.send(
+            roomID: "room", text: "Hello", threadID: nil, idempotencyKey: key)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
+        }
+        // A new relay over the same store (app relaunch / gateway reconnect).
+        let rebuilt = BridgedRoomRelay(
+            store: BridgedRooms.Store(url: url), resolver: { _ in nil }, memberTimeout: 1)
+        let retrySeq = try await rebuilt.send(
+            roomID: "room", text: "Hello", threadID: nil, idempotencyKey: key)
+        XCTAssertEqual(retrySeq, firstSeq, "the key folds across relay instances")
+        try await Task.sleep(for: .milliseconds(300))
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertEqual(record.events.filter { $0.kind == "message.user" }.count, 1)
+        XCTAssertEqual(record.events.filter { $0.kind == "message.member" }.count, 1)
+        XCTAssertFalse(record.events.contains { $0.kind == "turn.failed" },
+                       "a deduped retry spawns no member turn to fail")
+    }
+
     // MARK: - Build 76: group-context parity
 
     /// Captures every prompt submitted to a member's bridge session and
