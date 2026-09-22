@@ -279,6 +279,42 @@ final class BotModeNetworkingTests: XCTestCase {
         }
     }
 
+    /// The same wire path with a HOSTILE revision value: `ui_meta_revisions`
+    /// at exactly 2^63 used to reach `Int(_:)` in the receipt decoder and kill
+    /// the process (the response frame's id is decoded on the way in too, so
+    /// the whole codec → client → receipt path is exercised). The receipt must
+    /// drop the unreadable revision and keep the readable one.
+    func testMetadataWriteSurvivesAHostileRevisionValueAtTheBoundary() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "profiles.configure" {
+                    return [Self.responseFrame(id: id, resultObject: #"""
+                    {"ok":true,"applied":{"ui_meta":true,"ui_meta_revisions":{"hermes-bots":9223372036854775808,"hermes-bots-chat":9}}}
+                    """#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayBotModeClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let receipt = try await client.writeBotMetadata(
+            profile: "researcher", metadata: BotModeMetadata(),
+            expectedRevision: 3, previousRaw: nil)
+        XCTAssertTrue(receipt.applied)
+        XCTAssertEqual(receipt.newRevisions, ["hermes-bots-chat": 9],
+                       "the unreadable revision is dropped; the readable one survives")
+    }
+
     // MARK: - hosted groups client
 
     static let capabilitiesResult = #"""

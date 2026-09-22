@@ -359,9 +359,11 @@ public struct GatewaySlashCommandClient: SlashCommandProviding {
     /// `Int(2^63)` traps. Every representable `n` below 2^63 converts without
     /// trapping (Int truncates the fraction).
     static func intValue(_ value: JSONValue?) -> Int? {
-        guard case .number(let n)? = value else { return nil }
-        guard n.isFinite, n >= 0, n < 9_223_372_036_854_775_808.0 else { return nil }
-        return Int(n)
+        guard let n = value?.numberValue, n >= 0 else { return nil }
+        // The 2^63-exclusive bound lives in ONE place (`JSONValue.boundedInt`):
+        // `Double(Int.max)` rounds UP to exactly 2^63, so an inclusive
+        // `n <= Double(Int.max)` guard admitted a value that traps `Int(_:)`.
+        return JSONValue.boundedInt(n)
     }
 
     // MARK: Request/error mapping

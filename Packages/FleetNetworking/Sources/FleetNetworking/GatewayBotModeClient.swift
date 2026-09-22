@@ -88,7 +88,7 @@ public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconne
                 resolvedID: (resolved?.isEmpty == false) ? resolved : nil,
                 title: o["title"]?.stringValue ?? "",
                 preview: o["preview"]?.stringValue ?? "",
-                messageCount: o["message_count"]?.numberValue.map(Int.init) ?? 0
+                messageCount: o["message_count"]?.intValue ?? 0
             )
         }
         return CanonicalLookup(rows: rows)
@@ -274,7 +274,7 @@ public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconne
                 name: name,
                 label: o["label"]?.stringValue,
                 description: o["description"]?.stringValue,
-                toolCount: o["tool_count"]?.numberValue.map(Int.init) ?? 0,
+                toolCount: o["tool_count"]?.intValue ?? 0,
                 enabled: enabled)
         }
         let mcp = (object["mcp_servers"]?.arrayValue ?? []).compactMap { entry -> BotProfileDescription.MCPEntry? in
@@ -373,7 +373,11 @@ public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconne
         var newRevisions: [String: Int] = [:]
         if let revs = applied["ui_meta_revisions"]?.objectValue {
             for (key, value) in revs {
-                if let n = value.numberValue { newRevisions[key] = Int(n) }
+                // A revision outside `Int`'s range (the 2^63 boundary
+                // included) is not representable: drop the entry — the same
+                // shape as an absent key — instead of trapping or inventing a
+                // revision the next CAS write would echo back to the gateway.
+                if let revision = value.intValue { newRevisions[key] = revision }
             }
         }
         var conflict: BotProfileEditOutcome.MetadataConflict?
@@ -381,8 +385,11 @@ public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconne
            let botsConflict = conflicts[BotModeContract.botsMetaKey]?.objectValue {
             conflict = BotProfileEditOutcome.MetadataConflict(
                 key: BotModeContract.botsMetaKey,
-                expected: botsConflict["expected"]?.numberValue.map(Int.init) ?? 0,
-                actual: botsConflict["actual"]?.numberValue.map(Int.init) ?? 0)
+                // `MetadataConflict` carries non-optional Ints, so an
+                // unrepresentable value degrades to this site's existing
+                // missing-value default (0) — never an unguarded `Int(_:)`.
+                expected: botsConflict["expected"]?.intValue ?? 0,
+                actual: botsConflict["actual"]?.intValue ?? 0)
         }
         if let conflict {
             throw BotModeProfileError.metadataConflict(
@@ -483,7 +490,9 @@ public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconne
         }
         guard let row = profiles.first(where: { $0["name"]?.stringValue == profile }) else { return nil }
         guard let revisions = row["ui_meta_revisions"]?.objectValue else { return nil }
-        return revisions[key]?.numberValue.map(Int.init)
+        // An unrepresentable revision reads as "no revision for this key"
+        // (this method's existing unknown answer), never an unguarded `Int(_:)`.
+        return revisions[key]?.intValue
     }
 
     private func toJSON(_ value: MetadataValue) -> JSONValue {
@@ -606,15 +615,22 @@ public struct GatewayBotModeClient: BotModeChatProviding, GatewaySessionDisconne
         var newRevisions: [String: Int] = [:]
         if let revs = applied["ui_meta_revisions"]?.objectValue {
             for (key, value) in revs {
-                if let n = value.numberValue { newRevisions[key] = Int(n) }
+                // Same degradation as `decodeEditOutcome`: a revision outside
+                // `Int`'s range is dropped per key (absent-key shape), never
+                // converted unguarded (2^63 traps — verified).
+                if let revision = value.intValue { newRevisions[key] = revision }
             }
         }
         var conflicts: [String: BotModeProfileError.ExpectedActual] = [:]
         if let conflictObject = applied["ui_meta_conflicts"]?.objectValue {
             for (key, value) in conflictObject {
+                // An unrepresentable expected/actual drops the conflict entry
+                // for that key, exactly like a missing one; the caller then
+                // still fails TYPED (rpcFailed "did not apply"), never
+                // silently and never by trapping.
                 if let o = value.objectValue,
-                   let expected = o["expected"]?.numberValue.map(Int.init),
-                   let actual = o["actual"]?.numberValue.map(Int.init) {
+                   let expected = o["expected"]?.intValue,
+                   let actual = o["actual"]?.intValue {
                     conflicts[key] = BotModeProfileError.ExpectedActual(expected: expected, actual: actual)
                 }
             }
