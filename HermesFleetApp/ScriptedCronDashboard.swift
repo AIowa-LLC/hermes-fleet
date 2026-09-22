@@ -73,10 +73,12 @@ final class ScriptedCronDashboard: CronDashboardProviding, @unchecked Sendable {
 
     /// Async-safe scoped lock helper (NSLock is unavailable in async
     /// contexts on this toolchain — same helper as ScriptedManagementSeam).
-    private func unlocked<T>(_ body: () -> T) -> T {
+    /// `rethrows`: a lookup-and-mutate body must be able to raise `notFound`
+    /// from INSIDE the same critical section.
+    private func unlocked<T>(_ body: () throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
-        return body()
+        return try body()
     }
 
     private func replacingState(
@@ -135,9 +137,13 @@ final class ScriptedCronDashboard: CronDashboardProviding, @unchecked Sendable {
     }
 
     func updateJob(id: String, patch: CronJobPatch, profile: String?) async throws -> CronJobRecord {
-        let index = unlocked { jobs.firstIndex { $0.id == id } }
-        guard let index else { throw CronDashboardError.notFound }
-        return unlocked {
+        // Lookup and mutation share ONE critical section: finding the index in
+        // one scope and using it in another lets a concurrent delete shrink the
+        // array (trapping on `jobs[index]`) or rewrite the wrong record.
+        return try unlocked {
+            guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+                throw CronDashboardError.notFound
+            }
             let old = jobs[index]
             let name = patch.name ?? old.name
             let scheduleText = patch.schedule ?? old.scheduleDisplay
@@ -174,9 +180,12 @@ final class ScriptedCronDashboard: CronDashboardProviding, @unchecked Sendable {
     }
 
     private func setEnabled(id: String, enabled: Bool) async throws -> CronJobRecord {
-        let index = unlocked { jobs.firstIndex { $0.id == id } }
-        guard let index else { throw CronDashboardError.notFound }
-        return unlocked {
+        // One critical section (see updateJob): the index cannot outlive the
+        // lock and go stale under a concurrent delete.
+        return try unlocked {
+            guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+                throw CronDashboardError.notFound
+            }
             let old = jobs[index]
             let new = replacingState(
                 old, enabled: enabled,
@@ -189,9 +198,11 @@ final class ScriptedCronDashboard: CronDashboardProviding, @unchecked Sendable {
     }
 
     func triggerJob(id: String, profile: String?) async throws -> CronJobRecord {
-        let index = unlocked { jobs.firstIndex { $0.id == id } }
-        guard let index else { throw CronDashboardError.notFound }
-        return unlocked {
+        // One critical section (see updateJob).
+        return try unlocked {
+            guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+                throw CronDashboardError.notFound
+            }
             let old = jobs[index]
             let new = CronJobRecord(
                 id: old.id, name: old.name, prompt: old.prompt,
@@ -222,10 +233,15 @@ final class ScriptedCronDashboard: CronDashboardProviding, @unchecked Sendable {
     }
 
     func deleteJob(id: String, profile: String?) async throws {
-        let exists = unlocked { jobs.contains { $0.id == id } }
-        guard exists else { throw CronDashboardError.notFound }
-        unlocked { jobs.removeAll { $0.id == id } }
-        unlocked { runsByJob[id] = nil }
+        // Existence check and removal are one critical section: two scopes
+        // could report a job that a concurrent delete already removed.
+        try unlocked {
+            guard jobs.contains(where: { $0.id == id }) else {
+                throw CronDashboardError.notFound
+            }
+            jobs.removeAll { $0.id == id }
+            runsByJob[id] = nil
+        }
     }
 
     func runSessions(jobID: String, profile: String?, limit: Int) async throws -> [CronRunSession] {

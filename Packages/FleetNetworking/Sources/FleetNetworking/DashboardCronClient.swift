@@ -63,12 +63,12 @@ public struct DashboardCronClient: CronDashboardProviding, Sendable {
         return url(base: base, path: "/api/cron/jobs/\(encodedSegment(id))/runs", query: query)
     }
 
-    /// `…/api/cron/delivery-targets`.
-    public static func deliveryTargetsURL(base: URL) -> URL {
-        var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
-        components.path = "/api/cron/delivery-targets"
-        components.query = nil
-        return components.url!
+    /// `…/api/cron/delivery-targets`. `nil` for a base URL the components
+    /// parser cannot use — the caller maps that to `.malformedResponse`, the
+    /// same discipline as every other builder in this file (never a trap on
+    /// caller-supplied input).
+    public static func deliveryTargetsURL(base: URL) -> URL? {
+        url(base: base, path: "/api/cron/delivery-targets", query: [])
     }
 
     private static func profileQuery(_ profile: String?) -> [URLQueryItem] {
@@ -227,7 +227,10 @@ public struct DashboardCronClient: CronDashboardProviding, Sendable {
     }
 
     public func deliveryTargets() async throws -> [CronDeliveryTarget] {
-        let data = try await perform(url: Self.deliveryTargetsURL(base: baseURL), method: "GET")
+        guard let url = Self.deliveryTargetsURL(base: baseURL) else {
+            throw CronDashboardError.malformedResponse("bad delivery-targets URL")
+        }
+        let data = try await perform(url: url, method: "GET")
         struct Envelope: Decodable {
             let targets: [TargetPayload]
         }

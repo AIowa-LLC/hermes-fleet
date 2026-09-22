@@ -153,6 +153,35 @@ public struct CronJobRecord: Identifiable, Hashable, Sendable {
         ["error", "failed", "fire_failed", "completed"].contains(displayState.lowercased())
     }
 
+    /// True when `last_status` describes a last run the operator must read as a
+    /// failure. This key is the STATUS — never the job `state`: the two are
+    /// independent on the wire. The captured live list row carries
+    /// `state: "scheduled"` with `last_status: "blocked_config"` and
+    /// `failure_streak: 2` (scheduled for its next run, last run blocked),
+    /// while a one-shot that ran to completion has a terminal STATE with
+    /// `last_status: "ok"`.
+    ///
+    /// Vocabulary — `cron/jobs.py` `mark_job_run` writes the derived values
+    /// `ok` | `error` | `delivery_failed`, plus explicit overrides such as
+    /// `blocked_config` (preflight block: no LLM call) and `fire_failed` (the
+    /// scheduler's forward-failure stamp). The gateway's own doctor
+    /// (`hermes_cli/cron.py`) treats every status outside
+    /// {ok, delivery_failed, delivery_queued} as a failed last run; Fleet keeps
+    /// the deny-list below so an unrecognized future value renders neutrally
+    /// instead of claiming a failure it cannot name.
+    public var isFailureStatus: Bool {
+        guard let lastStatus else { return false }
+        let status = lastStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !status.isEmpty else { return false }
+        return Self.failureStatuses.contains(status)
+    }
+
+    /// The `last_status` values the UI renders with the warning treatment:
+    /// BotRoutinesView's `runStatusLine` set plus the live `blocked_config`.
+    private static let failureStatuses: Set<String> = [
+        "failed", "error", "failure", "fire_failed", "blocked_config",
+    ]
+
     /// A copy carrying the given execution ledger (`nil` clears it).
     ///
     /// The wire attaches `latest_execution` to LIST rows only
@@ -574,24 +603,42 @@ public enum CronTimestamp {
 
     /// ISO-8601 parse with the fractional-seconds fallback the gateway's
     /// `datetime.now().isoformat()` values need.
+    ///
+    /// The splitters are shared statics: building a formatter is comparatively
+    /// expensive and this parser runs on the render path (every row's
+    /// next-fire line, the detail screen's schedule/ledger rows).
+    /// `nonisolated(unsafe)`: `ISO8601DateFormatter` is not `Sendable`, but
+    /// these instances are only ever used for parsing, which is thread-safe.
     static func parse(_ raw: String) -> Date? {
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = withFraction.date(from: raw) { return date }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        if let date = plain.date(from: raw) { return date }
+        if let date = isoWithFractionalSeconds.date(from: raw) { return date }
+        if let date = isoWithoutFractionalSeconds.date(from: raw) { return date }
         // Naive local timestamps ("2026-09-05T07:00:00" — the scripted
         // fixtures' shape): interpret as local wall time.
         if !raw.hasSuffix("Z"), !raw.contains("+") {
-            let naive = DateFormatter()
-            naive.locale = Locale(identifier: "en_US_POSIX")
-            naive.timeZone = .current
-            naive.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            return naive.date(from: raw)
+            return naiveLocalFormatter.date(from: raw)
         }
         return nil
     }
+
+    nonisolated(unsafe) private static let isoWithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    nonisolated(unsafe) private static let isoWithoutFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let naiveLocalFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter
+    }()
 
     private static let displayFormatter: DateFormatter = {
         let formatter = DateFormatter()

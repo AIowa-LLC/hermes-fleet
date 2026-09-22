@@ -1,7 +1,7 @@
 import XCTest
 import FleetCore
 import FleetPersistence
-import FleetUI
+@testable import FleetUI
 @testable import HermesFleetApp
 
 /// Card B — the Cron destination view model over the dashboard REST seam:
@@ -374,5 +374,185 @@ final class CronDashboardModelTests: XCTestCase {
         // honest empty state across mutations.
         await model.setJob("job-2", enabled: true, profile: "default")
         XCTAssertNil(model.ledger(for: "job-2"), "a job that never fired still has no ledger")
+    }
+
+    // MARK: - OCR review round (Cron surfaces)
+
+    /// [medium] The last-run treatment follows `last_status`, never the job
+    /// `state`: the captured live list row pairs `state: "scheduled"` with
+    /// `last_status: "blocked_config"` + `failure_streak: 2` (a scheduled job
+    /// whose last run was blocked), while a completed one-shot carries a
+    /// terminal STATE and a healthy status.
+    func testFailureStatusFollowsTheStatusNotTheState() {
+        let blocked = CronJobRecord(
+            id: "0d6e0654a3bf", name: "fleet-pin-agent", prompt: "say pin",
+            schedule: CronSchedule(kind: "cron", expr: "0 3 * * *", display: "0 3 * * *"),
+            enabled: true, state: "scheduled", deliver: "local",
+            lastStatus: "blocked_config", failureStreak: 2)
+        XCTAssertFalse(blocked.isTerminalOrError, "state is `scheduled` — not terminal")
+        XCTAssertTrue(blocked.isFailureStatus, "the last run was blocked at preflight")
+
+        let completedOneShot = CronJobRecord(
+            id: "job-once", name: "one shot", prompt: "p",
+            schedule: CronSchedule(kind: "once", expr: "", display: "once"),
+            enabled: false, state: "completed", deliver: "local", lastStatus: "ok")
+        XCTAssertTrue(completedOneShot.isTerminalOrError)
+        XCTAssertFalse(completedOneShot.isFailureStatus, "a successful one-shot is not a failure")
+
+        for status in ["error", "failed", "failure", "fire_failed", "blocked_config", " FAILED "] {
+            let job = CronJobRecord(
+                id: "j", name: "n", schedule: CronSchedule(kind: "cron", expr: "* * * * *", display: "* * * * *"),
+                enabled: true, state: "scheduled", deliver: "local", lastStatus: status)
+            XCTAssertTrue(job.isFailureStatus, status)
+        }
+        for status in ["ok", "delivery_queued", "delivery_failed", "", "   "] {
+            let job = CronJobRecord(
+                id: "j", name: "n", schedule: CronSchedule(kind: "cron", expr: "* * * * *", display: "* * * * *"),
+                enabled: true, state: "scheduled", deliver: "local", lastStatus: status)
+            XCTAssertFalse(job.isFailureStatus, "not a failure status: '\(status)'")
+        }
+        let neverRan = CronJobRecord(
+            id: "j", name: "n", schedule: CronSchedule(kind: "cron", expr: "* * * * *", display: "* * * * *"),
+            enabled: true, state: "scheduled", deliver: "local", lastStatus: nil)
+        XCTAssertFalse(neverRan.isFailureStatus)
+    }
+
+    /// [low] The hoisted `CronTimestamp` formatters must keep parsing every
+    /// wire shape (rendered from view bodies, so repeated calls must stay
+    /// stable), and an unparsable value still renders verbatim.
+    func testCronTimestampDisplayParsesWireShapesDeterministically() {
+        // The naive shape is interpreted as LOCAL wall time → timezone-proof.
+        XCTAssertEqual(CronTimestamp.display("2026-09-05T07:00:00"), "Sep 5, 07:00")
+        XCTAssertEqual(CronTimestamp.display("2026-09-05T07:00:00"), "Sep 5, 07:00",
+                       "a repeated render-path call stays stable (shared formatters)")
+        // The live gateway shape (fractional seconds + offset) parses; its
+        // exact local render is timezone-dependent, so compare the two
+        // splitters against each other instead.
+        let fractional = CronTimestamp.display("2026-09-17T01:36:21.643921-05:00")
+        XCTAssertNotNil(fractional)
+        XCTAssertEqual(fractional, CronTimestamp.display("2026-09-17T01:36:21-05:00"),
+                       "fractional and plain ISO splitters agree on the instant")
+        XCTAssertEqual(CronTimestamp.display("not a date"), "not a date", "unparsable renders verbatim")
+        XCTAssertNil(CronTimestamp.display(nil))
+        XCTAssertNil(CronTimestamp.display(""))
+        let epoch = CronTimestamp.display(epochSeconds: 1_788_596_400)
+        XCTAssertNotNil(epoch)
+        XCTAssertEqual(epoch, CronTimestamp.display(epochSeconds: 1_788_596_400))
+        XCTAssertNil(CronTimestamp.display(epochSeconds: 0))
+        XCTAssertNil(CronTimestamp.display(epochSeconds: nil))
+    }
+
+    /// [low] The panes render BOTH the notice and the error bar when both are
+    /// non-nil, so each terminal outcome replaces the other banner.
+    func testMutationOutcomesReplaceTheOppositeBanner() async {
+        let seam = ScriptedDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        await model.start(profile: "default")
+
+        let deleted = await model.deleteJob("job-2", profile: "default")
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(model.notice, "Job deleted.")
+        XCTAssertNil(model.errorMessage)
+
+        seam.failNext(CronDashboardError.unauthorized)
+        let toggled = await model.setJob("job-1", enabled: false, profile: "default")
+        XCTAssertFalse(toggled)
+        XCTAssertEqual(model.errorMessage, "the gateway rejected the dashboard session — reconnect this gateway")
+        XCTAssertNil(model.notice, "a fresh failure must not sit beside the stale success notice")
+
+        let recovered = await model.setJob("job-1", enabled: false, profile: "default")
+        XCTAssertTrue(recovered)
+        XCTAssertNil(model.errorMessage, "a fresh success clears the stale error")
+        XCTAssertNil(model.notice)
+    }
+
+    /// The trigger's two honest outcomes are mutually exclusive too (the 409
+    /// claim is a NOTICE, every other failure is an error).
+    func testTriggerNoticeAndFailureAreExclusive() async {
+        let seam = ScriptedDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        await model.start(profile: "default")
+
+        seam.failNext(CronDashboardError.unauthorized)
+        await model.triggerJob("job-1", profile: "default")
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertNil(model.notice)
+
+        seam.setTriggerResult(.failure(CronDashboardError.conflict("already running")))
+        await model.triggerJob("job-1", profile: "default")
+        XCTAssertEqual(model.notice, "already running")
+        XCTAssertNil(model.errorMessage, "the conflict notice clears the previous error")
+    }
+
+    /// A failed list read is a terminal outcome as well: it supersedes the last
+    /// success notice (a stale "Job created." beside a fresh error was the
+    /// reporting symptom).
+    func testFailedListReadSupersedesTheSuccessNotice() async {
+        let seam = ScriptedDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        await model.start(profile: "default")
+        let deleted = await model.deleteJob("job-2", profile: "default")
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(model.notice, "Job deleted.")
+
+        seam.failNext(CronDashboardError.transport("boom"))
+        await model.refresh(profile: "default")
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(model.errorMessage, "boom")
+    }
+
+    /// [low] The model is shared per gateway, so a detail read for a DIFFERENT
+    /// job must drop the previous job's record and runs — including when the
+    /// requested read fails (otherwise the previous job's detail screen stands
+    /// in permanently for the missing one).
+    func testDetailClearsThePreviousJobWhenSwitching() async {
+        let seam = ScriptedDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        await model.start(profile: "default")
+        await model.refreshDetail(id: "job-1", profile: "default")
+        XCTAssertEqual(model.detail?.id, "job-1")
+        XCTAssertFalse(model.detailRuns.isEmpty, "precondition: job-1 carries a run")
+
+        seam.failNextDetail(CronDashboardError.notFound)
+        // refreshDetail is the screen's own entry point and drops the previous
+        // record BEFORE its async reads (asserted once the call settles; the
+        // view additionally guards on the requested id while they run).
+        await model.refreshDetail(id: "job-2", profile: "default")
+        XCTAssertNil(model.detail, "the previous job's record must not stand in for the requested one")
+        XCTAssertTrue(model.detailRuns.isEmpty, "nor its run history")
+        XCTAssertEqual(model.detailError, "job not found on this gateway")
+
+        // The same read for the SAME job keeps its record while refreshing
+        // (a pull-to-refresh must not blank the screen).
+        await model.refreshDetail(id: "job-1", profile: "default")
+        XCTAssertEqual(model.detail?.id, "job-1")
+    }
+
+    /// [medium, medium] The create form's scope comes from the machine's BOUND
+    /// section: the section's resolved profile (never a hardcoded `default`),
+    /// and nothing at all when no section is bound — the + stays disabled
+    /// instead of opening an empty sheet.
+    func testCreateScopeFollowsTheBoundSectionProfile() async {
+        let gateway = GatewayID(rawValue: "g1")
+        let seam = ScriptedDashboard()
+
+        let cache = CronSectionCache()
+        XCTAssertNil(cache.createScope(for: gateway), "no section bound yet → no scope")
+
+        let model = cache.model(for: gateway, seam: seam)
+        cache.retain(gateway)
+        XCTAssertNil(cache.createScope(for: gateway), "bound but never loaded → no resolved profile")
+
+        await model.start(profile: "researcher")
+        let scope = cache.createScope(for: gateway)
+        XCTAssertEqual(scope?.profile.rawValue, "researcher",
+                       "the scope follows the section's resolved profile — never `default`")
+        XCTAssertTrue(scope?.model === model, "the scope reuses the section's model")
+
+        // A model that exists in the cache without a retain (created on demand)
+        // is not a scope either: the sheet must ride a retained section.
+        let other = CronSectionCache()
+        _ = other.model(for: gateway, seam: seam)
+        XCTAssertNil(other.createScope(for: gateway), "an unretained model is not a section scope")
     }
 }

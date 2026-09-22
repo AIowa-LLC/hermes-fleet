@@ -60,9 +60,18 @@ final class DashboardCronClientTests: XCTestCase {
         XCTAssertEqual(try limit(7), "7")
     }
 
+    /// [low] The builder returns an OPTIONAL like every other URL builder in
+    /// the file (a caller-supplied base URL must never be force-unwrapped), and
+    /// it still clears any query the base carried.
     func testDeliveryTargetsURL() throws {
         let base = try XCTUnwrap(URL(string: "http://gw.example.invalid:18923"))
-        XCTAssertEqual(DashboardCronClient.deliveryTargetsURL(base: base).path, "/api/cron/delivery-targets")
+        let url = try XCTUnwrap(DashboardCronClient.deliveryTargetsURL(base: base))
+        XCTAssertEqual(url.path, "/api/cron/delivery-targets")
+
+        let baseWithQuery = try XCTUnwrap(URL(string: "http://gw.example.invalid:18923/?token=1"))
+        let cleared = try XCTUnwrap(DashboardCronClient.deliveryTargetsURL(base: baseWithQuery))
+        XCTAssertEqual(cleared.absoluteString, "http://gw.example.invalid:18923/api/cron/delivery-targets",
+                       "the base's query must not ride the delivery-targets URL")
     }
 
     // MARK: - List + detail decode (live shapes)

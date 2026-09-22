@@ -514,9 +514,12 @@ extension CronJobRow {
                 .foregroundStyle(job.enabled ? theme.textSecondary : theme.textMuted)
                 .accessibilityIdentifier("cron.row.nextfire.\(job.id)")
             if let status = job.lastStatus, !status.isEmpty {
-                Label(status, systemImage: job.isTerminalOrError ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
+                // Status, not state (`CronJobRecord.isFailureStatus`): a failed
+                // last run on a still-scheduled job is the operator's warning,
+                // and a completed one-shot with "ok" is not.
+                Label(status, systemImage: job.isFailureStatus ? "exclamationmark.triangle.fill" : "clock.arrow.circlepath")
                     .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(job.isTerminalOrError ? FleetTheme.statusDestructive : theme.textMuted)
+                    .foregroundStyle(job.isFailureStatus ? FleetTheme.statusDestructive : theme.textMuted)
             }
         }
     }

@@ -24,6 +24,10 @@ public final class CronDashboardModel {
     /// Pane-level error (list load / mutations that have no row to blame).
     public private(set) var errorMessage: String?
     /// Honest informational notice (run requested, already running, …).
+    ///
+    /// `notice` and `errorMessage` are mutually exclusive BY CONTRACT: every
+    /// terminal outcome (a mutation, or a list read) replaces the previous
+    /// one's banner, because the panes render BOTH bars when both are non-nil.
     public private(set) var notice: String?
     /// Job ids with a mutation in flight (row buttons disable).
     public private(set) var inFlightJobs: Set<String> = []
@@ -79,6 +83,10 @@ public final class CronDashboardModel {
             jobs = try await dashboard.listJobs(profile: profile)
             errorMessage = nil
         } catch {
+            // A failed read supersedes the last success notice (a stale
+            // "Job created." must never sit beside a fresh error); a successful
+            // read leaves an in-flight notice alone.
+            notice = nil
             errorMessage = Self.describe(error)
         }
     }
@@ -91,7 +99,21 @@ public final class CronDashboardModel {
 
     // MARK: Detail
 
+    /// One model is shared per gateway (CronSectionCache) and the detail screen
+    /// renders whatever `detail` holds: a read for a DIFFERENT job must drop the
+    /// previous job's record (and its runs) instead of showing them until — or
+    /// permanently, when the requested read throws (the job was deleted
+    /// elsewhere) — the load resolves.
+    private func clearDetailIfSwitching(to id: String) {
+        guard detail?.id != id else { return }
+        detail = nil
+        detailError = nil
+        detailRuns = []
+        runsError = nil
+    }
+
     public func loadDetail(id: String, profile: String?) async {
+        clearDetailIfSwitching(to: id)
         isLoadingDetail = true
         defer { isLoadingDetail = false }
         do {
@@ -116,6 +138,9 @@ public final class CronDashboardModel {
     /// Detail-screen refresh: the list snapshot (which carries the execution
     /// ledger), the job record, and its run history.
     public func refreshDetail(id: String, profile: String?) async {
+        // Drop the previous job BEFORE the (async) reads: the screen must not
+        // paint another job's record while they are in flight.
+        clearDetailIfSwitching(to: id)
         await reload(profile: profile)
         await loadDetail(id: id, profile: profile)
         await loadRuns(id: id, profile: profile)
@@ -178,8 +203,10 @@ public final class CronDashboardModel {
                 : try await dashboard.pauseJob(id: id, profile: profile)
             applyRow(updated)
             if detail?.id == updated.id { detail = updated }
+            errorMessage = nil
             return true
         } catch {
+            notice = nil
             errorMessage = Self.describe(error)
             return false
         }
@@ -194,6 +221,7 @@ public final class CronDashboardModel {
             let updated = try await dashboard.triggerJob(id: id, profile: profile)
             applyRow(updated)
             if detail?.id == updated.id { detail = updated }
+            errorMessage = nil
             notice = "Run requested — the job is firing now."
             // last_run_at / the execution ledger refresh on the next read.
             await reload(profile: profile)
@@ -202,8 +230,10 @@ public final class CronDashboardModel {
                 await loadDetail(id: id, profile: profile)
             }
         } catch let error as CronDashboardError where error.isAlreadyRunning {
+            errorMessage = nil
             notice = error.errorDescription
         } catch {
+            notice = nil
             errorMessage = Self.describe(error)
         }
     }
@@ -219,8 +249,10 @@ public final class CronDashboardModel {
             jobs.removeAll { $0.id == id }
             if detail?.id == id { detail = nil }
             notice = "Job deleted."
+            errorMessage = nil
             return true
         } catch {
+            notice = nil
             errorMessage = Self.describe(error)
             return false
         }

@@ -26,7 +26,11 @@ struct CronJobDetailView: View {
 
     var body: some View {
         List {
-            if let job = model.detail {
+            // Guard by id: the model is shared per gateway, so a record that
+            // belongs to ANOTHER job must never paint here (the model also
+            // clears it when the requested id changes — this closes the window
+            // before the first read lands).
+            if let job = model.detail, job.id == jobID {
                 headerSection(job)
                 scheduleSection(job)
                 deliverySection(job)
@@ -34,7 +38,9 @@ struct CronJobDetailView: View {
                 ledgerSection(job)
                 runsSection(job)
                 actionsSection(job)
-            } else if model.isLoadingDetail {
+            } else if model.isLoadingDetail || model.detail != nil {
+                // A mismatched record means a switch is in flight: show the
+                // loading state, never the other job's data.
                 HStack {
                     Spacer()
                     ProgressView("Loading job…")
@@ -140,8 +146,11 @@ struct CronJobDetailView: View {
                 mono: true, id: "cron.detail.next")
             detailRow("Last run", value: CronTimestamp.display(job.lastRunAt) ?? "never", mono: true, id: "cron.detail.last")
             if let status = job.lastStatus, !status.isEmpty {
+                // The tone follows the STATUS, never the job state: a scheduled
+                // job can carry a failed last run, and a completed one-shot has
+                // a healthy status (see `CronJobRecord.isFailureStatus`).
                 detailRow("Last status", value: status, mono: true, id: "cron.detail.lastStatus",
-                          tone: job.isTerminalOrError ? FleetTheme.statusDestructive : nil)
+                          tone: job.isFailureStatus ? FleetTheme.statusDestructive : nil)
             }
             if let streak = job.failureStreak, streak > 0 {
                 detailRow("Failure streak", value: "\(streak)", mono: true, id: "cron.detail.failureStreak")

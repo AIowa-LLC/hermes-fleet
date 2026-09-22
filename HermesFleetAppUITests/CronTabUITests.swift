@@ -48,7 +48,10 @@ final class CronTabUITests: XCTestCase {
         }
     }
 
-    private func openCronTab() {
+    /// - Parameter resolveProfile: true (default) picks `default` in the §8
+    ///   chooser when it renders, so the workstation section binds. A test that
+    ///   needs the unresolved state passes false.
+    private func openCronTab(resolveProfile: Bool = true) {
         // Compact: open the drawer, then tap the cron destination. iPad's
         // adaptive top control exposes it directly.
         let drawerDestination = firstMatch("fleet.drawer.destination.cron")
@@ -65,7 +68,7 @@ final class CronTabUITests: XCTestCase {
         }
         XCTAssertTrue(app.navigationBars["Scheduled"].waitForExistence(timeout: 10),
                       "the Cron tab root must show the Cron navigation title")
-        resolveDefaultProfileIfNeeded()
+        if resolveProfile { resolveDefaultProfileIfNeeded() }
     }
 
     func testCronTabRendersMachineSectionsWithJobs() throws {
@@ -116,6 +119,39 @@ final class CronTabUITests: XCTestCase {
             .matching(identifier: "cron.form.name").firstMatch
         XCTAssertTrue(nameField.waitForExistence(timeout: 10),
                       "Add must open the create form (cron.form.name)")
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.waitForExistence(timeout: 3) { cancel.tap() }
+        else { app.swipeDown() }
+    }
+
+    /// OCR review (Cron surfaces): a create tapped BEFORE the machine's profile
+    /// is chosen must not present an empty sheet. NAV_RESET clears the stored
+    /// choice and the workstation gateway has two profiles, so its section
+    /// shows the §8 chooser — the + cannot guess a scope, so the sheet must
+    /// NAME the reason (cron.form.unresolved) instead of rendering a blank
+    /// form, and must never file the job under a silent `default`.
+    func testCronTabAddWithUnresolvedProfileNamesTheReason() throws {
+        openCronTab(resolveProfile: false)
+
+        // Precondition: the section is in the honest §8 chooser state.
+        let chooser = firstMatch("cron.home.profile.workstation#default")
+        XCTAssertTrue(chooser.waitForExistence(timeout: 15),
+                      "precondition: two profiles + no stored choice → the §8 chooser renders")
+
+        let add = firstMatch("cron.new")
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "the Cron tab must expose an Add (+) control")
+        XCTAssertTrue(scrollTo(add), "the Add control must be hittable")
+        add.tap()
+
+        // Multi-gateway fleet: + opens the per-machine menu.
+        let menuItem = app.buttons["Workstation"].firstMatch
+        if menuItem.waitForExistence(timeout: 5) { menuItem.tap() }
+
+        let unresolved = firstMatch("cron.form.unresolved")
+        XCTAssertTrue(unresolved.waitForExistence(timeout: 10),
+                      "the create sheet must name the unresolved profile, never render empty")
+        XCTAssertFalse(firstMatch("cron.form.name").exists,
+                       "no scope resolved → the form itself must not render")
         let cancel = app.buttons["Cancel"].firstMatch
         if cancel.waitForExistence(timeout: 3) { cancel.tap() }
         else { app.swipeDown() }
