@@ -81,10 +81,10 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     // MARK: - Snapshot (archived visibility)
 
     public func snapshot(includeArchived: Bool) async throws -> KanbanBoardSnapshot {
+        // The pinned `board` query rides EVERY plugin request from
+        // `pluginRequest` (single owner for the parameter); appending it here
+        // as well duplicated it on the wire (`board=X&…&board=X`).
         var query: [URLQueryItem] = []
-        if let pinnedBoard, !pinnedBoard.isEmpty {
-            query.append(URLQueryItem(name: "board", value: pinnedBoard))
-        }
         if includeArchived {
             query.append(URLQueryItem(name: "include_archived", value: "true"))
         }
@@ -122,9 +122,20 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
     // MARK: - Task CRUD
 
     public func createTask(_ draft: KanbanTaskDraft) async throws -> KanbanCard {
+        try await createTaskWithWarning(draft).card
+    }
+
+    /// Same `POST /tasks`, keeping the server's optional `warning` (the
+    /// dashboard's dispatcher-presence banner for a `ready`+assigned create
+    /// that would otherwise sit idle).
+    public func createTaskWithWarning(_ draft: KanbanTaskDraft) async throws -> KanbanTaskCreation {
         let data = try await pluginRequest(
             path: "/tasks", method: "POST", body: CreateTaskBody(draft))
-        return try Self.decodeCardResponse(data, context: "created task")
+        let envelope = try Self.decodeTaskEnvelope(data)
+        guard let card = envelope.card else {
+            throw KanbanMutationError.malformedResponse("created task decode failed")
+        }
+        return KanbanTaskCreation(card: card, warning: envelope.warning)
     }
 
     public func updateTask(id: String, patch: KanbanTaskPatch) async throws -> KanbanCard {
@@ -289,24 +300,36 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
 
     // MARK: - Response decoding helpers
 
-    /// `{"task": {...}}` → card (create/PATCH responses).
-    static func decodeCardResponse(_ data: Data, context: String) throws -> KanbanCard {
+    /// `{"task": {...}, "warning": "..."}` — the create/PATCH response
+    /// envelope. Returns `(nil, nil)` when the body is not that shape; the
+    /// caller decides the failure copy.
+    static func decodeTaskEnvelope(_ data: Data) throws -> (card: KanbanCard?, warning: String?) {
         struct TaskResponse: Decodable {
             let task: BoardEnvelope.TaskEnvelope?
             let warning: String?
         }
-        guard let response = try? JSONDecoder().decode(TaskResponse.self, from: data),
-              let task = response.task else {
+        guard let response = try? JSONDecoder().decode(TaskResponse.self, from: data) else {
+            return (nil, nil)
+        }
+        let card = response.task.map { task in
+            KanbanCard(
+                id: task.id,
+                title: task.title ?? task.id,
+                status: task.status ?? "todo",
+                assignee: task.assignee,
+                priority: task.priority,
+                createdAt: task.created_at,
+                latestSummary: task.latest_summary)
+        }
+        return (card, response.warning)
+    }
+
+    /// `{"task": {...}}` → card (create/PATCH responses).
+    static func decodeCardResponse(_ data: Data, context: String) throws -> KanbanCard {
+        guard let card = try decodeTaskEnvelope(data).card else {
             throw KanbanMutationError.malformedResponse("\(context) decode failed")
         }
-        return KanbanCard(
-            id: task.id,
-            title: task.title ?? task.id,
-            status: task.status ?? "todo",
-            assignee: task.assignee,
-            priority: task.priority,
-            createdAt: task.created_at,
-            latestSummary: task.latest_summary)
+        return card
     }
 }
 

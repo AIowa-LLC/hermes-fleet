@@ -203,6 +203,20 @@ public struct KanbanBulkOutcome: Sendable, Equatable, Identifiable, Decodable {
     }
 }
 
+/// `POST /tasks` result: the created card plus the server's optional warning
+/// banner (a `ready`+assigned create with no running dispatcher would sit
+/// idle — the dashboard's own copy). `warning == nil` when the server sent
+/// none; the card is always present on success.
+public struct KanbanTaskCreation: Sendable, Equatable {
+    public let card: KanbanCard
+    public let warning: String?
+
+    public init(card: KanbanCard, warning: String? = nil) {
+        self.card = card
+        self.warning = warning
+    }
+}
+
 // MARK: - Detail bundle
 
     /// `GET /tasks/{id}` response: the full task plus comments, events, links,
@@ -235,6 +249,21 @@ public struct KanbanBulkOutcome: Sendable, Equatable, Identifiable, Decodable {
         private enum CodingKeys: String, CodingKey {
             case task, comments, events, links, runs
             case childResults = "child_results"
+        }
+
+        /// Tolerant decode: `task` is required (the bundle's subject), every
+        /// section reads as EMPTY when the server omits the key or sends
+        /// `null` — matching the memberwise defaults. A missing section (a
+        /// task with no runs, no child results, an older plugin build) must
+        /// degrade to "no rows", never fail the whole detail read.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            task = try c.decode(KanbanTaskRecord.self, forKey: .task)
+            comments = try c.decodeIfPresent([KanbanComment].self, forKey: .comments) ?? []
+            events = try c.decodeIfPresent([KanbanTaskEventRecord].self, forKey: .events) ?? []
+            links = try c.decodeIfPresent(KanbanTaskLinks.self, forKey: .links) ?? KanbanTaskLinks()
+            childResults = try c.decodeIfPresent([KanbanChildResult].self, forKey: .childResults) ?? []
+            runs = try c.decodeIfPresent([KanbanRunRecord].self, forKey: .runs) ?? []
         }
     }
 
@@ -506,7 +535,7 @@ public struct KanbanSpecifyOutcome: Sendable, Equatable, Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case ok, reason
-        case taskID = "task_task"
+        case taskID = "task_id"
         case newTitle = "new_title"
     }
 }
@@ -534,6 +563,21 @@ public struct KanbanDecomposeOutcome: Sendable, Equatable, Decodable {
         case taskID = "task_id"
         case childIDs = "child_ids"
         case newTitle = "new_title"
+    }
+
+    /// Tolerant decode for the VALUE path: a non-OK outcome (`ok == false` +
+    /// `reason`) is data the UI renders inline, not an error — an absent or
+    /// `null` `fanout`/`child_ids` reads as false/[] so the reason reaches the
+    /// caller instead of being re-thrown as `.malformedResponse`. `ok` stays
+    /// required (it is the value/error discriminator).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try c.decode(Bool.self, forKey: .ok)
+        taskID = try c.decodeIfPresent(String.self, forKey: .taskID)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        fanout = try c.decodeIfPresent(Bool.self, forKey: .fanout) ?? false
+        childIDs = try c.decodeIfPresent([String].self, forKey: .childIDs) ?? []
+        newTitle = try c.decodeIfPresent(String.self, forKey: .newTitle)
     }
 }
 
@@ -771,6 +815,11 @@ public protocol KanbanBoardOperating: KanbanBoardWatching {
     func snapshot(includeArchived: Bool) async throws -> KanbanBoardSnapshot
     /// `POST /tasks` — returns the created task (as a card).
     func createTask(_ draft: KanbanTaskDraft) async throws -> KanbanCard
+    /// `POST /tasks` — the created card PLUS the server's optional warning
+    /// banner. Default implementation delegates to `createTask` (a conformer
+    /// with no warning channel reports `warning == nil`); the REST client
+    /// overrides it to surface the wire `warning`.
+    func createTaskWithWarning(_ draft: KanbanTaskDraft) async throws -> KanbanTaskCreation
     /// `PATCH /tasks/{id}` — returns the updated task.
     func updateTask(id: String, patch: KanbanTaskPatch) async throws -> KanbanCard
     /// `DELETE /tasks/{id}` — hard delete (destructive; UI confirms).
@@ -801,4 +850,12 @@ public protocol KanbanBoardOperating: KanbanBoardWatching {
     func updateOrchestrationSettings(_ patch: KanbanOrchestrationPatch) async throws -> KanbanOrchestrationSettings
     /// `POST /dispatch` — dispatcher nudge (don't wait out the tick).
     func dispatchNudge(dryRun: Bool, max: Int) async throws -> KanbanDispatchResult
+}
+
+public extension KanbanBoardOperating {
+    /// Warning-less default: a conformer that only witnesses `createTask`
+    /// (scripted doubles, older stubs) reports no server warning.
+    func createTaskWithWarning(_ draft: KanbanTaskDraft) async throws -> KanbanTaskCreation {
+        KanbanTaskCreation(card: try await createTask(draft))
+    }
 }

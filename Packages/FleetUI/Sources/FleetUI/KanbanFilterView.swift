@@ -69,11 +69,9 @@ public struct KanbanFilterView: View {
     private func apply() {
         model?.filterText = text
         model?.filterAssignee = assignee.isEmpty ? nil : assignee
-        model?.showArchived = archived
-        Task {
-            if archived {
-                await model?.refresh()
-            }
-        }
+        // The model owns the archived-visibility refresh policy: the
+        // snapshot is refetched on BOTH transitions, so an OFF toggle drops
+        // the archived-inclusive snapshot instead of leaving the column up.
+        Task { await model?.setShowArchived(archived) }
     }
 }

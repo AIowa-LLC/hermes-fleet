@@ -22,7 +22,6 @@ public struct KanbanTaskDetailView: View {
     /// inserted above the composer, outside the typing viewport).
     @State private var commentScrollPulse = 0
     @State private var pendingDestructive: PendingDestructive?
-    @State private var actionNote: String?
     @State private var showingAddDependency = false
     @State private var dependencyParentID = ""
     @State private var dependencyChildID = ""
@@ -154,13 +153,7 @@ public struct KanbanTaskDetailView: View {
         ScrollViewReader { proxy in
             List {
                 taskSection(detail.task)
-                if let note = actionNote {
-                    Section {
-                        Text(note)
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                }
+                noticeSection
                 actionsSection(detail.task)
                 if !detail.comments.isEmpty {
                     commentsSection(detail.comments)
@@ -186,6 +179,30 @@ public struct KanbanTaskDetailView: View {
             .onChange(of: commentScrollPulse) { _, _ in
                 guard let lastCommentID = self.detail?.comments.last?.id else { return }
                 proxy.scrollTo(lastCommentID, anchor: .top)
+            }
+        }
+    }
+
+    /// Mutation/auxiliary outcomes from the BOARD model. Every action in
+    /// `actionsSection` (move/complete/archive/reassign/reclaim/link/…) writes
+    /// its failure into `mutationErrorMessage`, and specify/decompose/dispatch
+    /// notes land in `auxOutcomeMessage` — surfacing both here is what keeps a
+    /// refused action from silently reverting on the follow-up `load()`.
+    @ViewBuilder
+    private var noticeSection: some View {
+        if let message = boardModel?.mutationErrorMessage {
+            Section {
+                Text(message)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("kanban.detail.mutation-error")
+            }
+        }
+        if let note = boardModel?.auxOutcomeMessage {
+            Section {
+                Label(note, systemImage: "sparkles")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("kanban.detail.aux-note")
             }
         }
     }
@@ -430,10 +447,18 @@ public struct KanbanTaskDetailView: View {
                     Text(parentID)
                         .font(FleetTheme.monoFont)
                     Spacer()
-                    if let child = detail.childResults.first(where: { $0.id == parentID }) {
-                        Text(child.title ?? "")
-                            .font(FleetTheme.secondaryFont)
-                            .lineLimit(1)
+                    // `childResults` carries CHILDREN only — a parent id can
+                    // never resolve there. Look the parent up on the live
+                    // board snapshot; a parent off this board keeps its raw id
+                    // (never a fabricated row).
+                    if let parent = boardModel?.card(id: parentID) {
+                        HStack(spacing: FleetTheme.spacingXs) {
+                            Text(parent.status.capitalized)
+                                .font(FleetTheme.monoCaptionFont)
+                            Text(parent.title)
+                                .font(FleetTheme.secondaryFont)
+                                .lineLimit(1)
+                        }
                     }
                 }
             }

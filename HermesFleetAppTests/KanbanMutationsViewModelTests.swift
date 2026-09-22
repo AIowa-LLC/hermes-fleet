@@ -22,6 +22,9 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         private var _comments: [String: [KanbanComment]] = [:]
         private var _links: [String: KanbanTaskLinks] = [:]
         private var _snapshotFetchCount = 0
+        private var _archivedFetches = 0
+        private var _createError: Error?
+        private var _createWarning: String?
         private var _createdDrafts: [KanbanTaskDraft] = []
         private var _patches: [(id: String, patch: KanbanTaskPatch)] = []
         private var _commentBodies: [String] = []
@@ -36,6 +39,18 @@ final class KanbanMutationsViewModelTests: XCTestCase {
 
         // Observability
         var snapshotFetchCount: Int { lock.withLock { _snapshotFetchCount } }
+        /// Snapshot fetches that asked for the archived column.
+        var archivedSnapshotFetches: Int { lock.withLock { _archivedFetches } }
+        /// Set to make the next create fail (the view model must REPORT, never throw).
+        var createError: Error? {
+            get { lock.withLock { _createError } }
+            set { lock.withLock { _createError = newValue } }
+        }
+        /// The server banner returned with a successful create (nil = none).
+        var createWarning: String? {
+            get { lock.withLock { _createWarning } }
+            set { lock.withLock { _createWarning = newValue } }
+        }
         var createdDrafts: [KanbanTaskDraft] { lock.withLock { _createdDrafts } }
         var patches: [(id: String, patch: KanbanTaskPatch)] { lock.withLock { _patches } }
         var commentBodies: [String] { lock.withLock { _commentBodies } }
@@ -84,7 +99,8 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         }
 
         func snapshot(includeArchived: Bool) async throws -> KanbanBoardSnapshot {
-            try await snapshot()
+            if includeArchived { lock.withLock { _archivedFetches += 1 } }
+            return try await snapshot()
         }
 
         func changeEvents() async -> AsyncStream<KanbanEventBatch> {
@@ -125,6 +141,7 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         // MARK: KanbanBoardOperating
 
         func createTask(_ draft: KanbanTaskDraft) async throws -> KanbanCard {
+            if let error = lock.withLock({ _createError }) { throw error }
             let card: KanbanCard = lock.withLock {
                 _createdDrafts.append(draft)
                 let id = "t_new_\(_createdDrafts.count)"
@@ -134,6 +151,11 @@ final class KanbanMutationsViewModelTests: XCTestCase {
                                   createdAt: 1_780_000_000, latestSummary: nil)
             }
             return card
+        }
+
+        func createTaskWithWarning(_ draft: KanbanTaskDraft) async throws -> KanbanTaskCreation {
+            let card = try await createTask(draft)
+            return KanbanTaskCreation(card: card, warning: lock.withLock { _createWarning })
         }
 
         func updateTask(id: String, patch: KanbanTaskPatch) async throws -> KanbanCard {
@@ -296,7 +318,7 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         defer { Task { await model.stop() } }
 
         let before = op.snapshotFetchCount
-        let created = try await model.createTask(
+        let created = await model.createTask(
             KanbanTaskDraft(title: "New work", assignee: "apple-dev", priority: 2))
         XCTAssertEqual(created?.title, "New work")
         XCTAssertEqual(op.createdDrafts.count, 1)
@@ -453,7 +475,7 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         defer { Task { await model.stop() } }
 
         XCTAssertFalse(model.canMutate)
-        let created = try await model.createTask(KanbanTaskDraft(title: "x"))
+        let created = await model.createTask(KanbanTaskDraft(title: "x"))
         XCTAssertNil(created)
         XCTAssertEqual(op.createdDrafts.count, 0, "no operator → no wire call")
         await model.moveTask(id: "t_1", to: "done")
@@ -473,6 +495,113 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         try await waitFor { model.liveUpdateCount > liveBefore }
         XCTAssertGreaterThan(model.liveUpdateCount, liveBefore,
                              "a live event after a mutation must still drive a refetch")
+    }
+
+    // MARK: OCR kanban findings
+
+    /// The archived toggle refetches on BOTH transitions — turning it OFF must
+    /// drop the archived-inclusive snapshot instead of leaving the column up
+    /// until some unrelated event refreshes the board.
+    func testArchivedVisibilityRefetchesOnBothTransitions() async throws {
+        let op = RecordingBoardOperator()
+        let model = KanbanBoardViewModel(watcher: op, boardOperator: op)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        let fetches = op.snapshotFetchCount
+        await model.setShowArchived(true)
+        XCTAssertEqual(
+            op.archivedSnapshotFetches, 1,
+            "turning archived ON must fetch the archived-inclusive snapshot")
+        XCTAssertGreaterThan(op.snapshotFetchCount, fetches)
+
+        let afterOn = op.snapshotFetchCount
+        await model.setShowArchived(false)
+        XCTAssertEqual(
+            op.archivedSnapshotFetches, 1,
+            "turning archived OFF must not ask for the archived column")
+        XCTAssertGreaterThan(
+            op.snapshotFetchCount, afterOn,
+            "turning archived OFF must refetch so the archived column cannot linger")
+
+        // An unchanged value never hits the wire again.
+        let afterOff = op.snapshotFetchCount
+        await model.setShowArchived(false)
+        XCTAssertEqual(op.snapshotFetchCount, afterOff)
+    }
+
+    /// A refused create reports through the model (nil card + banner reason):
+    /// `createTask` does not throw, so a caller can never mistake a refusal for
+    /// a created card.
+    func testFailedCreateReturnsNilAndSurfacesReason() async throws {
+        let op = RecordingBoardOperator()
+        op.createError = KanbanMutationError.rejected("title is required")
+        let model = KanbanBoardViewModel(watcher: op, boardOperator: op)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        let created = await model.createTask(KanbanTaskDraft(title: ""))
+        XCTAssertNil(created, "a refused create must report no card")
+        XCTAssertEqual(model.mutationErrorMessage, "title is required")
+        XCTAssertTrue(op.createdDrafts.isEmpty)
+        XCTAssertNil(model.createWarning)
+    }
+
+    /// The server's dispatcher-presence warning rides the create result into
+    /// the model (the composer renders it and never mints a duplicate card).
+    func testCreateSurfacesServerWarning() async throws {
+        let op = RecordingBoardOperator()
+        op.createWarning = "No dispatcher is running - the card will stay in ready."
+        let model = KanbanBoardViewModel(watcher: op, boardOperator: op)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        let created = await model.createTask(
+            KanbanTaskDraft(title: "Ready work", assignee: "apple-dev"))
+        XCTAssertEqual(created?.title, "Ready work")
+        XCTAssertEqual(
+            model.createWarning, "No dispatcher is running - the card will stay in ready.")
+
+        // The next create attempt clears the previous banner.
+        op.createWarning = nil
+        _ = await model.createTask(KanbanTaskDraft(title: "Next"))
+        XCTAssertNil(model.createWarning)
+    }
+
+    /// Board lookup: a RELATED card (a detail sheet's PARENT row, which the
+    /// detail bundle carries only as an id) resolves from the live snapshot.
+    func testCardLookupResolvesRelatedCardFromSnapshot() async throws {
+        let op = RecordingBoardOperator()
+        let model = KanbanBoardViewModel(watcher: op, boardOperator: op)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        XCTAssertEqual(model.card(id: "t_1")?.title, "First card")
+        XCTAssertEqual(model.card(id: "t_2")?.status, "running")
+        XCTAssertNil(model.card(id: "t_missing"), "an off-board id must not fabricate a card")
+    }
+
+    /// Bulk retention: only ids the server CONFIRMED leave the selection, so a
+    /// partial failure stays selected for a retry.
+    func testBulkSelectionRetainsOnlyFailedIDs() {
+        let selected: Set<String> = ["t_1", "t_2", "t_3"]
+        XCTAssertEqual(
+            KanbanBulkSelection.retained(
+                selected: selected,
+                outcomes: [
+                    KanbanBulkOutcome(id: "t_1", ok: true),
+                    KanbanBulkOutcome(id: "t_2", ok: false, error: "not found"),
+                    KanbanBulkOutcome(id: "t_3", ok: true),
+                ]),
+            ["t_2"], "a failed id must stay selected for the retry")
+        XCTAssertEqual(
+            KanbanBulkSelection.retained(selected: selected, outcomes: []), selected,
+            "no confirmed outcome keeps everything selected")
+        XCTAssertTrue(
+            KanbanBulkSelection.retained(
+                selected: selected,
+                outcomes: selected.map { KanbanBulkOutcome(id: $0, ok: true) }).isEmpty,
+            "an all-confirmed batch clears the selection")
     }
 
     // MARK: Helpers

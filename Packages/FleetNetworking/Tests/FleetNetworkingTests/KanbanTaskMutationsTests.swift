@@ -104,16 +104,20 @@ final class KanbanTaskMutationsTests: XCTestCase {
         XCTAssertEqual(decoded.triage, false)
     }
 
-    func testCreateTaskPinsBoardQueryWhenPinned() async throws {
+    func testCreateTaskPinsBoardQueryExactlyOnce() async throws {
+        var seenQuery: String?
         let client = makeClient { request in
+            seenQuery = request.url?.query
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, Data(#"{"task":{"id":"t_x","title":"x","status":"todo"}}"#.utf8))
         }
         await client.pinBoard("r10")
         _ = try await client.createTask(KanbanTaskDraft(title: "x"))
-        // pinBoard resets cursor but the request URL carries the board.
-        // (Asserted via the next test's shared plumbing; here verify no throw.)
+        let query = try XCTUnwrap(seenQuery)
+        XCTAssertEqual(
+            query.split(separator: "&").filter { $0 == "board=r10" }.count, 1,
+            "the pinned board must ride the query exactly once (got: \(query))")
     }
 
     func testCreateTaskSurfaces400DetailAsRejection() async throws {
@@ -279,6 +283,9 @@ final class KanbanTaskMutationsTests: XCTestCase {
         }
         let outcome = try await client.specifyTask(id: "t_1", author: nil)
         XCTAssertFalse(outcome.ok)
+        XCTAssertEqual(
+            outcome.taskID, "t_1",
+            "task_id is the wire key — a wrong mapping silently decodes nil")
         XCTAssertEqual(outcome.reason, "specifier unavailable")
     }
 
@@ -336,5 +343,60 @@ final class KanbanTaskMutationsTests: XCTestCase {
         XCTAssertEqual(snapshot.columns, ["todo", "archived"])
         XCTAssertEqual(snapshot.totalCards, 1)
         XCTAssertTrue(seenQuery?.contains("include_archived=true") ?? false)
+    }
+
+    /// Archived + pinned must not double the `board` parameter: `pluginRequest`
+    /// owns it for every call (the local copy produced `board=X&…&board=X`).
+    func testSnapshotIncludeArchivedWithPinnedBoardSendsOneBoardParam() async throws {
+        var seenQuery: String?
+        let client = makeClient { request in
+            seenQuery = request.url?.query
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let payload = #"{"columns":[{"name":"todo","tasks":[]},{"name":"archived","tasks":[{"id":"t_a","title":"Old","status":"archived"}]}],"latest_event_id":5,"now":1}"#
+            return (response, Data(payload.utf8))
+        }
+        await client.pinBoard("r10")
+        let snapshot = try await client.snapshot(includeArchived: true)
+        XCTAssertEqual(snapshot.columns, ["todo", "archived"])
+        let query = try XCTUnwrap(seenQuery)
+        XCTAssertEqual(
+            query.split(separator: "&").filter { $0.hasPrefix("board=") }.count, 1,
+            "the pinned board must ride the query exactly once (got: \(query))")
+        XCTAssertTrue(query.contains("board=r10"))
+        XCTAssertTrue(query.contains("include_archived=true"))
+    }
+
+    // MARK: Create warning (dispatcher presence)
+
+    /// `POST /tasks` carries the server's optional `warning` (a ready+assigned
+    /// create with no running dispatcher). `createTask` keeps its card-only
+    /// contract; `createTaskWithWarning` surfaces the banner.
+    func testCreateTaskWithWarningSurfacesServerBanner() async throws {
+        let client = makeClient { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let payload = #"{"task":{"id":"t_new1","title":"Ready work","status":"ready","assignee":"apple-dev"},"warning":"No dispatcher is running for this gateway - the card will stay in ready until one starts."}"#
+            return (response, Data(payload.utf8))
+        }
+        let creation = try await client.createTaskWithWarning(
+            KanbanTaskDraft(title: "Ready work", assignee: "apple-dev"))
+        XCTAssertEqual(creation.card.id, "t_new1")
+        XCTAssertEqual(creation.card.status, "ready")
+        XCTAssertEqual(
+            creation.warning,
+            "No dispatcher is running for this gateway - the card will stay in ready until one starts.")
+    }
+
+    func testCreateTaskWithoutWarningReportsNil() async throws {
+        let client = makeClient { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let payload = #"{"task":{"id":"t_new2","title":"Plain","status":"todo"}}"#
+            return (response, Data(payload.utf8))
+        }
+        let creation = try await client.createTaskWithWarning(KanbanTaskDraft(title: "Plain"))
+        XCTAssertEqual(creation.card.id, "t_new2")
+        XCTAssertNil(creation.warning)
     }
 }

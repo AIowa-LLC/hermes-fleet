@@ -107,15 +107,23 @@ public struct KanbanTaskCreateView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        Task { await submit() }
+                        if warningMessage == nil {
+                            Task { await submit() }
+                        } else {
+                            // The card EXISTS — the warning is the server's
+                            // note about it. Done just closes the sheet.
+                            dismiss()
+                        }
                     } label: {
                         if isWorking {
                             ProgressView()
                         } else {
-                            Text("Create")
+                            Text(warningMessage == nil ? "Create" : "Done")
                         }
                     }
-                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || isWorking)
+                    .disabled(
+                        warningMessage == nil
+                            && (title.trimmingCharacters(in: .whitespaces).isEmpty || isWorking))
                     .accessibilityIdentifier("kanban.create.submit")
                 }
             }
@@ -147,22 +155,23 @@ public struct KanbanTaskCreateView: View {
             goalMode: goalMode,
             modelOverride: modelOverride.isEmpty ? nil : modelOverride,
             reasoningEffort: reasoningEffort.isEmpty ? nil : reasoningEffort)
-        do {
-            let created = try await model.createTask(draft)
-            if let warning = model.mutationErrorMessage {
-                failureMessage = warning
-                return
-            }
-            guard let created else {
-                failureMessage = "This gateway's board is read-only."
-                return
-            }
-            // A ready+assigned create without a dispatcher gets the server's
-            // warning banner; surface it inline after dismissing.
-            _ = created
-            dismiss()
-        } catch {
-            failureMessage = Redaction.safeErrorDescription(error)
+        // `createTask` reports through the model — nil means nothing was
+        // created (read-only board or a refusal) and the reason is already in
+        // `mutationErrorMessage`. It deliberately does not throw.
+        let created = await model.createTask(draft)
+        guard created != nil else {
+            failureMessage = model.mutationErrorMessage
+                ?? "This gateway's board is read-only."
+            return
         }
+        // A ready+assigned create without a dispatcher gets the server's
+        // warning banner: the card EXISTS, so keep the sheet up for the
+        // warning and let the confirm button read "Done" (never a second
+        // create).
+        if let warning = model.createWarning {
+            warningMessage = warning
+            return
+        }
+        dismiss()
     }
 }

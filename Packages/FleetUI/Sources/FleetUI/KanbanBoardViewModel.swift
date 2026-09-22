@@ -77,6 +77,30 @@ public final class KanbanBoardViewModel {
             now: snapshot.now)
     }
 
+    /// Show or hide the archived column. The snapshot is refetched on BOTH
+    /// transitions — turning the toggle OFF must drop the archived-inclusive
+    /// snapshot immediately, otherwise the archived column lingers (out of
+    /// step with the toggle) until some unrelated event refreshes the board.
+    /// An unchanged value is a no-op; read-only boards just flip the flag.
+    public func setShowArchived(_ value: Bool) async {
+        guard value != showArchived else { return }
+        showArchived = value
+        guard boardOperator != nil else { return }
+        await loadSnapshot(initial: false)
+    }
+
+    /// The card for a task id anywhere in the loaded snapshot (nil when the
+    /// task is not on this board). Detail rows that reference a RELATED card
+    /// — e.g. a task's PARENTS, which the detail bundle only carries as ids —
+    /// resolve their title/status from here.
+    public func card(id: String) -> KanbanCard? {
+        guard let snapshot else { return nil }
+        for cards in snapshot.cardsByColumn.values {
+            if let match = cards.first(where: { $0.id == id }) { return match }
+        }
+        return nil
+    }
+
     // MARK: Board selection (t_624b81cd — B1)
 
     /// Boards the gateway offers (empty until the first list fetch).
@@ -106,6 +130,10 @@ public final class KanbanBoardViewModel {
     public var mutationErrorMessage: String?
     /// Last auxiliary (specify/decompose/dispatch) outcome for inline notes.
     public var auxOutcomeMessage: String?
+    /// Server warning from the most recent create — the dispatcher-presence
+    /// banner on a ready+assigned card that would otherwise sit idle. Cleared
+    /// by the next create attempt; nil when the server sent none.
+    public private(set) var createWarning: String?
 
     /// The mutation seam. Nil = this gateway's board is read-only (fail
     /// closed — the UI hides every mutation affordance).
@@ -237,16 +265,26 @@ public final class KanbanBoardViewModel {
     }
 
     /// `POST /tasks` — create a card from the draft; returns the created card.
+    ///
+    /// NOT throwing by contract: the write routes through `runMutation`, which
+    /// captures every failure into `mutationErrorMessage` for the caller's
+    /// banner, and `nil` means "nothing was created" (read-only board or a
+    /// refusal). `createWarning` carries the server's optional warning banner.
     @discardableResult
-    public func createTask(_ draft: KanbanTaskDraft) async throws -> KanbanCard? {
+    public func createTask(_ draft: KanbanTaskDraft) async -> KanbanCard? {
+        createWarning = nil
         guard let boardOperator else {
             mutationErrorMessage = "This gateway's board is read-only."
             return nil
         }
         var created: KanbanCard?
+        var warning: String?
         await runMutation("create") {
-            created = try await boardOperator.createTask(draft)
+            let result = try await boardOperator.createTaskWithWarning(draft)
+            created = result.card
+            warning = result.warning
         }
+        createWarning = warning
         return created
     }
 

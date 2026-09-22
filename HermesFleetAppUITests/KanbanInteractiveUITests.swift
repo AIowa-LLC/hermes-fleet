@@ -362,6 +362,78 @@ final class KanbanInteractiveUITests: XCTestCase {
         attachScreenshot(of: app, name: "kanban-bulk-move")
     }
 
+    // MARK: 8b. Archived toggle drops its column
+
+    /// Turning "Show archived" OFF must refetch: the archived column exists
+    /// only in the archived-INCLUSIVE snapshot, so leaving the old snapshot up
+    /// keeps the column rendered while the toggle reads off.
+    func testArchivedToggleDropsTheArchivedColumnWhenOff() throws {
+        let app = launch()
+        openBoard(app)
+
+        openFilters(app)
+        setArchivedToggle(app, on: true)
+        attachScreenshot(of: app, name: "kanban-archived-on")
+        // The scripted board returns the archived column only for
+        // archived-inclusive snapshots — scroll the (last) lane into the lazy
+        // AX tree before asserting.
+        let header = archivedColumnHeader(app)
+        scrollToFind(app, header, maxSwipes: 8)
+        XCTAssertTrue(
+            header.waitForExistence(timeout: 15),
+            "turning archived ON must render the archived column")
+
+        openFilters(app)
+        setArchivedToggle(app, on: false)
+        XCTAssertFalse(
+            archivedColumnHeader(app).waitForExistence(timeout: 8),
+            "turning archived OFF must drop the archived column (no stale snapshot)")
+
+        attachScreenshot(of: app, name: "kanban-archived-off")
+    }
+
+    // MARK: 7b. Detail sheet surfaces a refused action
+
+    /// Every action in the detail sheet writes its failure into the board
+    /// model's mutation banner; the sheet must RENDER it (a refused action
+    /// used to revert silently on the follow-up reload).
+    func testDetailSurfacesRefusedActionInline() throws {
+        let app = launch()
+        openBoard(app)
+
+        let card = app.descendants(matching: .any)["kanban.card.t_script01"]
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        card.tap()
+        XCTAssertTrue(app.buttons["kanban.detail.done"].waitForExistence(timeout: 15))
+
+        // Add dependency with an UNKNOWN child id — the scripted operator
+        // refuses it ("unknown task id"), deterministically.
+        let addDependency = app.buttons["kanban.detail.dependency.add"]
+        scrollToFind(app, addDependency)
+        XCTAssertTrue(addDependency.waitForExistence(timeout: 10))
+        addDependency.tap()
+        let parentField = app.textFields["kanban.dependency.parent"]
+        XCTAssertTrue(parentField.waitForExistence(timeout: 10))
+        parentField.tap()
+        parentField.typeText("t_script01")
+        let childField = app.textFields["kanban.dependency.child"]
+        childField.tap()
+        childField.typeText("t_missing_child")
+        app.buttons["kanban.dependency.link"].tap()
+
+        // The refusal renders inline in the sheet. The row sits at the TOP of
+        // the list (above Actions), so reveal it — a lazy List materializes
+        // rows on scroll only.
+        let inlineError = app.descendants(matching: .any)["kanban.detail.mutation-error"]
+        for _ in 0..<6 where !inlineError.exists {
+            app.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(
+            inlineError.waitForExistence(timeout: 15),
+            "a refused action must surface its reason in the detail sheet")
+        attachScreenshot(of: app, name: "kanban-detail-refusal")
+    }
+
     // MARK: Gateway → Kanban routing (mission §6)
 
     func testGatewayDetailKanbanRoutesToKanbanTab() throws {
@@ -414,6 +486,46 @@ final class KanbanInteractiveUITests: XCTestCase {
             }
         }
         XCTFail("select mode never engaged after 3 menu attempts")
+    }
+
+    /// Open the board menu's Filters sheet (waits for the archived toggle).
+    private func openFilters(_ app: XCUIApplication) {
+        let menuButton = app.buttons["kanban.board.menu"]
+        XCTAssertTrue(menuButton.waitForExistence(timeout: 10))
+        menuButton.tap()
+        let filtersButton = app.buttons["kanban.board.filters"]
+        XCTAssertTrue(filtersButton.waitForExistence(timeout: 10))
+        filtersButton.tap()
+        XCTAssertTrue(
+            app.switches["kanban.filters.archived"].waitForExistence(timeout: 10),
+            "the filters sheet must render the archived toggle")
+    }
+
+    /// Drive the archived toggle to a known state, then apply the filters.
+    /// iOS 26 Form toggles can swallow a synthesized switch tap — verify the
+    /// value actually moved and fall back to a trailing-edge coordinate tap
+    /// on the row (the real switch control).
+    private func setArchivedToggle(_ app: XCUIApplication, on: Bool) {
+        let toggle = app.switches["kanban.filters.archived"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        func isOn() -> Bool { (toggle.value as? String) == "1" }
+        if isOn() != on {
+            toggle.tap()
+        }
+        if isOn() != on {
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        }
+        XCTAssertEqual(
+            isOn(), on,
+            "the archived toggle must reflect the requested state before applying")
+        app.buttons["kanban.filters.apply"].tap()
+    }
+
+    /// The archived column's header label is "<Archived>, N cards" — columns
+    /// carry no AX identifier of their own.
+    private func archivedColumnHeader(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Archived,")).firstMatch
     }
 
     /// Scroll a lazy-List row into the AX tree before interacting (iOS 26

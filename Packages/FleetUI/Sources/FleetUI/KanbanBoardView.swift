@@ -293,24 +293,24 @@ public struct KanbanBoardView: View {
                 ForEach(KanbanStatus.settable, id: \.self) { status in
                     Button(status.capitalized) {
                         Task {
-                            await model.bulkUpdate(
+                            await applyBulk(
+                                model,
                                 KanbanBulkPatch(ids: Array(selectedTaskIDs), status: status))
-                            selectedTaskIDs.removeAll()
                         }
                     }
                 }
                 Button("Unassign") {
                     Task {
-                        await model.bulkUpdate(
+                        await applyBulk(
+                            model,
                             KanbanBulkPatch(ids: Array(selectedTaskIDs), assignee: ""))
-                        selectedTaskIDs.removeAll()
                     }
                 }
                 Button("Archive", role: .destructive) {
                     Task {
-                        await model.bulkUpdate(
+                        await applyBulk(
+                            model,
                             KanbanBulkPatch(ids: Array(selectedTaskIDs), archive: true))
-                        selectedTaskIDs.removeAll()
                     }
                 }
             } label: {
@@ -331,6 +331,14 @@ public struct KanbanBoardView: View {
         .padding(FleetTheme.spacingMd)
         .background(theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: FleetTheme.radiusRow, style: .continuous))
+    }
+
+    /// Apply a bulk patch and keep only the ids the server did NOT confirm
+    /// selected — a partial failure stays retryable instead of being wiped.
+    private func applyBulk(_ model: KanbanBoardViewModel, _ patch: KanbanBulkPatch) async {
+        let outcomes = await model.bulkUpdate(patch)
+        selectedTaskIDs = KanbanBulkSelection.retained(
+            selected: selectedTaskIDs, outcomes: outcomes)
     }
 
     private func streamBanner(_ model: KanbanBoardViewModel) -> some View {
@@ -447,6 +455,17 @@ public struct KanbanBoardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("kanban.board.activity")
+    }
+}
+
+/// Multi-select retention for bulk actions: only ids the server CONFIRMED
+/// (`ok: true`) leave the selection. A partially failed batch stays selected
+/// so the user can retry exactly the cards that did not move, and an empty
+/// outcome list (no operator, or a transport failure) keeps everything —
+/// nothing was confirmed applied.
+public enum KanbanBulkSelection {
+    public static func retained(selected: Set<String>, outcomes: [KanbanBulkOutcome]) -> Set<String> {
+        selected.subtracting(outcomes.filter(\.ok).map(\.id))
     }
 }
 
