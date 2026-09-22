@@ -168,11 +168,15 @@ public enum LegacyGroupProjectionDecoder {
             if isIDKey, deleted[key] != nil { continue }
 
             guard let name = roomObject["name"]?.stringValue, !name.isEmpty else { continue }
-            let revision = roomObject["revision"]?.numberValue.map(Int.init) ?? 0
+            // An unrepresentable revision (e.g. a hostile 2^63) degrades to the
+            // missing-value shape — `?? 0` — instead of trapping `Int(_:)`.
+            let revision = roomObject["revision"]?.intValue ?? 0
 
             // Name-keyed tombstones are revision-gated: a deleted marker
             // with revision >= the room's revision suppresses the room.
-            if !isIDKey, let tombRevision = deleted[key]?.numberValue.map(Int.init),
+            // An unrepresentable tombstone revision stays absent, so the
+            // comparison is skipped (never clamped to an invented revision).
+            if !isIDKey, let tombRevision = deleted[key]?.intValue,
                tombRevision >= revision {
                 continue
             }
