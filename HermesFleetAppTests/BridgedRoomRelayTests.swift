@@ -682,15 +682,15 @@ final class BridgedRoomRelayTests: XCTestCase {
         let store = store()
         // Two bots named "default" on different gateways — the dogfood twin.
         try await store.upsert(.init(roomKey: "room", name: "Twins", members: [
-            .init(gatewayID: "macbook-m5", profile: "default", displayName: "default",
-                  routeID: "macbook-m5#default", gatewayLabel: "macbook-m5"),
-            .init(gatewayID: "gaming-rig", profile: "default", displayName: "default",
-                  routeID: "gaming-rig#default", gatewayLabel: "gaming-rig"),
+            .init(gatewayID: "gw-alpha", profile: "default", displayName: "default",
+                  routeID: "gw-alpha#default", gatewayLabel: "gw-alpha"),
+            .init(gatewayID: "gw-beta", profile: "default", displayName: "default",
+                  routeID: "gw-beta#default", gatewayLabel: "gw-beta"),
         ], createdAt: 0))
         let macbook = RecordingConversation()
         let rig = RecordingConversation()
-        let sessions = ["macbook-m5": Session(gatewayID: .init(rawValue: "macbook-m5"), client: macbook),
-                        "gaming-rig": Session(gatewayID: .init(rawValue: "gaming-rig"), client: rig)]
+        let sessions = ["gw-alpha": Session(gatewayID: .init(rawValue: "gw-alpha"), client: macbook),
+                        "gw-beta": Session(gatewayID: .init(rawValue: "gw-beta"), client: rig)]
         let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
         _ = try await relay.send(roomID: "room", text: "hello", threadID: nil)
         try await waitUntil(timeout: 5) {
@@ -702,7 +702,7 @@ final class BridgedRoomRelayTests: XCTestCase {
         let speakers = Set(record.events
             .filter { $0.kind == "message.member" }
             .compactMap { $0.actorDisplayName })
-        XCTAssertEqual(speakers, ["default · macbook-m5", "default · gaming-rig"],
+        XCTAssertEqual(speakers, ["default · gw-alpha", "default · gw-beta"],
                        "roster-duplicate display names persist qualified by source")
         // And the unique-name room stays plain.
         let store2 = self.store()
