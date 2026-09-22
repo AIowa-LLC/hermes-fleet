@@ -103,7 +103,10 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
 
     public func saveSessionListCache(_ entry: CachedSessionList) async throws {
         let ctx = ModelContext(container)
-        let key = "\(entry.route.gatewayID.rawValue)/\(entry.route.profileSlug.rawValue)"
+        // Canonical route identity ("gw#slug"): components reject `#` (M9), and
+        // unlike the old "gw/slug" concatenation this cannot be collided by
+        // wire-derived slugs that carry `/` (e.g. "b/c" vs gateway "a/b").
+        let key = entry.route.id
         let payload = try JSONEncoder().encode(entry)
         let existing = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>(
             predicate: #Predicate { $0.routeKey == key }
