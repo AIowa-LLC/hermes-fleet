@@ -90,6 +90,7 @@ public enum BotFailureCopy {
         case .missingConfig: return "Missing configuration"
         case .modelUnavailable: return "Model unavailable"
         case .bridgedMemberTimeout: return "Member didn't answer in time"
+        case .bridgedMemberTurnFailed: return "Member turn failed"
         case .bridgedSessionExpired: return "Member session expired"
         case .bridgedMemberUnreachable: return "Member unreachable"
         case .unknown: return "Unknown failure"
@@ -126,6 +127,8 @@ public enum BotFailureCopy {
             return "The configured model isn't available right now. Pick another model for this bot."
         case .bridgedMemberTimeout:
             return "A member took too long to answer this Group. It may still be working — its reply lands here when it finishes. Retry sends the question again."
+        case .bridgedMemberTurnFailed:
+            return "The member's gateway ended its turn with an error. Check that bot's chat, then retry."
         case .bridgedSessionExpired:
             return "A member's Group session expired on its gateway, so its earlier context is gone. Create a new Group to start fresh."
         case .bridgedMemberUnreachable:
@@ -163,7 +166,7 @@ public enum BotFailureCopy {
             return [.openSettings]
         case .modelUnavailable:
             return [.pickModel]
-        case .bridgedMemberTimeout, .bridgedMemberUnreachable:
+        case .bridgedMemberTimeout, .bridgedMemberTurnFailed, .bridgedMemberUnreachable:
             return [.retry]
         case .bridgedSessionExpired:
             // Context is gone on the gateway — a plain retry cannot recover

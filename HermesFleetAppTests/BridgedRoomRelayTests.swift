@@ -167,6 +167,32 @@ final class BridgedRoomRelayTests: XCTestCase {
         XCTAssertEqual(record.events.last?.actorID, "missing/writer")
     }
 
+    func testTerminalMemberErrorsAreReportedWithoutWaitingForTimeout() async throws {
+        for failure in [RecordingConversation.Failure.complete, .errorEvent] {
+            let store = store()
+            let conversation = RecordingConversation()
+            conversation.failure = failure
+            let sessions = ["alpha": Session(
+                gatewayID: .init(rawValue: "alpha"), client: conversation)]
+            try await store.upsert(.init(
+                roomKey: "room", name: "Test", members: [member("alpha", "research")],
+                createdAt: 0))
+            let relay = BridgedRoomRelay(
+                store: store, resolver: { sessions[$0.rawValue] },
+                memberTimeout: 30, lateCollectionWindow: 60)
+            _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+            try await waitUntil(timeout: 5) {
+                let record = await store.record(roomKey: "room")
+                return record?.events.contains { $0.reasonCode == "member_turn_failed" } == true
+            }
+            let stored = await store.record(roomKey: "room")
+            let record = try XCTUnwrap(stored)
+            XCTAssertEqual(record.events.filter { $0.kind == "turn.failed" }.count, 1)
+            XCTAssertEqual(record.events.last?.actorID, "alpha/research")
+            XCTAssertFalse(record.events.contains { $0.reasonCode == "member_timeout" })
+        }
+    }
+
     // MARK: - F1: non-blocking send
 
     func testSendReturnsImmediatelyWithoutMemberReplies() async throws {
@@ -446,11 +472,13 @@ final class BridgedRoomRelayTests: XCTestCase {
     /// replies with configurable text (the mock gateway for group-context
     /// assertions — the SUBMITTED text is the artifact under test).
     private final class RecordingConversation: ConversationProviding, @unchecked Sendable {
+        enum Failure { case complete, errorEvent }
         private let lock = NSLock()
         private var subscribers: [AsyncStream<ConversationEvent>.Continuation] = []
         private var _submittedTexts: [String] = []
         private(set) var createCount = 0
         var replyText: String = "real reply"
+        var failure: Failure?
         var submitError: Error?
         var expireOnResume = false
 
@@ -474,7 +502,16 @@ final class BridgedRoomRelayTests: XCTestCase {
             if let submitError { throw submitError }
             let streams = lock.withLock { subscribers }
             for stream in streams {
-                stream.yield(.messageComplete(sessionID: sessionID, text: replyText, status: nil, error: nil))
+                switch failure {
+                case .complete:
+                    stream.yield(.messageComplete(
+                        sessionID: sessionID, text: "", status: "error", error: "synthetic failure"))
+                case .errorEvent:
+                    stream.yield(.error(sessionID: sessionID, message: "synthetic failure"))
+                case nil:
+                    stream.yield(.messageComplete(
+                        sessionID: sessionID, text: replyText, status: nil, error: nil))
+                }
             }
             return .init(status: "streaming")
         }

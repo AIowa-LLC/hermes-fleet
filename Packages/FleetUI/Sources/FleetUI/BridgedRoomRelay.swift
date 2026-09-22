@@ -319,12 +319,17 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             // Phase 1: collect with an activity-extended window. A member
             // that keeps streaming never expires; only a silent member
             // times out (then phase 2 watches for the late reply).
-            var reply = await Self.collectReply(
+            let outcome = await Self.collectReply(
                 events: events,
                 sessionID: created.sessionID,
                 inactivity: memberTimeout,
                 total: lateCollectionWindow)
-            if let reply {
+            if Task.isCancelled {
+                // Stop or a superseding turn cancelled this collector. The
+                // gateway may still finish; do not invent a room event.
+                return
+            }
+            if case let .reply(reply) = outcome {
                 // A completed turn that is exactly "(pass)" — or empty text,
                 // which Desktop's `isGroupPassText` also counts as silence —
                 // is a GOOD turn: no reply row, no failure note.
@@ -332,9 +337,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: false)
                 return
             }
-            if Task.isCancelled {
-                // The person stopped waiting — nothing failed, and the
-                // member's turn still runs on its gateway. No note.
+            if case .failed = outcome {
+                try await appendFailure(member: member, reason: "member_turn_failed", roomID: roomID)
                 return
             }
             // Honest interim state. The late stream is subscribed BEFORE the
@@ -357,12 +361,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             // reply that arrives after the user-visible timeout, so an
             // inactivity watchdog here would re-create the exact race the
             // phase exists to close.
-            reply = await Self.collectReply(
+            let lateOutcome = await Self.collectReply(
                 events: lateEvents,
                 sessionID: created.sessionID,
                 inactivity: remaining,
                 total: remaining)
-            if let reply, !Task.isCancelled, !BridgedRoomTurnPrompt.isPassText(reply) {
+            if case let .reply(reply) = lateOutcome,
+               !Task.isCancelled, !BridgedRoomTurnPrompt.isPassText(reply) {
                 await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: true)
             }
         } catch {
@@ -373,12 +378,18 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     /// Collect this member's reply: the next terminal `message.complete` on
     /// the member's bridge session, bounded by an INACTIVITY deadline that
     /// any streamed event on the session extends, plus a hard total cap.
+    private enum ReplyOutcome: Sendable {
+        case reply(String)
+        case failed
+        case timedOut
+    }
+
     private static func collectReply(
         events: AsyncStream<ConversationEvent>,
         sessionID: String,
         inactivity: TimeInterval,
         total: TimeInterval
-    ) async -> String? {
+    ) async -> ReplyOutcome {
         // Activity-extended deadline shared between the iterator and the
         // watchdog (lock-guarded; the stream is the only writer of extends).
         final class Window: @unchecked Sendable {
@@ -400,18 +411,23 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             }
         }
         let window = Window(inactivity: inactivity, total: total)
-        return await withTaskGroup(of: String?.self) { group in
+        return await withTaskGroup(of: ReplyOutcome.self) { group in
             group.addTask {
                 var iterator = events.makeAsyncIterator()
                 while let event = await iterator.next() {
                     guard let sid = event.sessionID, sid == sessionID else { continue }
-                    if case let .messageComplete(_, text, status, _, _) = event {
-                        return status == "error" ? nil : text
+                    switch event {
+                    case let .messageComplete(_, text, status, _, _):
+                        return status == nil || status == "complete" ? .reply(text) : .failed
+                    case .error:
+                        return .failed
+                    default:
+                        break
                     }
                     // Any activity for this session: the member is working.
                     window.extend(inactivity: inactivity)
                 }
-                return nil
+                return .failed
             }
             group.addTask {
                 // Inactivity watchdog: poll cheaply until the (extended)
@@ -421,12 +437,12 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 // child wins (the late-reply-collected-but-never-appended
                 // bug).
                 while true {
-                    if window.expired { return nil }
+                    if window.expired { return .timedOut }
                     do { try await Task.sleep(for: .milliseconds(100)) }
-                    catch { return nil }
+                    catch { return .timedOut }
                 }
             }
-            let first = await group.next() ?? nil
+            let first = await group.next() ?? .timedOut
             group.cancelAll()
             return first
         }
@@ -520,6 +536,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         let text: String
         if reason == "bridge_session_expired_context_lost" {
             text = "\(member.displayName)'s bridge session expired; context was lost. Create a new Group to continue."
+        } else if reason == "member_turn_failed" {
+            text = "\(member.displayName)'s turn failed on its gateway. Check that bot's chat, then retry."
         } else {
             text = "\(member.displayName) couldn't be reached for this Group (\(reason))."
         }

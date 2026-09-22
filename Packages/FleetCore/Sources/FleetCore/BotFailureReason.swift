@@ -24,8 +24,9 @@ public enum BotFailureReason: String, Hashable, Sendable, Codable, CaseIterable 
     case modelUnavailable = "model_unavailable"
     case unknown = "unknown"
     // Phone-bridged Group relays (BridgedRoomRelay reason codes — client
-    // owned, never on the gateway wire): a member's reply window closed.
+    // owned, never on the gateway wire): member timeouts and turn failures.
     case bridgedMemberTimeout = "member_timeout"
+    case bridgedMemberTurnFailed = "member_turn_failed"
     case bridgedSessionExpired = "bridge_session_expired_context_lost"
     case bridgedMemberUnreachable = "bridge_member_unreachable"
     // Relay refusal (methods_bot_relay.py:143) — not in ALL_REASONS but a
@@ -52,7 +53,7 @@ public enum BotFailureReason: String, Hashable, Sendable, Codable, CaseIterable 
             // Person-driven retry only — the member may still complete and
             // land its reply through the late-collection tail.
             return .none
-        case .queuedExpired, .agentBlocked, .cancelled,
+        case .queuedExpired, .agentBlocked, .cancelled, .bridgedMemberTurnFailed,
              .providerAuthOrAccess, .providerQuotaLimit,
              .missingConfig, .modelUnavailable, .unknown,
              .bridgedSessionExpired, .bridgedMemberUnreachable:
