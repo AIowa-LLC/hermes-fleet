@@ -80,17 +80,37 @@ public struct FleetRosterView: View {
     /// FOS-5: healthy zero-bot gateways that still host Groups get a
     /// synthetic section so a Groups (or All) scope never hides them.
     /// (Outage gateways always have a section already; a `.loaded` zero-bot
-    /// gateway is the case this adds.)
-    private var collection: [RosterSection] {
+    /// gateway is the case this adds.) The condition counts the rows the
+    /// section RENDERS — hosted rooms AND recoverable Desktop archive
+    /// projections — so a gateway whose only groups are legacy projections
+    /// gets a section (previously it rendered nothing at all).
+    private func collection(hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]) -> [RosterSection] {
         var result = snapshotSections
         guard scope != .bots else { return result }
         let present = Set(result.map(\.gateway.id))
         for gateway in visibleGateways where !present.contains(gateway.id) {
-            if !environment.rooms(for: gateway.id).isEmpty {
+            if Self.roomsRenderable(
+                gatewayID: gateway.id, hostedRooms: hostedRooms, archiveRooms: archiveRooms
+            ) {
                 result.append(RosterSection(gateway: gateway, bots: [], outage: nil))
             }
         }
         return result
+    }
+
+    /// Unfiltered by search: whether a gateway's Groups section can render
+    /// anything at all (hosted rooms, or an archive projection that is not
+    /// already duplicated by a hosted row). Search filtering is the section's
+    /// own job. Static + pure: the synthetic-section scan, the empty-state
+    /// gate, and the tests all share this one rule.
+    static func roomsRenderable(
+        gatewayID: GatewayID, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> Bool {
+        if hostedRooms.contains(where: { $0.id.gatewayID == gatewayID }) { return true }
+        return archiveRooms.contains { room in
+            room.id.gatewayID == gatewayID
+                && shouldShowLegacyArchiveRoom(room, hostedRooms: hostedRooms)
+        }
     }
 
     private var renderedBotsExist: Bool {
@@ -98,21 +118,36 @@ public struct FleetRosterView: View {
         return snapshotSections.contains { !filteredRows(for: $0).isEmpty }
     }
 
-    private var renderedRoomsExist: Bool {
+    /// The empty-state gate counts exactly the rows the Groups section
+    /// renders: hosted rooms OR recoverable archive projections. Counting only
+    /// hosted rooms showed "No Bots" while the section had archive rows to
+    /// give (e.g. a search that matches only an archived group).
+    private func renderedRoomsExist(hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]) -> Bool {
         guard scope != .bots else { return false }
-        return visibleGateways.contains { !filteredRooms(for: $0).isEmpty }
+        return visibleGateways.contains { gateway in
+            !filteredRooms(for: gateway, hostedRooms: hostedRooms).isEmpty
+                || !filteredArchiveRooms(
+                    for: gateway, hostedRooms: hostedRooms, archiveRooms: archiveRooms).isEmpty
+        }
     }
 
     public var body: some View {
+        // Room-union reads re-ingest + reconcile the whole union on EVERY
+        // access; the gate, the synthetic-section scan and every Groups
+        // section need the same two lists — read them once per render pass
+        // and thread them down (never once per gateway section).
+        let hostedRooms = environment.allRooms
+        let archiveRooms = environment.legacyRoomArchive
         Group {
             if environment.rosterSnapshot == nil {
                 refreshing
             } else if environment.gateways.isEmpty {
                 emptyFleet
-            } else if !renderedBotsExist && !renderedRoomsExist {
+            } else if !renderedBotsExist
+                && !renderedRoomsExist(hostedRooms: hostedRooms, archiveRooms: archiveRooms) {
                 noBotsAnywhere
             } else {
-                rosterList
+                rosterList(hostedRooms: hostedRooms, archiveRooms: archiveRooms)
             }
         }
         .navigationTitle("Bots")
@@ -236,7 +271,7 @@ public struct FleetRosterView: View {
         .background(theme.background.ignoresSafeArea())
     }
 
-    private var rosterList: some View {
+    private func rosterList(hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: FleetTheme.spacingLg, pinnedViews: []) {
                 if showsFilterBar {
@@ -247,8 +282,8 @@ public struct FleetRosterView: View {
                 if scope != .groups {
                     fleetActiveNowPreview
                 }
-                ForEach(collection) { section in
-                    rosterSection(section)
+                ForEach(collection(hostedRooms: hostedRooms, archiveRooms: archiveRooms)) { section in
+                    rosterSection(section, hostedRooms: hostedRooms, archiveRooms: archiveRooms)
                 }
             }
             .padding(.horizontal, FleetTheme.spacingLg)
@@ -351,7 +386,9 @@ public struct FleetRosterView: View {
 
     // MARK: Per-gateway sections
 
-    private func rosterSection(_ section: RosterSection) -> some View {
+    private func rosterSection(
+        _ section: RosterSection, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             gatewayHeader(section)
 
@@ -387,7 +424,7 @@ public struct FleetRosterView: View {
                     botGroups(for: section)
                 }
                 if scope != .bots {
-                    roomsGroup(for: section.gateway)
+                    roomsGroup(for: section.gateway, hostedRooms: hostedRooms, archiveRooms: archiveRooms)
                 }
             }
         }
@@ -525,10 +562,15 @@ public struct FleetRosterView: View {
     }
 
     /// Groups (FOS-5 terminology; internal identity stays "room"): rows
-    /// from the room union (hosted + desktop legacy).
+    /// from the room union (hosted + desktop legacy). Both room lists are
+    /// passed in — read ONCE per render pass by `body` (each `allRooms` /
+    /// `legacyRoomArchive` access re-ingests and re-reconciles the union).
     @ViewBuilder
-    private func roomsGroup(for gateway: FleetGateway) -> some View {
-        let rows = filteredRooms(for: gateway) + filteredArchiveRooms(for: gateway)
+    private func roomsGroup(
+        for gateway: FleetGateway, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> some View {
+        let rows = filteredRooms(for: gateway, hostedRooms: hostedRooms)
+            + filteredArchiveRooms(for: gateway, hostedRooms: hostedRooms, archiveRooms: archiveRooms)
         if !rows.isEmpty {
             SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
@@ -546,15 +588,16 @@ public struct FleetRosterView: View {
         }
     }
 
-    private func filteredRooms(for gateway: FleetGateway) -> [FleetRoom] {
-        let rooms = environment.rooms(for: gateway.id)
+    private func filteredRooms(for gateway: FleetGateway, hostedRooms: [FleetRoom]) -> [FleetRoom] {
+        let rooms = hostedRooms.filter { $0.id.gatewayID == gateway.id }
         guard !searchText.isEmpty else { return rooms }
         return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
-    private func filteredArchiveRooms(for gateway: FleetGateway) -> [FleetRoom] {
-        let hostedRooms = environment.allRooms
-        let rooms = environment.legacyRoomArchive.filter { room in
+    private func filteredArchiveRooms(
+        for gateway: FleetGateway, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> [FleetRoom] {
+        let rooms = archiveRooms.filter { room in
             guard room.id.gatewayID == gateway.id else { return false }
             // Linked projections remain recoverable in GroupsHomeView's
             // explicit archive, but do not duplicate the hosted row here.

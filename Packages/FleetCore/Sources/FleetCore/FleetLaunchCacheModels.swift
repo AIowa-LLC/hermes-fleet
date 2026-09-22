@@ -78,7 +78,8 @@ public struct CachedSessionList: Codable, Sendable, Equatable {
 }
 
 /// Cache-wide policy (Hermex parity): entries expire after 7 days; reads
-/// past TTL discard; writes prune orphans (gateways no longer registered).
+/// discard expired rows; orphans (rows whose gateway left the registry) are
+/// pruned on gateway removal and on every settled roster write-through.
 public enum FleetLaunchCachePolicy {
     public static let ttl: TimeInterval = 7 * 24 * 60 * 60
 }

@@ -5,9 +5,12 @@ import FleetCore
 /// ADR-0012 (Instant Fleet): SwiftData-backed launch cache. Persists the
 /// last-good per-gateway bot lists and per-route session summaries so cold
 /// launch paints the fleet before any network work. 7-day TTL (Hermex
-/// parity); maintenance on write prunes expired rows and orphans (gateway
-/// ids the caller no longer knows are pruned via `prune(to:)` at read time
-/// by AppEnvironment, which owns the registry). **No credentials ever.**
+/// parity); reads discard expired rows, and ORPHANS are pruned at the two
+/// moments a gateway can leave the app's world: removing a gateway drops its
+/// rows (`removeLaunchCache(for:)` — the FOS-4 precedent), and every settled
+/// roster write-through sweeps rows for gateways the registry no longer knows
+/// (`prune(keeping:)`, decision 2's "orphan pruning on write"). **No
+/// credentials ever.**
 ///
 /// Shape note: the DTOs are small and few (one row per gateway + one per
 /// bot-route + one per session-route); storing each as a JSON payload row
@@ -123,6 +126,47 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
         ))
         stale.forEach { ctx.delete($0) }
         try ctx.save()
+    }
+
+    public func removeLaunchCache(for gatewayID: GatewayID) async throws {
+        let ctx = ModelContext(container)
+        let key = gatewayID.rawValue
+        let rosterRows = try ctx.fetch(FetchDescriptor<LaunchRosterRow>(
+            predicate: #Predicate { $0.gatewayID == key }
+        ))
+        rosterRows.forEach { ctx.delete($0) }
+        // Session rows are keyed by the canonical route id ("<gateway>#<slug>"),
+        // written only since b771504 (the pre-canonical "gw/slug" format never
+        // shipped a row) and unambiguous because route components reject `#`.
+        let listRows = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>())
+        for row in listRows where Self.routeKey(row.routeKey, belongsToGateway: key) {
+            ctx.delete(row)
+        }
+        try ctx.save()
+    }
+
+    public func prune(keeping gatewayIDs: Set<GatewayID>) async throws {
+        let ctx = ModelContext(container)
+        let keep = Set(gatewayIDs.map(\.rawValue))
+        let rosterRows = try ctx.fetch(FetchDescriptor<LaunchRosterRow>())
+        for row in rosterRows where !keep.contains(row.gatewayID) {
+            ctx.delete(row)
+        }
+        let listRows = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>())
+        for row in listRows where !keep.contains(Self.gatewayKey(ofRouteKey: row.routeKey)) {
+            ctx.delete(row)
+        }
+        try ctx.save()
+    }
+
+    /// Whether a canonical route key (`<gateway>#<slug>`) belongs to the
+    /// gateway. Gateway ids cannot contain the `#` separator (M9).
+    private static func routeKey(_ routeKey: String, belongsToGateway id: String) -> Bool {
+        gatewayKey(ofRouteKey: routeKey) == id
+    }
+
+    private static func gatewayKey(ofRouteKey routeKey: String) -> String {
+        String(routeKey.prefix(while: { $0 != "#" }))
     }
 
     public func clearLaunchCache() async throws {

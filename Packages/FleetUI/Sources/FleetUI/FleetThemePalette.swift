@@ -467,6 +467,7 @@ public struct FleetThemeValues: Sendable {
     private let resolvedSurface: FleetStoredColor
     private let resolvedSurfaceElevated: FleetStoredColor
     private let resolvedBorder: FleetStoredColor
+    private let resolvedShadow: FleetStoredColor
 
     public init(palette: FleetThemePalette, isDarkAppearance: Bool, isIncreasedContrast: Bool) {
         self.palette = palette
@@ -513,7 +514,18 @@ public struct FleetThemeValues: Sendable {
         self.resolvedSurface = surface
         self.resolvedSurfaceElevated = background.blended(toward: surface, amount: 0.5)
         self.resolvedBorder = text.blended(toward: background, amount: isIncreasedContrast ? 0.35 : 0.58)
+        // Floating-surface shadow ink: the resolved canvas driven to its dark
+        // end. A shadow DARKENS and never tints (`FleetTheme.scrim` parity);
+        // deriving it from the palette keeps a custom light canvas darkening
+        // correctly instead of inheriting a hard-coded platform black.
+        self.resolvedShadow = background.blended(
+            toward: FleetStoredColor(red: 0, green: 0, blue: 0),
+            amount: Self.shadowInkAmount)
     }
+
+    /// How far the shadow ink is driven from the resolved canvas toward black:
+    /// close enough to neutral that the ink reads as a shadow, not a tint.
+    private static let shadowInkAmount = 0.92
 
     public static let `default` = FleetThemeValues(
         palette: .fleetDefault,
@@ -536,6 +548,14 @@ public struct FleetThemeValues: Sendable {
     public var surfaceElevated: Color { resolvedSurfaceElevated.swiftUIColor }
     public var surfaceIncreased: Color { isIncreasedContrast ? resolvedBackground.swiftUIColor : surface }
     public var border: Color { resolvedBorder.swiftUIColor }
+
+    /// Floating-surface shadow ink (the composer pill, floating clusters) at
+    /// the appearance's own strength: the same ink at 8% over the light canvas
+    /// and 20% over the darker one. Call sites use this token — never a
+    /// hard-coded `Color.black` (issue #6 theme call-site audit).
+    public var shadow: Color {
+        resolvedShadow.swiftUIColor.opacity(isDarkAppearance ? 0.20 : 0.08)
+    }
 
     /// Render-time correction result. This is diagnostic/presentation state;
     /// the controller persists only `palette` and never this derived value.
@@ -673,10 +693,11 @@ public final class FleetThemeController: @unchecked Sendable {
               let legacy = FleetAccent(rawValue: raw) else {
             return .fleetDefault
         }
-        return FleetThemePalette(
-            highlight: legacy.legacyHighlight,
-            text: FleetThemePalette.fleetDefault.text,
-            background: FleetThemePalette.fleetDefault.background,
-            appearance: .adaptiveCustomHighlight)
+        // The accent's OWN palette carries its per-appearance resolution: the
+        // mono accents (White, and Black since the dark-legibility fix) must
+        // resolve their highlight in dark mode on a migrated install too — a
+        // hard-coded `.adaptiveCustomHighlight` here would keep the
+        // invisible-on-canvas highlight this migration exists to avoid.
+        return legacy.palette
     }
 }

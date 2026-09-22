@@ -63,14 +63,26 @@ extension FleetAccent {
 
     /// The palette this accent applies: its highlight over the Fleet-default
     /// text/background, adaptive — the existing contrast/ink pipeline and the
-    /// FleetThemeController apply-guard keep working unchanged. White is the
-    /// mono exception (ADR-0009): its highlight resolves per appearance.
+    /// FleetThemeController apply-guard keep working unchanged.
+    ///
+    /// MONO accents (ADR-0009, extended to Black): their highlight resolves
+    /// per appearance. White stores near-black and resolves white in dark;
+    /// Black stores #2C2C2E — a near-black highlight is as invisible on the
+    /// #101216 dark canvas (1.35:1) as white is on the light canvas, and the
+    /// invisible-pair guard passes it, so Black must take the same inverse
+    /// (white-in-dark) resolution. Tint, unread dots, and the unread badge
+    /// stay legible in both appearances for both.
     public var palette: FleetThemePalette {
         FleetThemePalette(
             highlight: highlight,
             text: FleetThemePalette.fleetDefault.text,
             background: FleetThemePalette.fleetDefault.background,
-            appearance: self == .white ? .adaptiveMono : .adaptiveCustomHighlight)
+            appearance: isMono ? .adaptiveMono : .adaptiveCustomHighlight)
+    }
+
+    /// The accents whose highlight is defined per appearance (ADR-0009).
+    var isMono: Bool {
+        self == .white || self == .black
     }
 
     /// The accent whose palette matches (for showing the current pick when a

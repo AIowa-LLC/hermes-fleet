@@ -159,16 +159,24 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
                 }
             }
         }
-        // ADR-0010: `.room` screens own to the Groups tab now. Persisted
-        // Chats paths from pre-Groups installs carried room destinations —
-        // migrate them onto the Groups path (order preserved, other tabs
-        // untouched) so a restored stack never pushes a room on the Chats
-        // stack (and `open(.room)`'s same-screen dedupe stays coherent).
-        if let chatsPath = merged[.chats], chatsPath.contains(where: \.isRoom) {
-            let retained = chatsPath.filter { !$0.isRoom }
-            let migrated = chatsPath.filter { $0.isRoom }
-            merged[.chats] = retained
-            merged[.groups, default: []].insert(contentsOf: migrated, at: 0)
+        // ADR-0010: `.room` screens own to the Groups tab now. Persisted paths
+        // from pre-Groups installs carried room destinations on the Chats
+        // stack AND — for every install that ran Build ≤42, where `.room` was
+        // still owned by `.bots` — on the BOTS stack (the roster's
+        // `fleet.room.row.*` rows and the old Chats Groups section both filed
+        // through `open()`, which uses `screen.owner`). Migrate rooms out of
+        // BOTH legacy owners onto the Groups path (order preserved, other tabs
+        // untouched) so a restored stack never pushes a room on a stack that no
+        // longer owns it (and `open(.room)`'s same-screen dedupe stays
+        // coherent).
+        var migratedRooms: [FleetScreen] = []
+        for legacyOwner in [FleetTab.chats, .bots] {
+            guard let path = merged[legacyOwner], path.contains(where: \.isRoom) else { continue }
+            merged[legacyOwner] = path.filter { !$0.isRoom }
+            migratedRooms.append(contentsOf: path.filter { $0.isRoom })
+        }
+        if !migratedRooms.isEmpty {
+            merged[.groups, default: []].insert(contentsOf: migratedRooms, at: 0)
         }
         paths = merged
     }

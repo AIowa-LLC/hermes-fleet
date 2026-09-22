@@ -255,6 +255,61 @@ extension AppCompositionTests {
         XCTAssertEqual(restored2.selection, .bots)
         XCTAssertEqual(restored2.paths[.bots], [.roster])
     }
+
+    /// ADR-0010 room ownership, SECOND legacy owner: every install that ran
+    /// Build ≤42 persisted `.room` destinations on the BOTS stack (`.room` was
+    /// owned by `.bots` until the Groups tab took it — the roster's
+    /// `fleet.room.row.*` rows filed through `open()`). Restore must migrate
+    /// rooms out of the bots path too; otherwise the room is pushed on a stack
+    /// that no longer owns it and `open(.room)`'s same-screen dedupe can never
+    /// match the restored entry.
+    func testLegacyRoomRestoreMigratesOutOfBothChatsAndBotsPaths() throws {
+        let botsRoom = FleetScreen.room(FleetRoomID(
+            provenance: .hosted,
+            gatewayID: GatewayID(rawValue: "workstation"),
+            key: "standup"))
+        let chatsRoom = FleetScreen.room(FleetRoomID(
+            provenance: .desktopLegacy,
+            gatewayID: GatewayID(rawValue: "render-box"),
+            key: "name:Design Review"))
+        let chatRow = FleetScreen.conversation(
+            Route(gatewayID: GatewayID(rawValue: "workstation"),
+                  profileSlug: ProfileSlug(rawValue: "default")),
+            sessionID: "s1")
+        let secondBotsRoom = FleetScreen.room(FleetRoomID(
+            provenance: .hosted,
+            gatewayID: GatewayID(rawValue: "workstation"),
+            key: "retro"))
+
+        func legacyJSON(bots: [FleetScreen], chats: [FleetScreen], groups: [FleetScreen]) throws -> Data {
+            let botsFrag = try JSONSerialization.jsonObject(with: JSONEncoder().encode(bots))
+            let chatsFrag = try JSONSerialization.jsonObject(with: JSONEncoder().encode(chats))
+            let groupsFrag = try JSONSerialization.jsonObject(with: JSONEncoder().encode(groups))
+            // [FleetTab: [FleetScreen]] encodes as an unkeyed alternating
+            // key/value array — assembled here in the real wire shape.
+            let paths: [Any] = ["bots", botsFrag, "chats", chatsFrag, "groups", groupsFrag]
+            return try JSONSerialization.data(withJSONObject: [
+                "version": 1,
+                "selection": "bots",
+                "paths": paths,
+            ] as [String: Any])
+        }
+
+        let restored = FleetNavigationState.restore(try legacyJSON(
+            bots: [.roster, botsRoom, secondBotsRoom],
+            chats: [chatsRoom, chatRow],
+            groups: [.gatewayGroups(GatewayID(rawValue: "workstation"))]))
+
+        XCTAssertEqual(restored.paths[.bots], [.roster],
+                       "a room must not restore on the bots stack (it no longer owns it)")
+        XCTAssertEqual(restored.paths[.chats], [chatRow],
+                       "non-room chat rows stay on the chats stack")
+        // Each source keeps its own internal order; chats rooms precede bots
+        // rooms (the newer legacy owner is migrated first) and both land ahead
+        // of the Groups entry already saved.
+        XCTAssertEqual(restored.paths[.groups], [chatsRoom, botsRoom, secondBotsRoom, .gatewayGroups(GatewayID(rawValue: "workstation"))],
+                       "rooms migrate from BOTH legacy owners to the top of Groups")
+    }
 }
 
 

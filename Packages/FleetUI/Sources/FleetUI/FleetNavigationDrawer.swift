@@ -154,7 +154,7 @@ struct FleetNavigationDrawer: View {
             // ChatGPT parity: no empty-state caption — an empty section
             // renders just its header.
             ForEach(environment.pinnedConversations) { pin in
-                conversationRow(pin: pin, isRecent: false)
+                conversationRow(pin: pin)
             }
         }
     }
@@ -243,7 +243,7 @@ struct FleetNavigationDrawer: View {
         .accessibilityIdentifier(identifier)
     }
 
-    private func conversationRow(pin: FleetConversationPin, isRecent: Bool) -> some View {
+    private func conversationRow(pin: FleetConversationPin) -> some View {
         // Codex-style row diet: title + muted secondary only. No avatar, no
         // pin glyph — pinning is managed by swipe on the Chats list.
         let unavailable = !isAvailable(pin)
@@ -344,9 +344,5 @@ struct FleetNavigationDrawer: View {
         if case .individual(let route, let sessionID) = pin.identity {
             onOpenConversation(route, sessionID)
         }
-    }
-
-    private func gatewayName(_ id: GatewayID) -> String {
-        environment.gateway(for: id)?.displayName ?? id.rawValue
     }
 }

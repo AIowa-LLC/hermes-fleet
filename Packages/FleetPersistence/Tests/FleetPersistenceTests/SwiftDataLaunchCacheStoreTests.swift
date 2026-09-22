@@ -94,7 +94,69 @@ extension SwiftDataLaunchCacheStoreTests {
     }
 }
 
-// MARK: - routeKey collision safety
+// MARK: - ADR-0012 decision 2: orphan pruning
+
+extension SwiftDataLaunchCacheStoreTests {
+
+    /// Removing a gateway drops ITS rows — roster entry and every session row
+    /// on its routes — while other gateways' rows survive. (OCR review: the
+    /// doc promised orphan pruning that did not exist; a removed gateway's bot
+    /// list and session titles stayed on disk for the full 7-day TTL.)
+    func testRemoveLaunchCacheDropsOnlyThatGatewaysRows() async throws {
+        let launchCache = try await makeSharedSeam()
+        let other = GatewayID(rawValue: "render-box")
+        let m5Route = Route(gatewayID: m5, profileSlug: ProfileSlug(rawValue: "default"))
+        let otherRoute = Route(gatewayID: other, profileSlug: ProfileSlug(rawValue: "default"))
+        try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: m5, bots: [], cachedAt: recent))
+        try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: other, bots: [], cachedAt: recent))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: m5Route, sessions: [], cachedAt: recent))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: otherRoute, sessions: [], cachedAt: recent))
+
+        try await launchCache.removeLaunchCache(for: m5)
+
+        let rosters = try await launchCache.loadRosterCache()
+        let lists = try await launchCache.loadSessionListCache()
+        XCTAssertEqual(rosters.map(\.gatewayID), [other], "the removed gateway's roster row is gone")
+        XCTAssertEqual(lists.map(\.route), [otherRoute], "the removed gateway's session rows are gone")
+    }
+
+    /// A route key that merely CONTAINS the removed gateway id (a different
+    /// gateway whose id is a prefix, or a slug carrying the id) is untouched:
+    /// the canonical key is `<gateway>#<slug>` and components reject `#`.
+    func testRemoveLaunchCacheDoesNotTouchPrefixLookalikeGateway() async throws {
+        let launchCache = try await makeSharedSeam()
+        let lookalike = GatewayID(rawValue: "workstation-2")
+        let lookalikeRoute = Route(gatewayID: lookalike, profileSlug: ProfileSlug(rawValue: "default"))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: lookalikeRoute, sessions: [], cachedAt: recent))
+
+        try await launchCache.removeLaunchCache(for: m5)
+
+        let lists = try await launchCache.loadSessionListCache()
+        XCTAssertEqual(lists.map(\.route), [lookalikeRoute],
+                       "only rows on the removed gateway's own routes are pruned")
+    }
+
+    /// Write-time sweep: rows for gateways the registry still knows survive
+    /// (even unanswered ones — the persisted FOS-5 ghost), rows for gateways
+    /// it no longer knows are deleted.
+    func testPruneKeepingRegistryGatewaysSweepsOnlyOrphans() async throws {
+        let launchCache = try await makeSharedSeam()
+        let orphan = GatewayID(rawValue: "decommissioned")
+        let m5Route = Route(gatewayID: m5, profileSlug: ProfileSlug(rawValue: "default"))
+        let orphanRoute = Route(gatewayID: orphan, profileSlug: ProfileSlug(rawValue: "default"))
+        try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: m5, bots: [], cachedAt: recent))
+        try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: orphan, bots: [], cachedAt: recent))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: m5Route, sessions: [], cachedAt: recent))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: orphanRoute, sessions: [], cachedAt: recent))
+
+        try await launchCache.prune(keeping: [m5])
+
+        let rosters = try await launchCache.loadRosterCache()
+        let lists = try await launchCache.loadSessionListCache()
+        XCTAssertEqual(rosters.map(\.gatewayID), [m5])
+        XCTAssertEqual(lists.map(\.route), [m5Route])
+    }
+}
 
 extension SwiftDataLaunchCacheStoreTests {
 

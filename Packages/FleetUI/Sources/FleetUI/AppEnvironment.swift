@@ -715,9 +715,11 @@ public final class AppEnvironment {
 
     /// W3: paint the fleet from the persisted launch cache. Gateways come
     /// from the live registry (already restored); bots + session lists come
-    /// from cache; a synthetic snapshot marks hydrated gateways `.loaded`
-    /// so sections render without outage chrome. Entries for gateways no
-    /// longer registered are ignored (orphan pruning at read).
+    /// from cache; hydrated gateways are marked `.loaded` so their sections
+    /// render without outage chrome. Entries for gateways no longer
+    /// registered are ignored here AND pruned on disk — by
+    /// `removeLaunchCache(for:)` when a gateway is removed and by
+    /// `prune(keeping:)` on every settled roster write-through.
     private func hydrateFromLaunchCache() async {
         guard let rosters = try? await launchCache.loadRosterCache(),
               let lists = try? await launchCache.loadSessionListCache() else { return }
@@ -733,8 +735,13 @@ public final class AppEnvironment {
         for (_, bots) in botsByGateway {
             for bot in bots { roster.upsertBot(bot) }
         }
-        let outcomes: [GatewayID: GatewayRosterOutcome] = knownIDs.reduce(into: [:]) { acc, id in
-            acc[id] = .loaded(profileCount: botsByGateway[id]?.count ?? 0)
+        // FOS-5 "never invent state": only gateways actually hydrated from
+        // cache are classified `.loaded` — including an answered zero-bot
+        // entry (empty-is-authoritative). A registered gateway with no cached
+        // entry stays UNCLASSIFIED (no outcome) until the live refresh
+        // settles: it must not be presented as reachable with zero bots.
+        let outcomes: [GatewayID: GatewayRosterOutcome] = botsByGateway.reduce(into: [:]) { acc, entry in
+            acc[entry.key] = .loaded(profileCount: entry.value.count)
         }
         rosterSnapshot = FleetRosterSnapshot(roster: roster, gatewayOutcomes: outcomes)
         cachedBotsByGateway = botsByGateway
@@ -758,6 +765,12 @@ public final class AppEnvironment {
                 bots: bots.map(FleetLaunchCacheMapper.dto(from:)))
             try? await launchCache.saveRosterCache(entry)
         }
+        // ADR-0012 decision 2 — ORPHAN PRUNING ON WRITE: a settled write-through
+        // sweeps rows for gateways the registry no longer knows (removed while
+        // this refresh was in flight, or dropped by a registry edit). Rows for
+        // REGISTERED gateways are kept even when this refresh failed — that is
+        // the persisted FOS-5 ghost, not an orphan.
+        try? await launchCache.prune(keeping: Set(gateways.map(\.id)))
     }
 
     /// W7/W8b: clears the persisted launch cache + the stale flag.
@@ -1631,8 +1644,14 @@ public final class AppEnvironment {
     private func replicate(
         room: FleetRoom, authorityGatewayID: GatewayID, targetGatewayIDs: Set<GatewayID>
     ) async {
-        guard !targetGatewayIDs.isEmpty,
-              let authority = roomLinkSeam(for: authorityGatewayID),
+        // Nothing to replicate (the room's only participant left the fleet) —
+        // a previously recorded "history sync pending" warning must clear
+        // with it, or the Groups row would claim a pending sync forever.
+        guard !targetGatewayIDs.isEmpty else {
+            roomSyncWarnings[room.canonicalIdentity] = nil
+            return
+        }
+        guard let authority = roomLinkSeam(for: authorityGatewayID),
               let source = try? await authority.roomReplaySource(roomID: room.id.key) else { return }
         var warning: String?
         for targetID in targetGatewayIDs {
@@ -2078,6 +2097,11 @@ public final class AppEnvironment {
         artifactLibrary.prune(gatewayID: id)
         artifactRetrievers[id] = nil
         artifactImages.clear(gatewayID: id)
+        // ADR-0012 decision 2: the removed gateway's cached bot list and
+        // session summaries are orphans the moment it leaves the registry —
+        // no read path may serve them again (7-day TTL is not a bound on
+        // "removed": the store is pruned on removal, per the FOS-4 precedent).
+        try? await launchCache.removeLaunchCache(for: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
         let removedRoutes = sessionRoutes(on: id)
@@ -2280,6 +2304,12 @@ public final class AppEnvironment {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionsByRoute[route] = sessions
+            // Dogfood D3/W4: the FIRST observation of a route establishes the
+            // device-local baseline — live reads included, not just the launch
+            // cache (a fresh install, or any run whose cache is empty/expired,
+            // never hydrates; without this every historical session would
+            // resolve unread and the badge would light for all of them).
+            baselineUnreadStateIfNeeded(route: route, sessions: sessions)
             recomputeUnreadAggregate()
             sessionReadErrors[route] = nil
             sessionsObservedAt[route] = Date()
@@ -2300,6 +2330,10 @@ public final class AppEnvironment {
     /// First observation of a route establishes the device-local read baseline
     /// for the sessions currently returned by that route. Later session IDs on
     /// an already-baselined route remain unread until the user opens them.
+    ///
+    /// Two callers, one contract: launch-cache hydration (W5 — dots on first
+    /// paint) and the first LIVE session read (`loadSessions`). A route that
+    /// was never hydrated baselines on its first live observation.
     private func baselineUnreadStateIfNeeded(route: Route, sessions: [SessionSummary]) {
         #if DEBUG
         // The unread UI suite deliberately starts with an unread fixture so it

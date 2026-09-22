@@ -158,7 +158,8 @@ final class AppEnvironmentTests: XCTestCase {
         sessionList: any SessionListProviding = TestSessionList(),
         conversationPinStore: any ConversationPinStoring = InMemoryConversationPinStore(),
         connectionResults: [GatewayID: Result<Void, GatewayConnectivityError>] = [:],
-        connectionIntentDefaults: UserDefaults? = nil
+        connectionIntentDefaults: UserDefaults? = nil,
+        launchCache: (any FleetLaunchCaching)? = nil
     ) async -> (AppEnvironment, GatewayRegistryService) {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
@@ -190,7 +191,8 @@ final class AppEnvironmentTests: XCTestCase {
             health: TestHealthAccumulator(),
             seedRegistrations: gateways,
             connectionIntentDefaults: connectionIntentDefaults,
-            conversationPinStore: conversationPinStore
+            conversationPinStore: conversationPinStore,
+            launchCache: launchCache
         )
         await environment.load()
         return (environment, registry)
@@ -251,6 +253,115 @@ final class AppEnvironmentTests: XCTestCase {
         await environment.load()
 
         XCTAssertEqual(environment.gateways.map(\.id.rawValue), ["existing"])
+    }
+
+    // MARK: ADR-0012 — launch-cache hydration honesty + orphan pruning
+
+    /// FOS-5 "never invent state": hydration classifies ONLY gateways with a
+    /// cached roster entry as `.loaded`. A registered gateway with no cached
+    /// entry stays unclassified until the live refresh settles — it must never
+    /// render as reachable with zero bots (the fabricated state the review
+    /// caught in `hydrateFromLaunchCache`).
+    func testHydrationClassifiesOnlyGatewaysPresentInTheCache() async throws {
+        let cache = InMemoryLaunchCache()
+        let hydrated = GatewayID(rawValue: "workstation")
+        let noCacheEntry = GatewayID(rawValue: "render-box")
+        try await cache.saveRosterCache(CachedGatewayRoster(
+            gatewayID: hydrated,
+            bots: [CachedFleetBot(
+                route: Route(gatewayID: hydrated, profileSlug: ProfileSlug(rawValue: "default")),
+                displayName: "Researcher")]))
+
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation"),
+                       registration("render-box", name: "Render Box")],
+            launchCache: cache)
+
+        let snapshot = try XCTUnwrap(environment.rosterSnapshot)
+        XCTAssertEqual(snapshot.outcome(for: hydrated), .loaded(profileCount: 1))
+        XCTAssertNil(snapshot.outcome(for: noCacheEntry),
+                     "a gateway with no cached entry must stay unclassified")
+        XCTAssertEqual(snapshot.botPresence(on: noCacheEntry), .unknown,
+                       "presence is never fabricated from a missing cache entry")
+        XCTAssertEqual(environment.cachedBotsByGateway[hydrated]?.count, 1)
+        XCTAssertNil(environment.cachedBotsByGateway[noCacheEntry])
+    }
+
+    /// ADR-0012 decision 2: removing a gateway prunes ITS launch-cache rows
+    /// (roster + session summaries) — a removed gateway's bot list and
+    /// conversation titles must not be served for the rest of the 7-day TTL
+    /// (the FOS-4 precedent, applied to the launch cache).
+    func testRemoveGatewayPrunesItsLaunchCacheRows() async throws {
+        let cache = InMemoryLaunchCache()
+        let removed = GatewayID(rawValue: "workstation")
+        let kept = GatewayID(rawValue: "render-box")
+        let removedRoute = Route(gatewayID: removed, profileSlug: ProfileSlug(rawValue: "default"))
+        let keptRoute = Route(gatewayID: kept, profileSlug: ProfileSlug(rawValue: "default"))
+        try await cache.saveRosterCache(CachedGatewayRoster(gatewayID: removed, bots: []))
+        try await cache.saveRosterCache(CachedGatewayRoster(gatewayID: kept, bots: []))
+        try await cache.saveSessionListCache(CachedSessionList(route: removedRoute, sessions: [
+            SessionSummary(id: "s1", title: "Removed gateway session", startedAt: 1, lastActive: 10, messageCount: 1)]))
+        try await cache.saveSessionListCache(CachedSessionList(route: keptRoute, sessions: []))
+
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation"),
+                       registration("render-box", name: "Render Box")],
+            launchCache: cache)
+
+        try await environment.removeGateway(removed)
+
+        let rosters = try await cache.loadRosterCache()
+        let lists = try await cache.loadSessionListCache()
+        XCTAssertEqual(rosters.map(\.gatewayID), [kept], "only the removed gateway's rows are pruned")
+        XCTAssertEqual(lists.map(\.route), [keptRoute])
+        XCTAssertEqual(environment.gateways.map(\.id), [kept])
+    }
+
+    /// D3/W4: the first LIVE session read establishes the unread baseline for
+    /// its route. On a fresh install (or any run whose launch cache is
+    /// empty/expired) nothing hydrates — without this the badge would light for
+    /// every historical session. Sessions that appear AFTER the baseline stay
+    /// unread until opened.
+    func testFirstLiveSessionObservationBaselinesUnreadState() async throws {
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        let historical = SessionSummary(
+            id: "stored-1", title: "Historical", startedAt: 1, lastActive: 100, messageCount: 2)
+        let sessionList = MutableSessionList(sessions: [historical])
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            sessionList: sessionList)
+        environment.resetUnreadStateForUITests()
+
+        await environment.loadSessions(for: route)
+
+        XCTAssertFalse(environment.isConversationUnread(route: route, session: historical),
+                       "the route's first observation baselines its existing sessions")
+        XCTAssertFalse(environment.anyUnreadSessions,
+                       "no historical session may light the badge on first observation")
+
+        let newer = SessionSummary(
+            id: "stored-2", title: "New", startedAt: 2, lastActive: 200, messageCount: 1)
+        sessionList.sessions = [historical, newer]
+        await environment.loadSessions(for: route)
+
+        XCTAssertTrue(environment.isConversationUnread(route: route, session: newer),
+                      "a session the baseline never saw remains unread until opened")
+        XCTAssertFalse(environment.isConversationUnread(route: route, session: historical))
+        XCTAssertTrue(environment.anyUnreadSessions)
+
+        environment.resetUnreadStateForUITests()
+    }
+
+    /// Mutable scripted `session.list` double: one route's list changes between
+    /// observations (baseline vs. later-arriving sessions).
+    private final class MutableSessionList: SessionListProviding, @unchecked Sendable {
+        nonisolated(unsafe) var sessions: [SessionSummary]
+
+        init(sessions: [SessionSummary]) { self.sessions = sessions }
+
+        func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { sessions }
     }
 
     // MARK: H2 — connection health wiring (observable publishing)

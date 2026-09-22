@@ -14,6 +14,17 @@ public protocol FleetLaunchCaching: Sendable {
     func saveRosterCache(_ entry: CachedGatewayRoster) async throws
     /// Replace the session-list entry for one route.
     func saveSessionListCache(_ entry: CachedSessionList) async throws
+    /// ADR-0012 decision 2 — orphan pruning. Drop every row belonging to one
+    /// gateway (its roster entry and every session-list row on its routes).
+    /// Called when the user removes a gateway (FOS-4 precedent: a removed
+    /// source's cached rows must not outlive it).
+    func removeLaunchCache(for gatewayID: GatewayID) async throws
+    /// ADR-0012 decision 2 — orphan pruning on write. Drop every row whose
+    /// gateway is NOT in `gatewayIDs` (the registry's current set), keeping
+    /// rows for registered gateways even when their last refresh failed
+    /// (FOS-5 persisted-ghost semantics). Called from the settled roster
+    /// write-through.
+    func prune(keeping gatewayIDs: Set<GatewayID>) async throws
     /// Drop everything (Data & Storage clear + UI-test hygiene).
     func clearLaunchCache() async throws
 }
@@ -43,6 +54,16 @@ public actor InMemoryLaunchCache: FleetLaunchCaching {
 
     public func saveSessionListCache(_ entry: CachedSessionList) async throws {
         lists[entry.route] = entry
+    }
+
+    public func removeLaunchCache(for gatewayID: GatewayID) async throws {
+        rosters[gatewayID] = nil
+        lists = lists.filter { $0.key.gatewayID != gatewayID }
+    }
+
+    public func prune(keeping gatewayIDs: Set<GatewayID>) async throws {
+        rosters = rosters.filter { gatewayIDs.contains($0.key) }
+        lists = lists.filter { gatewayIDs.contains($0.key.gatewayID) }
     }
 
     public func clearLaunchCache() async throws {

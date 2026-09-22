@@ -92,7 +92,7 @@ public struct FleetSettingsView: View {
                             .frame(width: 18, height: 18)
                             .overlay(Circle().strokeBorder(theme.border, lineWidth: 1))
                             .accessibilityHidden(true)
-                        Text(currentAccentLabel)
+                        Text("Accent")
                             .foregroundStyle(theme.textSecondary)
                         Spacer()
                         Text(currentAccent?.label ?? "Custom")
@@ -201,10 +201,6 @@ public struct FleetSettingsView: View {
 
     private var currentAccent: FleetAccent? {
         FleetAccent.matching(active: themeController.activePalette)
-    }
-
-    private var currentAccentLabel: String {
-        currentAccent?.label ?? "Accent"
     }
 
     private var accentColorHighlight: FleetStoredColor {

@@ -112,12 +112,24 @@ struct FleetChatsView: View {
 
     /// Codex-style cleanup: locally hidden conversations (archive). The
     /// gateway has no archive RPC on this client's seam yet — archive is an
-    /// honest device-level hide, persisted and filter-aware (never hides a
-    /// search match).
+    /// honest device-level hide, persisted; the hide rule itself is
+    /// `isLocallyHidden` below.
     @State private var hiddenEntryIDs: Set<String> = []
 
+    /// The local archive hide rule — pure + static so tests pin it: a hidden
+    /// row stays hidden while the list is unfiltered, and comes back the
+    /// moment the user searches (every row in `entries` already matches the
+    /// query, so a search match is never hidden).
+    static func isLocallyHidden(entryID: String, hiddenEntryIDs: Set<String>, query: String) -> Bool {
+        query.isEmpty && hiddenEntryIDs.contains(entryID)
+    }
+
+    private func isLocallyHidden(_ entry: FleetChatEntry) -> Bool {
+        Self.isLocallyHidden(entryID: entry.id, hiddenEntryIDs: hiddenEntryIDs, query: query)
+    }
+
     private var visibleEntries: [FleetChatEntry] {
-        entries.filter { !hiddenEntryIDs.contains($0.id) }
+        entries.filter { !isLocallyHidden($0) }
     }
 
     private func togglePin(_ entry: FleetChatEntry) async {
@@ -185,12 +197,16 @@ struct FleetChatsView: View {
     /// Dogfood finding 1: cached/retained conversations this screen can still
     /// render — every non-canonical session on a route whose gateway is known
     /// (a session retained from a bot that dropped out of the live roster still
-    /// counts: FOS-5 outage retention must not regress).
+    /// counts: FOS-5 outage retention must not regress). Locally hidden rows
+    /// do NOT count: the screen cannot render them, so "usable sessions
+    /// remain" must not soften a refresh failure into the inline variant while
+    /// the list the user sees is empty.
     private var usableSessionCount: Int {
         environment.sessionsByRoute.reduce(0) { count, pair in
             guard environment.gateway(for: pair.key.gatewayID) != nil else { return count }
             return count + pair.value.filter {
                 !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
+                    && !isLocallyHidden(FleetChatEntry(route: pair.key, session: $0))
             }.count
         }
     }
@@ -352,10 +368,14 @@ struct FleetChatsView: View {
                         .accessibilityIdentifier("fleet.chats.swipe.archive.\(entry.id)")
                     }
                 }
-                if entries.isEmpty && environment.loadingRoutes.isEmpty && refreshFailure != .prominent {
+                if visibleEntries.isEmpty && environment.loadingRoutes.isEmpty && refreshFailure != .prominent {
                     // F4 (dogfood corrective pass): the empty state is
                     // filter-aware and never claims the user has no data when
                     // a filter merely hid usable conversations.
+                    // OCR re-review: the gate counts the rows the LIST renders
+                    // (`visibleEntries`) — with every row locally archived the
+                    // unfiltered `entries` check never fired, leaving a bare
+                    // "Newest sessions" header with no explanation.
                     let empty = FleetChatsPresentation.emptyState(
                         hasQuery: !query.isEmpty,
                         hasGatewayFilter: gatewayID != nil,

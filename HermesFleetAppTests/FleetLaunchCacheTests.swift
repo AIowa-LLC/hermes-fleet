@@ -68,4 +68,45 @@ final class FleetLaunchCacheTests: XCTestCase {
         let emptied = try await store.loadRosterCache()
         XCTAssertTrue(emptied.isEmpty)
     }
+
+    // MARK: W2b — orphan pruning (ADR-0012 decision 2)
+
+    /// Per-gateway removal: the in-memory seam mirrors the SwiftData store.
+    func testInMemoryStoreRemovesOneGatewaysRows() async throws {
+        let store = InMemoryLaunchCache()
+        let kept = GatewayID(rawValue: "kept")
+        let removed = GatewayID(rawValue: "removed")
+        let keptRoute = Route(gatewayID: kept, profileSlug: ProfileSlug(rawValue: "default"))
+        let removedRoute = Route(gatewayID: removed, profileSlug: ProfileSlug(rawValue: "default"))
+        try await store.saveRosterCache(CachedGatewayRoster(gatewayID: kept, bots: []))
+        try await store.saveRosterCache(CachedGatewayRoster(gatewayID: removed, bots: []))
+        try await store.saveSessionListCache(CachedSessionList(route: keptRoute, sessions: []))
+        try await store.saveSessionListCache(CachedSessionList(route: removedRoute, sessions: []))
+
+        try await store.removeLaunchCache(for: removed)
+
+        let rosters = try await store.loadRosterCache()
+        let lists = try await store.loadSessionListCache()
+        XCTAssertEqual(rosters.map(\.gatewayID), [kept])
+        XCTAssertEqual(lists.map(\.route), [keptRoute])
+    }
+
+    /// Write-time sweep keeps registered gateways (the persisted FOS-5 ghost)
+    /// and drops only rows whose gateway left the registry.
+    func testInMemoryStorePruneKeepingRegisteredGateways() async throws {
+        let store = InMemoryLaunchCache()
+        let kept = GatewayID(rawValue: "kept")
+        let orphan = GatewayID(rawValue: "orphan")
+        try await store.saveRosterCache(CachedGatewayRoster(gatewayID: kept, bots: []))
+        try await store.saveRosterCache(CachedGatewayRoster(gatewayID: orphan, bots: []))
+        try await store.saveSessionListCache(CachedSessionList(
+            route: Route(gatewayID: orphan, profileSlug: ProfileSlug(rawValue: "default")), sessions: []))
+
+        try await store.prune(keeping: [kept])
+
+        let rosters = try await store.loadRosterCache()
+        let lists = try await store.loadSessionListCache()
+        XCTAssertEqual(rosters.map(\.gatewayID), [kept])
+        XCTAssertTrue(lists.isEmpty)
+    }
 }

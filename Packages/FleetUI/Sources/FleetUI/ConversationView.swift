@@ -70,9 +70,9 @@ public struct ConversationView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showingFileImporter = false
     @FocusState private var composerFocused: Bool
-    /// Dogfood r6 (G1): appearance for the composer's adaptive glass +
-    /// shadow, and the focus signal driving the pill→card morph.
-    @Environment(\.colorScheme) private var colorScheme
+    /// Dogfood r6 (G1): the focus signal driving the pill→card morph. (The
+    /// composer's adaptive glass + shadow no longer read the color scheme
+    /// directly — the shadow is a theme token, `theme.shadow`.)
 
     /// The composer morphs: stadium when idle (fully-rounded pill), a soft
     /// 26pt card when focused/expanding — ChatGPT/Hermex's presentation
@@ -1175,7 +1175,7 @@ enum ConversationHeaderChips {
                 RoundedRectangle(cornerRadius: composerPillRadius, style: .continuous)
                     .strokeBorder(theme.border.opacity(0.6), lineWidth: 0.5)
             )
-            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.20 : 0.08), radius: 10, y: 4)
+            .shadow(color: theme.shadow, radius: 10, y: 4)
             .padding(.horizontal, FleetTheme.spacingMd)
             .padding(.vertical, 6)
             // Scrollable chip zone: model · working folder · profile ·

@@ -277,6 +277,47 @@ final class FOS5BotsGroupsChatsTests: XCTestCase {
 
     // MARK: 5/6. SessionSummary.lastActive + Chats semantics unchanged
 
+    /// OCR re-review (medium): the Groups section renders
+    /// `filteredRooms + filteredArchiveRooms`, so the roster's empty-state gate
+    /// must count the SAME rows. A gateway whose only groups are legacy
+    /// projections — or a search matching only an archived group — must not
+    /// land on `noBotsAnywhere`.
+    func testRoomsRenderableCountsArchiveRowsForTheGate() {
+        let hosted = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: ws, key: "room-1"),
+            name: "Planning")
+        let archiveOnly = FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: lab, key: "id:room-9"),
+            name: "Archived")
+
+        XCTAssertTrue(FleetRosterView.roomsRenderable(
+            gatewayID: ws, hostedRooms: [hosted], archiveRooms: []),
+            "a hosted group renders")
+        XCTAssertTrue(FleetRosterView.roomsRenderable(
+            gatewayID: lab, hostedRooms: [hosted], archiveRooms: [archiveOnly]),
+            "an archive-only gateway still renders a Groups section")
+        XCTAssertFalse(FleetRosterView.roomsRenderable(
+            gatewayID: GatewayID(rawValue: "bare"), hostedRooms: [hosted], archiveRooms: [archiveOnly]),
+            "a gateway with neither hosted nor archive rows has nothing to render")
+    }
+
+    /// OCR finding (low): the local archive hide is FILTER-AWARE — hidden rows
+    /// come back while the user searches (every row in `entries` already
+    /// matches the query, so a search match is never hidden). Without this the
+    /// only affordance that reveals an archived conversation would be gone.
+    func testLocalArchiveHideIsFilterAware() {
+        let hidden: Set<String> = ["ws/default/s1"]
+        XCTAssertTrue(FleetChatsView.isLocallyHidden(
+            entryID: "ws/default/s1", hiddenEntryIDs: hidden, query: ""),
+            "an archived conversation stays hidden while the list is unfiltered")
+        XCTAssertFalse(FleetChatsView.isLocallyHidden(
+            entryID: "ws/default/s1", hiddenEntryIDs: hidden, query: "archived"),
+            "searching reveals the archived conversation (never hides a search match)")
+        XCTAssertFalse(FleetChatsView.isLocallyHidden(
+            entryID: "ws/default/s2", hiddenEntryIDs: hidden, query: ""),
+            "rows that were never hidden are unaffected")
+    }
+
     func testSessionSummaryCarriesLastActiveWithoutChangingSort() {
         let older = SessionSummary(id: "a", title: "A", startedAt: 100, lastActive: 999, messageCount: 1)
         let newer = SessionSummary(id: "b", title: "B", startedAt: 200, lastActive: 100, messageCount: 1)

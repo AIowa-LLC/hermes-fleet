@@ -13,10 +13,13 @@ struct GroupsHomeView: View {
     @State private var gatewayID: GatewayID?
     @State private var showingGroupCompose = false
 
-    /// Reconciled interactive rooms only. Legacy projections are intentionally
-    /// searched separately in the historical archive below.
-    private var groups: [FleetRoom] {
-        environment.allRooms
+    // MARK: Room lists
+
+    /// Reconciled interactive rooms only (legacy projections are searched
+    /// separately in the historical archive). Pure functions of the two room
+    /// lists + filters so `body` can compute each list ONCE per render pass.
+    private func filteredHosted(_ hosted: [FleetRoom]) -> [FleetRoom] {
+        hosted
             .filter { room in
                 (gatewayID == nil || room.id.gatewayID == gatewayID)
                     && (query.isEmpty || (room.name + " " + room.members.map(\.name).joined(separator: " ")).localizedCaseInsensitiveContains(query))
@@ -24,10 +27,8 @@ struct GroupsHomeView: View {
             .sorted { $0.canonicalIdentity < $1.canonicalIdentity }
     }
 
-    /// Source-preserving Desktop snapshots remain intentionally accessible,
-    /// but never appear as ordinary interactive groups.
-    private var archiveRooms: [FleetRoom] {
-        environment.legacyRoomArchive
+    private func filteredArchive(_ archive: [FleetRoom]) -> [FleetRoom] {
+        archive
             .filter { room in
                 (gatewayID == nil || room.id.gatewayID == gatewayID)
                     && (query.isEmpty || (room.name + " " + room.members.map(\.name).joined(separator: " ")).localizedCaseInsensitiveContains(query))
@@ -40,6 +41,14 @@ struct GroupsHomeView: View {
     }
 
     var body: some View {
+        // Room-union reads re-ingest + reconcile the whole union on EVERY
+        // access (`AppEnvironment.allRooms`/`legacyRoomArchive` derive from a
+        // computed `roomUnion`), and the body dereferences them from the
+        // empty-state gate, the section gate, and each ForEach — so a single
+        // search keystroke ran several full reconciliations. Compute both
+        // lists ONCE here and read the locals below.
+        let groups = filteredHosted(environment.allRooms)
+        let archiveRooms = filteredArchive(environment.legacyRoomArchive)
         List {
             Section {
                 Picker("Gateway", selection: $gatewayID) {
