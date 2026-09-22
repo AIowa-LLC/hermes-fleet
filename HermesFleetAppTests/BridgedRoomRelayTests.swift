@@ -75,7 +75,10 @@ final class BridgedRoomRelayTests: XCTestCase {
         XCTAssertEqual(conversation.resumeIDs, ["research"])
     }
 
-    func testExpiredMemberSessionStaysExplicitlyFailed() async throws {
+    /// B76 round 2: an expired bridge session is REBUILT with a fresh
+    /// gateway session (the room log re-establishes context) — the B75
+    /// "explicitly failed / create a new Group" contract is replaced.
+    func testExpiredMemberSessionIsRebuiltWithFreshContext() async throws {
         let store = store()
         let conversation = ImmediateConversation()
         let sessions = ["alpha": Session(
@@ -86,27 +89,31 @@ final class BridgedRoomRelayTests: XCTestCase {
         let relay = BridgedRoomRelay(
             store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
         _ = try await relay.send(roomID: "room", text: "First", threadID: nil)
-        // Wait for the first fan-out to persist its bridge session; the
-        // fan-out is detached (F1), so an immediate second send would race
-        // the route-map write and create a second session.
         try await waitUntil(timeout: 5) {
             let record = await store.record(roomKey: "room")
             return record?.bridgeSessionIDs["alpha/research"] != nil
         }
+        // The gateway loses the session; the room must survive it.
         conversation.expireOnResume = true
         _ = try await relay.send(roomID: "room", text: "Second", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains { $0.reasonCode == "bridge_session_rebuilt" } == true
+        }
+        XCTAssertEqual(conversation.createCount, 2, "expired context is rebuilt, not bricked")
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains {
+            $0.reasonCode == "bridge_session_expired_context_lost"
+        }, "the brick contract is gone")
+        // The gateway stabilizes: the next turn RESUMES the rebuilt session.
+        conversation.expireOnResume = false
         _ = try await relay.send(roomID: "room", text: "Third", threadID: nil)
         try await waitUntil(timeout: 5) {
             let record = await store.record(roomKey: "room")
-            return (record?.events.filter {
-                $0.reasonCode == "bridge_session_expired_context_lost" }.count ?? 0) == 2
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 3
         }
-        XCTAssertEqual(conversation.createCount, 1, "expired context is never silently replaced")
-        let stored = await store.record(roomKey: "room")
-        let record = try XCTUnwrap(stored)
-        XCTAssertEqual(
-            record.events.filter { $0.reasonCode == "bridge_session_expired_context_lost" }.count,
-            2)
+        XCTAssertEqual(conversation.createCount, 2, "a stable gateway resumes the rebuilt session")
     }
 
     func testReplayDrainsAllPagesOnReentry() async throws {
@@ -332,6 +339,7 @@ final class BridgedRoomRelayTests: XCTestCase {
         private(set) var createCount = 0
         var replyText: String = "real reply"
         var submitError: Error?
+        var expireOnResume = false
 
         var submittedTexts: [String] { lock.withLock { _submittedTexts } }
 
@@ -345,7 +353,8 @@ final class BridgedRoomRelayTests: XCTestCase {
             return ConversationSession(sessionID: profile ?? "default")
         }
         func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
-            .init(sessionID: sessionID)
+            if expireOnResume { throw ConversationError.sessionNotFound(sessionID) }
+            return .init(sessionID: sessionID)
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             lock.withLock { _submittedTexts.append(text) }
@@ -589,6 +598,131 @@ final class BridgedRoomRelayTests: XCTestCase {
         }, "a skipped turn is not a failure")
     }
 
+    // MARK: Build 76 dogfood round 2: recovery + identity rendering
+
+    func testExpiredBridgeSessionIsRebuiltNotBricked() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = ImmediateConversation()
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "first turn", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return record?.bridgeSessionIDs["alpha/research"] != nil
+        }
+        // The gateway loses the session (restart / store rotation).
+        research.expireOnResume = true
+        _ = try await relay.send(roomID: "room", text: "who is in this chat?", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
+        }
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        // NO brick: the expired-context failure contract is gone.
+        XCTAssertFalse(record.events.contains {
+            $0.reasonCode == "bridge_session_expired_context_lost"
+        }, "an expired bridge session must be rebuilt, never bricked")
+        // The rebuild is honestly noted as room activity, not an error row.
+        XCTAssertTrue(record.events.contains {
+            $0.kind == "room.activity" && $0.reasonCode == "bridge_session_rebuilt"
+        }, "the rebuild lands a durable activity note")
+        // A fresh session was created and persisted.
+        XCTAssertEqual(research.createCount, 2, "rebuild creates a replacement session")
+        let record2Value = await store.record(roomKey: "room")
+        let record2 = try XCTUnwrap(record2Value)
+        XCTAssertNotNil(record2.bridgeSessionIDs["alpha/research"])
+        // The reply landed normally.
+        XCTAssertTrue(record.events.contains {
+            $0.kind == "message.member" && $0.payloadText == "reply-research"
+        })
+    }
+
+    func testRebuiltSessionReceivesBoundedRecentHistoryIgnoringWatermark() async throws {
+        let store = store()
+        try await contextRoom(store)
+        let research = RecordingConversation()
+        research.expireOnResume = true
+        let sessions = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        // Seed delivered history the old session already consumed.
+        try await store.upsert(BridgedRooms.RoomRecord(
+            roomKey: "room", name: "Launch Crew",
+            members: [member("alpha", "research"), member("beta", "writer")],
+            createdAt: 0,
+            events: (1...30).map { seq in
+                BridgedRooms.EventRecord(
+                    seq: seq, eventID: "e\(seq)", kind: "message.user", actorKind: "user",
+                    actorID: "local-user", payloadText: "m\(seq)", createdAt: Double(seq))
+            },
+            bridgeSessionIDs: ["alpha/research": "old-session"],
+            deliveryWatermarks: ["alpha/research": 30]))
+        _ = try await relay.send(roomID: "room", text: "after expiry", threadID: nil)
+        try await waitUntil(timeout: 5) { research.submittedTexts.count == 1 }
+        let rebuilt = try XCTUnwrap(research.submittedTexts.first)
+        // A context-less session needs history even though the watermark
+        // says delivered — but bounded to the 24-line history window.
+        XCTAssertTrue(rebuilt.contains("User (user): m30"), "the newest line rides the rebuild")
+        XCTAssertTrue(rebuilt.contains("omitted since your last turn"),
+                      "the over-long tail is marked as truncated")
+        XCTAssertFalse(rebuilt.contains("User (user): m5"), "lines beyond the bound are cut")
+        XCTAssertTrue(rebuilt.contains("User (user): after expiry"))
+        // And the watermark re-anchors so the NEXT turn is incremental:
+        // after the reply lands, the contiguous advance puts it on the
+        // reply's own seq (well past the stale pre-rebuild value of 30).
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            guard let replySeq = record?.events.first(where: { $0.kind == "message.member" })?.seq else { return false }
+            return record?.deliveryWatermarks["alpha/research"] == replySeq
+        }
+    }
+
+    func testTwinDisplayNamesAreQualifiedAtPersistTime() async throws {
+        let store = store()
+        // Two bots named "default" on different gateways — the dogfood twin.
+        try await store.upsert(.init(roomKey: "room", name: "Twins", members: [
+            .init(gatewayID: "macbook-m5", profile: "default", displayName: "default",
+                  routeID: "macbook-m5#default", gatewayLabel: "macbook-m5"),
+            .init(gatewayID: "gaming-rig", profile: "default", displayName: "default",
+                  routeID: "gaming-rig#default", gatewayLabel: "gaming-rig"),
+        ], createdAt: 0))
+        let macbook = RecordingConversation()
+        let rig = RecordingConversation()
+        let sessions = ["macbook-m5": Session(gatewayID: .init(rawValue: "macbook-m5"), client: macbook),
+                        "gaming-rig": Session(gatewayID: .init(rawValue: "gaming-rig"), client: rig)]
+        let relay = BridgedRoomRelay(store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay.send(roomID: "room", text: "hello", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
+        }
+        let recordValue = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(recordValue)
+        let speakers = Set(record.events
+            .filter { $0.kind == "message.member" }
+            .compactMap { $0.actorDisplayName })
+        XCTAssertEqual(speakers, ["default · macbook-m5", "default · gaming-rig"],
+                       "roster-duplicate display names persist qualified by source")
+        // And the unique-name room stays plain.
+        let store2 = self.store()
+        try await contextRoom(store2)
+        let research2 = RecordingConversation()
+        let sessions2 = ["alpha": Session(gatewayID: .init(rawValue: "alpha"), client: research2),
+                         "beta": Session(gatewayID: .init(rawValue: "beta"), client: RecordingConversation())]
+        let relay2 = BridgedRoomRelay(store: store2, resolver: { sessions2[$0.rawValue] }, memberTimeout: 1)
+        _ = try await relay2.send(roomID: "room", text: "hello", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store2.record(roomKey: "room")
+            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
+        }
+        let plainValue = await store2.record(roomKey: "room")
+        let plain = try XCTUnwrap(plainValue)
+        XCTAssertEqual(Set(plain.events.filter { $0.kind == "message.member" }.compactMap { $0.actorDisplayName }),
+                       ["research", "writer"],
+                       "unique names are never decorated")
+    }
+
     func testRemovedMemberDoesNotReceiveGroupSubmissions() async throws {
         let store = store()
         try await contextRoom(store)
@@ -698,7 +832,7 @@ final class BridgedRoomRelayTests: XCTestCase {
             ConversationSession(sessionID: profile ?? "default")
         }
         func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
-            .init(sessionID: sessionID)
+            return .init(sessionID: sessionID)
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             Task {
@@ -733,7 +867,7 @@ final class BridgedRoomRelayTests: XCTestCase {
             ConversationSession(sessionID: profile ?? "default")
         }
         func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession {
-            .init(sessionID: sessionID)
+            return .init(sessionID: sessionID)
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             .init(status: "streaming")

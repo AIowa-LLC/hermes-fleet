@@ -106,7 +106,8 @@ final class BridgedRoomsTests: XCTestCase {
         let projection = RoomTranscriptProjection.project(
             record.events.map { $0.hostedEvent(roomKey: record.roomKey) })
         XCTAssertEqual(projection.entries.count, 3)
-        XCTAssertEqual(projection.entries.first?.speaker, "local-user")
+        XCTAssertEqual(projection.entries.first?.speaker, "You",
+                       "the room's human renders as You, never the local-user plumbing id")
         XCTAssertEqual(projection.entries.last?.failure?.message, "Niner couldn't answer.")
     }
 }

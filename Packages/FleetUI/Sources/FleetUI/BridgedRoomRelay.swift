@@ -130,7 +130,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             let tail = Task<Void, Never> {
                 // The task inherits this @MainActor context; the relay is
                 // environment-owned for the app's lifetime.
-                try? await self.relay(member: member, roomID: roomID, sessionID: sessionID)
+                try? await self.relay(member: member, roomID: roomID, sessionID: sessionID, rosterAtSend: record.members)
             }
             memberTails[roomID, default: [:]][member.routeID] = tail
         }
@@ -139,7 +139,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
     private func relay(
         member: BridgedRooms.MemberRef, roomID: String,
-        sessionID: String?
+        sessionID: String?, rosterAtSend: [BridgedRooms.MemberRef]
     ) async throws {
         guard let route = member.route else {
             try await appendFailure(member: member, reason: "invalid_route", roomID: roomID)
@@ -155,6 +155,12 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 try await session.connect()
             }
             let conversation = session.conversation
+            // Acquire the member's bridge session. An expired session (the
+            // gateway restarted / rotated its store) is REBUILT, not bricked:
+            // the room log + watermarks on this device can re-establish the
+            // member's group context, so the room survives gateway churn
+            // (Build 76 round 2 — replaces the Create-a-new-Group contract).
+            var rebuilt = false
             let created: ConversationSession
             if let sessionID {
                 do {
@@ -162,11 +168,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                         sessionID: sessionID, lastEventID: nil,
                         profile: route.profileSlug.rawValue)
                 } catch ConversationError.sessionNotFound {
-                    try await appendFailure(
-                        member: member,
-                        reason: "bridge_session_expired_context_lost",
-                        roomID: roomID)
-                    return
+                    created = try await conversation.createSession(
+                        title: "Group: \(roomID)", profile: route.profileSlug.rawValue,
+                        model: nil, provider: nil, cols: nil)
+                    rebuilt = true
+                    try await store.setBridgeSessionID(
+                        roomKey: roomID, routeID: member.routeID,
+                        sessionID: created.sessionID)
                 }
             } else {
                 // One durable bridge session per source-qualified member
@@ -179,6 +187,17 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                     roomKey: roomID, routeID: member.routeID,
                     sessionID: created.sessionID)
             }
+            // The rebuild note rides the log BEFORE the turn boundary is
+            // frozen, so the member's watermark advance covers it (a note
+            // appended after the anchor would leave the watermark lagging
+            // the member's own reply and break the contiguous advance).
+            if rebuilt {
+                try await appendActivityNote(
+                    member: member, speaker: Self.qualifiedName(member, in: rosterAtSend),
+                    roomID: roomID,
+                    text: "\(Self.qualifiedName(member, in: rosterAtSend)) joined a fresh session on its gateway; recent room history was re-delivered.",
+                    reason: "bridge_session_rebuilt")
+            }
             // Group-context turn (Build 76): re-read the room at turn start —
             // the authoritative roster, current name, and the member's
             // delivery watermark all come from the live record, not the
@@ -189,7 +208,10 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                   live.disbandedAt == nil,
                   live.members.contains(where: { $0.routeID == member.routeID }) else { return }
             let seen = live.deliveryWatermarks[member.routeID] ?? 0
-            let delta = live.events.filter { $0.seq > seen }
+            // A rebuilt session is context-less: its delta is the bounded
+            // RECENT history regardless of the watermark (which describes
+            // the dead session), so the member re-anchors on real room state.
+            let delta = rebuilt ? live.events : live.events.filter { $0.seq > seen }
             // Desktop's room log holds only conversation entries; Fleet's
             // event list also carries local notes (turn.failed,
             // room.activity). A delta of notes alone is not a turn — skip
@@ -236,7 +258,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 // which Desktop's `isGroupPassText` also counts as silence —
                 // is a GOOD turn: no reply row, no failure note.
                 guard !BridgedRoomTurnPrompt.isPassText(reply) else { return }
-                appendMemberMessage(member: member, reply: reply, roomID: roomID, late: false)
+                await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: false)
                 return
             }
             if Task.isCancelled {
@@ -265,7 +287,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 inactivity: remaining,
                 total: remaining)
             if let reply, !Task.isCancelled, !BridgedRoomTurnPrompt.isPassText(reply) {
-                appendMemberMessage(member: member, reply: reply, roomID: roomID, late: true)
+                await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: true)
             }
         } catch {
             try await appendFailure(member: member, reason: Self.reason(for: error), roomID: roomID)
@@ -338,7 +360,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
     private func appendMemberMessage(
         member: BridgedRooms.MemberRef, reply: String, roomID: String, late: Bool
-    ) {
+    ) async {
         let seq = nextSeq
         nextSeq += 1
         let event = BridgedRooms.EventRecord(
@@ -347,7 +369,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             kind: "message.member",
             actorKind: "member",
             actorID: member.routeID,
-            actorDisplayName: member.displayName,
+            actorDisplayName: await qualifiedName(member: member, roomID: roomID),
             actorProfile: member.profile,
             payloadText: reply,
             createdAt: Date().timeIntervalSince1970)
@@ -356,7 +378,43 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         // inference, but when the member's watermark already sits at the
         // log's tail its own reply extends it — so the member never has its
         // own words re-delivered on its next turn.
-        Task { try? await store.append(events: [event], to: roomID, advancingWatermarkFor: member.routeID) }
+        try? await store.append(events: [event], to: roomID, advancingWatermarkFor: member.routeID)
+    }
+
+    /// Display name for persisted rows, qualified by source when the LIVE
+    /// roster carries another member with the same display name (the two
+    /// `default`s on different gateways must never collapse in the
+    /// transcript). Unique names render plain.
+    private func qualifiedName(member: BridgedRooms.MemberRef, roomID: String) async -> String {
+        let record = await store.record(roomKey: roomID)
+        return Self.qualifiedName(member, in: record?.members ?? [member])
+    }
+
+    /// Pure form: qualified name against a known roster.
+    static func qualifiedName(_ member: BridgedRooms.MemberRef, in members: [BridgedRooms.MemberRef]) -> String {
+        let twin = members.contains {
+            $0.routeID != member.routeID && $0.displayName == member.displayName
+        }
+        return twin ? "\(member.displayName) · \(member.sourceLabel)" : member.displayName
+    }
+
+    /// Durable room-activity note (informational, never an error row).
+    private func appendActivityNote(
+        member: BridgedRooms.MemberRef, speaker: String, roomID: String, text: String, reason: String
+    ) async throws {
+        let seq = nextSeq
+        nextSeq += 1
+        try await store.append(events: [.init(
+            seq: seq,
+            eventID: "fleet-bridged-\(seq)-\(member.routeID)-\(reason)",
+            kind: "room.activity",
+            actorKind: "system",
+            actorID: "bridge",
+            actorDisplayName: nil,
+            actorProfile: nil,
+            payloadText: text,
+            reasonCode: reason,
+            createdAt: Date().timeIntervalSince1970)], to: roomID)
     }
 
     private func appendNote(

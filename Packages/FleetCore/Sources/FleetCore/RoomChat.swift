@@ -336,7 +336,11 @@ public struct RoomTranscriptProjection: Sendable {
                     id: event.id,
                     seq: event.seq,
                     flavor: .message(isUser: event.kind == "message.user"),
-                    speaker: event.actorDisplayName ?? event.actorProfile ?? event.actorID,
+                    // The room's human renders as "You" — `actorID` is
+                    // plumbing (`local-user`), never a display name.
+                    speaker: event.kind == "message.user"
+                        ? "You"
+                        : (event.actorDisplayName ?? event.actorProfile ?? event.actorID),
                     text: event.payloadText,
                     failure: nil,
                     createdAt: event.createdAt
