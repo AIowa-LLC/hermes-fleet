@@ -14,13 +14,13 @@ struct FleetConversationShortcutEntity: AppEntity {
     let id: String
     let route: Route
     let sessionID: String
-    let title: String
-    let subtitle: String
+    let canonical: Bool
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: LocalizedStringResource(stringLiteral: title),
-            subtitle: LocalizedStringResource(stringLiteral: subtitle)
+            title: "Fleet conversation",
+            subtitle: LocalizedStringResource(
+                stringLiteral: canonical ? "Bot Chat" : "Saved conversation")
         )
     }
 }
@@ -49,8 +49,7 @@ struct FleetConversationShortcutQuery: EntityQuery {
                 id: entry.id,
                 route: route,
                 sessionID: sessionID,
-                title: entry.title,
-                subtitle: entry.subtitle)
+                canonical: entry.kind == .canonicalBotChat)
         }
     }
 }
@@ -59,7 +58,7 @@ struct OpenFleetConversationIntent: AppIntent {
     static let title: LocalizedStringResource = "Open Fleet Conversation"
     static let description = IntentDescription(
         "Open one of your saved Hermes Fleet conversations.")
-    static let openAppWhenRun = true
+    static let supportedModes: IntentModes = .foreground(.immediate)
 
     @Parameter(title: "Conversation")
     var conversation: FleetConversationShortcutEntity
@@ -95,26 +94,31 @@ enum FleetConversationDeepLink {
             URLQueryItem(name: "gateway", value: entity.route.gatewayID.rawValue),
             URLQueryItem(name: "profile", value: entity.route.profileSlug.rawValue),
             URLQueryItem(name: "session", value: entity.sessionID),
+            URLQueryItem(name: "canonical", value: entity.canonical ? "1" : "0"),
         ]
         // All entity values were validated by the query provider.
         return components.url!
     }
 
-    static func target(from url: URL) -> (route: Route, sessionID: String)? {
+    static func target(from url: URL) -> (route: Route, sessionID: String, canonical: Bool)? {
         guard url.scheme == scheme, url.host == host,
               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else {
             return nil
         }
-        let values = Dictionary(uniqueKeysWithValues: items.compactMap { item in
-            item.value.map { (item.name, $0) }
-        })
+        var values: [String: String] = [:]
+        for item in items {
+            guard let value = item.value, values[item.name] == nil else { return nil }
+            values[item.name] = value
+        }
         guard let gateway = values["gateway"],
               let profile = values["profile"],
               let sessionID = values["session"],
+              let canonicalRaw = values["canonical"],
+              let canonical = ["0": false, "1": true][canonicalRaw],
               let route = Route(
                 validating: GatewayID(rawValue: gateway),
                 profileSlug: ProfileSlug(rawValue: profile)),
               RoutingGuard.isValidSessionKey(sessionID) else { return nil }
-        return (route, sessionID)
+        return (route, sessionID, canonical)
     }
 }

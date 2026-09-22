@@ -56,7 +56,8 @@ struct HermesFleetApp: App {
                 guard let target = FleetConversationDeepLink.target(from: url) else { return }
                 environment.openConversationFromShortcut(
                     route: target.route,
-                    sessionID: target.sessionID)
+                    sessionID: target.sessionID,
+                    canonical: target.canonical)
             }
         }
         .onChange(of: scenePhase) { _, phase in

@@ -73,6 +73,7 @@ public final class RoomChatViewModel {
     /// established eventTask pattern: created/replaced on the main actor,
     /// canceled in `deinit` (cancel is thread-safe).
     nonisolated(unsafe) private var liveTail: Task<Void, Never>?
+    nonisolated(unsafe) private var readAloudCompletionTask: Task<Void, Never>?
     /// Reused when a transport error leaves delivery indeterminate. The
     /// gateway's event_id contract makes a user retry idempotent.
     private var pendingSendID: String?
@@ -97,6 +98,7 @@ public final class RoomChatViewModel {
 
     deinit {
         liveTail?.cancel()
+        readAloudCompletionTask?.cancel()
     }
 
     // MARK: Stage 1 — assistant-reply footer (read aloud)
@@ -115,16 +117,42 @@ public final class RoomChatViewModel {
             await stopReadingReply()
             return true
         }
+        readAloudCompletionTask?.cancel()
         await voice.stopSpeaking()
         readAloudEntryID = entryID
         try? await voice.speak(text: text)
+        startReadAloudCompletionMonitor(entryID: entryID)
         return true
     }
 
     /// Stop the in-flight room Read Aloud utterance.
     public func stopReadingReply() async {
+        readAloudCompletionTask?.cancel()
+        readAloudCompletionTask = nil
         await voice.stopSpeaking()
         readAloudEntryID = nil
+    }
+
+    private func startReadAloudCompletionMonitor(entryID: String) {
+        readAloudCompletionTask?.cancel()
+        let voice = self.voice
+        readAloudCompletionTask = Task { [weak self] in
+            var observedSpeaking = false
+            for tick in 0..<20 where !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                let speaking = voice.isSpeaking
+                observedSpeaking = observedSpeaking || speaking
+                if !speaking && (observedSpeaking || tick >= 3) {
+                    await MainActor.run {
+                        guard let self, self.readAloudEntryID == entryID else { return }
+                        self.readAloudEntryID = nil
+                        self.readAloudCompletionTask = nil
+                    }
+                    return
+                }
+            }
+        }
     }
 
     /// Capabilities for this room (hosted: advertised methods; legacy:

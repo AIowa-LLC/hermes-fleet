@@ -381,6 +381,10 @@ public final class ConversationViewModel {
     /// `deinit` (the established eventTask/statusWatcher pattern); all
     /// creation/nil-out happens on the main actor.
     nonisolated(unsafe) private var micTask: Task<Void, Never>?
+    /// Polls the shared speech seam for its natural completion callback. The
+    /// seam intentionally stays small, so the monitor clears footer state when
+    /// AVSpeechSynthesizer reports that the utterance has finished.
+    nonisolated(unsafe) private var readAloudCompletionTask: Task<Void, Never>?
 
     // MARK: Internal state
 
@@ -496,6 +500,7 @@ public final class ConversationViewModel {
         eventTask?.cancel()
         statusWatcher?.cancel()
         micTask?.cancel()
+        readAloudCompletionTask?.cancel()
         slashSuggestionTask?.cancel()
     }
 
@@ -1550,8 +1555,11 @@ public final class ConversationViewModel {
     public func setVoiceMode(_ enabled: Bool) async {
         isVoiceModeEnabled = enabled
         if !enabled {
+            readAloudCompletionTask?.cancel()
+            readAloudCompletionTask = nil
             await voice.stopSpeaking()
             await speechQueue.drain()
+            readAloudRowID = nil
         }
     }
 
@@ -1619,14 +1627,42 @@ public final class ConversationViewModel {
         await speechQueue.enqueue {
             try? await voice.speak(text: text)
         }
+        startReadAloudCompletionMonitor(rowID: rowID)
         return true
     }
 
     /// Stop the in-flight Read Aloud utterance and drop queued chunks.
     public func stopReadingReply() async {
+        readAloudCompletionTask?.cancel()
+        readAloudCompletionTask = nil
         await voice.stopSpeaking()
         await speechQueue.drain()
         readAloudRowID = nil
+    }
+
+    private func startReadAloudCompletionMonitor(rowID: String) {
+        readAloudCompletionTask?.cancel()
+        let voice = self.voice
+        readAloudCompletionTask = Task { [weak self] in
+            var observedSpeaking = false
+            for tick in 0..<20 where !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                let speaking = voice.isSpeaking
+                observedSpeaking = observedSpeaking || speaking
+                // A short grace period handles engines whose speak() returns
+                // before the synthesizer flips its speaking flag; after that,
+                // a false flag is an honest natural-completion signal.
+                if (!speaking && (observedSpeaking || tick >= 3)) {
+                    await MainActor.run {
+                        guard let self, self.readAloudRowID == rowID else { return }
+                        self.readAloudRowID = nil
+                        self.readAloudCompletionTask = nil
+                    }
+                    return
+                }
+            }
+        }
     }
 
     /// Fail-closed probe: the fail-closed default engine cannot speak; an
@@ -1718,20 +1754,20 @@ public final class ConversationViewModel {
         replyActionError = nil
         replyActionInFlight = true
         defer { replyActionInFlight = false }
-        let previousRows = allRows
         let prompt: String
         do {
-            let execution = try await slashCommands.execute(sessionID: sid, command: "/retry")
-            prompt = try Self.retryPrompt(from: execution)
+            // Use one mutating RPC. Falling back to slash.exec after an
+            // ambiguous transport response can rewind the gateway twice.
+            let dispatch = try await slashCommands.dispatch(
+                sessionID: sid, name: "retry", argument: "")
+            prompt = try Self.retryPrompt(from: dispatch)
         } catch {
-            do {
-                let dispatch = try await slashCommands.dispatch(
-                    sessionID: sid, name: "retry", argument: "")
-                prompt = try Self.retryPrompt(from: dispatch)
-            } catch {
-                replyActionError = Self.nonSecret(error)
-                return false
-            }
+            // The command may have committed its rewind before the transport
+            // reported an error. Never restore stale local rows; reconcile
+            // from the authoritative session history instead.
+            await refetchAuthoritativeHistory(sessionID: sid)
+            replyActionError = Self.nonSecret(error)
+            return false
         }
 
         // The gateway has already rewound its durable history. Mirror that
@@ -1744,7 +1780,7 @@ public final class ConversationViewModel {
             sessionID: sid,
             includeAttachments: false)
         if !sent {
-            allRows = previousRows
+            await refetchAuthoritativeHistory(sessionID: sid)
             replyActionError = replyActionError ?? "Retry could not be submitted."
         }
         return sent
@@ -1784,13 +1820,6 @@ public final class ConversationViewModel {
             replyActionError = replyActionError ?? "Web search could not be submitted."
         }
         return sent
-    }
-
-    private static func retryPrompt(from execution: HermesSlashExecution) throws -> String {
-        guard let dispatch = execution.dispatch else {
-            throw SlashCommandError.malformedResponse("retry returned no structured prompt")
-        }
-        return try retryPrompt(from: dispatch)
     }
 
     private static func retryPrompt(from dispatch: HermesCommandDispatch) throws -> String {
@@ -1834,6 +1863,8 @@ public final class ConversationViewModel {
     /// re-created after cancellation), so it is left running and dies with the
     /// VM; a re-appear restarts the status watcher via `start()`.
     public func teardown() {
+        readAloudCompletionTask?.cancel()
+        readAloudCompletionTask = nil
         statusWatcher?.cancel()
         statusWatcher = nil
         foregroundObserver?.cancel()

@@ -135,6 +135,19 @@ final class ReadAloudViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.readAloudRowID, "r1")
     }
 
+    func testNaturalCompletionClearsReadAloudState() async throws {
+        let voice = ScriptedFooterVoice()
+        let viewModel = try await makeViewModel(voice: voice)
+
+        _ = await viewModel.readReplyAloud(rowID: "r1", text: "finished reply")
+        XCTAssertEqual(viewModel.readAloudRowID, "r1")
+        voice.setSpeaking(false)
+        try await Task.sleep(for: .milliseconds(700))
+
+        XCTAssertNil(viewModel.readAloudRowID,
+                     "footer state must clear when the shared speech engine finishes naturally")
+    }
+
     func testReTapSameRowTogglesOff() async throws {
         let voice = ScriptedFooterVoice()
         let viewModel = try await makeViewModel(voice: voice)

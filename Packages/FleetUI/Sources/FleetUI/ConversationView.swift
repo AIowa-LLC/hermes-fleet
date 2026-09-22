@@ -205,8 +205,10 @@ public struct ConversationView: View {
             }
         }
         // R9-T4: navigate to a successfully forked session.
-        .onChange(of: model.forkedSession?.sessionID) { _, newID in
+        .onChange(of: model.forkedSession?.storedSessionID ?? model.forkedSession?.sessionID) { _, newID in
             guard let newID, newID != forkTargetSessionID else { return }
+            // session.branch returns distinct runtime + stored identities;
+            // ConversationViewModel's open path accepts the stored/list key.
             forkTargetSessionID = newID
             model.consumeForkedSession()
         }

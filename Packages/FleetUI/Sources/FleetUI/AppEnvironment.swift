@@ -358,10 +358,11 @@ public final class AppEnvironment {
     /// Validate the source-qualified identity here, then let the normal shell
     /// open path resolve the live session and surface stale/deleted sessions
     /// honestly rather than guessing another gateway or title.
-    public func openConversationFromShortcut(route: Route, sessionID: String) {
+    public func openConversationFromShortcut(route: Route, sessionID: String, canonical: Bool) {
         guard route.isRoutingSafe,
               RoutingGuard.isValidSessionKey(sessionID) else { return }
-        pendingScreenNavigation = .conversation(route, sessionID: sessionID)
+        pendingScreenNavigation = .conversation(
+            route, sessionID: sessionID, canonical: canonical)
     }
 
     /// Codex-style floating gear: request the Settings TAB from any surface

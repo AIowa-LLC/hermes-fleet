@@ -12,20 +12,21 @@ final class FleetConversationShortcutsTests: XCTestCase {
             id: "conv|workstation#default|session-42",
             route: route,
             sessionID: "session-42",
-            title: "Private title",
-            subtitle: "default · Workstation")
+            canonical: true)
 
         let url = FleetConversationDeepLink.url(for: entity)
         let target = FleetConversationDeepLink.target(from: url)
 
         XCTAssertEqual(target?.route, route)
         XCTAssertEqual(target?.sessionID, "session-42")
+        XCTAssertEqual(target?.canonical, true)
         XCTAssertFalse(url.absoluteString.contains("Private title"))
     }
 
     func testConversationDeepLinkRejectsUnsafeOrWrongURLs() {
         XCTAssertNil(FleetConversationDeepLink.target(from: URL(string: "https://example.com")!))
         XCTAssertNil(FleetConversationDeepLink.target(from: URL(string: "hermes-fleet://conversation?gateway=bad%2Fgateway&profile=default&session=s1")!))
-        XCTAssertNil(FleetConversationDeepLink.target(from: URL(string: "hermes-fleet://conversation?gateway=workstation&profile=default&session=../secret")!))
+        XCTAssertNil(FleetConversationDeepLink.target(from: URL(string: "hermes-fleet://conversation?gateway=workstation&profile=default&session=../secret&canonical=0")!))
+        XCTAssertNil(FleetConversationDeepLink.target(from: URL(string: "hermes-fleet://conversation?gateway=workstation&profile=default&session=s1&canonical=1&canonical=0")!))
     }
 }
