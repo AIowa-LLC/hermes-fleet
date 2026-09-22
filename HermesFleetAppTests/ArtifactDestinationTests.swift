@@ -75,6 +75,48 @@ final class ArtifactDestinationTests: XCTestCase {
             path: path)
     }
 
+    // MARK: - Scripted retriever that parks mid-transfer
+
+    /// A retriever whose transfer parks until the test releases it — the
+    /// window a `clear` has to fence.
+    private final class GatedRetriever: ArtifactRetrieving, @unchecked Sendable {
+        let gatewayID: GatewayID
+        private let bytes: Data
+        private let enteredStream: AsyncStream<Void>
+        private let enteredContinuation: AsyncStream<Void>.Continuation
+        private let releaseStream: AsyncStream<Void>
+        private let releaseContinuation: AsyncStream<Void>.Continuation
+
+        init(gatewayID: GatewayID, bytes: Data) {
+            self.gatewayID = gatewayID
+            self.bytes = bytes
+            let entered = AsyncStream<Void>.makeStream()
+            self.enteredStream = entered.stream
+            self.enteredContinuation = entered.continuation
+            let release = AsyncStream<Void>.makeStream()
+            self.releaseStream = release.stream
+            self.releaseContinuation = release.continuation
+        }
+
+        /// Resolves once the transfer has actually started.
+        func waitUntilEntered() async {
+            var iterator = enteredStream.makeAsyncIterator()
+            _ = await iterator.next()
+        }
+
+        /// Let the parked transfer finish.
+        func release() {
+            releaseContinuation.yield()
+            releaseContinuation.finish()
+        }
+
+        func retrieve(_ reference: ArtifactReference) async throws -> RetrievedArtifact {
+            enteredContinuation.yield()
+            for await _ in releaseStream { break }
+            return RetrievedArtifact(reference: reference, data: bytes, mimeType: "image/png")
+        }
+    }
+
     // MARK: - Retrieval store: dedupe
 
     func testStoreDeduplicatesConcurrentLoads() async {
@@ -190,6 +232,98 @@ final class ArtifactDestinationTests: XCTestCase {
         store.clear(gatewayID: gateway)
         XCTAssertNil(store.state(for: mine))
         XCTAssertNotNil(store.state(for: theirs))
+    }
+
+    // MARK: - Retrieval store: clear is a data clear
+
+    func testClearGatewayRemovesStagedShareFilesIncludingAnEarlierLaunchesFile() async {
+        // A file an earlier launch staged survives in temp storage while that
+        // store instance is long gone: a later clear must still remove it,
+        // which only works because the staged name is a deterministic
+        // function of the reference.
+        let previousLaunch = ArtifactImageStore()
+        let retriever = ScriptedRetriever(gatewayID: gateway, outcomes: [.success(Self.pngBytes)])
+        let mine = reference(path: "/home/u/.hermes/cache/images/mine.png")
+        _ = await previousLaunch.load(mine, using: retriever)
+        let staleURL = previousLaunch.shareFileURL(for: mine)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staleURL?.path ?? ""),
+                      "the earlier launch staged a real file")
+
+        // This launch's store has no memory of that file.
+        let store = ArtifactImageStore()
+        let theirRetriever = ScriptedRetriever(gatewayID: otherGateway, outcomes: [.success(Self.pngBytes)])
+        let theirs = reference(path: "/home/u/.hermes/cache/images/theirs.png", gateway: otherGateway)
+        _ = await store.load(theirs, using: theirRetriever)
+        let theirsURL = store.shareFileURL(for: theirs)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: theirsURL?.path ?? ""))
+
+        store.clear(gatewayID: gateway)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleURL?.path ?? ""),
+                       "clear removes the gateway's staged share files, not just its in-memory rows")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: theirsURL?.path ?? ""),
+                      "another gateway's staged files are untouched")
+        XCTAssertNotNil(store.state(for: theirs))
+    }
+
+    func testRemoveAllRemovesEveryStagedShareFile() async {
+        let store = ArtifactImageStore()
+        let retriever = ScriptedRetriever(gatewayID: gateway, outcomes: [.success(Self.pngBytes)])
+        let theirRetriever = ScriptedRetriever(gatewayID: otherGateway, outcomes: [.success(Self.pngBytes)])
+        let mine = reference(path: "/home/u/.hermes/cache/images/mine.png")
+        let theirs = reference(path: "/home/u/.hermes/cache/images/theirs.png", gateway: otherGateway)
+        _ = await store.load(mine, using: retriever)
+        _ = await store.load(theirs, using: theirRetriever)
+        let mineURL = store.shareFileURL(for: mine)
+        let theirsURL = store.shareFileURL(for: theirs)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: mineURL?.path ?? ""))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: theirsURL?.path ?? ""))
+
+        store.removeAll()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mineURL?.path ?? ""),
+                       "a user-visible clear leaves no staged copy behind")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: theirsURL?.path ?? ""))
+        XCTAssertNil(store.state(for: mine))
+        XCTAssertNil(store.state(for: theirs))
+    }
+
+    func testInFlightRetrievalCannotRepopulateAClearedArtifact() async {
+        let store = ArtifactImageStore()
+        let retriever = GatedRetriever(gatewayID: gateway, bytes: Self.pngBytes)
+        let target = reference()
+
+        let loading = Task { await store.load(target, using: retriever) }
+        await retriever.waitUntilEntered()
+        XCTAssertEqual(store.state(for: target), .loading, "the transfer is genuinely in flight")
+
+        store.clear(gatewayID: gateway)
+        XCTAssertNil(store.state(for: target), "clear drops the loading entry")
+
+        retriever.release()
+        let handedBack = await loading.value
+        XCTAssertNil(handedBack, "a fetch invalidated by a clear hands nothing back")
+        XCTAssertNil(store.state(for: target),
+                     "an in-flight retrieval must never reinsert after a clear")
+        XCTAssertNil(store.image(for: target))
+        XCTAssertNil(store.shareFileURL(for: target), "a cleared reference stages no share file")
+    }
+
+    func testStagedShareFileNameIsLaunchStable() async {
+        let store = ArtifactImageStore()
+        let retriever = ScriptedRetriever(gatewayID: gateway, outcomes: [.success(Self.pngBytes)])
+        let target = reference()
+        _ = await store.load(target, using: retriever)
+
+        // FNV-1a/64 over the reference identity (gateway, session, profile,
+        // path). The exact name is the cross-launch contract: a clear in a
+        // later launch finds files written by an earlier one through it. A
+        // per-process `Hasher` produced a different name every launch, so
+        // those files could never be found or removed again. A deliberate
+        // change to the scheme updates this literal with it.
+        XCTAssertEqual(
+            store.shareFileURL(for: target)?.lastPathComponent,
+            "artifact-dc573a34b847eacc-f490c478842924ba-cat.png")
     }
 
     // MARK: - Honest copy

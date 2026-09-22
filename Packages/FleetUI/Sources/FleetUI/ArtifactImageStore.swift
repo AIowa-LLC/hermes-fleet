@@ -49,9 +49,23 @@ public final class ArtifactImageStore {
     /// Decoded images (never part of `states` — decoding is presentation).
     private var decoded: [ArtifactReference: UIImage] = [:]
     /// Serializes concurrent `load()` calls for the same reference.
-    private var inFlight: [ArtifactReference: Task<State, Never>] = [:]
+    /// `clear`/`removeAll` fence and cancel these, so a retrieval invalidated
+    /// mid-transfer can never write its result back.
+    private var inFlight: [ArtifactReference: InFlight] = [:]
     /// Share-file staging (lazily written per reference).
     private var shareFiles: [ArtifactReference: URL] = [:]
+
+    /// One in-flight retrieval plus its invalidation fence: `clear` and
+    /// `removeAll` flip `isFenced` (and cancel the task), and a fenced fetch
+    /// must never write state — the clear happened later and wins.
+    private final class RetrievalFence {
+        var isFenced = false
+    }
+
+    private struct InFlight {
+        let task: Task<State?, Never>
+        let fence: RetrievalFence
+    }
 
     public init() {}
 
@@ -78,11 +92,9 @@ public final class ArtifactImageStore {
             return existing
         }
         guard case .loaded(let payload) = states[reference] else { return nil }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("fleet-artifacts", isDirectory: true)
+        let directory = Self.shareDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let stem = ArtifactTransportRules.defaultName(forPath: reference.name)
-        let url = directory.appendingPathComponent("\(stableID(for: reference))-\(stem)")
+        let url = shareFileLocation(for: reference)
         do {
             try payload.data.write(to: url, options: .atomic)
         } catch {
@@ -97,6 +109,10 @@ public final class ArtifactImageStore {
     /// Fetch `reference` through `retriever` unless it is already
     /// loading/loaded. Concurrent callers join the same in-flight fetch. A
     /// `.failed` entry is returned as-is — retry is explicit (`retry()`).
+    ///
+    /// Returns nil when a `clear`/`removeAll` landed while this fetch was in
+    /// flight: the cleared state must not come back, and neither should a
+    /// value the store refused to keep.
     @discardableResult
     public func load(_ reference: ArtifactReference, using retriever: any ArtifactRetrieving) async -> State? {
         if let existing = states[reference] {
@@ -111,31 +127,39 @@ public final class ArtifactImageStore {
             return record(.failed(.gatewayMismatch(
                 expected: retriever.gatewayID, actual: reference.gatewayID)), for: reference)
         }
-        if let task = inFlight[reference] {
-            return await task.value
+        if let entry = inFlight[reference] {
+            return await entry.task.value
         }
         states[reference] = .loading
-        let task = Task<State, Never> { [weak self] in
+        let fence = RetrievalFence()
+        let task = Task<State?, Never> { [weak self] in
+            let outcome: State
             do {
                 let retrieved = try await retriever.retrieve(reference)
                 let payload = Payload(
                     reference: retrieved.reference,
                     data: retrieved.data,
                     mimeType: retrieved.mimeType)
-                await MainActor.run { self?.store(.loaded(payload), for: reference) }
-                return .loaded(payload)
+                outcome = .loaded(payload)
             } catch let error as ArtifactTransportError {
-                await MainActor.run { self?.store(.failed(error), for: reference) }
-                return .failed(error)
+                outcome = .failed(error)
             } catch {
-                let classified = ArtifactTransportError.transferFailed(detail: Redaction.safeErrorDescription(error))
-                await MainActor.run { self?.store(.failed(classified), for: reference) }
-                return .failed(classified)
+                outcome = .failed(.transferFailed(detail: Redaction.safeErrorDescription(error)))
             }
+            // The fence is read on the MainActor hop that writes state, so a
+            // clear landing while the transfer was in flight always wins.
+            let stored = await MainActor.run { () -> Bool in
+                guard let self, !fence.isFenced else { return false }
+                self.store(outcome, for: reference)
+                return true
+            }
+            return stored ? outcome : nil
         }
-        inFlight[reference] = task
+        inFlight[reference] = InFlight(task: task, fence: fence)
         let state = await task.value
-        inFlight[reference] = nil
+        // Retire only the entry this call installed: a clear may have fenced
+        // it, and a later load may already own the slot.
+        if inFlight[reference]?.fence === fence { inFlight[reference] = nil }
         return state
     }
 
@@ -152,23 +176,40 @@ public final class ArtifactImageStore {
         return await load(reference, using: retriever)
     }
 
-    /// Forget everything for one gateway (gateway removal / invalidation).
+    /// Forget everything for one gateway (gateway removal / invalidation):
+    /// state, decoded previews, in-flight retrievals (fenced + cancelled so a
+    /// late completion cannot reinsert), and every staged share file on disk
+    /// — including files an earlier launch wrote, which the sweep finds by
+    /// the reference-derived name.
     public func clear(gatewayID: GatewayID) {
-        for reference in states.keys where reference.gatewayID == gatewayID {
+        let cleared = states.keys.filter { $0.gatewayID == gatewayID }
+        for reference in cleared {
             states[reference] = nil
             decoded[reference] = nil
             shareFiles[reference] = nil
         }
         loadedOrder.removeAll { $0.gatewayID == gatewayID }
-        inFlight = inFlight.filter { $0.key.gatewayID != gatewayID }
+        for (reference, entry) in inFlight.filter({ $0.key.gatewayID == gatewayID }) {
+            entry.fence.isFenced = true
+            entry.task.cancel()
+            inFlight[reference] = nil
+        }
+        removeStagedShareFiles(for: gatewayID)
     }
 
+    /// Forget everything in the store (the user-visible local-data clear):
+    /// state, in-flight retrievals, and every staged share file on disk.
     public func removeAll() {
         states.removeAll()
         decoded.removeAll()
         shareFiles.removeAll()
         loadedOrder.removeAll()
+        for (_, entry) in inFlight {
+            entry.fence.isFenced = true
+            entry.task.cancel()
+        }
         inFlight.removeAll()
+        removeStagedShareFiles()
     }
 
     // MARK: Internals
@@ -211,12 +252,82 @@ public final class ArtifactImageStore {
         }
     }
 
-    /// Deterministic (non-random) id for staging files — derived from the
-    /// reference identity, never from the raw path.
+    // MARK: Share-file staging on disk
+
+    /// The app-scoped temp directory holding staged share files. This store
+    /// is its only writer, and `clear`/`removeAll` are its cleanup path.
+    private static var shareDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("fleet-artifacts", isDirectory: true)
+    }
+
+    /// The staged-file location for one reference. The name is deterministic
+    /// on purpose: the gateway token prefix is what lets a later launch's
+    /// `clear` find — and delete — files this store wrote in an earlier one.
+    private func shareFileLocation(for reference: ArtifactReference) -> URL {
+        let stem = ArtifactTransportRules.defaultName(forPath: reference.name)
+        return Self.shareDirectory.appendingPathComponent(
+            "artifact-\(Self.gatewayToken(for: reference.gatewayID))-\(stableID(for: reference))-\(stem)")
+    }
+
+    /// Launch-stable token for a gateway (the sweep prefix of its files).
+    private static func gatewayToken(for gatewayID: GatewayID) -> String {
+        stableToken(gatewayID.rawValue)
+    }
+
+    /// Delete the staged share files for one gateway: the tracked URLs plus
+    /// every file in the directory whose name carries the gateway's token, so
+    /// a file no longer in memory (an earlier launch, or an entry the payload
+    /// cap evicted) is removed too.
+    private func removeStagedShareFiles(for gatewayID: GatewayID) {
+        let prefix = "artifact-\(Self.gatewayToken(for: gatewayID))-"
+        let tracked = shareFiles.keys.filter { $0.gatewayID == gatewayID }
+        for reference in tracked {
+            shareFiles[reference] = nil
+        }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: Self.shareDirectory.path) else {
+            return
+        }
+        for name in names where name.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: Self.shareDirectory.appendingPathComponent(name))
+        }
+    }
+
+    /// Delete every staged share file (the directory is this store's own temp
+    /// storage — recreated lazily by `shareFileURL`).
+    private func removeStagedShareFiles() {
+        shareFiles.removeAll()
+        try? FileManager.default.removeItem(at: Self.shareDirectory)
+    }
+
+    // MARK: Identity
+
+    /// Deterministic (non-random) id for staging files — a fixed function of
+    /// the reference identity (gateway + session + profile + path), never of
+    /// the raw path itself.
+    ///
+    /// Deliberately NOT `Hasher`: that is seeded per process, so the staged
+    /// filename changed on every launch and the files an earlier launch wrote
+    /// could never be found — or removed — again.
     private func stableID(for reference: ArtifactReference) -> String {
-        var hasher = Hasher()
-        hasher.combine(reference)
-        return "artifact-\(UInt(bitPattern: hasher.finalize()))"
+        let identity = [
+            reference.gatewayID.rawValue,
+            reference.sessionID ?? "",
+            reference.profile ?? "",
+            reference.path,
+        ].joined(separator: "\u{1F}")
+        return Self.stableToken(identity)
+    }
+
+    /// FNV-1a/64 over `text`, hex-encoded — a stable, non-cryptographic token
+    /// for filenames (the input never appears in the output).
+    private static func stableToken(_ text: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100_0000_01b3
+        }
+        return String(hash, radix: 16)
     }
 }
 
