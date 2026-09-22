@@ -166,6 +166,27 @@ final class ConversationCompactChromeUITests: XCTestCase {
         // conversation — all chrome lives in ONE 44-56pt custom row.
         let header = firstMatch(in: app, identifier: "fleet.conversation.header")
         XCTAssertTrue(header.waitForExistence(timeout: 10), "compact header must render")
+
+        // The custom chrome is a full-width row. A content-sized HStack leaves
+        // a narrow floating bar centered on the screen during conversation
+        // entry, which makes the back/menu controls look like a collapsed top
+        // bar even though the row's controls remain tappable.
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "app window must render")
+        let horizontalTolerance: CGFloat = 2
+        XCTAssertEqual(
+            header.frame.minX,
+            window.frame.minX,
+            accuracy: horizontalTolerance,
+            "compact header must start at the window edge (header: \(header.frame), window: \(window.frame))"
+        )
+        XCTAssertEqual(
+            header.frame.maxX,
+            window.frame.maxX,
+            accuracy: horizontalTolerance,
+            "compact header must span the window width (header: \(header.frame), window: \(window.frame))"
+        )
+
         // The header's AX frame includes the status-bar region (custom chrome
         // owns the full top inset), so measure the ROW itself: back-button
         // top to transcript top = the single chrome row.

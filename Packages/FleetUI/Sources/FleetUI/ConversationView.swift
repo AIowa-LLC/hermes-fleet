@@ -382,6 +382,11 @@ public struct ConversationView: View {
             .accessibilityLabel("\(name), status \(status.label)")
             .accessibilityIdentifier("fleet.conversation.header.identity")
 
+            // Keep the session actions trailing and make the custom chrome
+            // span the full width. Without a flexible spacer this HStack is
+            // content-sized and the header visibly collapses on entry.
+            Spacer(minLength: FleetTheme.spacingXs)
+
             // r9: the chip zone moved UNDER the composer (the Toolbelt) —
             // nothing renders here anymore.
             if let toolingModel = model.toolingViewModel {
