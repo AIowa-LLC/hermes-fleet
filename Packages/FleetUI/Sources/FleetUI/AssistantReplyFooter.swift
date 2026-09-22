@@ -31,6 +31,18 @@ struct AssistantReplyFooter: View {
     /// Stable per-row accessibility namespace.
     var idNamespace: String
 
+    /// Every SF Symbol this footer renders. A nonexistent name renders a
+    /// SILENT blank glyph that still passes every AX/tap contract (dogfood
+    /// build 78 shipped an invisible-but-working copy button because
+    /// "doc.on.document" does not exist), so this catalog exists for the
+    /// resolution test — keep it in sync with the literals below.
+    static let glyphNames: [String] = [
+        "doc.on.doc", "hand.thumbsup", "hand.thumbsdown",
+        "square.and.arrow.up", "ellipsis",
+        "arrow.trianglehead.branch", "speaker.wave.2", "stop.fill",
+        "arrow.clockwise", "progress.indicator", "globe",
+    ]
+
     @State private var showingCopiedConfirmation = false
 
     var body: some View {
@@ -67,7 +79,7 @@ struct AssistantReplyFooter: View {
                 withAnimation(.easeOut(duration: 0.25)) { showingCopiedConfirmation = false }
             }
         } label: {
-            footerGlyph("doc.on.document", active: false)
+            footerGlyph("doc.on.doc", active: false)
         }
         .accessibilityLabel("Copy reply")
         .accessibilityIdentifier("\(idNamespace).copy")

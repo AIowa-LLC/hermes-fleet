@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 import FleetCore
 @testable import FleetUI
@@ -107,4 +108,18 @@ final class AssistantReplyFooterPolicyTests: XCTestCase {
         XCTAssertTrue(AssistantReplyActionPolicy.canRetry(rows: rows, selectedRowID: "a2", isStreaming: false))
         XCTAssertFalse(AssistantReplyActionPolicy.canRetry(rows: rows, selectedRowID: "a2", isStreaming: true))
     }
+
+    // MARK: - Glyph integrity
+
+    /// A nonexistent SF Symbol name renders a silent blank that still passes
+    /// every AX/tap contract — the button exists, is hittable, and is visually
+    /// empty (dogfood build 78: the copy button was exactly this). Every glyph
+    /// the footer can render must resolve on the running OS.
+    func testEveryFooterGlyphResolvesToRealSFSymbol() {
+        for name in AssistantReplyFooter.glyphNames {
+            XCTAssertNotNil(UIImage(systemName: name),
+                            "footer symbol '\(name)' must resolve to a real SF Symbol")
+        }
+    }
 }
+
