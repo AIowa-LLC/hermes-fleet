@@ -59,7 +59,8 @@ export FLEET_LIVE_ARTIFACT_SHA256
 ARTIFACT_DIR="$(cd "$(dirname "$FLEET_LIVE_ARTIFACT_PATH")" && pwd)"
 GATEWAY_HOME="${FLEET_LIVE_ARTIFACT_HOME:-}"
 if [ -n "$GATEWAY_HOME" ]; then
-    if ! GATEWAY_HOME="$(cd "$FLEET_LIVE_ARTIFACT_HOME" && pwd)"; then
+    # 2>/dev/null: report the failure ourselves below instead of the raw cd error
+    if ! GATEWAY_HOME="$(cd "$FLEET_LIVE_ARTIFACT_HOME" 2>/dev/null && pwd)"; then
         echo "FLEET_LIVE_ARTIFACT_HOME does not exist: $FLEET_LIVE_ARTIFACT_HOME" >&2
         exit 2
     fi
