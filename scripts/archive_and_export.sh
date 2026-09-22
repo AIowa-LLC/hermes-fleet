@@ -36,9 +36,14 @@ case "$BRANCH" in
 esac
 
 # 3. Clean tree (uncommitted source in a release artifact = unreproducible).
+#    Untracked files count too: XcodeGen targets compile by directory glob, so
+#    an untracked new source file would be baked into the archive while the
+#    receipt still claims a clean tree at HEAD. The lane's two progress logs
+#    are explicitly exempt (documentation, never compiled).
 if [[ "${FLEET_RELEASE_ALLOW_DIRTY:-0}" != "1" ]]; then
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    fail "working tree has uncommitted tracked changes (commit first, or set FLEET_RELEASE_ALLOW_DIRTY=1 to override)"
+  DIRTY="$(git status --porcelain | grep -vE '^\?\? (FLEET_BOTS_CHATS_GROUPS_PROGRESS\.md|FLEET_IMPROVEMENT_CONTEXT\.md)$' || true)"
+  if [[ -n "$DIRTY" ]]; then
+    fail "working tree is not clean (tracked or untracked): $(printf '%s' "$DIRTY" | head -5 | tr '\n' '; ') — commit first, or set FLEET_RELEASE_ALLOW_DIRTY=1 to override"
   fi
 fi
 
