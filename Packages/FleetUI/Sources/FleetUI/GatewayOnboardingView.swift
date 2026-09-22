@@ -163,11 +163,16 @@ public struct GatewayOnboardingView: View {
                     Label {
                         Text(copyConfirmed ? "Copied — paste it in chat" : "Copy setup prompt")
                             .font(.headline)
-                            .foregroundStyle(theme.onHighlight)
                             .frame(maxWidth: .infinity)
                     } icon: {
                         Image(systemName: copyConfirmed ? "checkmark.circle.fill" : "doc.on.doc.fill")
                     }
+                    // Ink on the WHOLE label (title AND glyph): this exists
+                    // because borderedProminent's default ink is not legible
+                    // on every highlight, and the Image never inherits a
+                    // modifier applied to the Text alone. Same shape as
+                    // SetupPromptSheet's copy control.
+                    .foregroundStyle(theme.onHighlight)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(copyConfirmed)

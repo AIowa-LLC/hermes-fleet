@@ -272,3 +272,46 @@ extension AppCompositionTests {
         XCTAssertEqual(state.paths[.chats], [.conversation(route, sessionID: "ordinary")])
     }
 }
+
+/// Build 41 scripted board operator (FleetSimulator) — mutation identity.
+/// The created-task id must come from a monotonic counter, never from the
+/// live card count: `tasks.count + 1` reuses a LIVE id after a delete and
+/// `tasks[id] = …` then silently overwrites that card (and re-links its
+/// parents onto the wrong row).
+final class ScriptedKanbanBoardOperatorTests: XCTestCase {
+
+    func testCreatedIDsStayUniqueAfterADelete() async throws {
+        let watcher = ScriptedKanbanWatcher()
+        let first = try await watcher.createTask(KanbanTaskDraft(title: "first created"))
+        XCTAssertEqual(first.id, "t_script06", "the seeded board ends at t_script05")
+
+        try await watcher.deleteTask(id: first.id)
+        let second = try await watcher.createTask(KanbanTaskDraft(title: "second created"))
+
+        XCTAssertNotEqual(second.id, first.id, "a created id is never reused")
+        let cards = try await watcher.snapshot(includeArchived: false)
+            .cardsByColumn.values.flatMap { $0 }
+        let secondCards = cards.filter { $0.id == second.id }
+        XCTAssertEqual(secondCards.count, 1, "the new card owns exactly one row")
+        XCTAssertEqual(secondCards.first?.title, "second created",
+                       "no existing card was overwritten by the reused id")
+        XCTAssertFalse(cards.contains { $0.id == first.id }, "the deleted card stays deleted")
+        XCTAssertTrue(cards.contains { $0.id == "t_script05" },
+                      "untouched seeded rows survive the delete-then-create")
+        XCTAssertEqual(cards.count, 6, "five seeded rows plus the new card")
+    }
+
+    func testCreatedIDsAlsoSurviveADeleteOfASeededRow() async throws {
+        let watcher = ScriptedKanbanWatcher()
+        try await watcher.deleteTask(id: "t_script01")
+        let created = try await watcher.createTask(KanbanTaskDraft(title: "after seed delete"))
+        let cards = try await watcher.snapshot(includeArchived: false)
+            .cardsByColumn.values.flatMap { $0 }
+        XCTAssertFalse(cards.contains { $0.id == "t_script01" })
+        XCTAssertNotEqual(created.id, "t_script05",
+                          "the counter must not fall back onto a LIVE seeded id")
+        XCTAssertEqual(cards.filter { $0.id == created.id }.count, 1)
+        XCTAssertEqual(cards.first { $0.id == "t_script05" }?.title, "Scripted: domain models",
+                       "the live seeded row keeps its own title")
+    }
+}

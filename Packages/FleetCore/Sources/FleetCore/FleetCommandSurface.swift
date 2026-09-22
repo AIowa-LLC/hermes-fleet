@@ -119,6 +119,16 @@ public enum FleetCommandRouter {
         "status": .rpc(.status),
     ]
 
+    /// Bare canonical key for a token from ANY Fleet caller: lowercase, no
+    /// leading slash. Catalog keys and completion rows are slash-prefixed
+    /// (`/steer`); execution paths strip the slash before dispatch, and the
+    /// `native` table is keyed bare. One normalization here keeps every path
+    /// on one convention instead of two that disagree.
+    static func bareName(_ token: String) -> String {
+        let key = token.lowercased()
+        return key.hasPrefix("/") ? String(key.dropFirst()) : key
+    }
+
     /// The fulfillment rule:
     /// 1. Known Fleet-native command → Fleet native route
     /// 2. Known upstream unavailable disposition → unavailable
@@ -126,9 +136,17 @@ public enum FleetCommandRouter {
     ///
     /// `hidden` upstream means executable-but-omitted-from-discovery; Fleet
     /// follows the same policy (still routes to exec/backend so a manually
-    /// typed hidden command Hermes owns behaves per Hermes semantics).
+    /// typed hidden command Hermes owns behaves per Hermes semantics; the
+    /// omission from normal discovery lives in `isSuggestible`, where the
+    /// native-surface exception can be expressed).
+    ///
+    /// The token is normalized first: callers reach here with either the
+    /// catalog's bare canonical name (`"steer"`) or a slash-prefixed
+    /// completion token (`"/steer"`). Both spell the same command, so both
+    /// must classify identically — the two conventions previously disagreed
+    /// and silently dropped native surfaces for palette rows.
     public static func surface(for canonicalName: String, desktopDisposition: String?) -> FleetCommandSurface {
-        let key = canonicalName.lowercased()
+        let key = bareName(canonicalName)
         if let nativeSurface = native[key] {
             return nativeSurface
         }
@@ -145,13 +163,25 @@ public enum FleetCommandRouter {
     /// Whether a catalog/completion row may be SUGGESTED in the palette.
     /// Aliases never appear (duplicate clutter); genuinely unavailable
     /// commands never appear. Hidden native/picker commands (e.g. `/model`)
-    /// DO appear — Fleet has a first-class surface for them.
+    /// DO appear — Fleet has a first-class surface for them. A command that
+    /// is `hidden` upstream with NO Fleet surface stays out of normal
+    /// discovery (palette and `/help`), exactly as this file's `.hidden`
+    /// policy states — it still executes when typed (`isExecutable`).
     public static func isSuggestible(_ row: SlashCommandSuggestion, canon: [String: String]) -> Bool {
-        let key = row.text.lowercased()
-        if let canonical = canon[key], canonical.lowercased() != key {
+        // Completion rows carry the slash-prefixed token; the alias table is
+        // keyed the same way, while `surface(for:)` keys on bare canonical
+        // names. Resolve the alias (slash form) and dispatch (bare form) with
+        // the conventions each one actually uses.
+        let token = row.text.lowercased()
+        if let canonical = canon[token], canonical.lowercased() != token {
             return false  // alias of another canonical — never suggested
         }
-        switch surface(for: key, desktopDisposition: row.desktopDisposition) {
+        let canonicalName = bareName(canon[token] ?? token)
+        if FleetCommandUnavailableReason(disposition: row.desktopDisposition ?? "") == .hidden,
+           native[canonicalName] == nil {
+            return false  // hidden with no Fleet surface — omitted from discovery
+        }
+        switch surface(for: canonicalName, desktopDisposition: row.desktopDisposition) {
         case .unavailable:
             return false
         case .action, .picker, .rpc, .exec:

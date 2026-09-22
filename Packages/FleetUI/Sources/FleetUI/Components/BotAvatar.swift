@@ -96,14 +96,6 @@ enum BotAvatarAppearanceTint {
               blue: Double(hexValue & 255) / 255)
     }
 
-    /// #RRGGBB encoding of a fallback palette entry (identity colors are
-    /// defined as UInt32; the renderer path goes through the same parser as
-    /// metadata colors so both vocabularies render identically).
-    static func hexString(_ hex: UInt32) -> String {
-        String(format: "#%02X%02X%02X",
-               (hex >> 16) & 255, (hex >> 8) & 255, hex & 255)
-    }
-
     /// The FULL avatar color precedence, shared by the roster renderer and
     /// the editor preview (they must agree — #7):
     ///   1. a valid explicit metadata color (server-authoritative)

@@ -63,6 +63,52 @@ final class HermesCommandDomainTests: XCTestCase {
         XCTAssertFalse(FleetCommandRouter.isExecutable(canonicalName: "redraw", desktopDisposition: "terminal"))
     }
 
+    /// Token convention: completion rows carry `/name`, while the router's
+    /// native table and execution path use the bare canonical name. Both
+    /// spellings of the same command must classify identically, or a palette
+    /// row silently loses its Fleet surface and falls back to its upstream
+    /// `desktop` disposition.
+    func testSlashPrefixedAndBareTokensClassifyIdentically() {
+        for name in ["model", "steer", "status", "resume"] {
+            XCTAssertEqual(
+                FleetCommandRouter.surface(for: "/\(name)", desktopDisposition: nil),
+                FleetCommandRouter.surface(for: name, desktopDisposition: nil),
+                "/\(name) must classify as its bare canonical name")
+            XCTAssertEqual(
+                FleetCommandRouter.surface(for: "/\(name)", desktopDisposition: "hidden"),
+                FleetCommandRouter.surface(for: name, desktopDisposition: "hidden"))
+        }
+        // A native command keeps its Fleet surface even when the SLASH form
+        // is the one carrying the upstream disposition (the palette row).
+        let model = SlashCommandSuggestion(
+            text: "/model", kind: .command, desktopDisposition: "hidden")
+        XCTAssertTrue(
+            FleetCommandRouter.isSuggestible(model, canon: ["/model": "/model"]),
+            "/model is Fleet-native — its picker surface decides, not `hidden`")
+    }
+
+    /// `hidden` upstream means executable when typed but omitted from normal
+    /// discovery. A hidden command with NO Fleet surface must therefore stay
+    /// out of the palette and `/help`, while still executing.
+    func testHiddenCommandWithoutFleetSurfaceExecutesButIsNotSuggested() {
+        let hidden = SlashCommandSuggestion(
+            text: "/codex-runtime", kind: .command, desktopDisposition: "hidden")
+        XCTAssertFalse(
+            FleetCommandRouter.isSuggestible(hidden, canon: [:]),
+            "hidden + no Fleet surface must not be offered in discovery")
+        XCTAssertTrue(
+            FleetCommandRouter.isExecutable(canonicalName: "codex-runtime", desktopDisposition: "hidden"),
+            "hidden still executes when typed")
+        XCTAssertEqual(
+            FleetCommandRouter.surface(for: "codex-runtime", desktopDisposition: "hidden"),
+            .exec)
+        // Rows WITH a disposition that just ride backend exec (skills, quick
+        // commands, no disposition at all) stay suggestible.
+        XCTAssertTrue(FleetCommandRouter.isSuggestible(
+            SlashCommandSuggestion(text: "/my-quick-command", kind: .extensionCommand),
+            canon: [:]))
+    }
+
     // MARK: Catalog model
 
     func testCanonicalFormResolvesAliases() {

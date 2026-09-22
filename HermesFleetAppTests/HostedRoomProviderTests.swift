@@ -69,6 +69,53 @@ final class HostedRoomProviderTests: XCTestCase {
         XCTAssertEqual(rooms.first(where: { $0.id.key == "room-gone" })?.isDeleted, true)
         XCTAssertEqual(listOffsets.values, [0, 200])
     }
+
+    /// A gateway whose `groups.list` cursor ALWAYS advances (empty pages,
+    /// `next_offset = offset + 200`) must not wedge the room-load path in
+    /// unbounded requests: the provider's page cap terminates the drain.
+    func testRoomsStopsAtThePageCapWhenTheCursorNeverStopsAdvancing() async throws {
+        let listOffsets = LockedInts()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [readyFrame()],
+            onText: { frame in
+                guard let data = frame.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let id = object["id"] as? String,
+                      let method = object["method"] as? String else { return [] }
+
+                switch method {
+                case "groups.capabilities":
+                    return [#"{"jsonrpc":"2.0","id":"\#(id)","result":{"protocol_version":2,"driver":true,"persistent_process":true,"authority_gateway_id":"install:test","room_link":{"enabled":false},"features":[],"methods":["groups.capabilities","groups.list"],"max_log_limit":500}}"#]
+                case "groups.list":
+                    let params = object["params"] as? [String: Any]
+                    let offset = (params?["offset"] as? NSNumber)?.intValue ?? 0
+                    listOffsets.append(offset)
+                    return [#"{"jsonrpc":"2.0","id":"\#(id)","result":{"rooms":[],"next_offset":\#(offset + 200)}}"#]
+                default:
+                    return []
+                }
+            })
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let gatewayID = GatewayID(rawValue: "test-gateway")
+        let client = GatewayGroupsClient(gatewayID: gatewayID, transport: transport)
+        let provider = HostedRoomProvider(gatewayID: gatewayID, client: client)
+
+        let rooms = try await provider.rooms()
+
+        XCTAssertTrue(rooms.isEmpty)
+        XCTAssertEqual(listOffsets.values.count, HostedRoomProvider.maxRoomListPages,
+                       "the drain stops at the page cap instead of following the cursor forever")
+        XCTAssertEqual(listOffsets.values.first, 0)
+        XCTAssertEqual(listOffsets.values.last, (HostedRoomProvider.maxRoomListPages - 1) * 200)
+        XCTAssertEqual(listOffsets.values, listOffsets.values.sorted(),
+                       "offsets follow the advancing cursor")
+    }
 }
 
 private final class LockedInts: @unchecked Sendable {

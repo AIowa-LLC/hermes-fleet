@@ -23,8 +23,18 @@ public protocol RoomChatCommanding: Sendable {
     /// `groups.send` with a client-minted event id.
     func send(roomID: String, text: String, threadID: String?) async throws -> Int
     /// Idempotent send variant used when a request may have reached the
-    /// gateway before transport failure. Existing test seams inherit the
-    /// compatibility implementation below.
+    /// gateway before transport failure: `idempotencyKey` is the caller's
+    /// event id for ONE logical message and must be stable across retries of
+    /// that message (the gateway folds `event_id` into its own event
+    /// identity, so a re-send of the same key is at-most-once). Conformers
+    /// MUST honor the key when non-nil — a seam that drops it silently loses
+    /// the at-most-once guarantee the caller is relying on.
+    ///
+    /// The compatibility default below keeps older test seams compiling, so
+    /// it is the ONE place the key can be lost: any conformer that does not
+    /// implement this overload (e.g. the phone-bridged relay, which mints its
+    /// own local event ids) does not dedupe retries. New conformers should
+    /// implement it rather than inherit the default.
     func send(roomID: String, text: String, threadID: String?, idempotencyKey: String?) async throws -> Int
     /// `groups.rename`.
     func rename(roomID: String, name: String) async throws
@@ -45,8 +55,13 @@ public protocol RoomChatCommanding: Sendable {
 }
 
 public extension RoomChatCommanding {
+    /// Compatibility bridge for seams that predate the key-bearing overload.
+    /// It DISCARDS `idempotencyKey`: inherited implementations therefore
+    /// cannot dedupe a retry. Kept so existing seams (and their tests) keep
+    /// compiling — see the requirement's contract above.
     func send(roomID: String, text: String, threadID: String?, idempotencyKey: String?) async throws -> Int {
-        try await send(roomID: roomID, text: text, threadID: threadID)
+        _ = idempotencyKey
+        return try await send(roomID: roomID, text: text, threadID: threadID)
     }
 }
 

@@ -74,18 +74,6 @@ public enum BotFailureReason: String, Hashable, Sendable, Codable, CaseIterable 
         }
     }
 
-    /// Phone-bridged Group relay failures: never auto-retry themselves (a
-    /// timed-out member may STILL be working — see the late-reply tail);
-    /// the person decides via Retry.
-    public var isBridgedRelayFailure: Bool {
-        switch self {
-        case .bridgedMemberTimeout, .bridgedSessionExpired, .bridgedMemberUnreachable:
-            return true
-        default:
-            return false
-        }
-    }
-
     /// Tolerant decode from the wire string; unknown spellings decode to
     /// `.unknown` (never fail — the enum is closed upstream but old clients
     /// must degrade honestly).

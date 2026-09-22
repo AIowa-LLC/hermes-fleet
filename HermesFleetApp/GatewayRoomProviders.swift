@@ -18,6 +18,14 @@ struct HostedRoomProvider: FleetRoomProviding {
         self.client = client
     }
 
+    /// Upper bound on `groups.list` pages for ONE room-list load. The drain
+    /// loop follows the server's `next_offset` cursor, so a malformed or
+    /// adversarial gateway could otherwise page forever. 50 pages × the
+    /// client's 200-row page limit (10 000 rooms) is far beyond any real
+    /// hosted room list — the cap bounds the request count, it does not
+    /// shape normal loads.
+    static let maxRoomListPages = 50
+
     /// Gateway-level create capability (F1): derived from the gateway's own
     /// `groups.capabilities` probe, independent of any room row — a capable
     /// gateway with ZERO hosted rooms still reports `.supported` so the
@@ -51,10 +59,17 @@ struct HostedRoomProvider: FleetRoomProviding {
         // Include tombstones so FleetRoomUnion can remember authoritative
         // disbands and prevent stale Desktop mirrors from resurrecting rows.
         // Drain every bounded page; the gateway's room list is offset-based.
+        // The cursor is SERVER-supplied, so the drain is additionally capped:
+        // a malformed/adversarial gateway that returns a strictly increasing
+        // `next_offset` forever (even with empty pages) must not wedge the
+        // room-load path in unbounded requests.
         var rows: [HostedRoomRow] = []
         var offset = 0
-        while true {
+        var pages = 0
+        while pages < Self.maxRoomListPages {
+            try Task.checkCancellation()
             let page = try await client.listRooms(offset: offset, includeDisbanded: true)
+            pages += 1
             rows.append(contentsOf: page.rooms)
             guard let next = page.nextOffset, next > offset else { break }
             offset = next

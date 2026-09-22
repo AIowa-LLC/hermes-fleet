@@ -357,9 +357,21 @@ public struct BotDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(isGhost || presence == .unreachable)
-                    .accessibilityHint(editUnavailableHint)
+                    // Mirrors the New Session hint above: the hint describes
+                    // what the button does NOW. Announcing "Reconnect …" for
+                    // an enabled button is misleading VoiceOver copy.
+                    .accessibilityHint(isGhost || presence == .unreachable
+                        ? editUnavailableHint
+                        : "Opens this bot's editor.")
                     .accessibilityIdentifier("fleet.bot-detail.edit")
                     BotActionsMenu(environment: environment, bot: bot)
+                        // Build 43 invariant: no write is attempted while
+                        // offline. The menu owns real gateway writes
+                        // (duplicate → createProfile, move → configureProfile)
+                        // and does not self-guard connectivity, so it is
+                        // gated with the Edit button it sits beside.
+                        .disabled(isGhost || presence == .unreachable)
+                        .accessibilityIdentifier("fleet.bot-detail.actions")
                 }
                 // FOS-2: profile-scoped management panes entered from
                 // Bot Detail carry this Bot's Route — no picker, no

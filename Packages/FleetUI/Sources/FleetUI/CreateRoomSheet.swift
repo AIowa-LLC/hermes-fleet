@@ -179,13 +179,10 @@ public struct CreateRoomSheet: View {
                 if let gateway {
                     compatibleGateways = await environment.compatibleRoomGateways(homeID: gateway.id)
                 } else {
-                    var results: [Route: String] = [:]
-                    for candidate in candidates {
-                        if let reason = await environment.roomEligibilityMessage(for: candidate.route) {
-                            results[candidate.route] = reason
-                        }
-                    }
-                    eligibility = results
+                    let environment = self.environment
+                    eligibility = await RoomEligibilityProbes.evaluate(
+                        routes: candidates.map(\.route),
+                        probe: { await environment.roomEligibilityMessage(for: $0) })
                     eligibilityReady = true
                 }
             }
@@ -304,6 +301,56 @@ public struct CreateRoomSheet: View {
             dismiss()
         } catch {
             errorMessage = RoomChatViewModel.explain(error)
+        }
+    }
+}
+
+/// Fleet-wide eligibility probing for `CreateRoomSheet`.
+///
+/// `AppEnvironment.roomEligibilityMessage` can issue RoomLink probes against
+/// every other gateway (host + target snapshots), and it depends only on the
+/// candidate's route. A serial loop over candidates therefore costs one probe
+/// sequence per Bot on the sheet's load path — the "Checking connected
+/// gateways…" state — and repeats identical probes for Bots that share a
+/// route. Evaluate ONCE per distinct route with bounded concurrency, then map
+/// the reason back onto every candidate that carries that route.
+enum RoomEligibilityProbes {
+    /// Probes in flight at once: enough to overlap the network waits, small
+    /// enough to avoid stampeding every gateway with sockets (mirrors the
+    /// environment's bounded session-load fan-out).
+    static let maxConcurrent = 6
+
+    /// Route → eligibility reason (only routes with a reason are present),
+    /// identical in meaning to the per-candidate sequential loop it replaces.
+    static func evaluate(
+        routes: [Route],
+        probe: @escaping @Sendable (Route) async -> String?
+    ) async -> [Route: String] {
+        var ordered: [Route] = []
+        var seen = Set<Route>()
+        for route in routes where seen.insert(route).inserted {
+            ordered.append(route)
+        }
+        guard !ordered.isEmpty else { return [:] }
+
+        let bound = max(1, maxConcurrent)
+        return await withTaskGroup(of: (Route, String?).self) { group in
+            var iterator = ordered.makeIterator()
+            var inFlight = 0
+            func addNext() {
+                while inFlight < bound, let route = iterator.next() {
+                    inFlight += 1
+                    group.addTask { (route, await probe(route)) }
+                }
+            }
+            addNext()
+            var results: [Route: String] = [:]
+            for await (route, reason) in group {
+                inFlight -= 1
+                if let reason { results[route] = reason }
+                addNext()
+            }
+            return results
         }
     }
 }
