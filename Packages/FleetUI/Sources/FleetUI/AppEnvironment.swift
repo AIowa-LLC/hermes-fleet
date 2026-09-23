@@ -503,10 +503,24 @@ public final class AppEnvironment {
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
 
+    /// Dogfood r2 (2026-09-23): per-gateway auto-recovery. A watch loop per
+    /// gateway with recorded connection intent samples the transport state
+    /// and drives a bounded, policy-gated reconnect (spec §8.6) — a failed
+    /// connect or a post-open drop used to leave the row stuck ("Degraded"
+    /// that never heals). The watch is ALSO the only writer of a failure the
+    /// runtime did not itself record (a drop used to leave
+    /// `connectionStates` stale-`.connected`).
+    @ObservationIgnored private var connectionWatchTasks: [GatewayID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var reconnectRetryTasks: [GatewayID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var reconnectAttempts: [GatewayID: Int] = [:]
+
     /// Desired connection intent is deliberately distinct from live transport
     /// state. The store contains gateway IDs only; production backs it with
     /// UserDefaults and tests/simulator may keep it in-process.
     private let connectionIntent: ConnectionIntentStore
+    /// Bounded auto-recovery cadence (spec §8.6) — injectable so tests drive
+    /// the recovery loop at millisecond cadence.
+    private let recoveryTiming: ConnectionRecoveryTiming
     private let gatewaySessionInvalidator: FleetGatewaySessionInvalidator?
     private let gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll?
 
@@ -583,7 +597,8 @@ public final class AppEnvironment {
         gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil,
         conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
         launchCache: (any FleetLaunchCaching)? = nil,
-        diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder()
+        diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
+        recoveryTiming: ConnectionRecoveryTiming = .standard
     ) {
         self.registry = registry
         self.roster = roster
@@ -614,6 +629,7 @@ public final class AppEnvironment {
         self.conversationPinStore = conversationPinStore
         self.launchCache = launchCache ?? InMemoryLaunchCache()
         self.diagnosticsRecorder = diagnosticsRecorder
+        self.recoveryTiming = recoveryTiming
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -1723,6 +1739,7 @@ public final class AppEnvironment {
         roomDriverStatuses.removeAll()
         roomLinks.removeAll()
         connectionStates.removeAll()
+        cancelAllConnectionRecovery()
         continueIndex.removeAll()
         // Card D: local-data clear also drops observed artifacts + retrieved bytes.
         artifactLibrary.removeAll()
@@ -1759,6 +1776,7 @@ public final class AppEnvironment {
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
         activeConnections[id] = connection
+        startConnectionWatchIfNeeded(for: id)
         do {
             try await connection.connect()
             connectionStates[id] = GatewayConnectionState(status: connection.status)
@@ -1804,9 +1822,110 @@ public final class AppEnvironment {
             detail: "\(gateway.displayName): \(GatewayFailureCopy.detail(status: status, detail: detail, gatewayName: gateway.displayName))")
     }
 
+    // MARK: Connection auto-recovery (dogfood r2 — sticky failed state)
+
+    /// Start (or keep) the per-gateway recovery watch. Idempotent: a live
+    /// task wins. The loop exits only on cancellation (manual disconnect,
+    /// gateway removal, environment reset) — a nil'd `activeConnections`
+    /// entry is a reconnect in progress, not a stop signal.
+    private func startConnectionWatchIfNeeded(for id: GatewayID) {
+        if let existing = connectionWatchTasks[id], !existing.isCancelled { return }
+        connectionWatchTasks[id] = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.observeConnectionState(for: id)
+                try? await Task.sleep(for: .seconds(self.recoveryTiming.watchInterval))
+            }
+        }
+    }
+
+    /// One watch tick: mirror a genuine failure into the observable lifecycle
+    /// and schedule a bounded, policy-gated retry. A CLEAN teardown reports
+    /// `.normalClosure` (policy: do not reconnect) — the runtime's own
+    /// `.disconnected` write stands and no retry is scheduled, so the
+    /// background/`disconnectAll` path is untouched.
+    private func observeConnectionState(for id: GatewayID) async {
+        guard let connection = activeConnections[id] else { return }
+        let live = connection.status
+        switch live {
+        case .online:
+            // A live connection clears the retry budget.
+            reconnectAttempts[id] = 0
+            cancelPendingRetry(for: id)
+        case .connecting:
+            break
+        case .offline, .degraded, .authenticationRequired, .unsupported:
+            let reason = await connection.lastDisconnectReason()
+            let retryable = reason.map {
+                ReconnectPolicy.decision(for: $0) == .reconnect
+            } ?? false
+            if retryable {
+                // Never leave the row stale-"Online" over a dead socket.
+                if connectionStates[id] != .failed(live) {
+                    connectionStates[id] = .failed(live)
+                }
+                scheduleAutoReconnect(for: id)
+            } else if live != .offline {
+                // A failed class the runtime may not have recorded (defense;
+                // connect() records offline/degraded itself).
+                if connectionStates[id] != .failed(live) {
+                    connectionStates[id] = .failed(live)
+                }
+            }
+        }
+    }
+
+    /// Bounded retry with exponential backoff, gated on connection intent and
+    /// the spec §8.6 policy (transient reasons only). After `maxAttempts` the
+    /// gateway stays failed until a foreground restore or a manual retry.
+    private func scheduleAutoReconnect(for id: GatewayID) {
+        guard connectionIntent.isIntended(id) else { return }
+        guard reconnectRetryTasks[id] == nil else { return }
+        let attempt = reconnectAttempts[id, default: 0] + 1
+        guard attempt <= recoveryTiming.maxAttempts else { return }
+        reconnectAttempts[id] = attempt
+        let delay = min(
+            recoveryTiming.maxDelay,
+            recoveryTiming.baseDelay * pow(2, Double(attempt - 1)))
+        reconnectRetryTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            self.reconnectRetryTasks[id] = nil
+            guard self.connectionIntent.isIntended(id) else { return }
+            await self.connect(to: id)
+        }
+    }
+
+    private func cancelPendingRetry(for id: GatewayID) {
+        reconnectRetryTasks[id]?.cancel()
+        reconnectRetryTasks[id] = nil
+    }
+
+    /// Stop all auto-recovery activity for a gateway (manual disconnect,
+    /// gateway removal). A later explicit connect() restarts the watch.
+    private func cancelConnectionRecovery(for id: GatewayID) {
+        connectionWatchTasks[id]?.cancel()
+        connectionWatchTasks[id] = nil
+        cancelPendingRetry(for: id)
+        reconnectAttempts[id] = nil
+    }
+
+    private func cancelAllConnectionRecovery() {
+        for id in connectionWatchTasks.keys {
+            connectionWatchTasks[id]?.cancel()
+        }
+        connectionWatchTasks.removeAll()
+        for id in reconnectRetryTasks.keys {
+            reconnectRetryTasks[id]?.cancel()
+        }
+        reconnectRetryTasks.removeAll()
+        reconnectAttempts.removeAll()
+    }
+
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
         connectionIntent.clear(id)
+        cancelConnectionRecovery(for: id)
         // Manual Disconnect is transport control, not sign-out. Keep the
         // in-memory authenticated lease so an explicit later Connect mints a
         // fresh single-use ticket without another password-login burst.
@@ -1841,6 +1960,12 @@ public final class AppEnvironment {
         for connection in connections {
             await connection.disconnect()
         }
+        // Dogfood r2: a lock/background boundary cancels pending auto-retry
+        // timers — the foreground restore owns reconnection from here.
+        for id in reconnectRetryTasks.keys {
+            reconnectRetryTasks[id]?.cancel()
+        }
+        reconnectRetryTasks.removeAll()
         for conversation in conversations {
             await conversation.disconnect()
         }
@@ -2075,6 +2200,7 @@ public final class AppEnvironment {
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
         connectionIntent.clear(id)
+        cancelConnectionRecovery(for: id)
         await gatewaySessionInvalidator?(id)
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
