@@ -342,11 +342,16 @@ public struct RoomTranscriptProjection: Sendable {
     public static func project(_ events: [HostedRoomEventValue]) -> RoomTranscriptProjection {
         var entries: [RoomTranscriptEntry] = []
         var latestFailure: TypedBotFailure?
+        var latestFailureActorID: String?
         var indeterminate: String?
         var stopRequested = false
 
         for event in events {
             if messageKinds.contains(event.kind) {
+                if event.kind == "message.member" && event.actorID == latestFailureActorID {
+                    latestFailure = nil
+                    latestFailureActorID = nil
+                }
                 entries.append(RoomTranscriptEntry(
                     id: event.id,
                     seq: event.seq,
@@ -365,6 +370,7 @@ public struct RoomTranscriptProjection: Sendable {
                     wireReason: event.reasonCode ?? "unknown",
                     message: event.payloadText)
                 latestFailure = failure
+                latestFailureActorID = event.actorID
                 entries.append(RoomTranscriptEntry(
                     id: event.id,
                     seq: event.seq,

@@ -128,7 +128,7 @@ public enum BotFailureCopy {
         case .bridgedMemberTimeout:
             return "A member took too long to answer this Group. It may still be working — its reply lands here when it finishes. Retry sends the question again."
         case .bridgedMemberTurnFailed:
-            return "The member's gateway ended its turn with an error. Check that bot's chat, then retry."
+            return "The member's gateway ended its Group turn with an error. The failure row shows its reason when available."
         case .bridgedSessionExpired:
             return "A member's Group session expired on its gateway, so its earlier context is gone. Create a new Group to start fresh."
         case .bridgedMemberUnreachable:

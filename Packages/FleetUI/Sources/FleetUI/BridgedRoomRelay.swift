@@ -24,8 +24,8 @@ import FleetCore
 ///   note lands first (honest interim state), the late reply appends after.
 /// - `rename` / `disband` are local record updates (disband = final
 ///   tombstone, matching the hosted contract).
-/// - `stop` cancels the room's live tails; `retry` re-sends the room's last
-///   user message (the only retryable unit the bridge owns).
+/// - `stop` cancels the room's live tails; `retry` repeats the failed
+///   member's turn using the existing user message without a duplicate row.
 @MainActor
 public final class BridgedRoomRelay: RoomChatCommanding {
     /// Resolves the conversation session for a gateway (the environment's
@@ -210,7 +210,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
     private func relay(
         member: BridgedRooms.MemberRef, roomID: String,
-        sessionID: String?, rosterAtSend: [BridgedRooms.MemberRef]
+        sessionID: String?, rosterAtSend: [BridgedRooms.MemberRef],
+        retryFromSeq: Int? = nil
     ) async throws {
         guard let route = member.route else {
             try await appendFailure(member: member, reason: "invalid_route", roomID: roomID)
@@ -282,7 +283,9 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             // A rebuilt session is context-less: its delta is the bounded
             // RECENT history regardless of the watermark (which describes
             // the dead session), so the member re-anchors on real room state.
-            let delta = rebuilt ? live.events : live.events.filter { $0.seq > seen }
+            let delta = rebuilt ? live.events : live.events.filter {
+                $0.seq > (retryFromSeq.map { min(seen, $0 - 1) } ?? seen)
+            }
             // Desktop's room log holds only conversation entries; Fleet's
             // event list also carries local notes (turn.failed,
             // room.activity). A delta of notes alone is not a turn — skip
@@ -337,8 +340,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: false)
                 return
             }
-            if case .failed = outcome {
-                try await appendFailure(member: member, reason: "member_turn_failed", roomID: roomID)
+            if case let .failed(detail) = outcome {
+                try await appendFailure(member: member, reason: "member_turn_failed", roomID: roomID, detail: detail)
                 return
             }
             // Honest interim state. The late stream is subscribed BEFORE the
@@ -369,13 +372,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             if case let .reply(reply) = lateOutcome,
                !Task.isCancelled, !BridgedRoomTurnPrompt.isPassText(reply) {
                 await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: true)
-            } else if case .failed = lateOutcome, !Task.isCancelled {
+            } else if case let .failed(detail) = lateOutcome, !Task.isCancelled {
                 // A TERMINAL failure that lands AFTER the interim note is the
                 // turn's real outcome: surface it (the note first, this after)
                 // instead of leaving the room on a bare "didn't answer in
                 // time". Only the canonical completion predicate ever produces
                 // `.failed` — a bare advisory `.error` frame does not.
-                try await appendFailure(member: member, reason: "member_turn_failed", roomID: roomID)
+                try await appendFailure(member: member, reason: "member_turn_failed", roomID: roomID, detail: detail)
             }
         } catch {
             try await appendFailure(member: member, reason: Self.reason(for: error), roomID: roomID)
@@ -407,7 +410,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     /// interim note, and phase 2 keeps watching for the late reply.
     private enum ReplyOutcome: Sendable {
         case reply(String)
-        case failed
+        case failed(String?)
         case timedOut
     }
 
@@ -445,7 +448,10 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                     guard let sid = event.sessionID, sid == sessionID else { continue }
                     switch event {
                     case let .messageComplete(_, text, status, error, _):
-                        return status == "error" || error != nil ? .failed : .reply(text)
+                        if status == "error" || error != nil {
+                            return .failed(error ?? (text.isEmpty ? nil : text))
+                        }
+                        return .reply(text)
                     case .error:
                         // Advisory, not turn-terminal (see the doc comment).
                         break
@@ -455,7 +461,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                     // Any activity for this session: the member is working.
                     window.extend(inactivity: inactivity)
                 }
-                return .failed
+                return .failed(nil)
             }
             group.addTask {
                 // Inactivity watchdog: poll cheaply until the (extended)
@@ -560,12 +566,15 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         try await store.append(events: [event], to: roomID)
     }
 
-    private func appendFailure(member: BridgedRooms.MemberRef, reason: String, roomID: String) async throws {
+    private func appendFailure(
+        member: BridgedRooms.MemberRef, reason: String, roomID: String, detail: String? = nil
+    ) async throws {
         let text: String
         if reason == "bridge_session_expired_context_lost" {
             text = "\(member.displayName)'s bridge session expired; context was lost. Create a new Group to continue."
         } else if reason == "member_turn_failed" {
-            text = "\(member.displayName)'s turn failed on its gateway. Check that bot's chat, then retry."
+            let safeDetail = detail.map(Redaction.safeText)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            text = "\(member.displayName)'s Group turn failed. \(safeDetail.flatMap { $0.isEmpty ? nil : $0 } ?? "The gateway did not give a reason.")"
         } else {
             text = "\(member.displayName) couldn't be reached for this Group (\(reason))."
         }
@@ -603,12 +612,30 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     }
 
     public func retry(roomID: String, taskID: String) async throws {
-        // The only retryable unit the bridge owns: re-send the room's last
-        // user message (a fresh fan-out with fresh seq numbers).
+        // The phone bridge has no hosted task id. Retry the latest failed
+        // member after the latest user message, preserving that message's
+        // single transcript row and the healthy members' completed turns.
+        _ = taskID
         guard let record = await store.record(roomKey: roomID) else { return }
+        guard record.disbandedAt == nil else {
+            throw RoomCommandFailure.rpcFailed(
+                "This Group was disbanded — it no longer accepts messages.", 0)
+        }
         guard let lastUser = record.events.last(where: { $0.kind == "message.user" }),
-              let text = lastUser.payloadText else { return }
-        _ = try await send(roomID: roomID, text: text, threadID: nil)
+              let failed = record.events.last(where: {
+                  $0.kind == "turn.failed" && $0.seq > lastUser.seq
+              }),
+              let member = record.members.first(where: { $0.routeID == failed.actorID }) else { return }
+        let sessionID = record.bridgeSessionIDs[member.routeID]
+        memberTails[roomID]?[member.routeID]?.task.cancel()
+        let token = UUID()
+        let tail = Task<Void, Never> {
+            try? await self.relay(
+                member: member, roomID: roomID, sessionID: sessionID,
+                rosterAtSend: record.members, retryFromSeq: lastUser.seq)
+            self.pruneTail(roomID: roomID, routeID: member.routeID, token: token)
+        }
+        memberTails[roomID, default: [:]][member.routeID] = MemberTail(task: tail, token: token)
     }
 
     public func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws {}

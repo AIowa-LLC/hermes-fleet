@@ -193,6 +193,7 @@ final class BridgedRoomRelayTests: XCTestCase {
             let record = try XCTUnwrap(stored)
             XCTAssertEqual(record.events.filter { $0.kind == "turn.failed" }.count, 1)
             XCTAssertEqual(record.events.last?.actorID, "alpha/research")
+            XCTAssertTrue(record.events.last?.payloadText?.contains("synthetic failure") == true)
             XCTAssertFalse(record.events.contains { $0.reasonCode == "member_timeout" })
         }
     }
@@ -516,7 +517,7 @@ final class BridgedRoomRelayTests: XCTestCase {
         _ = try? await relay.stop(roomID: "room")
     }
 
-    // MARK: - F5: stop cancels tails; retry re-sends the last user message
+    // MARK: - F5: stop cancels tails; retry reuses the failed user turn
 
     func testStopCancelsLiveTails() async throws {
         let store = store()
@@ -539,21 +540,28 @@ final class BridgedRoomRelayTests: XCTestCase {
                       "cancelling a live tail must not fabricate a failure note")
     }
 
-    func testRetryResendsLastUserMessage() async throws {
+    func testRetryReusesUserMessageAndClearsRecoveredFailure() async throws {
         let store = store()
-        let conversation = ImmediateConversation()
-        let sessions = ["alpha": Session(
-            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        let conversation = RecordingConversation()
+        conversation.failure = .complete
+        let healthy = RecordingConversation()
+        let sessions = [
+            "alpha": Session(gatewayID: .init(rawValue: "alpha"), client: conversation),
+            "beta": Session(gatewayID: .init(rawValue: "beta"), client: healthy),
+        ]
         try await store.upsert(.init(
-            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            roomKey: "room", name: "Test",
+            members: [member("alpha", "research"), member("beta", "writer")],
             createdAt: 0))
         let relay = BridgedRoomRelay(
             store: store, resolver: { sessions[$0.rawValue] }, memberTimeout: 1)
         _ = try await relay.send(roomID: "room", text: "Original", threadID: nil)
         try await waitUntil(timeout: 5) {
             let record = await store.record(roomKey: "room")
-            return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
+            return (record?.events.filter { $0.kind == "turn.failed" }.count ?? 0) == 1
+                && (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
         }
+        conversation.failure = nil
         _ = try await relay.retry(roomID: "room", taskID: "latest")
         try await waitUntil(timeout: 5) {
             let record = await store.record(roomKey: "room")
@@ -561,9 +569,13 @@ final class BridgedRoomRelayTests: XCTestCase {
         }
         let stored = await store.record(roomKey: "room")
         let record = try XCTUnwrap(stored)
-        XCTAssertEqual(record.events.filter { $0.kind == "message.user" }.count, 2,
-                       "retry re-sends the room's last user message")
-        XCTAssertEqual(record.events.filter { $0.kind == "message.member" }.count, 2)
+        XCTAssertEqual(record.events.filter { $0.kind == "message.user" }.count, 1,
+                       "retry must not duplicate the user's question")
+        XCTAssertEqual(conversation.submittedTexts.count, 2)
+        XCTAssertEqual(healthy.submittedTexts.count, 1,
+                       "retry must not re-run a member that already answered")
+        XCTAssertTrue(conversation.submittedTexts.last?.contains("User (user): Original") == true)
+        XCTAssertNil(RoomTranscriptProjection.project(record.events.map { $0.hostedEvent(roomKey: "room") }).latestFailure)
     }
 
     // MARK: - At-most-once sends (RoomChatCommanding idempotency key)
