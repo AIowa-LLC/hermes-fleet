@@ -600,6 +600,11 @@ public struct ConversationView: View {
                 .fill(theme.border)
                 .frame(height: 1)
         }
+        // `.contain` (the compact-header pattern) makes the bar a container
+        // element so the field/stepper/close keep their OWN identifiers —
+        // without it the bar's id propagates onto every child (AX dump
+        // evidence, RC-84 CC UI test).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.conversation.find.bar")
         .task(id: findQuery) {
             // Debounce: a short idle before rescanning keeps long

@@ -109,9 +109,14 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertTrue(
             app.descendants(matching: .any)["fleet.room.info.capability.send"].waitForExistence(timeout: 5),
             "Send messages capability line must render")
-        XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.info.capability.replay"].exists,
-            "every capability line must render (replay may be honest 'Not supported')")
+        // The sheet's List materializes rows lazily (repo lazy-list rule) —
+        // reveal the deep capability rows before asserting them.
+        let replay = app.descendants(matching: .any)["fleet.room.info.capability.replay"]
+        for _ in 0..<6 where !replay.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(replay.waitForExistence(timeout: 5),
+                      "every capability line must render (replay may be honest 'Not supported')")
 
         app.buttons["Done"].firstMatch.tap()
         let gone = NSPredicate(format: "exists == 0")

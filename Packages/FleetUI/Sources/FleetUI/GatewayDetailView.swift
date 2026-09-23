@@ -75,6 +75,10 @@ struct GatewayDetailView: View {
                                 .foregroundStyle(theme.textSecondary)
                         }
                     }
+                    // `.contain` keeps the capability ROWS' own identifiers
+                    // queryable (the compact-header pattern; without it the
+                    // group id propagates onto every row's AX element).
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("fleet.gateway-detail.\(gatewayID.rawValue).capabilities")
                 } footer: {
                     Text("Detected from this phone's actual gateway probes and observations — never assumed because a screen exists. Unprobed items stay Unknown.")
