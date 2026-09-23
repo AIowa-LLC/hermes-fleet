@@ -168,7 +168,11 @@ final class BridgedRoomRelayTests: XCTestCase {
     }
 
     func testTerminalMemberErrorsAreReportedWithoutWaitingForTimeout() async throws {
-        for failure in [RecordingConversation.Failure.complete, .errorEvent] {
+        // Both genuinely terminal completion shapes: `status: "error"` with an
+        // error payload, and the defensive `error != nil` with no error status.
+        // A bare advisory session `.error` frame is deliberately NOT in this
+        // list — it is not turn-terminal (see the advisory tests below).
+        for failure in [RecordingConversation.Failure.complete, .completionError] {
             let store = store()
             let conversation = RecordingConversation()
             conversation.failure = failure
@@ -191,6 +195,215 @@ final class BridgedRoomRelayTests: XCTestCase {
             XCTAssertEqual(record.events.last?.actorID, "alpha/research")
             XCTAssertFalse(record.events.contains { $0.reasonCode == "member_timeout" })
         }
+    }
+
+    func testMessageCompleteErrorPayloadFailsEvenWithoutErrorStatus() async throws {
+        let store = store()
+        let conversation = RecordingConversation()
+        conversation.failure = .completionError
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 30, lateCollectionWindow: 60)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 2) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains {
+                $0.kind == "message.member" || $0.reasonCode == "member_turn_failed"
+            } == true
+        }
+        let storedRecord = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(storedRecord)
+        XCTAssertTrue(record.events.contains { $0.reasonCode == "member_turn_failed" })
+        XCTAssertFalse(record.events.contains { $0.kind == "message.member" })
+    }
+
+    func testNonErrorMessageCompleteStatusIsSuccessfulReply() async throws {
+        let store = store()
+        let conversation = RecordingConversation()
+        conversation.failure = .completeStatus
+        conversation.replyText = "completed reply"
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 30, lateCollectionWindow: 60)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 2) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains {
+                $0.kind == "message.member" && $0.payloadText == "completed reply"
+            } == true
+        }
+        let storedRecord = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(storedRecord)
+        XCTAssertFalse(record.events.contains { $0.reasonCode == "member_turn_failed" })
+        _ = try? await relay.stop(roomID: "room")
+    }
+
+    /// D1: a gateway-CANCELLED member turn comes back as
+    /// `message.complete{status: "interrupted", error: nil}` (the real
+    /// `TurnStatus` for a cancelled turn) — NOT a member failure. An empty
+    /// reply is silence by the relay's own pass-text rule, so the room shows
+    /// nothing at all.
+    ///
+    /// The settle is a bounded sleep, NOT a `stop` poll: stopping cancels a
+    /// live tail, and a cancelled tail appends nothing — polling via `stop`
+    /// would mask a mis-classified failure (it passes on a relay that turns
+    /// the cancel into a failure note). The classifier resolves on the first
+    /// buffered terminal frame (the mock yields it synchronously inside
+    /// `submitPrompt`), so the tail has decided well inside this window.
+    func testInterruptedCompletionIsSilentNotAFailure() async throws {
+        let store = store()
+        let conversation = RecordingConversation()
+        conversation.failure = .interrupted
+        conversation.replyText = ""
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 30, lateCollectionWindow: 60)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await Task.sleep(for: .milliseconds(900))
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains { $0.kind == "turn.failed" },
+                       "a cancelled turn must not be reported as a member failure")
+        XCTAssertFalse(record.events.contains { $0.kind == "message.member" })
+        _ = try? await relay.stop(roomID: "room")
+    }
+
+    /// D1 companion: an interrupted turn that DID produce text stays a reply —
+    /// the canonical predicate never reads `interrupted` as an error.
+    func testInterruptedCompletionWithTextAppendsThePartialReply() async throws {
+        let store = store()
+        let conversation = RecordingConversation()
+        conversation.failure = .interrupted
+        conversation.replyText = "partial answer"
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 30, lateCollectionWindow: 60)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 2) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains {
+                $0.kind == "message.member" && $0.payloadText == "partial answer"
+            } == true
+        }
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains { $0.kind == "turn.failed" },
+                       "an interrupted turn is never a fabricated failure")
+        _ = try? await relay.stop(roomID: "room")
+    }
+
+    /// D2: an ADVISORY session `.error` frame ("Could not switch model…" — every
+    /// `_emit("error", …)` site sets only `message`) is not the turn's terminal
+    /// frame. The member's real reply arrives afterwards and must still be
+    /// collected, with no failure note.
+    func testAdvisoryErrorFrameDoesNotEndTheTurn() async throws {
+        let store = store()
+        let conversation = RecordingConversation()
+        conversation.failure = .errorThenReply
+        conversation.replyText = "real reply"
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 30, lateCollectionWindow: 60)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains {
+                $0.kind == "message.member" && $0.payloadText == "real reply"
+            } == true
+        }
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains { $0.reasonCode == "member_turn_failed" },
+                       "an advisory error frame must not fail the member's turn")
+        XCTAssertFalse(record.events.contains { $0.reasonCode == "member_timeout" })
+        _ = try? await relay.stop(roomID: "room")
+    }
+
+    /// D2 companion: an advisory `.error` frame ON ITS OWN never becomes a
+    /// member failure. The turn stays on the honest inactivity path (the
+    /// interim note), and no `member_turn_failed` row is invented from a frame
+    /// that carries no terminal semantics.
+    func testAdvisoryErrorFrameAloneDoesNotFailTheTurn() async throws {
+        let store = store()
+        let conversation = RecordingConversation()
+        conversation.failure = .errorEvent
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 0.3, lateCollectionWindow: 3)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        try await waitUntil(timeout: 5) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains { $0.reasonCode == "member_timeout" } == true
+        }
+        let stored = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(stored)
+        XCTAssertFalse(record.events.contains { $0.reasonCode == "member_turn_failed" },
+                       "an advisory error frame is not a terminal member error")
+        XCTAssertFalse(record.events.contains { $0.kind == "message.member" })
+        _ = try? await relay.stop(roomID: "room")
+    }
+
+    func testTerminalErrorAfterTimeoutNoticeIsPersisted() async throws {
+        let store = store()
+        let conversation = LateReplyConversation(delay: 0.7, terminalError: true)
+        let sessions = ["alpha": Session(
+            gatewayID: .init(rawValue: "alpha"), client: conversation)]
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")],
+            createdAt: 0))
+        let relay = BridgedRoomRelay(
+            store: store, resolver: { sessions[$0.rawValue] },
+            memberTimeout: 0.2, lateCollectionWindow: 4)
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        let observedTerminalFailure = try await waitUntil(timeout: 2) {
+            let record = await store.record(roomKey: "room")
+            return record?.events.contains { $0.reasonCode == "member_turn_failed" } == true
+        }
+        let storedRecord = await store.record(roomKey: "room")
+        let record = try XCTUnwrap(storedRecord)
+        XCTAssertTrue(observedTerminalFailure,
+                      "a terminal error after the timeout notice must be surfaced")
+        let timeoutIndex = try XCTUnwrap(record.events.firstIndex {
+            $0.reasonCode == "member_timeout"
+        })
+        let failureIndex = try XCTUnwrap(record.events.firstIndex {
+            $0.reasonCode == "member_turn_failed"
+        })
+        XCTAssertLessThan(timeoutIndex, failureIndex,
+                          "the terminal result follows the interim timeout notice")
+        XCTAssertEqual(record.events.filter { $0.reasonCode == "member_turn_failed" }.count, 1,
+                       "the terminal failure is appended exactly once")
+        XCTAssertFalse(record.events.contains { $0.kind == "message.member" })
     }
 
     // MARK: - F1: non-blocking send
@@ -472,7 +685,10 @@ final class BridgedRoomRelayTests: XCTestCase {
     /// replies with configurable text (the mock gateway for group-context
     /// assertions — the SUBMITTED text is the artifact under test).
     private final class RecordingConversation: ConversationProviding, @unchecked Sendable {
-        enum Failure { case complete, errorEvent }
+        /// Terminal-classification fixtures. The gateway's status
+        /// vocabulary is `complete | error | interrupted`
+        /// (`tui_gateway/contracts/events.py`), so these use exactly those.
+        enum Failure { case complete, errorEvent, completionError, completeStatus, interrupted, errorThenReply }
         private let lock = NSLock()
         private var subscribers: [AsyncStream<ConversationEvent>.Continuation] = []
         private var _submittedTexts: [String] = []
@@ -508,6 +724,19 @@ final class BridgedRoomRelayTests: XCTestCase {
                         sessionID: sessionID, text: "", status: "error", error: "synthetic failure"))
                 case .errorEvent:
                     stream.yield(.error(sessionID: sessionID, message: "synthetic failure"))
+                case .completionError:
+                    stream.yield(.messageComplete(
+                        sessionID: sessionID, text: "not a valid reply", status: nil, error: "synthetic failure"))
+                case .completeStatus:
+                    stream.yield(.messageComplete(
+                        sessionID: sessionID, text: replyText, status: "complete", error: nil))
+                case .interrupted:
+                    stream.yield(.messageComplete(
+                        sessionID: sessionID, text: replyText, status: "interrupted", error: nil))
+                case .errorThenReply:
+                    stream.yield(.error(sessionID: sessionID, message: "advisory synthetic error"))
+                    stream.yield(.messageComplete(
+                        sessionID: sessionID, text: replyText, status: nil, error: nil))
                 case nil:
                     stream.yield(.messageComplete(
                         sessionID: sessionID, text: replyText, status: nil, error: nil))
@@ -1119,7 +1348,11 @@ final class BridgedRoomRelayTests: XCTestCase {
         private let lock = NSLock()
         private var subscribers: [AsyncStream<ConversationEvent>.Continuation] = []
         private let delay: TimeInterval
-        init(delay: TimeInterval) { self.delay = delay }
+        private let terminalError: Bool
+        init(delay: TimeInterval, terminalError: Bool = false) {
+            self.delay = delay
+            self.terminalError = terminalError
+        }
         var events: AsyncStream<ConversationEvent> {
             let pair = AsyncStream<ConversationEvent>.makeStream()
             lock.withLock { subscribers.append(pair.continuation) }
@@ -1140,8 +1373,13 @@ final class BridgedRoomRelayTests: XCTestCase {
                 // terminal event.
                 let streams = lock.withLock { subscribers }
                 for stream in streams {
-                    stream.yield(.messageComplete(
-                        sessionID: sessionID, text: "late-reply", status: nil, error: nil))
+                    if terminalError {
+                        stream.yield(.messageComplete(
+                            sessionID: sessionID, text: "", status: "error", error: "synthetic late failure"))
+                    } else {
+                        stream.yield(.messageComplete(
+                            sessionID: sessionID, text: "late-reply", status: nil, error: nil))
+                    }
                 }
             }
             return .init(status: "streaming")

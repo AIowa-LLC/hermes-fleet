@@ -369,6 +369,13 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             if case let .reply(reply) = lateOutcome,
                !Task.isCancelled, !BridgedRoomTurnPrompt.isPassText(reply) {
                 await appendMemberMessage(member: member, reply: reply, roomID: roomID, late: true)
+            } else if case .failed = lateOutcome, !Task.isCancelled {
+                // A TERMINAL failure that lands AFTER the interim note is the
+                // turn's real outcome: surface it (the note first, this after)
+                // instead of leaving the room on a bare "didn't answer in
+                // time". Only the canonical completion predicate ever produces
+                // `.failed` — a bare advisory `.error` frame does not.
+                try await appendFailure(member: member, reason: "member_turn_failed", roomID: roomID)
             }
         } catch {
             try await appendFailure(member: member, reason: Self.reason(for: error), roomID: roomID)
@@ -378,6 +385,26 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     /// Collect this member's reply: the next terminal `message.complete` on
     /// the member's bridge session, bounded by an INACTIVITY deadline that
     /// any streamed event on the session extends, plus a hard total cap.
+    ///
+    /// Classification is the app's CANONICAL completion predicate
+    /// (`ConversationViewModel.swift:2281`, `ImageGenerationActivity.swift:96`):
+    /// ONLY `status == "error"` or a carried `error` is a failed turn.
+    /// Everything else is the turn's reply — including `status == "interrupted"`
+    /// (the gateway's `TurnStatus` for a cancelled turn, `prompt_turn._result_status`,
+    /// which sets NO error payload) and a nil status. An empty/pass reply is
+    /// silence for the caller's `isPassText` rule, so a cancel stays silent
+    /// instead of fabricating a member failure, and a partial-text interrupted
+    /// turn stays a reply.
+    ///
+    /// A bare session `.error` frame is NOT terminal here: every
+    /// `_emit("error", …)` site on this gateway sets exactly `message`
+    /// (`tui_gateway/contracts/events.py`) — an advisory (e.g. "Could not switch
+    /// model" on a live session, or an ownership refusal) that can arrive while
+    /// the turn is still running. Returning on one discarded the member's real
+    /// reply that landed after it, so it only proves the session is alive and
+    /// falls through to the activity extension below. A turn that really dies
+    /// with no terminal frame is still reported honestly: it times out into the
+    /// interim note, and phase 2 keeps watching for the late reply.
     private enum ReplyOutcome: Sendable {
         case reply(String)
         case failed
@@ -417,10 +444,11 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 while let event = await iterator.next() {
                     guard let sid = event.sessionID, sid == sessionID else { continue }
                     switch event {
-                    case let .messageComplete(_, text, status, _, _):
-                        return status == nil || status == "complete" ? .reply(text) : .failed
+                    case let .messageComplete(_, text, status, error, _):
+                        return status == "error" || error != nil ? .failed : .reply(text)
                     case .error:
-                        return .failed
+                        // Advisory, not turn-terminal (see the doc comment).
+                        break
                     default:
                         break
                     }
