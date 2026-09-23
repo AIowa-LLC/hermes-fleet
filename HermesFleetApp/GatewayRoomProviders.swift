@@ -386,7 +386,10 @@ struct GatewayRoomDriverStatusAdapter: RoomDriverStatusProviding {
                 approvals.append(RoomPendingApproval(
                     memberID: memberID,
                     taskID: taskID,
-                    executionGeneration: object["execution_generation"]?.numberValue.map(Int.init) ?? 0,
+                    // An unrepresentable generation (e.g. a hostile 2^63)
+                    // degrades to this site's missing-value shape — `?? 0` —
+                    // instead of trapping `Int(_:)`.
+                    executionGeneration: object["execution_generation"]?.intValue ?? 0,
                     runID: object["run_id"]?.stringValue,
                     sessionID: object["session_id"]?.stringValue,
                     requestID: object["request_id"]?.stringValue,
@@ -396,7 +399,9 @@ struct GatewayRoomDriverStatusAdapter: RoomDriverStatusProviding {
         var counts: [String: Int] = [:]
         if let countsObject = status["counts"]?.objectValue {
             for (key, value) in countsObject {
-                counts[key] = value.numberValue.map(Int.init) ?? 0
+                // Same bound as above: a count outside `Int`'s range reads as
+                // the key's missing-value shape (`0`), never a clamped count.
+                counts[key] = value.intValue ?? 0
             }
         }
         return RoomDriverStatus(
