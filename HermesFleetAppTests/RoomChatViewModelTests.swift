@@ -76,6 +76,13 @@ final class RoomChatViewModelTests: XCTestCase {
         func driverStatus(roomID: String) async throws -> RoomDriverStatus? { status }
     }
 
+    private actor MutableDriverStatus: RoomDriverStatusProviding {
+        var status: RoomDriverStatus?
+        init(_ status: RoomDriverStatus?) { self.status = status }
+        func set(_ status: RoomDriverStatus?) { self.status = status }
+        func driverStatus(roomID: String) async throws -> RoomDriverStatus? { status }
+    }
+
     // MARK: Fixtures
 
     private func hostedRoom(
@@ -204,6 +211,62 @@ final class RoomChatViewModelTests: XCTestCase {
         XCTAssertTrue(
             vm.transcript.contains { $0.text == "slice four" },
             "sent message lands in the transcript after replay refresh")
+    }
+
+    func testHostedWorkIndicatorTracksStatusAndApproval() async throws {
+        let commands = makeCommands()
+        let status = MutableDriverStatus(RoomDriverStatus(
+            working: false, blocked: false, counts: [:],
+            pendingRetries: [], pendingApprovals: []))
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: status)
+        await vm.start()
+        defer { vm.stopObserving() }
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+
+        let sent = await vm.send("Please investigate")
+        XCTAssertTrue(sent)
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["The room is working…"],
+                       "accepted send stays visible while the hosted driver starts")
+
+        await status.set(RoomDriverStatus(
+            working: true, blocked: false, counts: [:],
+            pendingRetries: [], pendingApprovals: []))
+        await vm.refresh()
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["The room is working…"])
+
+        let approval = RoomPendingApproval(
+            memberID: "researcher", taskID: "task-1", executionGeneration: 1,
+            requestID: "req-1", approval: ["prompt": .string("Continue?")])
+        await status.set(RoomDriverStatus(
+            working: true, blocked: true, counts: [:],
+            pendingRetries: [], pendingApprovals: [approval]))
+        await vm.refresh()
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["Waiting for your answer…"])
+        XCTAssertEqual(vm.workIndicators.map(\.showsSpinner), [false])
+
+        await status.set(RoomDriverStatus(
+            working: false, blocked: false, counts: [:],
+            pendingRetries: [], pendingApprovals: []))
+        await vm.refresh()
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+    }
+
+    func testReadOnlyRoomNeverShowsWorkIndicator() async throws {
+        let vm = RoomChatViewModel(room: legacyRoom(), commands: nil)
+        await vm.start()
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+    }
+
+    func testAcceptedHostedSendGetsBoundedIndicatorWithoutDriverStatus() async throws {
+        let vm = RoomChatViewModel(
+            room: hostedRoom(methods: ["groups.send", "groups.log"]),
+            commands: makeCommands(), driverStatus: StubDriverStatus(status: nil))
+        await vm.start()
+        let sent = await vm.send("Hello")
+        XCTAssertTrue(sent)
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["The room is working…"])
+        vm.stopObserving()
+        XCTAssertTrue(vm.workIndicators.isEmpty)
     }
 
     // MARK: D16 controls

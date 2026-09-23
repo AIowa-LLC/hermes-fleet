@@ -1744,6 +1744,11 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                     contextPercent: 43
                 )
             ))
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_BRIDGED_ROOM"] == "1",
+               let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_BRIDGED_REPLY_DELAY_MS"],
+               let milliseconds = Int(raw), milliseconds > 0 {
+                try? await Task.sleep(for: .milliseconds(milliseconds))
+            }
             // Card D demo hook (simulator only): `HERMES_FLEET_IMAGE_DEMO=1`
             // makes every scripted turn run an image_generate call whose
             // result names a retrievable gateway path — the inline artifact,
@@ -3084,6 +3089,8 @@ struct ScriptedRoomSource: FleetRoomSourceProviding {
 /// - `HERMES_FLEET_ROOM_FAILURE=1` — the room's transcript carries a typed
 ///   `turn.failed` (provider_auth_or_access) + a pending retry action.
 /// - `HERMES_FLEET_ROOM_APPROVAL=1` — a needs-you approval is pending.
+/// - `HERMES_FLEET_ROOM_REPLY_DELAY_MS=...` — scripted hosted work remains
+///   active for that duration after send, then lands a member reply.
 actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     static let shared = ScriptedRoomEngine()
 
@@ -3100,6 +3107,7 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     private var _approveChoices: [String] = []
     private var _pendingApproval: RoomPendingApproval?
     private var _pendingRetry: RoomPendingRetry?
+    private var _workingUntil: Date?
     private var _lastCreatedMembers: [[String: String]] = []
     private var _createdRoomNames: [String: String] = [:]
     private var _createdRoomMembers: [String: [FleetRoomMember]] = [:]
@@ -3110,6 +3118,7 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         _events = seed.events
         _seq = seed.seq
         _pendingRetry = seed.pendingRetry
+        _workingUntil = nil
         _pendingApproval = seed.pendingApproval
     }
 
@@ -3184,6 +3193,7 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         _seq = seed.seq
         _pendingApproval = seed.pendingApproval
         _pendingRetry = seed.pendingRetry
+        _workingUntil = nil
     }
 
     var roomKey: String { "room-alpha" }
@@ -3253,6 +3263,10 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     func send(roomID: String, text: String, threadID: String?) async throws -> Int {
         _sendCount += 1
         append(roomID: roomID, kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
+        if let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_ROOM_REPLY_DELAY_MS"],
+           let milliseconds = Int(raw), milliseconds > 0 {
+            _workingUntil = Date().addingTimeInterval(Double(milliseconds) / 1_000)
+        }
         return _seq
     }
 
@@ -3269,6 +3283,7 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
 
     func stop(roomID: String) async throws -> Int {
         _stopCount += 1
+        _workingUntil = nil
         append(roomID: roomID, kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
         return 1
     }
@@ -3337,8 +3352,14 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     // MARK: RoomDriverStatusProviding
 
     func driverStatus(roomID: String) async throws -> RoomDriverStatus? {
-        RoomDriverStatus(
-            working: false,
+        if let until = _workingUntil, until <= Date() {
+            _workingUntil = nil
+            append(roomID: roomID, kind: "message.member", actorKind: "member",
+                   actorID: "researcher", actorProfile: "researcher",
+                   text: "Scripted reply after work.")
+        }
+        return RoomDriverStatus(
+            working: _workingUntil != nil,
             blocked: _pendingApproval != nil || _pendingRetry != nil,
             counts: [:],
             pendingRetries: _pendingRetry.map { [$0] } ?? [],

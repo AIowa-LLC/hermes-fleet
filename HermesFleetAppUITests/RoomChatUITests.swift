@@ -117,6 +117,27 @@ final class RoomChatUITests: XCTestCase {
             "sent message appears in transcript")
     }
 
+    func testHostedRoomShowsWorkingUntilScriptedReply() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_ROOM_REPLY_DELAY_MS": "6000"])
+        scrollToFind(app, identifier: "fleet.room.row.room-alpha").tap()
+        let composer = app.textFields["fleet.room.composer.field"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Investigate this")
+        app.buttons["fleet.room.send"].tap()
+
+        let indicator = app.descendants(matching: .any)["fleet.room.work.room"]
+        XCTAssertTrue(indicator.waitForExistence(timeout: 5),
+                      "an accepted hosted send shows room work")
+        XCTAssertTrue(indicator.label.contains("The room is working"))
+        let gone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: indicator)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 20), .completed,
+                       "the indicator clears after the scripted reply")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.room.entry.4"]
+            .waitForExistence(timeout: 10), "the completed reply enters the transcript")
+    }
+
     // MARK: - D15 rename
 
     func testHostedRoomRename() throws {
@@ -299,12 +320,16 @@ final class RoomChatUITests: XCTestCase {
 
         let approve = app.buttons["fleet.room.approve.once"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10), "needs-you approval renders")
+        let waiting = app.descendants(matching: .any)["fleet.room.work.approval"]
+        XCTAssertTrue(waiting.waitForExistence(timeout: 5))
+        XCTAssertTrue(waiting.label.contains("Waiting for your answer"))
         approve.tap()
 
         // After approving, the approval card clears.
         XCTAssertFalse(
             app.buttons["fleet.room.approve.once"].waitForExistence(timeout: 5),
             "approval clears after approve-once")
+        XCTAssertFalse(waiting.exists, "waiting copy clears with the approval")
     }
 
     // MARK: - D15 create room
@@ -362,7 +387,10 @@ final class RoomChatUITests: XCTestCase {
     // device-local room. The second launch deliberately omits NAV_RESET so
     // the persisted bridged record is the thing being reopened.
     func testPhoneBridgedGroupCreatesOpensSendsAndSurvivesRelaunch() throws {
-        let fixture = ["HERMES_FLEET_BRIDGED_ROOM": "1"]
+        let fixture = [
+            "HERMES_FLEET_BRIDGED_ROOM": "1",
+            "HERMES_FLEET_BRIDGED_REPLY_DELAY_MS": "8000",
+        ]
         let app = launch(extraEnv: fixture, autoNav: "groups")
 
         let newGroup = app.buttons["fleet.groups.new"]
@@ -390,6 +418,13 @@ final class RoomChatUITests: XCTestCase {
                 .waitForExistence(timeout: 10),
             "bridged user message is persisted in the local transcript")
 
+        let thinking = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "is thinking…"))
+        XCTAssertTrue(thinking.element(boundBy: 1).waitForExistence(timeout: 5))
+        let thinkingLabels = thinking.allElementsBoundByIndex.map { $0.label }
+        XCTAssertEqual(Set(thinkingLabels).count, 2, "each working bot has its own named line")
+        XCTAssertTrue(thinkingLabels.contains { $0.contains("Researcher") })
+
         for seq in [3, 4] {
             let reply = app.descendants(matching: .any)["fleet.room.entry.\(seq)"]
             XCTAssertTrue(reply.waitForExistence(timeout: 15), "each selected bot replies")
@@ -401,6 +436,7 @@ final class RoomChatUITests: XCTestCase {
             XCTAssertTrue(reply.label.contains("Assistant response from"),
                           "a member reply must not be a timeout/failure note")
         }
+        XCTAssertEqual(thinking.count, 0)
 
         app.terminate()
         self.app = nil

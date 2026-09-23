@@ -1,6 +1,19 @@
 import Foundation
 import FleetCore
 
+/// A member whose phone-bridged Group turn is currently being collected.
+/// `id` is the source-qualified route id, so duplicate display names remain
+/// distinct both in SwiftUI and in the relay's live activity stream.
+public struct BridgedRoomActiveMember: Hashable, Sendable, Identifiable {
+    public let id: String
+    public let displayName: String
+
+    public init(id: String, displayName: String) {
+        self.id = id
+        self.displayName = displayName
+    }
+}
+
 /// Phone-bridged room relay: implements the existing `RoomChatCommanding`
 /// seam for bridged rooms so `RoomChatViewModel` renders and drives them with
 /// ZERO view changes.
@@ -52,6 +65,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     }
 
     private var memberTails: [String: [String: MemberTail]] = [:]
+    private var activeMembersByRoom: [String: [String: BridgedRoomActiveMember]] = [:]
+    private var activityContinuations: [String: [UUID: AsyncStream<[BridgedRoomActiveMember]>.Continuation]] = [:]
     private var nextSeq = 1
 
     public init(
@@ -116,6 +131,45 @@ public final class BridgedRoomRelay: RoomChatCommanding {
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Current live member turns. Names are qualified against the roster at
+    /// fan-out time and remain stable for that turn.
+    public func activeMembers(roomID: String) -> [BridgedRoomActiveMember] {
+        sortedActiveMembers(roomID: roomID)
+    }
+
+    /// Live activity for one room. The first element is yielded synchronously
+    /// from the relay's current snapshot, so re-entering a room cannot miss a
+    /// turn that started before the view subscribed.
+    public func activeMemberChanges(roomID: String) -> AsyncStream<[BridgedRoomActiveMember]> {
+        let subscriberID = UUID()
+        return AsyncStream { continuation in
+            activityContinuations[roomID, default: [:]][subscriberID] = continuation
+            continuation.yield(sortedActiveMembers(roomID: roomID))
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in
+                    self?.activityContinuations[roomID]?[subscriberID] = nil
+                    if self?.activityContinuations[roomID]?.isEmpty == true {
+                        self?.activityContinuations[roomID] = nil
+                    }
+                }
+            }
+        }
+    }
+
+    private func sortedActiveMembers(roomID: String) -> [BridgedRoomActiveMember] {
+        guard let members = activeMembersByRoom[roomID] else { return [] }
+        return members.values.sorted { $0.id < $1.id }
+    }
+
+    private func publishActivity(roomID: String) {
+        let snapshot = sortedActiveMembers(roomID: roomID)
+        if let continuations = activityContinuations[roomID] {
+            for continuation in continuations.values {
+                continuation.yield(snapshot)
+            }
         }
     }
 
@@ -187,6 +241,10 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             let sessionID = record.bridgeSessionIDs[member.routeID]
             memberTails[roomID]?[member.routeID]?.task.cancel()
             let token = UUID()
+            activeMembersByRoom[roomID, default: [:]][member.routeID] = BridgedRoomActiveMember(
+                id: member.routeID,
+                displayName: Self.qualifiedName(member, in: record.members))
+            publishActivity(roomID: roomID)
             let tail = Task<Void, Never> {
                 // The task inherits this @MainActor context; the relay is
                 // environment-owned for the app's lifetime.
@@ -203,6 +261,11 @@ public final class BridgedRoomRelay: RoomChatCommanding {
     private func pruneTail(roomID: String, routeID: String, token: UUID) {
         guard memberTails[roomID]?[routeID]?.token == token else { return }
         memberTails[roomID]?[routeID] = nil
+        activeMembersByRoom[roomID]?[routeID] = nil
+        if activeMembersByRoom[roomID]?.isEmpty == true {
+            activeMembersByRoom[roomID] = nil
+        }
+        publishActivity(roomID: roomID)
         if memberTails[roomID]?.isEmpty == true {
             memberTails[roomID] = nil
         }
@@ -599,6 +662,7 @@ public final class BridgedRoomRelay: RoomChatCommanding {
 
     public func disband(roomID: String) async throws {
         try await store.disband(roomKey: roomID, at: Date().timeIntervalSince1970)
+        _ = try await stop(roomID: roomID)
     }
 
     public func stop(roomID: String) async throws -> Int {
@@ -608,6 +672,8 @@ public final class BridgedRoomRelay: RoomChatCommanding {
             cancelled += 1
         }
         memberTails[roomID] = nil
+        activeMembersByRoom[roomID] = nil
+        publishActivity(roomID: roomID)
         return cancelled
     }
 
@@ -629,6 +695,10 @@ public final class BridgedRoomRelay: RoomChatCommanding {
         let sessionID = record.bridgeSessionIDs[member.routeID]
         memberTails[roomID]?[member.routeID]?.task.cancel()
         let token = UUID()
+        activeMembersByRoom[roomID, default: [:]][member.routeID] = BridgedRoomActiveMember(
+            id: member.routeID,
+            displayName: Self.qualifiedName(member, in: record.members))
+        publishActivity(roomID: roomID)
         let tail = Task<Void, Never> {
             try? await self.relay(
                 member: member, roomID: roomID, sessionID: sessionID,

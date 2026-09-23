@@ -3,6 +3,12 @@ import SwiftUI
 import Observation
 import FleetCore
 
+public struct RoomWorkIndicator: Identifiable, Equatable {
+    public let id: String
+    public let text: String
+    public let showsSpinner: Bool
+}
+
 /// TRUE BOTS MODE slice 4 (D15/D16/D18) — observable state for one room's
 /// interactive chat screen.
 ///
@@ -40,6 +46,7 @@ public final class RoomChatViewModel {
     /// Room-level D16 attention state from driver status.
     public private(set) var driverWorking = false
     public private(set) var driverBlocked = false
+    public private(set) var activeBridgedMembers: [BridgedRoomActiveMember] = []
     public private(set) var pendingApprovals: [RoomPendingApproval] = []
     public private(set) var pendingRetries: [RoomPendingRetry] = []
     /// Room was disbanded through this screen (navigable-away tombstone).
@@ -73,7 +80,10 @@ public final class RoomChatViewModel {
     /// established eventTask pattern: created/replaced on the main actor,
     /// canceled in `deinit` (cancel is thread-safe).
     nonisolated(unsafe) private var liveTail: Task<Void, Never>?
+    nonisolated(unsafe) private var activityTail: Task<Void, Never>?
+    nonisolated(unsafe) private var hostedStatusTail: Task<Void, Never>?
     nonisolated(unsafe) private var readAloudCompletionTask: Task<Void, Never>?
+    private var hostedPendingUntil: Date?
     /// Reused when a transport error leaves delivery indeterminate. The
     /// gateway's event_id contract makes a user retry idempotent.
     private var pendingSendID: String?
@@ -98,7 +108,28 @@ public final class RoomChatViewModel {
 
     deinit {
         liveTail?.cancel()
+        activityTail?.cancel()
+        hostedStatusTail?.cancel()
         readAloudCompletionTask?.cancel()
+    }
+
+    public var workIndicators: [RoomWorkIndicator] {
+        guard !isDisbanded && !isManagedByDesktop else { return [] }
+        if isSending {
+            return [.init(id: "sending", text: "Sending…", showsSpinner: true)]
+        }
+        if driverBlocked && !pendingApprovals.isEmpty {
+            return [.init(id: "approval", text: "Waiting for your answer…", showsSpinner: false)]
+        }
+        if commands is BridgedRoomRelay {
+            return activeBridgedMembers.map {
+                .init(id: $0.id, text: "\($0.displayName) is thinking…", showsSpinner: true)
+            }
+        }
+        if driverWorking || hostedPendingUntil != nil {
+            return [.init(id: "room", text: "The room is working…", showsSpinner: true)]
+        }
+        return []
     }
 
     // MARK: Stage 1 — assistant-reply footer (read aloud)
@@ -174,7 +205,57 @@ public final class RoomChatViewModel {
         // between the replay read and the live tail's registration; an
         // overlap is harmless (the seq-keyed cache dedupes).
         startLiveTail()
+        startActivityTail()
         await refresh()
+        guard !Task.isCancelled else { return }
+        startHostedStatusTail()
+    }
+
+    /// The screen owns these observation tasks; a later open subscribes again
+    /// and receives the bridge's current activity snapshot.
+    public func stopObserving() {
+        liveTail?.cancel()
+        liveTail = nil
+        activityTail?.cancel()
+        activityTail = nil
+        hostedStatusTail?.cancel()
+        hostedStatusTail = nil
+        activeBridgedMembers = []
+        hostedPendingUntil = nil
+    }
+
+    private func startActivityTail() {
+        guard let relay = commands as? BridgedRoomRelay else { return }
+        activityTail?.cancel()
+        let changes = relay.activeMemberChanges(roomID: room.id.key)
+        activityTail = Task { [weak self] in
+            for await members in changes {
+                guard !Task.isCancelled else { break }
+                self?.activeBridgedMembers = members
+            }
+        }
+    }
+
+    private func startHostedStatusTail() {
+        guard !(commands is BridgedRoomRelay), !isManagedByDesktop,
+              driverStatus != nil, capabilities.canSend else { return }
+        hostedStatusTail?.cancel()
+        hostedStatusTail = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                do {
+                    try await Task.sleep(for: .seconds(self.driverWorking || self.hostedPendingUntil != nil ? 2 : 5))
+                } catch { return }
+                guard !Task.isCancelled else { return }
+                let wasWorking = self.driverWorking
+                await self.refresh(clearError: false)
+                if wasWorking && !self.driverWorking {
+                    // The status read may publish the terminal reply after
+                    // the preceding log replay. Pick it up immediately.
+                    await self.refresh(clearError: false)
+                }
+            }
+        }
     }
 
     /// F2: live transcript for bridged rooms — the store notifies on every
@@ -198,8 +279,8 @@ public final class RoomChatViewModel {
     /// Replay the durable log since the merged cursor + refresh driver
     /// status. The cache projection renders FIRST so re-entry shows the
     /// surviving transcript immediately.
-    public func refresh() async {
-        errorMessage = nil
+    public func refresh(clearError: Bool = true) async {
+        if clearError { errorMessage = nil }
         if !capabilities.canReplay {
             // Honest: no replay path (legacy projection already carries its
             // bounded window in room.recentLog — project it once).
@@ -261,15 +342,29 @@ public final class RoomChatViewModel {
     }
 
     private func loadDriverStatus() async {
-        guard let driverStatus, capabilities.canStop || capabilities.canRetry || capabilities.canApprove else {
+        guard let driverStatus,
+              capabilities.canSend || capabilities.canStop || capabilities.canRetry || capabilities.canApprove else {
             return
         }
         if let status = try? await driverStatus.driverStatus(roomID: room.id.key) {
+            let wasWorking = driverWorking
             driverWorking = status.working
             driverBlocked = status.blocked
             pendingApprovals = status.pendingApprovals
             pendingRetries = status.pendingRetries
             lastDriverStatus = status
+            if status.working || wasWorking || (hostedPendingUntil.map { $0 <= Date() } ?? false) {
+                hostedPendingUntil = nil
+            }
+        } else {
+            // A stale positive status must not leave a spinner indefinitely.
+            // An accepted send still gets its bounded startup window when
+            // this gateway cannot return driver status.
+            driverWorking = false
+            driverBlocked = false
+            if hostedPendingUntil.map({ $0 <= Date() }) == true {
+                hostedPendingUntil = nil
+            }
         }
     }
 
@@ -311,6 +406,9 @@ public final class RoomChatViewModel {
                 roomID: room.id.key, text: text,
                 threadID: Self.mainThreadID(for: room.id.key),
                 idempotencyKey: eventID)
+            if !(commands is BridgedRoomRelay), driverStatus != nil {
+                hostedPendingUntil = Date().addingTimeInterval(8)
+            }
             pendingSendID = nil
             pendingSendText = nil
             errorMessage = nil
@@ -391,6 +489,8 @@ public final class RoomChatViewModel {
         attemptedWriteCount += 1
         do {
             let cancelled = try await commands.stop(roomID: room.id.key)
+            hostedPendingUntil = nil
+            driverWorking = false
             notice = cancelled > 0
                 ? "Stopped \(cancelled) running task\(cancelled == 1 ? "" : "s")."
                 : "No running tasks to stop."
@@ -582,6 +682,7 @@ public struct RoomChatView: View {
                     failureSurfaces
                     approvalSurfaces
                     transcriptRows
+                    workIndicatorRows
                     if viewModel.transcript.isEmpty && !viewModel.isLoading {
                         emptyTranscript
                     }
@@ -615,6 +716,7 @@ public struct RoomChatView: View {
                         ?? viewModel.room.id.gatewayID.rawValue)
                 environment.publishRoomAttention(room: viewModel.room, status: viewModel.lastDriverStatus)
             }
+            .onDisappear { viewModel.stopObserving() }
             .refreshable {
                 await viewModel.refresh()
                 // FOS-4: a manual room refresh re-publishes its observations.
@@ -655,7 +757,7 @@ public struct RoomChatView: View {
                 // reading position — auto-follow only when already at the
                 // bottom (followingLatest).
                 guard followingLatest else { return }
-                if let last = viewModel.transcript.last {
+                if let target = latestScrollTarget {
                     // t_363bc529: ONE scrollTo is not enough when a large
                     // durable history projects at once — the LazyVStack's
                     // height estimates for rows it has not yet materialized
@@ -666,18 +768,23 @@ public struct RoomChatView: View {
                     // materializes more rows, so estimates converge.
                     followLatestToken += 1
                     convergeOnLatest(
-                        proxy: proxy, target: last.id,
+                        proxy: proxy, target: target,
                         token: followLatestToken)
                 }
+            }
+            .onChange(of: viewModel.workIndicators) { _, _ in
+                guard followingLatest, let target = latestScrollTarget else { return }
+                followLatestToken += 1
+                convergeOnLatest(proxy: proxy, target: target, token: followLatestToken)
             }
             .onAppear {
                 // Open at the LATEST content (pre-FOS-8 behavior preserved:
                 // the room opens following the latest; only an explicit
                 // upward escape unfollows).
-                if let last = viewModel.transcript.last {
+                if let target = latestScrollTarget {
                     followLatestToken += 1
                     convergeOnLatest(
-                        proxy: proxy, target: last.id,
+                        proxy: proxy, target: target,
                         token: followLatestToken)
                 }
             }
@@ -719,7 +826,7 @@ public struct RoomChatView: View {
                     HStack {
                         Spacer()
                         Button {
-                            if let last = viewModel.transcript.last {
+                            if let target = latestScrollTarget {
                                 // Mark the follow as programmatic before
                                 // changing visibility. Adaptive iPad scroll
                                 // containers can emit one more interaction
@@ -737,7 +844,7 @@ public struct RoomChatView: View {
                                 // Latest immediately.
                                 Task { @MainActor in
                                     await Task.yield()
-                                    proxy.scrollTo(last.id, anchor: .bottom)
+                                    proxy.scrollTo(target, anchor: .bottom)
                                     // Bounded settle window: if the geometry
                                     // observer never confirms (edge layouts),
                                     // stop suppressing after 1.5s (test load
@@ -763,6 +870,10 @@ public struct RoomChatView: View {
     }
 
     // MARK: Open-at-latest convergence (t_363bc529)
+
+    private var latestScrollTarget: String? {
+        !viewModel.workIndicators.isEmpty ? "fleet.room.work.anchor" : viewModel.transcript.last?.id
+    }
 
     /// Re-assert scrollTo(latest) until the scroll view CONFIRMS it is at
     /// the bottom (the onScrollGeometryChange at-bottom observer clears the
@@ -1064,6 +1175,33 @@ public struct RoomChatView: View {
     private var transcriptRows: some View {
         ForEach(viewModel.transcript) { entry in
             transcriptEntry(entry)
+        }
+    }
+
+    @ViewBuilder
+    private var workIndicatorRows: some View {
+        if !viewModel.workIndicators.isEmpty {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                ForEach(viewModel.workIndicators) { indicator in
+                    HStack(spacing: FleetTheme.spacingXs) {
+                        if indicator.showsSpinner {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(theme.textSecondary)
+                        }
+                        Text(indicator.text)
+                            .font(FleetTheme.monoCaptionFont)
+                            .italic()
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(indicator.text)
+                    .accessibilityIdentifier("fleet.room.work.\(indicator.id)")
+                }
+            }
+            .padding(.horizontal, FleetTheme.spacingSm)
+            .padding(.vertical, FleetTheme.spacingXs)
+            .id("fleet.room.work.anchor")
         }
     }
 

@@ -15,6 +15,64 @@ final class BridgedRoomRelayTests: XCTestCase {
         .init(gatewayID: gateway, profile: profile, displayName: profile, routeID: "\(gateway)/\(profile)")
     }
 
+    func testActivityStreamPublishesQualifiedParallelTurnsAndStopClearsThem() async throws {
+        let store = store()
+        let gate = Gate()
+        let first = BridgedRooms.MemberRef(
+            gatewayID: "alpha", profile: "research", displayName: "Helper", routeID: "alpha/research")
+        let second = BridgedRooms.MemberRef(
+            gatewayID: "beta", profile: "research", displayName: "Helper", routeID: "beta/research")
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [first, second], createdAt: 0))
+        let relay = BridgedRoomRelay(store: store, resolver: { _ in
+            await gate.wait()
+            return nil
+        })
+        var changes = relay.activeMemberChanges(roomID: "room").makeAsyncIterator()
+        let initial = await changes.next()
+        XCTAssertEqual(initial, [])
+
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        let expected = [
+            BridgedRoomActiveMember(id: "alpha/research", displayName: "Helper · alpha"),
+            BridgedRoomActiveMember(id: "beta/research", displayName: "Helper · beta"),
+        ]
+        XCTAssertEqual(relay.activeMembers(roomID: "room"), expected)
+        var started: [BridgedRoomActiveMember]?
+        for _ in 0..<2 where started != expected {
+            started = await changes.next()
+        }
+        XCTAssertEqual(started, expected)
+        let cancelled = try await relay.stop(roomID: "room")
+        XCTAssertEqual(cancelled, 2)
+        XCTAssertEqual(relay.activeMembers(roomID: "room"), [])
+        var stopped: [BridgedRoomActiveMember]?
+        for _ in 0..<2 where stopped != [] {
+            stopped = await changes.next()
+        }
+        XCTAssertEqual(stopped, [])
+        await gate.open()
+    }
+
+    func testActivityStreamStartsWithCurrentSnapshotWhenRoomIsReentered() async throws {
+        let store = store()
+        let gate = Gate()
+        try await store.upsert(.init(
+            roomKey: "room", name: "Test", members: [member("alpha", "research")], createdAt: 0))
+        let relay = BridgedRoomRelay(store: store, resolver: { _ in
+            await gate.wait()
+            return nil
+        })
+        _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
+        let snapshot = relay.activeMembers(roomID: "room")
+        let reopened = relay.activeMemberChanges(roomID: "room")
+        var iterator = reopened.makeAsyncIterator()
+        let initialSnapshot = await iterator.next()
+        XCTAssertEqual(initialSnapshot, snapshot)
+        _ = try await relay.stop(roomID: "room")
+        await gate.open()
+    }
+
     func testImmediateRepliesReachCorrectMembersAcrossGateways() async throws {
         let store = store()
         let first = ImmediateConversation()
@@ -29,6 +87,9 @@ final class BridgedRoomRelayTests: XCTestCase {
         try await waitUntil(timeout: 5) {
             let record = await store.record(roomKey: "room")
             return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
+        }
+        try await waitUntil(timeout: 5) {
+            relay.activeMembers(roomID: "room").isEmpty
         }
         let stored = await store.record(roomKey: "room")
         let record = try XCTUnwrap(stored)
@@ -161,6 +222,7 @@ final class BridgedRoomRelayTests: XCTestCase {
             let record = await store.record(roomKey: "room")
             return record?.events.last?.reasonCode == "bridge_member_unreachable"
         }
+        try await waitUntil(timeout: 5) { relay.activeMembers(roomID: "room").isEmpty }
         let stored = await store.record(roomKey: "room")
         let record = try XCTUnwrap(stored)
         XCTAssertEqual(record.events.last?.reasonCode, "bridge_member_unreachable")
@@ -533,6 +595,7 @@ final class BridgedRoomRelayTests: XCTestCase {
         _ = try await relay.send(roomID: "room", text: "Hello", threadID: nil)
         let cancelled = try await relay.stop(roomID: "room")
         XCTAssertEqual(cancelled, 1)
+        XCTAssertTrue(relay.activeMembers(roomID: "room").isEmpty)
         try await Task.sleep(for: .milliseconds(200))
         let stored = await store.record(roomKey: "room")
         let record = try XCTUnwrap(stored)
@@ -561,12 +624,15 @@ final class BridgedRoomRelayTests: XCTestCase {
             return (record?.events.filter { $0.kind == "turn.failed" }.count ?? 0) == 1
                 && (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 1
         }
+        try await waitUntil(timeout: 5) { relay.activeMembers(roomID: "room").isEmpty }
         conversation.failure = nil
         _ = try await relay.retry(roomID: "room", taskID: "latest")
+        XCTAssertEqual(relay.activeMembers(roomID: "room").map(\.id), ["alpha/research"])
         try await waitUntil(timeout: 5) {
             let record = await store.record(roomKey: "room")
             return (record?.events.filter { $0.kind == "message.member" }.count ?? 0) == 2
         }
+        try await waitUntil(timeout: 5) { relay.activeMembers(roomID: "room").isEmpty }
         let stored = await store.record(roomKey: "room")
         let record = try XCTUnwrap(stored)
         XCTAssertEqual(record.events.filter { $0.kind == "message.user" }.count, 1,
@@ -952,6 +1018,7 @@ final class BridgedRoomRelayTests: XCTestCase {
         _ = try await relay.send(roomID: "room", text: "anyone?", threadID: nil)
         try await waitUntil(timeout: 5) { research.submittedTexts.count == 1 }
         try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil(timeout: 5) { relay.activeMembers(roomID: "room").isEmpty }
         let stored = await store.record(roomKey: "room")
         let record = try XCTUnwrap(stored)
         XCTAssertFalse(record.events.contains {
@@ -1217,8 +1284,10 @@ final class BridgedRoomRelayTests: XCTestCase {
             return record?.events.contains { $0.kind == "turn.failed" } == true
         }
         try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(relay.activeMembers(roomID: "room").map(\.id), ["alpha/research"])
         let cancelled = try await relay.stop(roomID: "room")
         XCTAssertEqual(cancelled, 1, "only the newest tail for the member stays live")
+        XCTAssertTrue(relay.activeMembers(roomID: "room").isEmpty)
     }
 
     /// MEDIUM: disband is a final tombstone — the seam refuses the write
