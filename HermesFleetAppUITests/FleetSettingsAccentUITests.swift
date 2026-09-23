@@ -6,6 +6,37 @@ import XCTest
 /// keeps running this settings lane.
 final class FleetSettingsAccentUITests: XCTestCase {
 
+    /// RC-84 P0-A: the diagnostics door — "Report a Problem" opens the
+    /// sanitized report sheet (identity header + Copy), built from this
+    /// process's real facts.
+    func testReportAProblemSheetRendersSanitizedReport() throws {
+        let app = launchApp()
+        UITabNavigation.openSettings(app)
+
+        let row = app.descendants(matching: .any)["fleet.settings.report-problem"]
+        for _ in 0..<6 where !row.exists { app.swipeUp() }
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Report a Problem row must render")
+        row.tap()
+
+        let sheet = app.descendants(matching: .any)["fleet.diagnostics.sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10), "diagnostics sheet must open")
+        let text = app.descendants(matching: .any)["fleet.diagnostics.text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "report text must render")
+
+        // The report carries its generated identity + honest sections.
+        let hasReportID = NSPredicate(format: "label CONTAINS %@", "Report ID: DF-")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: hasReportID, object: text)], timeout: 10) == .completed,
+            "report must carry its generated identity")
+        let hasContext = NSPredicate(format: "label CONTAINS %@", "Settings · Report a Problem")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: hasContext, object: text)], timeout: 5) == .completed,
+            "report must name its surface context")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.diagnostics.copy"].exists, "Copy must be offered")
+
+        app.buttons["Done"].firstMatch.tap()
+    }
+
     func testAccentRowRendersAndMenuOffersAllCuratedAccents() throws {
         let app = launchApp()
         UITabNavigation.openSettings(app)

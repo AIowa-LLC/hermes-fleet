@@ -19,19 +19,28 @@ public struct FleetSettingsView: View {
     /// — routes via open(.gateways), which selects the Fleet tab and pushes
     /// the registry cockpit (the Command Center routing contract).
     private let onOpenGateways: () -> Void
+    /// P0-A: the runtime, used by the "Report a Problem" row to assemble the
+    /// sanitized diagnostics report. Optional — previews and non-runtime
+    /// call sites pass nil and the row is omitted (the
+    /// `FleetSettingsDataView` pattern).
+    private let environment: AppEnvironment?
 
     /// C2: presents the always-reachable agent setup prompt sheet.
     @State private var showingSetupPrompt = false
+    /// P0-A: presents the "Report a Problem" diagnostics report sheet.
+    @State private var showingDiagnosticsReport = false
     @Environment(\.fleetTheme) private var theme
 
     public init(appearanceController: FleetAppearanceController = FleetAppearanceController.shared,
                 themeController: FleetThemeController = FleetThemeController.shared,
                 onSelectAbout: @escaping () -> Void = {},
-                onOpenGateways: @escaping () -> Void = {}) {
+                onOpenGateways: @escaping () -> Void = {},
+                environment: AppEnvironment? = nil) {
         self.appearanceController = appearanceController
         self.themeController = themeController
         self.onSelectAbout = onSelectAbout
         self.onOpenGateways = onOpenGateways
+        self.environment = environment
     }
 
     public var body: some View {
@@ -132,6 +141,21 @@ public struct FleetSettingsView: View {
                         .foregroundStyle(theme.textPrimary)
                 }
                 .accessibilityIdentifier("fleet.settings.data")
+                // P0-A: the diagnostics door. Rendered only when the
+                // runtime is available (previews pass nil).
+                if let environment {
+                    Button {
+                        showingDiagnosticsReport = true
+                    } label: {
+                        Label("Report a Problem", systemImage: "exclamationmark.bubble")
+                            .foregroundStyle(theme.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("fleet.settings.report-problem")
+                    .sheet(isPresented: $showingDiagnosticsReport) {
+                        DiagnosticsReportSheet(environment: environment)
+                    }
+                }
             } header: {
                 Text("App settings")
                     .foregroundStyle(theme.textSecondary)

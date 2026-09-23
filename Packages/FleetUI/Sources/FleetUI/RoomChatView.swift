@@ -640,6 +640,8 @@ public struct RoomChatView: View {
     @State private var renameDraft = ""
     @State private var showingDisbandConfirm = false
     @State private var showingRoomLink = false
+    /// RC-84 P1: Group Info sheet presentation.
+    @State private var showingInfo = false
     /// "Continue as Interactive Group": confirmation + in-flight state for
     /// promoting a legacy projection room into a hosted room (fix B).
     @State private var showingContinueConfirm = false
@@ -723,6 +725,9 @@ public struct RoomChatView: View {
                 environment.publishRoomAttention(room: viewModel.room, status: viewModel.lastDriverStatus)
             }
             .sheet(isPresented: $showingRename) { renameSheet }
+            .sheet(isPresented: $showingInfo) {
+                RoomInfoSheet(viewModel: viewModel, environment: environment)
+            }
             .sheet(isPresented: $showingRoomLink) {
                 NavigationStack {
                     RoomLinkView(room: viewModel.room, environment: environment)
@@ -1363,6 +1368,16 @@ public struct RoomChatView: View {
 
     @ToolbarContentBuilder
     private var toolbarControls: some ToolbarContent {
+        // RC-84 P1: Group Info — compact known state (participants, gateways,
+        // capabilities). Always offered: it never mutates anything.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showingInfo = true
+            } label: {
+                Label("Info", systemImage: "info.circle")
+            }
+            .accessibilityIdentifier("fleet.room.info")
+        }
         // Slice 5 (D19): RoomLink management for hosted rooms (negotiation,
         // grants, routes, replay, takeover) — legacy rooms never offer it.
         if viewModel.room.id.provenance == .hosted && !viewModel.isDisbanded {

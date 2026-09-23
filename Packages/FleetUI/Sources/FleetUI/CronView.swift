@@ -521,6 +521,16 @@ extension CronJobRow {
                     .font(FleetTheme.monoCaptionFont)
                     .foregroundStyle(job.isFailureStatus ? FleetTheme.statusDestructive : theme.textMuted)
             }
+            // RC-84 cron polish: when the last run happened — the record's
+            // `lastRunAt` was previously detail-only; the row now carries the
+            // same datum (nothing invented: absent/unparsable renders nothing).
+            if let lastRun = CronTimestamp.display(job.lastRunAt) {
+                Text("· last \(lastRun)")
+                    .font(FleetTheme.monoCaptionFont)
+                    .foregroundStyle(theme.textMuted)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("cron.row.lastRun.\(job.id)")
+            }
         }
     }
 

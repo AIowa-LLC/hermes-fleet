@@ -346,6 +346,72 @@ final class ConversationCompactChromeUITests: XCTestCase {
         }
     }
 
+    /// P0-B (RC-84): Find in Conversation — opens from the header, lands on
+    /// the first match with an "n of m" count, advances, wraps, shows the
+    /// honest no-results state, and closes cleanly. The count is
+    /// deterministic: the scripted turn echo makes BOTH the user row and the
+    /// reply carry "findprobe" (tool/status chrome is not searchable).
+    func testFindInConversationMatchesNavigatesEmptyStateAndDismisses() throws {
+        let app = launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("findprobe alpha")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        // The turn completes when the reply footer lands.
+        let footer = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier ENDSWITH %@", ".footer")
+        ).firstMatch
+        XCTAssertTrue(footer.waitForExistence(timeout: 15), "turn must complete before searching")
+
+        // Open Find from the header and type the query.
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find"))
+        let field = firstMatch(in: app, identifier: "fleet.conversation.find.field")
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "find bar must open with a field")
+        field.tap()
+        field.typeText("findprobe")
+
+        // Two matches: the user row + the scripted echo reply.
+        let count = firstMatch(in: app, identifier: "fleet.conversation.find.count")
+        XCTAssertTrue(
+            waitForFindCount(count, equals: "1 of 2", timeout: 6),
+            "find must land on the first match (got: \(count.label))"
+        )
+
+        // Next advances, then wraps.
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find.next"))
+        XCTAssertTrue(waitForFindCount(count, equals: "2 of 2", timeout: 5),
+                      "next must advance to the second match (got: \(count.label))")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find.next"))
+        XCTAssertTrue(waitForFindCount(count, equals: "1 of 2", timeout: 5),
+                      "next must wrap to the first match (got: \(count.label))")
+
+        // No-results state for a query that cannot match.
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 9))
+        field.typeText("zzzznope")
+        XCTAssertTrue(waitForFindCount(count, equals: "No matches", timeout: 6),
+                      "empty state must be honest (got: \(count.label))")
+
+        // Close restores the steady-state chrome.
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find.close"))
+        XCTAssertTrue(
+            waitUntilGone(firstMatch(in: app, identifier: "fleet.conversation.find.bar")),
+            "find bar must dismiss cleanly"
+        )
+    }
+
+    /// Waits for the find count element's label to equal `text`.
+    private func waitForFindCount(_ element: XCUIElement, equals text: String, timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "label == %@", text)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+            && element.label == text
+    }
+
     // MARK: - Helpers (same shapes as the U6 suite)
 
     private func tap(_ element: XCUIElement) {

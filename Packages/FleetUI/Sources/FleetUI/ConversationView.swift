@@ -84,6 +84,19 @@ public struct ConversationView: View {
     /// transcript lands for review (submit-on-silence OFF).
     @State private var showingTranscriptReview = false
 
+    // P0-B (RC-84): Find in Conversation — view-local search over the
+    // loaded transcript. Purely additive: never mutates conversation state.
+    @State private var findActive = false
+    @State private var findQuery = ""
+    @State private var findMatches: [ConversationFindPolicy.Match] = []
+    @State private var findIndex = 0
+    /// Bumped to ask the transcript's ScrollViewReader to scroll to the
+    /// active match (the find bar cannot reach the proxy directly — same
+    /// pulse pattern as `scrollPulse`).
+    @State private var findScrollPulse = 0
+    @State private var findTargetRowID: String?
+    @FocusState private var findFieldFocused: Bool
+
     public init(environment: AppEnvironment, route: Route, sessionID: String?) {
         self.environment = environment
         self.route = route
@@ -159,6 +172,11 @@ public struct ConversationView: View {
     private func canvas(_ model: ConversationViewModel) -> some View {
         VStack(spacing: 0) {
             compactHeader(model)
+            // P0-B (RC-84): the Find in Conversation bar docks directly
+            // under the compact header while active.
+            if findActive {
+                findBar(model)
+            }
             bannerArea(model)
             // R9-T4: transient tooling notices (fork/rename failures) —
             // renders nothing when clear, so the steady-state chrome stays
@@ -387,6 +405,25 @@ public struct ConversationView: View {
             // content-sized and the header visibly collapses on entry.
             Spacer(minLength: FleetTheme.spacingXs)
 
+            // P0-B (RC-84): Find in Conversation — a fixed 44pt control
+            // (the header's Spacer geometry keeps the row full-width).
+            Button {
+                if findActive {
+                    closeFind()
+                } else {
+                    openFind()
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(findActive ? theme.highlight : theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Find in Conversation")
+            .accessibilityIdentifier("fleet.conversation.find")
+
             // r9: the chip zone moved UNDER the composer (the Toolbelt) —
             // nothing renders here anymore.
             if let toolingModel = model.toolingViewModel {
@@ -416,6 +453,162 @@ public struct ConversationView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.conversation.header")
+    }
+
+    // MARK: Find in Conversation (P0-B / RC-84)
+
+    /// Opens the find bar fresh (empty query, no stale matches).
+    private func openFind() {
+        findQuery = ""
+        findMatches = []
+        findIndex = 0
+        findTargetRowID = nil
+        findActive = true
+    }
+
+    /// Closes find and restores the steady-state chrome — no conversation
+    /// state is touched.
+    private func closeFind() {
+        findActive = false
+        findQuery = ""
+        findMatches = []
+        findIndex = 0
+        findTargetRowID = nil
+        findFieldFocused = false
+    }
+
+    /// The status text in the find bar: "n of m", "No matches" for a live
+    /// no-result query, empty while the query is blank.
+    private var findStatusText: String {
+        guard !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        guard !findMatches.isEmpty else { return "No matches" }
+        return ConversationFindPolicy.positionText(index: findIndex, count: findMatches.count)
+    }
+
+    /// Recomputes matches over the loaded (bounded) transcript. `resetIndex`
+    /// is true for a fresh query (land on the first match) and false when
+    /// the transcript grew underneath a live query (keep the user's place).
+    private func recomputeFind(_ model: ConversationViewModel, resetIndex: Bool = true) {
+        let previousTarget = findTargetRowID
+        findMatches = ConversationFindPolicy.matches(rows: model.transcript, query: findQuery)
+        guard !findMatches.isEmpty else {
+            findIndex = 0
+            findTargetRowID = nil
+            return
+        }
+        findIndex = resetIndex ? 0 : min(max(findIndex, 0), findMatches.count - 1)
+        findTargetRowID = findMatches[findIndex].rowID
+        if findTargetRowID != previousTarget {
+            // Manual navigation stops live-follow; the floating chevron
+            // carries the way back (same rule as the timeline sheet).
+            followingLatest = false
+            findScrollPulse += 1
+        }
+    }
+
+    /// Moves to the previous/next match with wrap-around.
+    private func advanceFind(direction: Int) {
+        guard !findMatches.isEmpty else { return }
+        findIndex = direction >= 0
+            ? ConversationFindPolicy.nextIndex(current: findIndex, count: findMatches.count)
+            : ConversationFindPolicy.previousIndex(current: findIndex, count: findMatches.count)
+        findTargetRowID = findMatches[findIndex].rowID
+        followingLatest = false
+        findScrollPulse += 1
+    }
+
+    /// The find bar: field + match position + prev/next + close. Docks
+    /// under the compact header while active; every control is a 44pt
+    /// target. Typing is debounced via `.task(id:)` so long transcripts
+    /// are not rescanned per keystroke.
+    private func findBar(_ model: ConversationViewModel) -> some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityHidden(true)
+                TextField("Find in conversation", text: $findQuery)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textPrimary)
+                    .tint(theme.highlight)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($findFieldFocused)
+                    .onSubmit { advanceFind(direction: 1) }
+                    .accessibilityIdentifier("fleet.conversation.find.field")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(theme.background, in: Capsule())
+            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
+
+            Text(findStatusText)
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+                .accessibilityIdentifier("fleet.conversation.find.count")
+
+            Button {
+                advanceFind(direction: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .disabled(findMatches.isEmpty)
+            .accessibilityLabel("Previous match")
+            .accessibilityIdentifier("fleet.conversation.find.prev")
+
+            Button {
+                advanceFind(direction: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .disabled(findMatches.isEmpty)
+            .accessibilityLabel("Next match")
+            .accessibilityIdentifier("fleet.conversation.find.next")
+
+            Button {
+                closeFind()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Close find")
+            .accessibilityIdentifier("fleet.conversation.find.close")
+        }
+        .padding(.horizontal, FleetTheme.spacingSm)
+        .padding(.vertical, 2)
+        .background(theme.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.border)
+                .frame(height: 1)
+        }
+        .accessibilityIdentifier("fleet.conversation.find.bar")
+        .task(id: findQuery) {
+            // Debounce: a short idle before rescanning keeps long
+            // transcripts off the per-keystroke path.
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            recomputeFind(model)
+        }
+        .onAppear { findFieldFocused = true }
     }
 
     /// 28pt avatar with a 10pt status dot pinned bottom-trailing. The dot is
@@ -798,6 +991,16 @@ enum ConversationHeaderChips {
                     ForEach(model.transcript) { row in
                         bubbleView(model: model, row: row)
                         .id(row.id)
+                        // P0-B: the active find match gets a border ring
+                        // (decorative — the find bar carries the AX truth).
+                        .overlay {
+                            if findActive, let target = findTargetRowID, row.id == target {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(theme.highlight.opacity(0.7), lineWidth: 1.5)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
 
                         // R10-T3: `@file:`/`@folder:` refs tap through into
                         // the Projects browser. Rendered OUTSIDE the bubble
@@ -880,6 +1083,20 @@ enum ConversationHeaderChips {
                 guard followingLatest, let last = model.transcript.last else { return }
                 if reduceMotion { proxy.scrollTo(last.id, anchor: .bottom) }
                 else { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+            }
+            // P0-B: jumps to the active find match (the find bar sits above
+            // this ScrollView and cannot reach the proxy).
+            .onChange(of: findScrollPulse) { _, _ in
+                guard let target = findTargetRowID else { return }
+                if reduceMotion { proxy.scrollTo(target, anchor: .center) }
+                else { withAnimation(.snappy) { proxy.scrollTo(target, anchor: .center) } }
+            }
+            // P0-B: keep matches fresh while the transcript grows (or the
+            // bounded display window trims) under a live query.
+            .onChange(of: model.transcript.last?.id) { _, _ in
+                guard findActive,
+                      !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                recomputeFind(model, resetIndex: false)
             }
         }
         .scrollDismissesKeyboard(.interactively)

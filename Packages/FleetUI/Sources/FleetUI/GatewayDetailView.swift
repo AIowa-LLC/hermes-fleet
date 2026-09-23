@@ -62,6 +62,23 @@ struct GatewayDetailView: View {
                     resource("Skills", "sparkles", .skills(gatewayID), "skills")
                     resource("Memory", "point.3.connected.trianglepath.dotted", .memoryGraph(gatewayID), "memory")
                 }
+                // RC-84 P1: the honest capability/compatibility report —
+                // detected from real probes, collapsed by default.
+                Section {
+                    DisclosureGroup {
+                        capabilityRows
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Detected capabilities")
+                            Text(capabilitySummary)
+                                .font(.footnote)
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                    .accessibilityIdentifier("fleet.gateway-detail.\(gatewayID.rawValue).capabilities")
+                } footer: {
+                    Text("Detected from this phone's actual gateway probes and observations — never assumed because a screen exists. Unprobed items stay Unknown.")
+                }
                 Section {
                     resource("Connection", "network", .gatewayConnection(gatewayID), "connection")
                 } footer: {
@@ -192,6 +209,55 @@ struct GatewayDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(theme.textSecondary)
             } header: { Text("Working here") }
+        }
+    }
+
+    // MARK: Capability report (RC-84 P1)
+
+    /// Everything the report may truthfully read, from state this phone
+    /// already gathered — no network work here.
+    private var capabilityEvidence: GatewayCapabilityEvidence {
+        let advertised = environment.testResults[gatewayID]?.capabilities.allStrings
+            ?? environment.rosterSnapshot?.roster.gateways[gatewayID]?.capabilities
+            ?? []
+        return GatewayCapabilityEvidence(
+            advertisedCapabilities: advertised,
+            groupsCreate: groupsCreateTruth,
+            rosterOutcome: environment.rosterSnapshot?.outcome(for: gatewayID))
+    }
+
+    /// The persisted gateway-level `groups.capabilities` probe result
+    /// (absence = never probed → unknown, fail closed).
+    private var groupsCreateTruth: GroupsCreateCapability {
+        guard let probed = environment.canCreateRoomsByGateway[gatewayID] else { return .unknown }
+        return probed ? .supported : .unsupported
+    }
+
+    private var capabilitySummary: String {
+        GatewayCapabilityReport.summary(GatewayCapabilityReport.rows(capabilityEvidence))
+    }
+
+    @ViewBuilder
+    private var capabilityRows: some View {
+        let rows = GatewayCapabilityReport.rows(capabilityEvidence)
+        ForEach(rows) { row in
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text(row.feature.title)
+                    Spacer()
+                    Text(row.availability.label)
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if let reason = row.availability.reason {
+                    Text(reason)
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("fleet.gateway-detail.\(gatewayID.rawValue).capability.\(row.feature.rawValue)")
         }
     }
 

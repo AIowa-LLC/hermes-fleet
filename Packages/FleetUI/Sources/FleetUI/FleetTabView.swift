@@ -412,7 +412,8 @@ public struct FleetTabView: View {
         // Security sub-screen; the root no longer needs the controllers.
         case .settings: FleetSettingsView(
             onSelectAbout: { navigation.selection = .about },
-            onOpenGateways: { navigation.open(.gateways) })
+            onOpenGateways: { navigation.open(.gateways) },
+            environment: environment)
         // ADR-0011: About — identity, version, Terms / Privacy / Support.
         case .about: FleetAboutView()
         }

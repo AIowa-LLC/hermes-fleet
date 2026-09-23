@@ -187,6 +187,11 @@ public final class AppEnvironment {
     /// persisted.
     public let gatewayFormDraft = GatewayFormDraftStore()
 
+    /// P0-A "Report a Problem": the bounded in-memory fault ring the
+    /// diagnostics report renders. Details are redacted at record time and
+    /// again at render time; nothing here is persisted.
+    public let diagnosticsRecorder: DiagnosticsRecorder
+
     /// Per-gateway connection-test result, observable (§13 reachable /
     /// unreachable probe). Set only after `testConnection` completes; a
     /// gateway with no entry has never been tested this session.
@@ -577,7 +582,8 @@ public final class AppEnvironment {
         gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
         gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil,
         conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
-        launchCache: (any FleetLaunchCaching)? = nil
+        launchCache: (any FleetLaunchCaching)? = nil,
+        diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder()
     ) {
         self.registry = registry
         self.roster = roster
@@ -607,6 +613,7 @@ public final class AppEnvironment {
         self.gatewaySessionInvalidatorAll = gatewaySessionInvalidatorAll
         self.conversationPinStore = conversationPinStore
         self.launchCache = launchCache ?? InMemoryLaunchCache()
+        self.diagnosticsRecorder = diagnosticsRecorder
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -855,8 +862,12 @@ public final class AppEnvironment {
             switch snapshot.outcome(for: gateway.id) {
             case .loaded:
                 summarySourceStates[gateway.id] = summaryScheduler.onSuccess(state)
-            case .failed:
+            case .failed(let status, let detail):
                 summarySourceStates[gateway.id] = summaryScheduler.onFailure(state)
+                // P0-A: a roster failure is a recorded fault.
+                recordFault(
+                    category: "Roster refresh", gateway: gateway,
+                    status: status, detail: detail)
             case nil:
                 // The refresh settled without classifying this gateway —
                 // an uncovered observation counts as a failure for backoff
@@ -1757,6 +1768,11 @@ public final class AppEnvironment {
         } catch let error as GatewayConnectivityError {
             let status = GatewayStatus(connectivityError: error)
             connectionStates[id] = .failed(status)
+            // P0-A: a failed connect is a recorded fault (one short line —
+            // never a raw endpoint, never a secret).
+            recordFault(
+                category: "Gateway connection", gateway: gateway,
+                status: status, detail: error.errorDescription)
             switch status {
             case .authenticationRequired, .unsupported:
                 connectionIntent.clear(id)
@@ -1765,7 +1781,27 @@ public final class AppEnvironment {
             }
         } catch {
             connectionStates[id] = .failed(.offline)
+            // P0-A: an unclassified connect failure still gets one honest
+            // line (no error payload is echoed).
+            recordFault(
+                category: "Gateway connection", gateway: gateway,
+                status: .offline, detail: nil)
         }
+    }
+
+    /// P0-A: record ONE short, non-secret fault line for the diagnostics
+    /// report. The user-facing cause comes from `GatewayFailureCopy` (which
+    /// never echoes a raw endpoint), prefixed with the gateway's name; the
+    /// recorder redacts again on the way in.
+    private func recordFault(
+        category: String,
+        gateway: FleetGateway,
+        status: GatewayStatus,
+        detail: String?
+    ) {
+        diagnosticsRecorder.record(
+            category: category,
+            detail: "\(gateway.displayName): \(GatewayFailureCopy.detail(status: status, detail: detail, gatewayName: gateway.displayName))")
     }
 
     /// Disconnect cleanly and safely from every state (spec §31).
@@ -2286,7 +2322,16 @@ public final class AppEnvironment {
         testResultObservedAt[id] = Date()
         // Reflect the probe into the observable connection lifecycle so the
         // row shows the §13 state without a separate connect attempt.
-        connectionStates[id] = GatewayConnectionState(status: result.status)
+        let state = GatewayConnectionState(status: result.status)
+        connectionStates[id] = state
+        // P0-A: a probe that classified the gateway as failed is a recorded
+        // fault (the app's own evidence trail).
+        if case .failed(let status) = state,
+           let gateway = gateways.first(where: { $0.id == id }) {
+            recordFault(
+                category: "Gateway connection", gateway: gateway,
+                status: status, detail: nil)
+        }
     }
 
     // MARK: Session list (Bot detail — read-only `session.list` seam)

@@ -83,6 +83,33 @@ public enum Redaction {
         return safe
     }
 
+    /// Produce bounded, display-safe text for diagnostics payloads (P0-A):
+    /// a strict superset of `safeText` that ALSO masks WebSocket URL
+    /// user-info (`wss://user:pass@host` — the WS-ticket shape `safeText`'s
+    /// http(s)-only pattern misses) and explicit header-style key material
+    /// (`x-api-key: …`). Kept separate so `safeText`'s shipped behavior is
+    /// unchanged.
+    public static func safeDiagnosticText(_ text: String) -> String {
+        var safe = safeText(text)
+        for pattern in diagnosticSecretPatterns {
+            safe = pattern.stringByReplacingMatches(
+                in: safe,
+                range: NSRange(safe.startIndex..., in: safe),
+                withTemplate: "$1[REDACTED]")
+        }
+        return safe
+    }
+
+    /// The credential shapes `safeText` does not cover. Each keeps a leading
+    /// marker as capture group 1 so the masked output stays readable.
+    private static let diagnosticSecretPatterns: [NSRegularExpression] = {
+        let patterns = [
+            #"(?i)(wss?://)[^\s/@:]+(?::[^\s/@]*)?@"#, // ws(s) URL user-info
+            #"(?i)((?:x-api-key|x-auth-token|private-token|proxy-authorization)\s*[:=]\s*)[^\s,;]+"#,
+        ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+    }()
+
     private static let errorSecretPatterns: [NSRegularExpression] = {
         let patterns = [
             #"(?i)(https?://)[^\s/@:]+(?::[^\s/@]*)?@"#, // URL user-info

@@ -85,6 +85,41 @@ final class RoomChatUITests: XCTestCase {
         return found()
     }
 
+    /// RC-84 P1: Group Info — the room toolbar's Info entry opens the
+    /// compact known-state sheet (participants / gateways / capabilities)
+    /// and it closes cleanly. Values come from the room's real fields; this
+    /// pins the surface + honest structure.
+    func testRoomInfoSheetShowsHonestGroupState() throws {
+        let app = launch()
+
+        let row = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
+        row.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10),
+                      "room chat must open")
+
+        let info = app.descendants(matching: .any)["fleet.room.info"]
+        XCTAssertTrue(info.waitForExistence(timeout: 10),
+                      "Group Info entry must render in the room toolbar")
+        info.tap()
+
+        let sheet = app.descendants(matching: .any)["fleet.room.info.sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10), "Group Info sheet must open")
+        XCTAssertTrue(app.staticTexts["Home gateway"].firstMatch.waitForExistence(timeout: 5),
+                      "Home gateway row must render")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.info.capability.send"].waitForExistence(timeout: 5),
+            "Send messages capability line must render")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.info.capability.replay"].exists,
+            "every capability line must render (replay may be honest 'Not supported')")
+
+        app.buttons["Done"].firstMatch.tap()
+        let gone = NSPredicate(format: "exists == 0")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: gone, object: sheet)], timeout: 5) == .completed,
+            "Group Info sheet must dismiss")
+    }
+
     // MARK: - D15 open + transcript + send
 
     func testHostedRoomOpenSendAndTranscriptRender() throws {
