@@ -1856,6 +1856,7 @@ public final class AppEnvironment {
             break
         case .offline, .degraded, .authenticationRequired, .unsupported:
             let reason = await connection.lastDisconnectReason()
+            guard !Task.isCancelled else { return }
             let retryable = reason.map {
                 ReconnectPolicy.decision(for: $0) == .reconnect
             } ?? false
@@ -1945,6 +1946,12 @@ public final class AppEnvironment {
     /// seam, so they are explicitly disconnected in addition to the base
     /// gateway connections.
     public func disconnectAll() async {
+        // A background/lock teardown hands recovery ownership to foreground
+        // restore. Cancel observers and retry timers before the first awaited
+        // disconnect so a racing watch cannot schedule another connection.
+        // Desired connection intent remains untouched.
+        cancelAllConnectionRecovery()
+
         let connections = Array(activeConnections.values)
         let conversations = Array(conversationSessions.values)
         let kanban = Array(kanbanWatchers.values)
@@ -1960,12 +1967,6 @@ public final class AppEnvironment {
         for connection in connections {
             await connection.disconnect()
         }
-        // Dogfood r2: a lock/background boundary cancels pending auto-retry
-        // timers — the foreground restore owns reconnection from here.
-        for id in reconnectRetryTasks.keys {
-            reconnectRetryTasks[id]?.cancel()
-        }
-        reconnectRetryTasks.removeAll()
         for conversation in conversations {
             await conversation.disconnect()
         }

@@ -287,6 +287,40 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(connection.connectCount, 2)
     }
 
+    func testDisconnectAllStopsRecoveryWatchUntilForegroundRestore() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.025, maxDelay: 0.025, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        connection.statusValue = .offline
+        connection.reasonValue = .abnormalClosure
+        let observedDrop = await waitUntil {
+            environment.connectionStates[id] == .failed(.offline)
+        }
+        XCTAssertTrue(observedDrop, "the recovery watch observes the transient drop")
+
+        await environment.disconnectAll()
+        XCTAssertEqual(environment.connectionStates[id], .disconnected)
+        XCTAssertTrue(environment.isConnectionIntended(id), "background teardown preserves intent")
+
+        let retriedWhileSuspended = await waitUntil(timeout: 0.2) {
+            connection.connectCount > 1
+        }
+        XCTAssertFalse(retriedWhileSuspended, "disconnectAll stops recovery until foreground restore")
+        XCTAssertEqual(connection.connectCount, 1)
+
+        await environment.restoreIntendedConnections()
+        let restored = await waitUntil {
+            environment.connectionStates[id] == .connected
+        }
+        XCTAssertTrue(restored, "foreground restore reconnects the intended gateway")
+        XCTAssertEqual(connection.connectCount, 2)
+    }
+
     func testAuthRequiredFailureDoesNotAutoRetry() async {
         let id = GatewayID(rawValue: "workstation")
         let connection = RecoveringConnection(gatewayID: id, scripted: [
