@@ -16,8 +16,8 @@
 # left the loop unable to tell "not reachable yet" from "state string I don't
 # recognise", burning every attempt (~2 h) before a generic failure. The JSON
 # rule mirrors scripts/fleet_device.sh (see its header for the observed Xcode
-# 26.6 CoreDevice fields): available = paired + tunnelState != "unavailable" +
-# a transportType present.
+# CoreDevice fields): available = physical ECID + paired + tunnelState ==
+# "connected" + localNetwork/wired transport.
 #
 # Exit codes: 0 installed+launched, 1 attempts exhausted, 2 bad precondition
 # (missing APP / unresolved device), 3 device state unknown UNKNOWN_LIMIT
@@ -70,11 +70,11 @@ for d in data.get("result", {}).get("devices", []):
     cp = d.get("connectionProperties", {})
     tunnel = cp.get("tunnelState")
     transport = cp.get("transportType")
-    if hp.get("deviceType") != "iPhone" or hp.get("platform") != "iOS":
+    if hp.get("deviceType") != "iPhone" or hp.get("platform") != "iOS" or hp.get("ecid") is None:
         print("unknown:identifier is not an iOS iPhone (check HERMES_FLEET_DEVICE_ID)")
     elif cp.get("pairingState") != "paired":
         print("not-ready:pairingState=%s" % cp.get("pairingState"))
-    elif tunnel is None or tunnel == "unavailable" or not transport:
+    elif tunnel != "connected" or transport not in ("localNetwork", "wired"):
         print("not-ready:tunnelState=%s transport=%s" % (tunnel, transport))
     else:
         print("ready:tunnelState=%s transport=%s" % (tunnel, transport))
