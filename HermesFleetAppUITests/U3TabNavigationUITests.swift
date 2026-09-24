@@ -250,7 +250,13 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10))
         attachScreenshot(of: app, name: "u3-group-menu-and-back")
         UITabNavigation.openDrawer(app)
-        XCTAssertTrue(app.descendants(matching: .any)["fleet.drawer.destination.bots"].exists)
+        let groupsDestination = app.descendants(matching: .any)["fleet.drawer.destination.groups"]
+        XCTAssertEqual(groupsDestination.value as? String, "Selected",
+                       "room destinations must select their canonical Groups owner")
+        XCTAssertNotEqual(
+            app.descendants(matching: .any)["fleet.drawer.destination.bots"].value as? String,
+            "Selected",
+            "opening a room from the Bots roster must leave the Bots stack")
     }
 
     func testCompactSwitchingRetainsIndividualConversationDraft() throws {

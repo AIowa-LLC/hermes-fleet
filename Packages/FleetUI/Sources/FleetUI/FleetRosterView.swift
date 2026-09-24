@@ -575,10 +575,7 @@ public struct FleetRosterView: View {
             SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
             ForEach(rows) { room in
-                NavigationLink {
-                    RoomChatView(room: room, environment: environment)
-                        .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
-                } label: {
+                NavigationLink(value: FleetScreen.room(room.id)) {
                     RoomRowView(room: room)
                 }
                 .buttonStyle(.fleetPressable)
