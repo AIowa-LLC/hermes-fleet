@@ -5,26 +5,29 @@ The audited app target owns the manifest at
 `HermesFleetApp/PrivacyInfo.xcprivacy`; `project.yml` adds that file to the
 target resources and XcodeGen produces the corresponding resource phase.
 
+Audit snapshot: 2026-09-18 at repository `d0f607b`. The source audit is
+evidence for this GitHub snapshot only. Re-run it after Issue #50
+synchronization and validate the built/archive copy before using it for App
+Store Connect answers.
+
 ## Scope and dependency graph
 
 The shipping target links the local `FleetCore`, `FleetNetworking`,
 `FleetSecurity`, `FleetPersistence`, and `FleetUI` packages. `FleetUI` links
 the pinned SwiftStreamingMarkdown revision
-`5f7c04e0558df6146f90d482edb62cb456986bda` and its resolved transitive graph:
+`5f7c04e0558df6146f90d482edb62cb456986bda`.
 
-- `swift-markdown` 0.7.3
-- `swift-cmark` 0.8.0
-- `swift-syntax` 603.0.2
-- `HighlightSwift` revision `99c431b38a1444a5fd6a4978307fbbefe3a7af53`
-- `iosMath` revision `ba9ab7729b151329c54fd895a7c1859981d9484c`
-- `SwiftUI-Shimmer` 1.5.1
-- `Equatable` 1.4.1
+The repository does not commit `Package.resolved` or SwiftPM's checkout
+directory (`Package.resolved` is ignored), so a fresh clone cannot prove the
+resolved transitive dependency graph or inspect third-party bundle manifests.
+SwiftPM resolves that graph during the build. A final RC audit must inspect
+the resolved graph and every embedded framework/library or package bundle in
+the archive. The app manifest cannot substitute for a third-party SDK
+manifest when Apple requires the SDK to carry its own declarations.
 
-The audit covers production Swift in `HermesFleetApp/` and every local
+The source audit covers production Swift in `HermesFleetApp/` and every local
 package `Sources/` directory. Tests, documentation, comments, and derived
-build products are excluded from call-site findings. The pinned third-party
-checkouts were also inspected for privacy manifests and required-reason API
-call patterns; no manifest or matching production-source usage was found.
+build products are excluded from call-site findings.
 
 ## Findings and declarations
 
@@ -35,6 +38,31 @@ call patterns; no manifest or matching production-source usage was found.
 | System boot time | No production call sites. | None |
 | Disk space | No production call sites. | None |
 | Active keyboards | No production call sites. | None |
+
+### UserDefaults source locations
+
+The current scanner reports 24 production hits, all in app-owned defaults
+used for local settings/state. Line numbers are for the audited snapshot and
+may move after synchronization:
+
+| File | Lines |
+| --- | --- |
+| `HermesFleetApp/FleetServiceGraph.swift` | 91, 223 |
+| `Packages/FleetUI/Sources/FleetUI/AppEnvironment.swift` | 454 |
+| `Packages/FleetUI/Sources/FleetUI/AppLockController.swift` | 101, 108 |
+| `Packages/FleetUI/Sources/FleetUI/ConnectionIntentStore.swift` | 12, 15 |
+| `Packages/FleetUI/Sources/FleetUI/ConversationToolingViewModel.swift` | 64, 100, 102 |
+| `Packages/FleetUI/Sources/FleetUI/FleetAccent.swift` | 51, 53 |
+| `Packages/FleetUI/Sources/FleetUI/FleetAppearance.swift` | 45, 47 |
+| `Packages/FleetUI/Sources/FleetUI/FleetTabView.swift` | 81, 99 |
+| `Packages/FleetUI/Sources/FleetUI/FleetThemePalette.swift` | 552, 555, 582 |
+| `Packages/FleetUI/Sources/FleetUI/GatewayResourceView.swift` | 64, 71, 207 |
+| `Packages/FleetUI/Sources/FleetUI/KanbanBoardSelectionStore.swift` | 17, 20 |
+
+The source also reads local file-size and file-attribute values for attachment
+handling, but the current Apple required-reason table audited by the scanner
+does not list those calls as a required-reason category. Recheck any new API
+use against Apple's current table rather than expanding the manifest by guess.
 
 Fleet does not declare collected data or tracking in this manifest:
 `NSPrivacyCollectedDataTypes` is empty and `NSPrivacyTracking` is false.
@@ -48,6 +76,11 @@ the source manifest and the audit rationale with the exact approved reason.
 
 The source scanner's API table is pinned to Apple's current
 [`NSPrivacyAccessedAPIType` documentation](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype).
+Apple also states that required-reason APIs used by third-party SDKs must be
+declared in the SDK's own privacy manifest:
+[`Describing use of required reason API`](https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api),
+[`Privacy manifest files`](https://developer.apple.com/documentation/bundleresources/privacy-manifest-files), and
+[`TN3183`](https://developer.apple.com/documentation/technotes/tn3183-adding-required-reason-api-entries-to-your-privacy-manifest).
 The current File Timestamp list includes `creationDate`, `modificationDate`,
 `fileModificationDate`, `contentModificationDateKey`, `creationDateKey`,
 `getattrlist`, `getattrlistbulk`, `fgetattrlist`, `stat`, and `fstat`. The
@@ -85,3 +118,12 @@ bash scripts/privacy_manifest_validate.sh \
 The release preflight in Issue #14 reuses this same validator for archive
 proof. It must fail if the manifest disappears or changes shape in the
 shipping bundle.
+
+## Final-RC dependency handoff
+
+After source synchronization, record the exact resolved SwiftPM graph and
+inspect the archive for every embedded framework, dynamic library, and package
+bundle. For each item, record whether it contains `PrivacyInfo.xcprivacy`,
+whether it uses a required-reason API, and whether Apple lists it among SDKs
+that require a manifest/signature. The final archive—not this source-only
+audit—is the evidence for the shipping binary.

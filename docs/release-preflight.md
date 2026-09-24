@@ -5,6 +5,13 @@ construction: a run must start from a clean checkout whose `HEAD` equals the
 explicit full SHA supplied to the script, and every report/archive is written
 under a SHA-specific disposable `build/` directory.
 
+This document describes procedure, not RC evidence. The repository snapshot
+audited on 2026-09-18 is `d0f607b` with source version `0.2.0` and build `32`;
+those values are not a release authorization and must be replaced by the
+synchronized candidate values from Issue #50. The archive, physical-device,
+live-gateway, App Store Connect validation, and upload stages were not run by
+the repository-preparation pass.
+
 ## Archive and distribution stages
 
 The preflight keeps the Xcode archive and the final distributable artifact
@@ -39,6 +46,25 @@ the actual IPA's bundle metadata, distribution signing authority and team,
 application identifier, signed entitlements, App Store provisioning posture,
 absence of device-limited or `get-task-allow` state, and embedded privacy
 manifest.
+
+## Required provenance record
+
+Before invoking the preflight, record the full candidate SHA and confirm the
+checkout is the intended release source. The release record must include:
+
+- full Git SHA and commit subject;
+- `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from `project.yml`;
+- bundle identifier, target device family, deployment target, and Xcode
+  version;
+- archive path and the exact preflight report path; and
+- final archive/export/validation results, with unavailable credential-gated
+  steps marked `NOT RUN` or `BLOCKED` rather than inferred as pass.
+
+The candidate must be a clean checkout of the approved integration source.
+Run `git fetch origin`, inspect the current `origin/main`, and do not archive
+from a dirty worktree or an unreviewed development branch. Run
+`bash scripts/xcodegen_drift_gate.sh` before the archive; it regenerates from
+`project.yml` and fails if the committed Xcode project drifts.
 
 ## Machines without distribution export credentials
 
@@ -81,6 +107,11 @@ key material and never uploads. Organizer or an equivalent credentialed
 App Store Connect upload and subsequent processing acceptance remain deliberate
 external release actions.
 
+The script intentionally stops before upload. Apple still requires the
+uploaded beta build's export-compliance information to be answered or linked
+to approved documentation in TestFlight. See Apple's
+[beta export-compliance procedure](https://developer.apple.com/help/app-store-connect/test-a-beta-version/provide-export-compliance-information-for-beta-builds).
+
 ## Build-number retry policy
 
 `CURRENT_PROJECT_VERSION` in `project.yml` is the source of truth. For every
@@ -93,3 +124,22 @@ Apple has accepted the build into processing, use a new number.
 
 Issue #17 additionally requires release candidates to originate only from a
 fully green `main`; this preflight does not override that integration gate.
+
+## Safe repository-only checks
+
+These checks can run before the final RC without signing, upload, device, or
+live-gateway access:
+
+```bash
+bash scripts/xcodegen_drift_gate.sh
+bash scripts/privacy_manifest_validate.sh
+bash scripts/privacy_required_reason_audit.sh
+bash scripts/release_preflight_contract_test.sh
+bash scripts/rc_preflight.sh
+bash scripts/public_safety_guard.sh
+gitleaks detect --source . --no-git
+```
+
+They prove repository invariants only. They do not prove distribution signing,
+archive contents, Apple's validation result, backend availability, or
+TestFlight review acceptance.

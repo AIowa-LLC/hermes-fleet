@@ -57,3 +57,5 @@ When behavior changes, update the relevant current document and ADR in the same 
 ## Release readiness
 
 The versioned physical-device/live-Hermes gate is [`release/RC-ACCEPTANCE-v1.md`](release/RC-ACCEPTANCE-v1.md); begin with `bash scripts/rc_preflight.sh`. Record public-safe results using [`release/RC-EVIDENCE-TEMPLATE.md`](release/RC-EVIDENCE-TEMPLATE.md). These documents do not authorize distribution.
+
+The repository-side release procedure is [`release-preflight.md`](release-preflight.md). The draft App Store Connect package is [`release/BETA-METADATA.md`](release/BETA-METADATA.md), the reviewer environment design is [`release/REVIEWER-ENVIRONMENT.md`](release/REVIEWER-ENVIRONMENT.md), and the current synchronization handoff is [`release/SYNC-HANDOFF.md`](release/SYNC-HANDOFF.md). A dated readiness audit and PR #46 disposition are kept in [`release/READINESS-AUDIT-2026-09-18.md`](release/READINESS-AUDIT-2026-09-18.md) and [`release/PR-46-REVIEW.md`](release/PR-46-REVIEW.md).

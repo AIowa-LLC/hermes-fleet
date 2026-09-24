@@ -156,8 +156,8 @@ XCODE_VERSION="$(xcodebuild -version)"
 echo "=== Xcode ==="
 echo "$XCODE_VERSION"
 XCODE_MAJOR="$(awk '/^Xcode / { split($2, v, "."); print v[1]; exit }' <<<"$XCODE_VERSION")"
-if [[ "$XCODE_MAJOR" != "26" ]]; then
-  echo "ERROR: this repository release policy expects Xcode 26.x (found Xcode $XCODE_MAJOR)" >&2
+if [[ "$XCODE_MAJOR" != "26" && "$XCODE_MAJOR" != "27" ]]; then
+  echo "ERROR: this repository release policy expects Xcode 26.x or 27.x (found Xcode $XCODE_MAJOR)" >&2
   exit 1
 fi
 
