@@ -219,13 +219,20 @@ final class U3TabNavigationUITests: XCTestCase {
         UITabNavigation.closeDrawer(app)
 
         // Same-tab drawer reselection pops the Bots stack to its roster root.
-        UITabNavigation.openDrawer(app)
-        app.descendants(matching: .any)["fleet.drawer.destination.bots"].firstMatch.tap()
+        // Use the shared selector, which retries only while the drawer is
+        // still open; a closed drawer is the signal that the one tap landed.
+        UITabNavigation.selectTab(app, label: "Bots")
+        let drawer = app.descendants(matching: .any)["fleet.drawer"].firstMatch
+        XCTAssertFalse(drawer.exists, "same-tab selection must dismiss the drawer")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),
+                      "same-tab selection must return to the Bots roster")
         let group = app.descendants(matching: .any)["fleet.room.row.room-alpha"].firstMatch
         if !group.waitForExistence(timeout: 5) {
             for _ in 0..<8 where !group.exists { app.swipeUp(velocity: .fast) }
         }
         XCTAssertTrue(group.waitForExistence(timeout: 10), "scripted group row renders")
+        for _ in 0..<8 where !group.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(group.isHittable, "scripted group row must be hittable before activation")
         group.tap()
         XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10))
         attachScreenshot(of: app, name: "u3-group-menu-and-back")
