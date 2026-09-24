@@ -36,5 +36,5 @@ regexes = [
 description = "FleetCore UserDefaults pin storage key (persistence constant, not a credential)"
 regexTarget = "line"
 regexes = [
-  '''public static let storageKey = "fleet\.conversation\.pins\.v1"''',
+  '''^\s*public static let storageKey = "fleet\.conversation\.pins\.v1"\s*$''',
 ]
