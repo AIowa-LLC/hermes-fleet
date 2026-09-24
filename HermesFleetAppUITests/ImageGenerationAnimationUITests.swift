@@ -62,6 +62,10 @@ final class ImageGenerationAnimationUITests: XCTestCase {
             .firstMatch
     }
 
+    private func animation(in row: XCUIElement) -> XCUIElement {
+        row.staticTexts[Self.animationIdentifier].firstMatch
+    }
+
     private func deliveredImage(_ app: XCUIApplication) -> XCUIElement {
         transcript(app).buttons[Self.deliveredImageIdentifier].firstMatch
     }
@@ -94,7 +98,8 @@ final class ImageGenerationAnimationUITests: XCTestCase {
         // The animation belongs to the CITING tool row (user, tool, assistant).
         let toolRow = transcript(app).descendants(matching: .any)["fleet.conversation.row.row-2"]
         XCTAssertTrue(toolRow.waitForExistence(timeout: 10))
-        XCTAssertTrue(toolRow.staticTexts[Self.animationIdentifier].firstMatch.exists,
+        let rowStage = animation(in: toolRow)
+        XCTAssertTrue(rowStage.exists,
                       "the animation must render inside the citing tool row, not as a detached row")
 
         // Wait for the positive handoff state first. Querying disappearance
@@ -102,10 +107,10 @@ final class ImageGenerationAnimationUITests: XCTestCase {
         // timeouts on hosted runners. Resolve the exact accessibility role
         // and identifier directly; the image identifier includes its citing
         // row id, and the image is the stable completion signal.
-        let image = deliveredImage(app)
+        let image = toolRow.buttons[Self.deliveredImageIdentifier].firstMatch
         XCTAssertTrue(image.waitForExistence(timeout: 40),
                       "the delivered image must render in the citing row")
-        XCTAssertTrue(stage.waitForNonExistence(timeout: 5),
+        XCTAssertTrue(rowStage.waitForNonExistence(timeout: 5),
                       "the delivered result must stop the animation")
         attachScreenshot(app, name: "imagegen-delivered")
     }

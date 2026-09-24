@@ -627,6 +627,32 @@ enum RoomDraftStore {
 
 // MARK: - Screen
 
+private struct RoomLatestScrollTargetFrame: Equatable {
+    let id: String
+    let frame: CGRect
+}
+
+private struct RoomLatestScrollTargetFramePreferenceKey: PreferenceKey {
+    static let defaultValue: RoomLatestScrollTargetFrame? = nil
+
+    static func reduce(
+        value: inout RoomLatestScrollTargetFrame?,
+        nextValue: () -> RoomLatestScrollTargetFrame?
+    ) {
+        if let next = nextValue() {
+            value = next
+        }
+    }
+}
+
+private struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
+    static let defaultValue = CGRect.null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 /// One room, generation-agnostic: hosted rooms render interactive (per
 /// capabilities), legacy rooms render observational with the "Managed by
 /// Hermes Desktop" label. Fleet visual language: dark cards, bold headers,
@@ -662,6 +688,10 @@ public struct RoomChatView: View {
     /// t_363bc529: monotonic token for the open-at-latest convergence loop —
     /// a newer projection arrival supersedes any in-flight loop.
     @State private var followLatestToken = 0
+    /// LazyVStack's estimated content size can report "at bottom" before the
+    /// final row is materialized. Convergence uses the target's actual frame.
+    @State private var latestScrollTargetFrame: RoomLatestScrollTargetFrame?
+    @State private var scrollViewportFrame = CGRect.null
     @FocusState private var composing: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
@@ -696,6 +726,15 @@ public struct RoomChatView: View {
                 // every safeAreaInset control's identifier (the Latest
                 // button lost its own id this way).
                 .accessibilityIdentifier("fleet.room.chat")
+            }
+            .overlay {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: RoomScrollViewportFramePreferenceKey.self,
+                        value: geometry.frame(in: .global))
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
             .overlay(alignment: .bottom) { composer }
             .background(theme.background.ignoresSafeArea())
@@ -802,9 +841,10 @@ public struct RoomChatView: View {
                     - geometry.visibleRect.height <= 160
             } action: { _, atBottom in
                 isAtBottomLatest = atBottom
-                if atBottom {
+                if atBottom && isLatestScrollTargetAtEnd {
                     isProgrammaticFollow = false
-                } else if isUserInteractingWithScroll && !isProgrammaticFollow {
+                } else if isUserInteractingWithScroll && !isProgrammaticFollow
+                    && !isLatestScrollTargetAtEnd {
                     // The phase callback can run before geometry has updated
                     // isAtBottomLatest. Treat the first non-bottom geometry
                     // update during a real drag as the user's explicit
@@ -820,7 +860,8 @@ public struct RoomChatView: View {
                 // rows taller than the viewport all shift geometry while
                 // still "following latest".
                 isUserInteractingWithScroll = phase == .interacting
-                if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow {
+                if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow
+                    && !isLatestScrollTargetAtEnd {
                     followingLatest = false
                 }
             }
@@ -872,6 +913,12 @@ public struct RoomChatView: View {
                 }
             }
         }
+        .onPreferenceChange(RoomLatestScrollTargetFramePreferenceKey.self) { frame in
+            latestScrollTargetFrame = frame
+        }
+        .onPreferenceChange(RoomScrollViewportFramePreferenceKey.self) { frame in
+            scrollViewportFrame = frame
+        }
     }
 
     // MARK: Open-at-latest convergence (t_363bc529)
@@ -880,10 +927,25 @@ public struct RoomChatView: View {
         !viewModel.workIndicators.isEmpty ? "fleet.room.work.anchor" : viewModel.transcript.last?.id
     }
 
-    /// Re-assert scrollTo(latest) until the scroll view CONFIRMS it is at
-    /// the bottom (the onScrollGeometryChange at-bottom observer clears the
-    /// programmatic-follow guard), bounded so a pathological layout can
-    /// never spin forever.
+    private var isLatestScrollTargetVisible: Bool {
+        guard let latestScrollTargetFrame,
+              latestScrollTargetFrame.id == latestScrollTarget,
+              !scrollViewportFrame.isNull else { return false }
+        return latestScrollTargetFrame.frame.intersects(scrollViewportFrame)
+    }
+
+    /// The target's bottom edge must reach the scroll viewport's end. Merely
+    /// intersecting the viewport can happen while a deep lazy stack is still
+    /// correcting its height estimates, before open-at-latest has converged.
+    private var isLatestScrollTargetAtEnd: Bool {
+        guard isLatestScrollTargetVisible,
+              let targetFrame = latestScrollTargetFrame?.frame else { return false }
+        return targetFrame.maxY <= scrollViewportFrame.maxY - 96
+    }
+
+    /// Re-assert scrollTo(latest) until the target reaches the visible end of
+    /// the viewport. Scroll geometry alone can report a false bottom while a
+    /// LazyVStack still uses short estimates for unmaterialized rows.
     ///
     /// A single scrollTo on a freshly-projected deep transcript lands on the
     /// LazyVStack's unmaterialized height estimates and can park mid-transcript
@@ -891,7 +953,7 @@ public struct RoomChatView: View {
     /// so the estimates converge to the true content height within a few
     /// passes.
     ///
-    /// Cancels itself when: geometry confirms at-bottom, the user starts
+    /// Cancels itself when: the target reaches the visible end, the user starts
     /// dragging (their scroll wins), or a newer projection supersedes the
     /// token. If the bounded budget is exhausted without arrival, it leaves
     /// the honest state — NOT following — so the Latest control renders and
@@ -900,16 +962,21 @@ public struct RoomChatView: View {
         isProgrammaticFollow = true
         Task { @MainActor in
             var attempts = 0
-            while attempts < 10 {
+            while attempts < 20 {
                 guard followLatestToken == token else { return } // superseded
                 guard !isUserInteractingWithScroll else {
                     // The user grabbed the scroll: hand control back fully so
                     // their drag can unfollow (otherwise Latest stays hidden
                     // until they happen to touch bottom).
+                    followingLatest = isLatestScrollTargetAtEnd
                     isProgrammaticFollow = false
                     return
                 }
-                if isAtBottomLatest && attempts > 0 { return }   // arrived
+                if isLatestScrollTargetAtEnd && attempts > 0 {
+                    followingLatest = true
+                    isProgrammaticFollow = false
+                    return
+                }
                 proxy.scrollTo(target, anchor: .bottom)
                 attempts += 1
                 try? await Task.sleep(for: .milliseconds(250))
@@ -918,7 +985,7 @@ public struct RoomChatView: View {
                 isProgrammaticFollow = false
                 // Bounded budget exhausted without confirmed arrival: leave
                 // the honest state so the Latest control offers the way down.
-                if !isAtBottomLatest { followingLatest = false }
+                if !isLatestScrollTargetAtEnd { followingLatest = false }
             }
         }
     }
@@ -1206,6 +1273,17 @@ public struct RoomChatView: View {
             }
             .padding(.horizontal, FleetTheme.spacingSm)
             .padding(.vertical, FleetTheme.spacingXs)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: RoomLatestScrollTargetFramePreferenceKey.self,
+                        value: latestScrollTarget == "fleet.room.work.anchor"
+                            ? RoomLatestScrollTargetFrame(
+                                id: "fleet.room.work.anchor",
+                                frame: geometry.frame(in: .global))
+                            : nil)
+                }
+            }
             .id("fleet.room.work.anchor")
         }
     }
@@ -1265,6 +1343,17 @@ public struct RoomChatView: View {
             }
         }
         .id(entry.id)
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: RoomLatestScrollTargetFramePreferenceKey.self,
+                    value: latestScrollTarget == entry.id
+                        ? RoomLatestScrollTargetFrame(
+                            id: entry.id,
+                            frame: geometry.frame(in: .global))
+                        : nil)
+            }
+        }
         .modifier(RoomTranscriptAccessibilityModifier(
             rendersRichText: rendersRichText,
             speaker: entry.speaker))
