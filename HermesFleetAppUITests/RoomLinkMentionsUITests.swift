@@ -73,9 +73,6 @@ final class RoomLinkMentionsUITests: XCTestCase {
         let row = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
         let room = app.descendants(matching: .any)["fleet.room.chat"]
         row.tap()
-        if !room.waitForExistence(timeout: 3) {
-            row.tap()
-        }
         XCTAssertTrue(room.waitForExistence(timeout: 10), "room chat screen renders")
     }
 
