@@ -138,10 +138,23 @@ final class SlashCommandParityUITests: XCTestCase {
         composer.typeText("/new")
         tap(element(in: app, identifier: "fleet.conversation.send"))
 
-        // The pushed fresh conversation is composer-ready with no old rows.
+        // /new pushes another ConversationView while the previous screen
+        // remains in the navigation stack. Both fields share the stable
+        // composer ID, so resolve the topmost destination explicitly.
+        let composers = app.textFields.matching(identifier: "fleet.conversation.composer")
+        XCTAssertTrue(composers.firstMatch.waitForExistence(timeout: 10),
+                      "the pushed conversation should expose its composer")
+        // iOS versions differ on whether the covered NavigationStack view is
+        // still represented in the accessibility tree. Select the last
+        // ordered match, which is the visible destination on versions that
+        // expose both composers and the sole match otherwise.
+        guard let freshComposer = composers.allElementsBoundByIndex.last else {
+            XCTFail("the pushed conversation should expose its composer")
+            return
+        }
         XCTAssertTrue(
-            waitForComposerValue(composer, equals: ""),
-            "composer clears after /new"
+            waitForComposerValue(freshComposer, equals: ""),
+            "the fresh conversation composer is empty after /new"
         )
         XCTAssertNil(conversationRow(in: app, containing: "Hello from the scripted fleet"),
                      "the fresh conversation must not show the old transcript")
