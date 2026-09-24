@@ -1,7 +1,7 @@
 # Drawer — Codex-parity round 3 (metric pass + dismissal rework)
 
 **Status:** Approved for implementation — 2026-09-18
-**Baseline:** lane branch `dogfood/build-41-integration` @ `01de630` (worktree `.worktrees/build-41`)
+**Baseline:** drawer parity implementation from commit `01de630` in the integration lane.
 **Evidence:** `IMG_7116.PNG` (ours, iPhone 17 Pro Max 1320×2868@3x) vs `IMG_7117.PNG` (Codex reference). All pixel measurements below were taken from those rasters programmatically (PIL), not by eye.
 
 ## 1. Goal

@@ -181,23 +181,6 @@ survives relaunch (new UITest, W6).
 6. Long runs backgrounded with per-suite logs + `Executed` receipts under
    `/tmp` (interruptible/recoverable).
 
-## SPEC §14 amendment draft (external file — awaits explicit go)
-
-The SPEC lives outside the repo at `~/code/fleet-os-spec/SPEC.md`. Draft
-amendment text (to insert after the §14 sentence "Filled violet buttons use
-white text in light mode and dark canvas text on the pale dark-mode violet."):
-
-> **Amendment (dogfood build-41): the drawer compose pill is theme-coupled.**
-> The compose affordance fills with the active highlight (accent-adaptive)
-> and uses the max-contrast ink token, not a fixed violet. With the default
-> palette this is visually identical in light mode (`#5B35D5`); in dark mode
-> the default highlight is white, so the pill renders white with dark ink.
-> The accent picker offers an eighth curated accent, **White** — a monochrome
-> accent: near-black (`#1C1C1E`) in light mode, white (`#FFFFFF`) in dark
-> mode, over the Fleet-default text/background. (ADR-0009.)
-
-The external SPEC file is edited only on Tony's explicit go.
-
 ## Out of scope
 
 - Every other `theme.highlight` consumer (tints, links, selected controls —
@@ -209,6 +192,4 @@ The external SPEC file is edited only on Tony's explicit go.
   resolutions already clear the 4.5:1 increased-contrast minimum (16.16:1 /
   18.75:1), so `correctedForeground` returns the highlight unchanged.
 - Weakening or exempting anything in the invisible-pair guard.
-- Commit, push, PR, TestFlight — this spec and the implementation land as one
-  lane commit on Tony's go; nothing leaves the Mac without word-for-word
-  instruction.
+- Distribution and release actions are outside this design note.

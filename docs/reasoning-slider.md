@@ -186,17 +186,15 @@ that choice here.
 | --- | --- |
 | `scripts/c1_ui_matrix.sh` | +1 `UI_CLASSES` row (`ReasoningSliderUITests`) — same change as the new class (drift gate) |
 | Existing composer/UI tests | untouched — the chip is additive in the tooling sub-row; no identifier moves |
-| `HermesFleetApp.xcodeproj` | regenerated (`~/.local/bin/xcodegen generate`) — 3 new source files + 2 test files; pbxproj diff rides the same commit |
+| `HermesFleetApp.xcodeproj` | regenerated with XcodeGen — 3 new source files + 2 test files; pbxproj diff rides the same commit |
 
 ## Validation plan
 
-1. Orient: `git branch --show-current` ⇒ `dogfood/build-41-integration`, HEAD
-   ≥ `fleet-dogfood-baseline-61`. `pgrep xcodebuild` before any run.
+1. Verify the checkout and inspect for existing Xcode builds before any run.
 2. Fresh dedicated simulator `QAREASON` (`iPhone 18 Pro`), own
    `-derivedDataPath`, deleted after — never shared across xcodebuilds.
 3. Targeted packages: `swift test` filtered to
-   `ConversationReasoningTests` + `GatewayReasoningClientTests`
-   (FleetNetworking's full-suite TLS hang is known — filtered runs only).
+   `ConversationReasoningTests` + `GatewayReasoningClientTests`.
 4. Targeted UI: `-only-testing:HermesFleetAppUITests/ReasoningSliderUITests`
    (full class name incl. suffix); verdict = the `Executed N tests` line.
 5. Full unit gate: `HermesFleetAppUnitTests` scheme with
@@ -206,10 +204,8 @@ that choice here.
    active highlight, handle = onHighlight (programmatic sample, ±3/channel,
    `scripts/measure_drawer_screenshot.py` pattern). One accent-switched shot
    (e.g. Green) proves no hardcoded lavender survives.
-7. Commit: explicit paths only, `git commit -F /tmp/msg.txt`,
-   `~/.local/bin/gitleaks protect --staged` first, author
-   Tony Simons <tony@aiowa.dev>. No push, no PR, no TestFlight without
-   word-for-word instruction.
+7. Commit only the intended paths after staged secret scanning. Keep
+   distribution and release actions separate from engineering validation.
 
 ## Out of scope
 
