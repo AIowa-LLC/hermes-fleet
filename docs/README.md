@@ -33,6 +33,7 @@ the v0.1 document deferred or excluded.
 - [`navigation.md`](navigation.md) - four-tab structure, screen ownership, and navigation restoration
 - [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
+- [`DEVELOPMENT.md`](DEVELOPMENT.md) - branch model: `main` baseline, `dogfood-next` integration, hotfix propagation
 - [`adr/`](adr/) - architectural decision records
 
 ## Historical milestone files
@@ -58,4 +59,4 @@ When behavior changes, update the relevant current document and ADR in the same 
 
 The versioned physical-device/live-Hermes gate is [`release/RC-ACCEPTANCE-v1.md`](release/RC-ACCEPTANCE-v1.md); begin with `bash scripts/rc_preflight.sh`. Record public-safe results using [`release/RC-EVIDENCE-TEMPLATE.md`](release/RC-EVIDENCE-TEMPLATE.md). These documents do not authorize distribution.
 
-The repository-side release procedure is [`release-preflight.md`](release-preflight.md). The draft App Store Connect package is [`release/BETA-METADATA.md`](release/BETA-METADATA.md), the reviewer environment design is [`release/REVIEWER-ENVIRONMENT.md`](release/REVIEWER-ENVIRONMENT.md), and the current synchronization handoff is [`release/SYNC-HANDOFF.md`](release/SYNC-HANDOFF.md). A dated readiness audit and PR #46 disposition are kept in [`release/READINESS-AUDIT-2026-09-18.md`](release/READINESS-AUDIT-2026-09-18.md) and [`release/PR-46-REVIEW.md`](release/PR-46-REVIEW.md).
+The repository-side release procedure is [`release-preflight.md`](release-preflight.md). Release records for distributed builds (commit + tag per build) live in [`../RELEASES.md`](../RELEASES.md). The draft App Store Connect package is [`release/BETA-METADATA.md`](release/BETA-METADATA.md), the reviewer environment design is [`release/REVIEWER-ENVIRONMENT.md`](release/REVIEWER-ENVIRONMENT.md), and the current synchronization handoff is [`release/SYNC-HANDOFF.md`](release/SYNC-HANDOFF.md). A dated readiness audit and PR #46 disposition are kept in [`release/READINESS-AUDIT-2026-09-18.md`](release/READINESS-AUDIT-2026-09-18.md) and [`release/PR-46-REVIEW.md`](release/PR-46-REVIEW.md).
