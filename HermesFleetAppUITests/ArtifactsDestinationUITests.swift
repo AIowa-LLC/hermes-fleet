@@ -147,6 +147,10 @@ final class ArtifactsDestinationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO"] = "1"
+        // Keep the tool row stable while XCUITest resolves its accessibility
+        // elements. Immediate completion races the transcript snapshot on
+        // hosted simulators as the animation hands off to the delivered image.
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO_HOLD_MS"] = "8000"
         app.launch()
         UITabNavigation.shellReady(app, timeout: 20)
         openConversation(app)
@@ -159,7 +163,12 @@ final class ArtifactsDestinationUITests: XCTestCase {
 
         // Resolve the image in the exact citing tool row. Keep the positive
         // image, preview, and share assertions while limiting snapshot work
-        // to the row that owns the artifact.
+        // to the row that owns the artifact. First observe the in-flight
+        // state; the hold above prevents the tool/image handoff from racing
+        // the row lookup on hosted simulators.
+        let generating = firstMatch(app, "fleet.conversation.imagegen.activity.row-2")
+        XCTAssertTrue(generating.waitForExistence(timeout: 20),
+                      "image generation must start inside the tool row")
         let transcript = app.scrollViews["fleet.conversation.transcript"]
         let citingToolRow = transcript.descendants(matching: .any)["fleet.conversation.row.row-2"]
         XCTAssertTrue(citingToolRow.waitForExistence(timeout: 20))
