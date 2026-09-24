@@ -5,7 +5,7 @@
 #   (selected from the working diff vs the base ref; never the full matrix)
 #
 # The hosted pull-request preflight runs the same selection; the merge queue
-# runs the complete five-shard C1 matrix as the authoritative integration
+# runs the complete eight-shard C1 matrix as the authoritative integration
 # gate. Use `make ci` for the broad local gate.
 #
 # Usage:

@@ -3,8 +3,9 @@
 #
 # Dev Loop v2: ordinary pull-request CI validates a focused subset of the
 # deterministic UI inventory, selected from the pull request's changed files.
-# The complete five-shard matrix (merge_group / main pushes) remains the
-# authoritative integration gate; this preflight only catches obvious defects
+# The complete eight-shard matrix runs for merge_group candidates. Main pushes
+# retain static/package/unit validation without repeating UI work already
+# proven by the merge queue. This preflight only catches obvious defects
 # earlier and must never be treated as a substitute for the full matrix.
 #
 # Usage:
@@ -51,12 +52,12 @@ has_class() { case " $KNOWN " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Conservative broad journeys for ambiguous/broad product changes and for
 # product files without a more specific mapping. Keep this set deliberately
-# small: the complete five-shard merge_group matrix remains authoritative for
+# small: the complete eight-shard merge_group matrix remains authoritative for
 # broad diffs, while pull-request preflight must finish within its own budget.
 CORE="HermesFleetHappyPath P0_7SessionStateMachine"
 # A pull request can touch many product areas at once (for example, a
 # cross-cutting networking/security change).  Keep the PR signal bounded and
-# deterministic: the full five-shard merge_group matrix remains authoritative
+# deterministic: the full eight-shard merge_group matrix remains authoritative
 # for the complete inventory.  Oversized selections still run a mandatory,
 # conservative CORE journey set instead of timing out after an unbounded serial
 # list of xcodebuild invocations.
