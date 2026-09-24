@@ -65,10 +65,10 @@ require "      fail-fast: false" "a failing UI shard must not cancel its sibling
 if ! awk '
   /^  ui-shard:$/ { in_ui_shard=1; next }
   /^  [[:alnum:]_-]+:$/ { if (in_ui_shard) exit }
-  in_ui_shard && /^    timeout-minutes: 120$/ { found=1 }
+  in_ui_shard && /^    timeout-minutes: 150$/ { found=1 }
   END { exit !found }
 ' "$WORKFLOW"; then
-  echo "FAIL: the authoritative UI matrix must have a 120-minute ceiling" >&2
+  echo "FAIL: the authoritative UI matrix must have a 150-minute ceiling" >&2
   exit 1
 fi
 require "        shard: [1, 2, 3, 4, 5]" "all deterministic UI shards must remain configured"

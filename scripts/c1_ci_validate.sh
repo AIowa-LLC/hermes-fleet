@@ -7,7 +7,7 @@
 #
 # GitHub Actions runs these same phases as separate jobs instead of this one
 # monolithic process. Its authoritative UI matrix uses five shards, each with
-# a 120-minute ceiling; the local --all matrix still runs suites serially:
+# a 150-minute ceiling; the local --all matrix still runs suites serially:
 #   static-guards  -> scripts/c1_static.sh
 #   packages       -> scripts/c1_packages.sh
 #   units          -> scripts/c1_units.sh

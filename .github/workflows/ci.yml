@@ -69,9 +69,10 @@ jobs:
     if: github.event_name == 'merge_group'
     runs-on: macos-latest
     # The deterministic inventory has grown to 59 suites, or 11-12 suites per
-    # shard. Five shards fit the observed hosted-runner concurrency; 120 minutes
-    # gives each shard headroom for its build, retries, and slower runners.
-    timeout-minutes: 120
+    # shard. Five shards fit the observed hosted-runner concurrency. Runtime-
+    # weighted estimates top out near 105 minutes; 150 leaves recovery margin
+    # for hosted-runner variance, xcodebuild setup, and suite retries.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
