@@ -62,22 +62,21 @@ jobs:
 
   ui-shard:
     name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
-    # Dev Loop v2: the complete eight-shard matrix is the authoritative
+    # Dev Loop v2: the complete five-shard matrix is the authoritative
     # integration validation for merge_group candidates. Main pushes retain
     # static/package/unit post-merge validation without paying for the same UI
     # matrix a second time; pull requests run the focused ui-preflight below.
     if: github.event_name == 'merge_group'
     runs-on: macos-latest
-    # The deterministic inventory has grown to 59 suites. Run 7-8 suites per
-    # shard to lower wall-clock time, with headroom for the initial build,
-    # retries, and slower hosted runners. The former 75-minute ceiling killed
-    # legitimate shards before they finished this inventory.
+    # The deterministic inventory has grown to 59 suites, or 11-12 suites per
+    # shard. Five shards fit the observed hosted-runner concurrency; 120 minutes
+    # gives each shard headroom for its build, retries, and slower runners.
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
-        shards: [8]
+        shard: [1, 2, 3, 4, 5]
+        shards: [5]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

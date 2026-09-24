@@ -5,7 +5,7 @@
 #
 # Dev Loop v2 contract: pull requests run a fast preflight whose UI component
 # is a focused subset selected by scripts/c1_ui_preflight.sh; merge_group
-# candidates run the complete eight-shard C1 matrix. Main pushes run only the
+# candidates run the complete five-shard C1 matrix. Main pushes run only the
 # post-merge static/package/unit validation; the merge_group event is the sole
 # UI authority. The required `CI Gate` check must fail closed in every
 # topology: every expected dependency must report success, and the job that
@@ -71,8 +71,8 @@ if ! awk '
   echo "FAIL: the authoritative UI matrix must have a 120-minute ceiling" >&2
   exit 1
 fi
-require "        shard: [1, 2, 3, 4, 5, 6, 7, 8]" "all deterministic UI shards must remain configured"
-require "        shards: [8]" "the UI matrix must keep its eight-shard split"
+require "        shard: [1, 2, 3, 4, 5]" "all deterministic UI shards must remain configured"
+require "        shards: [5]" "the UI matrix must keep its five-shard split"
 require "        run: bash scripts/ci_gate_policy_check.sh" "CI must verify its own integration policy"
 require "        run: bash scripts/ci_gate_policy_contract_test.sh" "CI must execute event-specific CI Gate contract tests"
 require "        run: bash scripts/c1_ui_preflight_test.sh" "CI must verify the preflight selector"

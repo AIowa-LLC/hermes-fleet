@@ -22,7 +22,7 @@
 #    ENVIRONMENTAL_CLASSES). No suite can silently disappear.
 #  - --classes is used by the focused pull-request preflight
 #    (scripts/c1_ui_preflight.sh, Dev Loop v2). It selects a deterministic
-#    SUBSET of this same inventory and never forks it; the full eight-shard
+#    SUBSET of this same inventory and never forks it; the full five-shard
 #    matrix remains the authoritative merge_group gate.
 set -u
 cd "$(dirname "$0")/.."
@@ -109,7 +109,7 @@ audit() {
 shard_for_index() { echo $(( $1 % SHARDS + 1 )); }
 
 # --- argument parsing --------------------------------------------------------
-MODE=all; SHARD=1; SHARDS=8; CLASSES=""
+MODE=all; SHARD=1; SHARDS=5; CLASSES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) MODE=all ;;
