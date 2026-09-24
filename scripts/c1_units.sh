@@ -20,12 +20,14 @@ SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | se
 echo "  using simulator: $SIM_NAME"
 DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
 DD="$REPO/build/C1Ci"
+UNIT_RESULT="/tmp/hermes-c1-unit-${GITHUB_RUN_ID:-local}-$$.xcresult"
 # SwiftStreamingMarkdown v0.7.0 transitively uses the reviewed Equatable
 # macro. Headless CI has no Xcode UI step to approve that pinned macro, so
 # explicitly bypass fingerprint validation; this does not bypass macro
 # execution or package resolution.
 XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation)
+    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation \
+    -resultBundlePath "$UNIT_RESULT")
 
 printf '\n=== xcodebuild UNIT tests (HermesFleetAppTests) ===\n'
 if xcodebuild "${XC[@]}" -only-testing:HermesFleetAppTests \
@@ -36,6 +38,13 @@ if xcodebuild "${XC[@]}" -only-testing:HermesFleetAppTests \
   exit 0
 else
   printf 'FAIL  xcodebuild UNIT tests (HermesFleetAppTests) FAILED\n'
+  # Keep the failing case visible even when many passing suite summaries push
+  # it out of the bounded tail below. The full xcresult is uploaded by CI.
+  grep -E 'Test Case .* (failed|Failure)|Executed .* with [1-9][0-9]* failure' \
+    /tmp/c1_xctest_unit.log | tail -20 || true
   grep -E 'error:|failed|Test Suite|Executed' /tmp/c1_xctest_unit.log | tail -25
+  if [ -d "$UNIT_RESULT" ]; then
+    echo "  xcresult: $UNIT_RESULT"
+  fi
   exit 1
 fi
