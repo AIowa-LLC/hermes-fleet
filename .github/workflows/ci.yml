@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Install tools (xcodegen, gitleaks)
@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Package phase
@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Unit phase
@@ -62,9 +62,9 @@ jobs:
 
       - name: Upload xcresults (unit failure diagnostics)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: xcresults-units
+          name: xcresults-units-attempt-${{ github.run_attempt }}
           path: /tmp/hermes-c1-unit-*.xcresult
           retention-days: 7
           if-no-files-found: ignore
@@ -89,7 +89,7 @@ jobs:
         shards: [5]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Run UI shard
@@ -97,9 +97,9 @@ jobs:
 
       - name: Upload xcresults (failure diagnostics)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: xcresults-shard-${{ matrix.shard }}
+          name: xcresults-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: /tmp/hermes-c1-results/
           retention-days: 7
           if-no-files-found: ignore
@@ -115,7 +115,7 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # The selector diffs against the pull request's base commit, so the
           # full pull request history must be present.
@@ -125,9 +125,9 @@ jobs:
 
       - name: Upload xcresults (failure diagnostics)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
-          name: xcresults-pr-preflight
+          name: xcresults-pr-preflight-attempt-${{ github.run_attempt }}
           path: /tmp/hermes-c1-results/
           retention-days: 7
           if-no-files-found: ignore
@@ -140,7 +140,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout gate evaluator
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Require every validation job to have succeeded
