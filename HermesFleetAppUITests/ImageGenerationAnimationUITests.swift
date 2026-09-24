@@ -102,12 +102,15 @@ final class ImageGenerationAnimationUITests: XCTestCase {
                 .firstMatch.exists,
             "the animation must render inside the citing tool row, not as a detached row")
 
-        // Delivered: the animation leaves and the retrieved image takes over.
-        XCTAssertTrue(stage.waitForNonExistence(timeout: 30),
-                      "the delivered result must stop the animation")
+        // Wait for the positive handoff state first. Querying disappearance
+        // while the tool row is reconfiguring produced XCUITest snapshot
+        // timeouts on hosted runners; the image is the stable completion
+        // signal, after which the outgoing animation must be gone.
         let image = deliveredImage(app)
         XCTAssertTrue(image.waitForExistence(timeout: 40),
                       "the delivered image must render in the citing row")
+        XCTAssertTrue(stage.waitForNonExistence(timeout: 5),
+                      "the delivered result must stop the animation")
         attachScreenshot(app, name: "imagegen-delivered")
     }
 
