@@ -24,7 +24,7 @@ final class ImageGenerationAnimationUITests: XCTestCase {
 
     /// Contract identifier stems (the citing row id is appended by the app).
     private static let animationPrefix = "fleet.conversation.imagegen.activity."
-    private static let imagePrefix = "fleet.artifact.image."
+    private static let deliveredImageIdentifier = "fleet.artifact.image.row-2.scripted_generation.png"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -65,7 +65,8 @@ final class ImageGenerationAnimationUITests: XCTestCase {
     }
 
     private func deliveredImage(_ app: XCUIApplication) -> XCUIElement {
-        firstMatch(app, prefix: Self.imagePrefix)
+        app.descendants(matching: .any)["fleet.conversation.row.row-2"]
+            .buttons[Self.deliveredImageIdentifier].firstMatch
     }
 
     private func sendPrompt(_ app: XCUIApplication, text: String) {

@@ -157,19 +157,21 @@ final class ArtifactsDestinationUITests: XCTestCase {
         composer.typeText("draw a cat")
         tap(app.descendants(matching: .any)["fleet.conversation.send"])
 
-        let inlineImage = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH 'fleet.artifact.image.'")).firstMatch
+        let toolRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
+        XCTAssertTrue(toolRow.waitForExistence(timeout: 10), "the citing tool row should render")
+        // Scope the lookup to the known citing row and exact scripted fixture
+        // ID. A BEGINSWITH query across every descendant repeatedly stalls
+        // XCTest snapshot evaluation on hosted simulators even though the
+        // image is visibly rendered in this row.
+        let inlineImage = toolRow.buttons["fleet.artifact.image.row-2.scripted_generation.png"].firstMatch
         XCTAssertTrue(inlineImage.waitForExistence(timeout: 40),
                       "the generated image must render inline in the transcript")
 
         // The artifact lives in the TOOL row's bubble (the row whose result
         // cited it) — the scripted turn layout puts it at row-2 (user, tool,
         // assistant).
-        let toolRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
-        XCTAssertTrue(toolRow.waitForExistence(timeout: 10))
         XCTAssertTrue(
-            toolRow.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH 'fleet.artifact.image.'")).firstMatch.exists,
+            toolRow.buttons["fleet.artifact.image.row-2.scripted_generation.png"].exists,
             "the artifact must render inside the citing tool row, not as a detached row")
 
         inlineImage.tap()

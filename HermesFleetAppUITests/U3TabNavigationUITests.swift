@@ -231,7 +231,20 @@ final class U3TabNavigationUITests: XCTestCase {
             for _ in 0..<8 where !group.exists { app.swipeUp(velocity: .fast) }
         }
         XCTAssertTrue(group.waitForExistence(timeout: 10), "scripted group row renders")
-        for _ in 0..<8 where !group.isHittable { app.swipeUp(velocity: .fast) }
+        let roster = app.scrollViews["fleet.roster"].firstMatch
+        XCTAssertTrue(roster.waitForExistence(timeout: 5), "Bots roster must expose its scroll view")
+        let searchField = app.searchFields["Bots, groups, gateways"].firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Bots roster search field must render")
+        // XCTest can report a row as hittable when only its clipped bottom
+        // edge is visible. In that state tap() targets the row's center
+        // below the safe viewport (on iPhone 17 Pro, y=858 for a row ending
+        // at y=894 in an 874-point window). Scroll the actual roster until
+        // the whole row clears the persistent search field before activation.
+        for _ in 0..<8 where group.frame.maxY > searchField.frame.minY {
+            roster.swipeUp(velocity: .fast)
+        }
+        XCTAssertLessThanOrEqual(group.frame.maxY, searchField.frame.minY,
+                                 "scripted group row must clear the bottom search field")
         XCTAssertTrue(group.isHittable, "scripted group row must be hittable before activation")
         group.tap()
         XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10))
