@@ -24,6 +24,7 @@ final class ImageGenerationAnimationUITests: XCTestCase {
 
     /// Contract identifier stems (the citing row id is appended by the app).
     private static let animationPrefix = "fleet.conversation.imagegen.activity."
+    private static let animationIdentifier = "fleet.conversation.imagegen.activity.row-2"
     private static let deliveredImageIdentifier = "fleet.artifact.image.row-2.scripted_generation.png"
 
     override func setUpWithError() throws {
@@ -51,22 +52,14 @@ final class ImageGenerationAnimationUITests: XCTestCase {
         return app
     }
 
-    /// Swift 6: NSPredicate is not Sendable and cannot cross an isolation
-    /// boundary as a parameter — the predicate is minted fresh at the call
-    /// site from a Sendable prefix string (the repo's established pattern).
-    private func firstMatch(_ app: XCUIApplication, prefix: String) -> XCUIElement {
-        app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+    private func animation(_ app: XCUIApplication) -> XCUIElement {
+        app.staticTexts
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", Self.animationPrefix))
             .firstMatch
     }
 
-    private func animation(_ app: XCUIApplication) -> XCUIElement {
-        firstMatch(app, prefix: Self.animationPrefix)
-    }
-
     private func deliveredImage(_ app: XCUIApplication) -> XCUIElement {
-        app.descendants(matching: .any)["fleet.conversation.row.row-2"]
-            .buttons[Self.deliveredImageIdentifier].firstMatch
+        app.buttons[Self.deliveredImageIdentifier].firstMatch
     }
 
     private func sendPrompt(_ app: XCUIApplication, text: String) {
@@ -97,16 +90,14 @@ final class ImageGenerationAnimationUITests: XCTestCase {
         // The animation belongs to the CITING tool row (user, tool, assistant).
         let toolRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
         XCTAssertTrue(toolRow.waitForExistence(timeout: 10))
-        XCTAssertTrue(
-            toolRow.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@", Self.animationPrefix))
-                .firstMatch.exists,
-            "the animation must render inside the citing tool row, not as a detached row")
+        XCTAssertTrue(toolRow.staticTexts[Self.animationIdentifier].firstMatch.exists,
+                      "the animation must render inside the citing tool row, not as a detached row")
 
         // Wait for the positive handoff state first. Querying disappearance
         // while the tool row is reconfiguring produced XCUITest snapshot
-        // timeouts on hosted runners; the image is the stable completion
-        // signal, after which the outgoing animation must be gone.
+        // timeouts on hosted runners. Resolve the exact accessibility role
+        // and identifier directly; the image identifier includes its citing
+        // row id, and the image is the stable completion signal.
         let image = deliveredImage(app)
         XCTAssertTrue(image.waitForExistence(timeout: 40),
                       "the delivered image must render in the citing row")

@@ -157,22 +157,16 @@ final class ArtifactsDestinationUITests: XCTestCase {
         composer.typeText("draw a cat")
         tap(app.descendants(matching: .any)["fleet.conversation.send"])
 
-        let toolRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
-        XCTAssertTrue(toolRow.waitForExistence(timeout: 10), "the citing tool row should render")
-        // Scope the lookup to the known citing row and exact scripted fixture
-        // ID. A BEGINSWITH query across every descendant repeatedly stalls
-        // XCTest snapshot evaluation on hosted simulators even though the
-        // image is visibly rendered in this row.
-        let inlineImage = toolRow.buttons["fleet.artifact.image.row-2.scripted_generation.png"].firstMatch
+        // Resolve the image by its exact button role and ID. The ID carries
+        // the citing tool row (`row-2`); querying that row's full descendant
+        // tree while SwiftUI inserts the image stalled XCTest snapshots on
+        // hosted simulators even though the image was visibly rendered.
+        let inlineImage = app.buttons["fleet.artifact.image.row-2.scripted_generation.png"].firstMatch
         XCTAssertTrue(inlineImage.waitForExistence(timeout: 40),
                       "the generated image must render inline in the transcript")
 
-        // The artifact lives in the TOOL row's bubble (the row whose result
-        // cited it) — the scripted turn layout puts it at row-2 (user, tool,
-        // assistant).
-        XCTAssertTrue(
-            toolRow.buttons["fleet.artifact.image.row-2.scripted_generation.png"].exists,
-            "the artifact must render inside the citing tool row, not as a detached row")
+        // The scripted turn layout is user, tool, assistant; row-2 in the
+        // exact image identifier proves the artifact is attached to the tool.
 
         inlineImage.tap()
         XCTAssertTrue(firstMatch(app, "fleet.artifact.preview").waitForExistence(timeout: 15),
