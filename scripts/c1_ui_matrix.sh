@@ -15,11 +15,12 @@
 #    bare bundle).
 #  - The ENVIRONMENTAL live-gateway suites (real `hermes serve` / LAN /
 #    tailnet) are intentionally NOT part of CI; they run locally.
-#  - Shard assignment is deterministic: suite at index i (canonical order
-#    below) belongs to shard $(( i % SHARDS + 1 )). Adding a new suite class
-#    to HermesFleetAppUITests makes --audit (and every shard run) FAIL LOUDLY
-#    until it is added to UI_CLASSES (and, if it is environmental, to
-#    ENVIRONMENTAL_CLASSES). No suite can silently disappear.
+#  - Shard assignment is deterministic and runtime-weighted. Observed suite
+#    durations are kept beside the canonical inventory; longest suites are
+#    greedily assigned to the currently lightest shard, with canonical order
+#    breaking ties. Adding a suite makes --audit FAIL LOUDLY until both its
+#    inventory row and observed-runtime estimate are added. No suite can
+#    silently disappear.
 #  - --classes is used by the focused pull-request preflight
 #    (scripts/c1_ui_preflight.sh, Dev Loop v2). It selects a deterministic
 #    SUBSET of this same inventory and never forks it; the full five-shard
@@ -29,7 +30,7 @@ cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 
 # Canonical deterministic CI suites (bare class names; UITests suffix added
-# at invocation). Order is historical; do not reorder without resharding.
+# at invocation). Order is historical and also breaks runtime-weight ties.
 UI_CLASSES=(
   HermesFleetHappyPath HermesFleetReconnect P0_7SessionStateMachine
   S3CleartextWarning RT2RemovalAndEndpointSanitization
@@ -78,6 +79,20 @@ UI_CLASSES=(
   FleetLaunchCache
 )
 
+# C1 elapsed-runtime weights in tenths of a minute, in the same order as
+# UI_CLASSES. Source: merge-group run 36006153435 (suite start to final
+# PASS/FAIL marker, including retry overhead); suites not started or cut off
+# by shard 5's timeout use the preceding complete matrix run with the observed
+# shard-5 slowdown applied. Failed-suite retry time is intentionally retained
+# as conservative headroom until clean runs provide better estimates.
+UI_WEIGHT_TENTHS_OF_MINUTE=(
+  149 101 182 104 145 40 38 41 24 91 66 105
+  53 32 157 57 58 45 47 48 45 110 51 108
+  123 38 60 82 71 76 83 92 86 55 390 120
+  75 129 94 71 90 199 46 74 108 101 41 91
+  73 60 65 47 114 150 223 55 62 43 33
+)
+
 # Live-gateway/environmental suites — intentionally excluded from CI. They
 # need real infrastructure and stay gated/manual/local.
 ENVIRONMENTAL_CLASSES=(
@@ -105,8 +120,6 @@ audit() {
   fi
   echo "audit: ${#UI_CLASSES[@]} CI suites + ${#ENVIRONMENTAL_CLASSES[@]} environmental suites = $(printf '%s\n' "$discovered" | wc -l | tr -d ' ') bundle classes — every class accounted for exactly once."
 }
-
-shard_for_index() { echo $(( $1 % SHARDS + 1 )); }
 
 # --- argument parsing --------------------------------------------------------
 MODE=all; SHARD=1; SHARDS=5; CLASSES=""
@@ -143,6 +156,50 @@ if [ "$MODE" = classes ]; then
   done
 fi
 
+# Build the same deterministic LPT plan for every mode, including --audit.
+# The plan accepts a different shard count for local diagnosis, while CI uses
+# the five bins configured in .github/workflows/ci.yml.
+build_shard_plan() {
+  local raw index shard
+  [ "${#UI_WEIGHT_TENTHS_OF_MINUTE[@]}" -eq "${#UI_CLASSES[@]}" ] \
+    || die "runtime weights must cover every deterministic UI suite"
+  raw=$(python3 - "$SHARDS" "${#UI_CLASSES[@]}" "${UI_WEIGHT_TENTHS_OF_MINUTE[@]}" <<'PY'
+import sys
+
+shard_count = int(sys.argv[1])
+suite_count = int(sys.argv[2])
+weights = [int(value) for value in sys.argv[3:]]
+if shard_count < 1 or len(weights) != suite_count or any(weight <= 0 for weight in weights):
+    raise SystemExit("invalid shard count or deterministic suite runtime weights")
+
+loads = [0] * shard_count
+assignments = [0] * suite_count
+for index in sorted(range(suite_count), key=lambda item: (-weights[item], item)):
+    shard = min(range(shard_count), key=lambda item: (loads[item], item))
+    assignments[index] = shard + 1
+    loads[shard] += weights[index]
+
+for index, shard in enumerate(assignments):
+    print(index, shard)
+PY
+) || die "could not build deterministic runtime-weighted shard plan"
+  SHARD_FOR_INDEX=()
+  SHARD_TOTALS=()
+  for ((index = 0; index < SHARDS; index++)); do SHARD_TOTALS+=(0); done
+  while read -r index shard; do
+    [ -n "$index" ] || continue
+    [ "$shard" -ge 1 ] && [ "$shard" -le "$SHARDS" ] \
+      || die "runtime-weighted plan assigned an invalid shard"
+    SHARD_FOR_INDEX[$index]=$shard
+    SHARD_TOTALS[$((shard - 1))]=$((SHARD_TOTALS[shard - 1] + UI_WEIGHT_TENTHS_OF_MINUTE[index]))
+  done <<< "$raw"
+  [ "${#SHARD_FOR_INDEX[@]}" -eq "${#UI_CLASSES[@]}" ] \
+    || die "runtime-weighted plan did not assign every deterministic suite exactly once"
+}
+build_shard_plan
+
+shard_for_index() { echo "${SHARD_FOR_INDEX[$1]}"; }
+
 audit  # every mode audits first — fail loudly before running anything
 
 # --- select the suites for this invocation -----------------------------------
@@ -156,9 +213,10 @@ for i in "${!UI_CLASSES[@]}"; do
 done
 
 if [ "$MODE" = audit ]; then
-  echo "shard mapping ($SHARDS shards, round-robin over canonical order):"
+  echo "shard mapping ($SHARDS shards, deterministic runtime-weighted LPT; load units are 0.1 minutes):"
   for s in $(seq 1 "$SHARDS"); do
-    printf '  shard %d: ' "$s"
+    printf '  shard %d (~%d.%d min): ' "$s" \
+      "$((SHARD_TOTALS[s - 1] / 10))" "$((SHARD_TOTALS[s - 1] % 10))"
     for i in "${!UI_CLASSES[@]}"; do
       [ "$(shard_for_index "$i")" -eq "$s" ] && printf '%s ' "${UI_CLASSES[$i]}"
     done
