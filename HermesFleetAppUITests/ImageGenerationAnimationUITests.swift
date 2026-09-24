@@ -52,14 +52,18 @@ final class ImageGenerationAnimationUITests: XCTestCase {
         return app
     }
 
+    private func transcript(_ app: XCUIApplication) -> XCUIElement {
+        app.scrollViews["fleet.conversation.transcript"]
+    }
+
     private func animation(_ app: XCUIApplication) -> XCUIElement {
-        app.staticTexts
+        transcript(app).staticTexts
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", Self.animationPrefix))
             .firstMatch
     }
 
     private func deliveredImage(_ app: XCUIApplication) -> XCUIElement {
-        app.buttons[Self.deliveredImageIdentifier].firstMatch
+        transcript(app).buttons[Self.deliveredImageIdentifier].firstMatch
     }
 
     private func sendPrompt(_ app: XCUIApplication, text: String) {
@@ -88,7 +92,7 @@ final class ImageGenerationAnimationUITests: XCTestCase {
         attachScreenshot(app, name: "imagegen-generating")
 
         // The animation belongs to the CITING tool row (user, tool, assistant).
-        let toolRow = app.descendants(matching: .any)["fleet.conversation.row.row-2"]
+        let toolRow = transcript(app).descendants(matching: .any)["fleet.conversation.row.row-2"]
         XCTAssertTrue(toolRow.waitForExistence(timeout: 10))
         XCTAssertTrue(toolRow.staticTexts[Self.animationIdentifier].firstMatch.exists,
                       "the animation must render inside the citing tool row, not as a detached row")

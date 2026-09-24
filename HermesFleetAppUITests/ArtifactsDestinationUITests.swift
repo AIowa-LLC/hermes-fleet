@@ -157,11 +157,12 @@ final class ArtifactsDestinationUITests: XCTestCase {
         composer.typeText("draw a cat")
         tap(app.descendants(matching: .any)["fleet.conversation.send"])
 
-        // Resolve the image by its exact button role and ID. The ID carries
-        // the citing tool row (`row-2`); querying that row's full descendant
-        // tree while SwiftUI inserts the image stalled XCTest snapshots on
-        // hosted simulators even though the image was visibly rendered.
-        let inlineImage = app.buttons["fleet.artifact.image.row-2.scripted_generation.png"].firstMatch
+        // Resolve the image by its exact button role and ID inside the
+        // transcript. The ID carries the citing tool row (`row-2`); scoping
+        // the query keeps XCTest from rebuilding a match list for the whole
+        // shell (including the active keyboard) during the image handoff.
+        let transcript = app.scrollViews["fleet.conversation.transcript"]
+        let inlineImage = transcript.buttons["fleet.artifact.image.row-2.scripted_generation.png"].firstMatch
         XCTAssertTrue(inlineImage.waitForExistence(timeout: 40),
                       "the generated image must render inline in the transcript")
 
