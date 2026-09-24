@@ -9,9 +9,9 @@ import Foundation
 /// no view, no device, no clock read beyond the values handed in.
 ///
 /// `DiagnosticsReport.render(_:)` is the last line of defense: every free-text
-/// field passes through `Redaction.safeDiagnosticText` even though callers pre-redact
-/// (belt and braces — a future caller cannot leak by forgetting, and an
-/// already-redacted endpoint is simply redacted again, idempotently).
+/// field passes through `Redaction.safeDiagnosticReportText`, which removes
+/// credentials and masks complete endpoint URLs before a user shares the
+/// report.
 public struct DiagnosticsReportInput: Sendable, Equatable {
     /// When the report was assembled (stamped into the header).
     public let generatedAt: Date
@@ -57,8 +57,8 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
 }
 
 /// One gateway's section of the diagnostics report. Every string here is
-/// already display-safe at the call site (`Redaction.redactedURL` for
-/// `endpointDisplay`) and is re-redacted at render time.
+/// display-safe at the call site. The shared report masks endpoint URLs even
+/// when the app's local display helpers retain their host for troubleshooting.
 public struct DiagnosticsGatewaySection: Sendable, Equatable {
     /// User-facing gateway name.
     public let label: String
@@ -133,17 +133,17 @@ public enum DiagnosticsReport {
         var lines: [String] = []
 
         // Header — identity + the three facts a maintainer asks for first.
-        lines.append("Hermes Fleet \(Redaction.safeDiagnosticText(input.appVersion)) (build \(Redaction.safeDiagnosticText(input.appBuild)))")
-        lines.append("Report ID: \(Redaction.safeDiagnosticText(input.reportID))")
+        lines.append("Hermes Fleet \(Redaction.safeDiagnosticReportText(input.appVersion)) (build \(Redaction.safeDiagnosticReportText(input.appBuild)))")
+        lines.append("Report ID: \(Redaction.safeDiagnosticReportText(input.reportID))")
         lines.append("Generated: \(iso8601(input.generatedAt))")
         lines.append("")
 
         lines.append("DEVICE")
-        lines.append("  OS: \(Redaction.safeDiagnosticText(input.osVersion))")
-        lines.append("  Model: \(Redaction.safeDiagnosticText(input.deviceModel))")
+        lines.append("  OS: \(Redaction.safeDiagnosticReportText(input.osVersion))")
+        lines.append("  Model: \(Redaction.safeDiagnosticReportText(input.deviceModel))")
         lines.append("")
 
-        let context = Redaction.safeDiagnosticText(input.surfaceContext ?? "")
+        let context = Redaction.safeDiagnosticReportText(input.surfaceContext ?? "")
         lines.append("CONTEXT")
         lines.append("  \(context.isEmpty ? "not captured" : context)")
         lines.append("")
@@ -153,14 +153,14 @@ public enum DiagnosticsReport {
             lines.append("  No gateways configured.")
         } else {
             for section in input.gateways {
-                lines.append("  \(Redaction.safeDiagnosticText(section.label))")
-                lines.append("    Endpoint: \(Redaction.safeDiagnosticText(section.endpointDisplay))")
-                lines.append("    Connection: \(Redaction.safeDiagnosticText(section.connectionState))")
-                let capabilities = section.transportCapabilities.map(Redaction.safeDiagnosticText)
+                lines.append("  \(Redaction.safeDiagnosticReportText(section.label))")
+                lines.append("    Endpoint: \(Redaction.safeDiagnosticReportText(section.endpointDisplay))")
+                lines.append("    Connection: \(Redaction.safeDiagnosticReportText(section.connectionState))")
+                let capabilities = section.transportCapabilities.map(Redaction.safeDiagnosticReportText)
                 lines.append("    Capabilities: \(capabilities.isEmpty ? "none advertised" : capabilities.joined(separator: ", "))")
                 lines.append("    Groups: \(capabilityText(section.groupsCapability))")
                 if let roster = section.rosterSummary, !roster.isEmpty {
-                    lines.append("    Roster: \(Redaction.safeDiagnosticText(roster))")
+                    lines.append("    Roster: \(Redaction.safeDiagnosticReportText(roster))")
                 }
             }
         }
@@ -173,7 +173,7 @@ public enum DiagnosticsReport {
             lines.append("  No recent errors.")
         } else {
             for event in events {
-                lines.append("  \(clock(event.at))  \(Redaction.safeDiagnosticText(event.category)) — \(Redaction.safeDiagnosticText(event.detail))")
+                lines.append("  \(clock(event.at))  \(Redaction.safeDiagnosticReportText(event.category)) — \(Redaction.safeDiagnosticReportText(event.detail))")
             }
         }
 
@@ -186,7 +186,7 @@ public enum DiagnosticsReport {
     /// (fail closed — never "supported" by assumption).
     private static func capabilityText(_ capability: String?) -> String {
         guard let capability else { return "unknown" }
-        let safe = Redaction.safeDiagnosticText(capability)
+        let safe = Redaction.safeDiagnosticReportText(capability)
         return safe.isEmpty ? "unknown" : safe
     }
 

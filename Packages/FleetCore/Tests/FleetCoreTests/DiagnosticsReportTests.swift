@@ -57,7 +57,7 @@ final class DiagnosticsReportTests: XCTestCase {
         let text = DiagnosticsReport.render(makeInput(gateways: [
             DiagnosticsGatewaySection(
                 label: "MacBook",
-                endpointDisplay: "https://mac.example.ts.net:8765",
+                endpointDisplay: "https://gateway.example:8765/private/path",
                 connectionState: "Connected",
                 transportCapabilities: ["change_events", "heartbeat"],
                 groupsCapability: "supported",
@@ -72,7 +72,9 @@ final class DiagnosticsReportTests: XCTestCase {
         ]))
 
         XCTAssertTrue(text.contains("  MacBook"), text)
-        XCTAssertTrue(text.contains("    Endpoint: https://mac.example.ts.net:8765"), text)
+        XCTAssertTrue(text.contains("    Endpoint: [ENDPOINT REDACTED]"), text)
+        XCTAssertFalse(text.contains("gateway.example"), text)
+        XCTAssertFalse(text.contains("private/path"), text)
         XCTAssertTrue(text.contains("    Connection: Connected"), text)
         XCTAssertTrue(text.contains("    Capabilities: change_events, heartbeat"), text)
         XCTAssertTrue(text.contains("    Groups: supported"), text)
@@ -96,14 +98,14 @@ final class DiagnosticsReportTests: XCTestCase {
         let text = DiagnosticsReport.render(makeInput(gateways: [
             DiagnosticsGatewaySection(
                 label: "MacBook token=abc12345",
-                endpointDisplay: "https://user:pass@mac.example.ts.net:8765/?ticket=SECRETVALUE",
+                endpointDisplay: "https://user:pass@gateway.example:8765/private/path?ticket=SECRETVALUE",
                 connectionState: "Unavailable from this phone",
                 transportCapabilities: ["heartbeat"],
                 groupsCapability: "unsupported: ticket=SECRETVALUE",
-                rosterSummary: "failed: https://mac.example.ts.net/?token=abc12345"),
+                rosterSummary: "failed: https://gateway.example/private/path?token=abc12345"),
         ]))
 
-        for secret in ["abc12345", "SECRETVALUE", "user:pass@", "pass@mac"] {
+        for secret in ["abc12345", "SECRETVALUE", "user:pass@", "gateway.example", "private/path"] {
             XCTAssertFalse(text.contains(secret),
                            "\(secret) must never render in the report: \(text)")
         }
@@ -122,7 +124,8 @@ final class DiagnosticsReportTests: XCTestCase {
         for secret in ["abc12345", "SECRETVALUE", "user:pass@"] {
             XCTAssertFalse(text.contains(secret), "\(secret) must never render: \(text)")
         }
-        XCTAssertTrue(text.contains("https://[REDACTED]host/?ticket=[REDACTED]"), text)
+        XCTAssertTrue(text.contains("[ENDPOINT REDACTED]"), text)
+        XCTAssertFalse(text.contains("host/"), text)
         XCTAssertTrue(text.contains("token=[REDACTED]"), text)
     }
 

@@ -100,6 +100,18 @@ public enum Redaction {
         return safe
     }
 
+    /// Produce text safe for the user-shared diagnostics report. Local
+    /// diagnostics may retain a gateway host to help with troubleshooting;
+    /// reports are copied or shared outside the app, so mask complete endpoint
+    /// URLs, including their host and path, after removing credential shapes.
+    public static func safeDiagnosticReportText(_ text: String) -> String {
+        let safe = safeDiagnosticText(text)
+        return diagnosticReportURLPatterns[0].stringByReplacingMatches(
+            in: safe,
+            range: NSRange(safe.startIndex..., in: safe),
+            withTemplate: "[ENDPOINT REDACTED]")
+    }
+
     /// The credential shapes `safeText` does not cover. Each keeps a leading
     /// marker as capture group 1 so the masked output stays readable.
     private static let diagnosticSecretPatterns: [NSRegularExpression] = {
@@ -107,6 +119,11 @@ public enum Redaction {
             #"(?i)(wss?://)[^\s/@:]+(?::[^\s/@]*)?@"#, // ws(s) URL user-info
             #"(?i)((?:x-api-key|x-auth-token|private-token|proxy-authorization)\s*[:=]\s*)[^\s,;]+"#,
         ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
+    }()
+
+    private static let diagnosticReportURLPatterns: [NSRegularExpression] = {
+        let patterns = [#"(?i)\b(?:https?|wss?)://[^\s<>\"'`]+"#]
         return patterns.compactMap { try? NSRegularExpression(pattern: $0) }
     }()
 

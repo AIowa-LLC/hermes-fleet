@@ -42,6 +42,17 @@ final class DiagnosticRedactionTests: XCTestCase {
         XCTAssertEqual(Redaction.safeDiagnosticText(once), once)
     }
 
+    func testSharedReportSanitizerMasksEndpointHostAndPath() {
+        let text = "failed at https://user:pass@gateway.example:8765/private/path?ticket=secret-value"
+        let once = Redaction.safeDiagnosticReportText(text)
+
+        XCTAssertEqual(once, "failed at [ENDPOINT REDACTED]")
+        XCTAssertFalse(once.contains("gateway.example"))
+        XCTAssertFalse(once.contains("private/path"))
+        XCTAssertFalse(once.contains("secret-value"))
+        XCTAssertEqual(Redaction.safeDiagnosticReportText(once), once)
+    }
+
     func testPlainTextIsUnchanged() {
         let text = "Roster refresh: MacBook answered — 3 bots"
         XCTAssertEqual(Redaction.safeDiagnosticText(text), text)

@@ -35,17 +35,49 @@ struct FleetConversationShortcutEntity: AppEntity {
 }
 
 struct FleetConversationShortcutQuery: EntityQuery {
+    private let indexURL: URL
+    private let appLockIsEnabled: @Sendable () -> Bool
+
+    init() {
+        self.init(
+            indexURL: FleetContinueIndexStore.defaultURL(),
+            appLockIsEnabled: {
+                let defaults = UserDefaults.standard
+                // Keep this key in sync with AppLockController.defaultsKey.
+                // The controller is MainActor-isolated, but AppIntents
+                // queries run on the system's nonisolated query executor.
+                let appLockSettingKey = "fleet.appLock.enabled"
+                guard defaults.object(forKey: appLockSettingKey) != nil else {
+                    // App Lock defaults to enabled on a fresh installation.
+                    return true
+                }
+                return defaults.bool(forKey: appLockSettingKey)
+            })
+    }
+
+    init(
+        indexURL: URL,
+        appLockIsEnabled: @escaping @Sendable () -> Bool
+    ) {
+        self.indexURL = indexURL
+        self.appLockIsEnabled = appLockIsEnabled
+    }
+
     func entities(for identifiers: [FleetConversationShortcutEntity.ID]) async throws -> [FleetConversationShortcutEntity] {
         let wanted = Set(identifiers)
-        return Self.load().filter { wanted.contains($0.id) }
+        return load().filter { wanted.contains($0.id) }
     }
 
     func suggestedEntities() async throws -> [FleetConversationShortcutEntity] {
-        Self.load()
+        load()
     }
 
-    private static func load() -> [FleetConversationShortcutEntity] {
-        let store = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL())
+    private func load() -> [FleetConversationShortcutEntity] {
+        let store = FleetContinueIndexStore(url: indexURL)
+        // AppIntents display representations are shown outside Fleet by system
+        // surfaces such as Shortcuts and Siri. App Lock only gates Fleet's UI,
+        // so omit conversation labels whenever that lock is enabled.
+        let hideDisplayLabels = appLockIsEnabled()
         return store.entries().compactMap { entry in
             guard entry.kind == .ordinaryConversation || entry.kind == .canonicalBotChat,
                   let profile = entry.routeProfile,
@@ -59,8 +91,8 @@ struct FleetConversationShortcutQuery: EntityQuery {
                 route: route,
                 sessionID: sessionID,
                 canonical: entry.kind == .canonicalBotChat,
-                title: entry.title,
-                subtitle: entry.subtitle)
+                title: hideDisplayLabels ? "" : entry.title,
+                subtitle: hideDisplayLabels ? "" : entry.subtitle)
         }
     }
 }

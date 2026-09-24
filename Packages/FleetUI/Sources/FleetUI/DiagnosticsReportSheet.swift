@@ -11,9 +11,9 @@ import FleetCore
 /// copies or shares the text themselves, which is why the redaction guarantees
 /// matter.
 ///
-/// Every gateway endpoint is display-redacted (`Redaction.redactedURL`) before
-/// it reaches the input, and the renderer re-redacts every free-text field on
-/// the way out.
+/// Gateway endpoints are redacted for local display before they reach the
+/// input, and the renderer applies stricter share-report redaction to every
+/// free-text field before the user copies or shares it.
 public struct DiagnosticsReportSheet: View {
     let environment: AppEnvironment
 

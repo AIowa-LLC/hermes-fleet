@@ -1,5 +1,6 @@
 import XCTest
 import FleetCore
+import FleetUI
 @testable import HermesFleetApp
 
 @MainActor
@@ -48,6 +49,46 @@ final class FleetConversationShortcutsTests: XCTestCase {
             canonical: true)
         XCTAssertEqual(unlabelled.displayRepresentation.title.key, "Fleet conversation")
         XCTAssertEqual(unlabelled.displayRepresentation.subtitle?.key, "Bot Chat")
+    }
+
+    func testShortcutQueryHidesConversationLabelsWhenAppLockIsEnabled() async throws {
+        let indexURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("continue-index.json")
+        defer { try? FileManager.default.removeItem(at: indexURL.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(
+            at: indexURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        FleetContinueIndexStore(url: indexURL).recordConversationOpen(
+            route: route,
+            sessionID: "session-privacy-check",
+            canonical: false,
+            title: "Private conversation title",
+            subtitle: "Private gateway label")
+
+        let lockedQuery = FleetConversationShortcutQuery(
+            indexURL: indexURL,
+            appLockIsEnabled: { true })
+        let locked = try await lockedQuery.suggestedEntities()
+        XCTAssertEqual(locked.count, 1)
+        XCTAssertEqual(locked[0].displayRepresentation.title.key, "Fleet conversation")
+        XCTAssertEqual(locked[0].displayRepresentation.subtitle?.key, "Saved conversation")
+        XCTAssertFalse(locked[0].displayRepresentation.title.key.contains("Private"))
+        XCTAssertFalse(locked[0].displayRepresentation.subtitle?.key.contains("Private") ?? false)
+        let resolvedWhileLocked = try await lockedQuery.entities(for: [locked[0].id])
+        XCTAssertEqual(resolvedWhileLocked.first?.displayRepresentation.title.key, "Fleet conversation")
+        XCTAssertEqual(resolvedWhileLocked.first?.displayRepresentation.subtitle?.key, "Saved conversation")
+
+        let unlockedQuery = FleetConversationShortcutQuery(
+            indexURL: indexURL,
+            appLockIsEnabled: { false })
+        let unlocked = try await unlockedQuery.suggestedEntities()
+        XCTAssertEqual(unlocked[0].displayRepresentation.title.key, "Private conversation title")
+        XCTAssertEqual(unlocked[0].displayRepresentation.subtitle?.key, "Private gateway label")
     }
 
     func testConversationDeepLinkRejectsUnsafeOrWrongURLs() {
