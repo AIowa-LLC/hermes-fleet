@@ -15,7 +15,10 @@ run_pkg() {
   printf '\n=== %s swift test ===\n' "$name"
   out=$(cd "Packages/$name" && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
   echo "  $out"
-  if echo "$out" | grep -q ', with 0 failures'; then
+  # xctest prints "Executed N tests, with 0 failures ..." and, when optional
+  # live checks (env-gated) skip by design, "Executed N tests, with K tests
+  # skipped and 0 failures ...". Both are green; only real failures fail.
+  if echo "$out" | grep -qE ', with ([0-9]+ tests? skipped and )?0 failures'; then
     printf 'PASS  %s swift test green: %s\n' "$name" "$out"
   else
     FAIL=$((FAIL+1)); FAILURES+=("$name swift test NOT green")
