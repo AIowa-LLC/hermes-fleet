@@ -441,6 +441,14 @@ public struct ConversationView: View {
                     onFork: { _ in }
                 )
             }
+
+            // R9-T3: per-session YOLO toggle (session-scoped only, confirmed
+            // on enable). Hidden when the session has no approvals seam.
+            // (Restored: e748746's single-row header dropped this mount while
+            // claiming identifier preservation; R9ApprovalBanner is the guard.)
+            if let approvalModel = model.approvalViewModel {
+                SessionYoloToggle(model: approvalModel)
+            }
         }
         .frame(minHeight: 44)
         .padding(.horizontal, FleetTheme.spacingSm)
