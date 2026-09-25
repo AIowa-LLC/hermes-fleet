@@ -269,6 +269,12 @@ public final class AppEnvironment {
     /// when automatic authentication succeeds.
     @ObservationIgnored private var didHydrateEnvironment = false
 
+    /// Build-88 first-run invariant: "zero gateways" is authoritative only
+    /// after the durable record store has ANSWERED for this launch. Until
+    /// then the phase stays `.loading` — an unresolved registry must never
+    /// render the setup surface (the transient onboarding flash this guards).
+    @ObservationIgnored private var durableGatewayRestoreCompleted = false
+
     /// First-run gate (hydration model): the root shell distinguishes
     /// "registry not loaded yet" from "loaded and empty" so a brand-new user
     /// lands on setup BEFORE the normal tab UI, without a fragile
@@ -292,7 +298,13 @@ public final class AppEnvironment {
     /// the end of every `load()`/`reloadGateways()` settlement so the phase
     /// always reflects reality (add → configured; remove-the-last →
     /// unconfigured).
+    ///
+    /// Build-88 invariant: `.unconfigured` is settled ONLY once durable
+    /// gateway restoration has completed for this launch; while the durable
+    /// answer is unresolved the phase holds at `.loading` and the setup
+    /// surface cannot flash from an intermediate empty registry.
     private func settleHydrationPhase() {
+        guard durableGatewayRestoreCompleted else { return }
         hydrationPhase = gateways.isEmpty ? .unconfigured : .configured
     }
 
@@ -705,11 +717,23 @@ public final class AppEnvironment {
         /// seeding check so a restored user fleet suppresses seeding.
         do {
             _ = try await registry.restorePersistedGateways()
+            durableGatewayRestoreCompleted = true
         } catch {
+            // Build-88: a failed durable read is NOT "zero gateways" — retry
+            // immediately (no delays) before letting the first-run gate treat
+            // the registry as authoritative; store-open / file-protection
+            // conditions clear between attempts on real devices. If every
+            // attempt fails the phase holds at `.loading` (settleHydrationPhase)
+            // instead of flashing the setup surface.
+            var restored = (try? await registry.restorePersistedGateways()) != nil
+            if !restored {
+                restored = (try? await registry.restorePersistedGateways()) != nil
+            }
+            durableGatewayRestoreCompleted = restored
             // A broken record store must not brick launch — log and continue
             // with the (possibly empty) in-memory registry.
             #if DEBUG
-            print("P0-4 gateway restore failed: \(error)")
+            print("P0-4 gateway restore failed: \(error) retried=2 restored=\(restored)")
             #endif
         }
         let existing = await registry.allGateways()
