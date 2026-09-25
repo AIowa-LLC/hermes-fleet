@@ -48,8 +48,12 @@ public enum ConversationEvent: Hashable, Sendable {
     /// payload is config-gated upstream, tolerated as a typed case).
     case toolProgress(sessionID: String, toolID: String?, name: String?, text: String?, seq: Int? = nil)
     /// `tool.complete` — a tool call finished
-    /// (`{tool_id, name, args, result?, summary?, ...}`).
-    case toolComplete(sessionID: String, toolID: String, name: String, summary: String?, seq: Int? = nil)
+    /// (`{tool_id, name, args, result?, summary?, ...}`). Card D: `resultText`
+    /// carries the compact JSON of the tool RESULT (the gateway parses it
+    /// before emitting: `tui_gateway/tool_progress.py:_on_tool_complete`) —
+    /// the only live source of a generated-image artifact path
+    /// (`image_generate` summaries are nil upstream).
+    case toolComplete(sessionID: String, toolID: String, name: String, summary: String?, resultText: String? = nil, seq: Int? = nil)
     /// `background.complete` — a background turn finished (`{task_id, text}`).
     case backgroundComplete(sessionID: String, taskID: String?, text: String?, seq: Int? = nil)
     /// `session.info` — end-of-turn session metadata
@@ -69,6 +73,10 @@ public enum ConversationEvent: Hashable, Sendable {
     case usageUpdate(sessionID: String, usage: SessionUsageSnapshot, seq: Int? = nil)
     /// `error` — a turn-level error event (`{message, ...}`).
     case error(sessionID: String?, message: String, seq: Int? = nil)
+    /// `session.title` — the gateway titled/renamed the session
+    /// (`{session_id, title}`; methods_session.py:1427). Arrives shortly
+    /// after a new chat's first turn; the conversation header adopts it.
+    case sessionTitleUpdate(sessionID: String, title: String, seq: Int? = nil)
     /// Any event type this client does not model — preserved with its raw
     /// wire type so a newer gateway's event is never dropped (spec §5.5).
     case unknown(sessionID: String?, rawType: String, seq: Int? = nil)
@@ -90,11 +98,12 @@ extension ConversationEvent {
         case .toolStart(let sid, _, _, _, _, _): return sid
         case .toolGenerating(let sid, _, _): return sid
         case .toolProgress(let sid, _, _, _, _): return sid
-        case .toolComplete(let sid, _, _, _, _): return sid
+        case .toolComplete(let sid, _, _, _, _, _): return sid
         case .backgroundComplete(let sid, _, _, _): return sid
         case .sessionInfo(let sid, _, _, _, _, _, _, _, _): return sid
         case .approvalRequested(let sid, _, _, _, _, _): return sid
         case .usageUpdate(let sid, _, _): return sid
+        case .sessionTitleUpdate(let sid, _, _): return sid
         case .error(let sid, _, _): return sid
         case .unknown(let sid, _, _): return sid
         }
@@ -116,10 +125,11 @@ extension ConversationEvent {
              .toolStart(_, _, _, _, _, let seq),
              .toolGenerating(_, _, let seq),
              .toolProgress(_, _, _, _, let seq),
-             .toolComplete(_, _, _, _, let seq),
+             .toolComplete(_, _, _, _, _, let seq),
              .backgroundComplete(_, _, _, let seq),
              .sessionInfo(_, _, _, _, _, _, _, _, let seq),
              .approvalRequested(_, _, _, _, _, let seq),
+             .sessionTitleUpdate(_, _, let seq),
              .usageUpdate(_, _, let seq),
              .error(_, _, let seq),
              .unknown(_, _, let seq):

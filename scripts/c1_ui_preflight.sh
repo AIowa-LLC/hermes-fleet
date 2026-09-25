@@ -3,8 +3,9 @@
 #
 # Dev Loop v2: ordinary pull-request CI validates a focused subset of the
 # deterministic UI inventory, selected from the pull request's changed files.
-# The complete five-shard matrix (merge_group / main pushes) remains the
-# authoritative integration gate; this preflight only catches obvious defects
+# The complete five-shard matrix runs for merge_group candidates. Main pushes
+# retain static/package/unit validation without repeating UI work already
+# proven by the merge queue. This preflight only catches obvious defects
 # earlier and must never be treated as a substitute for the full matrix.
 #
 # Usage:

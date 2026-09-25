@@ -68,11 +68,11 @@ jobs:
     # matrix a second time; pull requests run the focused ui-preflight below.
     if: github.event_name == 'merge_group'
     runs-on: macos-latest
-    # Observed runner pace (run 34405682516): ~10 min initial build + first
-    # boot, then ~3.5-11 min per suite. 10 suites/shard measured 54-61 min
-    # and brushed the old 60-min ceiling; 5 shards x 8 suites lands ~45 min.
-    # 75 min leaves stabilization headroom for slow runners.
-    timeout-minutes: 75
+    # The deterministic inventory has grown to 59 suites, or 11-12 suites per
+    # shard. Five shards fit the observed hosted-runner concurrency. Runtime-
+    # weighted estimates top out near 105 minutes; 150 leaves recovery margin
+    # for hosted-runner variance, xcodebuild setup, and suite retries.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:

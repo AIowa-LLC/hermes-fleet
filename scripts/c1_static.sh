@@ -81,6 +81,14 @@ else
   bad "release preflight contract tests FAILED"; cat /tmp/c1_release_preflight.log
 fi
 
+# --- package runner fail-closed contract ------------------------------------
+note "Package runner fail-closed contract"
+if bash scripts/c1_packages_contract_test.sh >/tmp/c1_packages_contract.log 2>&1; then
+  ok "package runner rejects failed, missing, and partial test summaries"
+else
+  bad "package runner contract tests FAILED"; cat /tmp/c1_packages_contract.log
+fi
+
 # --- xcresult retry parser contract ------------------------------------------
 note "xcresult retry parser contract"
 if python3 scripts/c1_xcresult_parse_test.py >/tmp/c1_xcresult_parse.log 2>&1; then

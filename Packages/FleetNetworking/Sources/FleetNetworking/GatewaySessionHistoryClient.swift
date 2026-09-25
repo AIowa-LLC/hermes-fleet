@@ -74,7 +74,7 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         let object = result.objectValue
         let messagesJSON = object?["messages"]?.arrayValue ?? []
         let messages = messagesJSON.compactMap(Self.decodeMessage)
-        let count = object?["count"]?.numberValue.map(Int.init) ?? messages.count
+        let count = object?["count"]?.intValue ?? messages.count
         return SessionHistory(sessionID: sessionID, count: count, messages: messages)
     }
 
@@ -93,8 +93,11 @@ public struct GatewaySessionHistoryClient: SessionHistoryProviding {
         let toolName = object["name"]?.stringValue
         let toolContext = object["context"]?.stringValue
         let rowID: String?
-        if let r = object["row_id"]?.numberValue {
-            rowID = String(Int(r))
+        // `intValue` bounds the conversion (2^63-exclusive); an
+        // unrepresentable number falls through to the string form and then to
+        // nil — the same shapes as a missing key, never an invented row id.
+        if let rowNumber = object["row_id"]?.intValue {
+            rowID = String(rowNumber)
         } else {
             rowID = object["row_id"]?.stringValue
         }

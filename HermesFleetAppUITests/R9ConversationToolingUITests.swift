@@ -130,4 +130,117 @@ final class R9ConversationToolingUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    // MARK: - r9 Toolbelt (chips under the composer)
+
+    /// The chip zone renders UNDER the composer (r9 move): its frame sits
+    /// below the composer's, above the keyboard-safe bottom.
+    func testToolbeltRendersUnderComposer() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
+        XCTAssertTrue(zone.waitForExistence(timeout: 10),
+                      "the toolbelt chip zone must render")
+        XCTAssertGreaterThan(zone.frame.minY, composer.frame.maxY,
+                             "chip zone must sit BELOW the composer (r9 move)")
+        attachScreenshot(of: app, name: "r9-toolbelt-under-composer")
+    }
+
+    /// The folder chip opens the working-folder SWITCHER and a change
+    /// applies end-to-end: field → apply → chip value flips to the new
+    /// folder's last path component (scripted `session.cwd.set` seam).
+    func testFolderChipChangesWorkingFolder() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_INFO_FIXTURE"] = "1"
+        app.launch()
+        openConversation(app)
+
+        // The chips need the session.info fixture — send a probe turn.
+        let composer = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("cwd probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
+        XCTAssertTrue(zone.waitForExistence(timeout: 10))
+        func reveal(_ id: String) -> XCUIElement {
+            let e = firstMatch(in: app, identifier: id)
+            for _ in 0..<4 where !(e.exists && e.isHittable) {
+                zone.swipeLeft(velocity: .slow)
+            }
+            return e
+        }
+        let folder = reveal("fleet.conversation.header.folder")
+        XCTAssertTrue(folder.waitForExistence(timeout: 10), "folder chip must render")
+        let before = folder.value as? String ?? ""
+        XCTAssertTrue(before.contains("hermes-fleet"),
+                      "folder chip starts at the fixture cwd (got \(before))")
+
+        folder.tap()
+        let field = firstMatch(in: app, identifier: "fleet.conversation.folder.field")
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "switcher sheet must open")
+        field.tap()
+        field.typeText("/home/dev/other-project")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.folder.apply"))
+
+        // The chip follows the readback (last path component) — bounded
+        // poll (NSPredicate closures over XCUIElement are a known
+        // data-race trap on this codebase).
+        let folderAfter = firstMatch(in: app, identifier: "fleet.conversation.header.folder")
+        var applied = false
+        for _ in 0..<20 {
+            if let v = folderAfter.value as? String, v.contains("other-project") {
+                applied = true
+                break
+            }
+            usleep(500_000)
+        }
+        XCTAssertTrue(applied,
+                      "folder chip must show the new cwd after apply (got \(folderAfter.value ?? "nil"))")
+        attachScreenshot(of: app, name: "r9-folder-switch-applied")
+    }
+
+    /// The profile chip opens the session DOSSIER (identity + rename +
+    /// branch actions).
+    func testProfileChipOpensDossier() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_INFO_FIXTURE"] = "1"
+        app.launch()
+        openConversation(app)
+
+        // Chips need the session.info fixture (probe turn).
+        let composer = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("dossier probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
+        XCTAssertTrue(zone.waitForExistence(timeout: 10))
+        func reveal(_ id: String) -> XCUIElement {
+            let e = firstMatch(in: app, identifier: id)
+            for _ in 0..<4 where !(e.exists && e.isHittable) {
+                zone.swipeLeft(velocity: .slow)
+            }
+            return e
+        }
+        let profile = reveal("fleet.conversation.header.profile")
+        XCTAssertTrue(profile.waitForExistence(timeout: 10), "profile chip must render")
+        profile.tap()
+
+        let renameField = firstMatch(in: app, identifier: "fleet.conversation.dossier.rename.field")
+        XCTAssertTrue(renameField.waitForExistence(timeout: 5),
+                      "dossier sheet must render with rename")
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.dossier.branch").exists,
+                      "dossier offers branch")
+        attachScreenshot(of: app, name: "r9-dossier-open")
+    }
 }

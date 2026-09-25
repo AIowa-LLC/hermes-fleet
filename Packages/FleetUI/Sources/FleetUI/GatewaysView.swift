@@ -328,6 +328,7 @@ public struct GatewaysView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(theme.highlight)
+            .foregroundStyle(theme.onHighlight)
             .accessibilityIdentifier("fleet.gateways.empty.add")
         }
         .accessibilityIdentifier("fleet.gateways.empty")

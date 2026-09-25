@@ -35,7 +35,23 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 - approvals and per-session control surfaces
 - model selection and context information
 - steer, rename, and fork workflows where supported
+- session thinking level: a composer gauge button (right cluster, between
+  the field and the mic — ChatGPT placement; the needle encodes the level)
+  opens a drag slider (overlay above the composer) that sets how much this
+  session reasons — eight stops (None/Minimal/Low/Medium/High/Extra
+  High/Max/Ultra — the gateway's full effort ladder, verified live),
+  session-scoped only, theme-highlight colored; failures surface inline,
+  never silent
 - attachments and message reactions
+- generated-image artifacts: an `image_generate` result is retrieved through
+  the owning gateway's authenticated media API and renders inline on the tool
+  row that cited it (device-local observed-artifact library behind the
+  Artifacts destination)
+- a branded, indeterminate animation (FleetWingMark) marks a **verified**
+  in-flight `image_generate` call. It carries no percentage or ETA — nothing
+  is fabricated — holds still under Reduce Motion, and stops on the result, an
+  explicit failure, an interrupt, or a transport drop; the delivered image
+  takes its place
 
 Very long conversations use a bounded display window while retaining authoritative cached history separately.
 

@@ -29,6 +29,7 @@ final class ConversationViewModelTests: XCTestCase {
         SessionHistoryProviding,
         ApprovalsCapable,
         SlashCommandCapable,
+        AttachmentStagingCapable,
         @unchecked Sendable
     {
         let gatewayID = GatewayID(rawValue: "workstation")
@@ -47,9 +48,14 @@ final class ConversationViewModelTests: XCTestCase {
             .success(ConversationSession(sessionID: "s-1", profileName: "default"))
         var createCallCount = 0
         var resumeCallCount = 0
+        var resumedProfiles: [String?] = []
         var submittedTexts: [String] = []
         var submitError: ConversationError?
+        /// The `prompt.submit` status the seam answers with. Non-streaming
+        /// ("accepted") reproduces the path with NO terminal event frame.
+        var submissionStatus = "streaming"
         var interruptError: ConversationError?
+        let attachmentDouble = ScriptedAttachmentStaging()
 
         // event stream
         private let streamPair: (AsyncStream<ConversationEvent>, AsyncStream<ConversationEvent>.Continuation)
@@ -106,6 +112,7 @@ final class ConversationViewModelTests: XCTestCase {
         var approvals: any ApprovalsProviding { approvalsBox }
         let approvalsBox = ScriptedPendingApprovals()
         var slashCommands: any SlashCommandProviding { slashBox }
+        var attachments: any AttachmentStagingProviding { attachmentDouble }
         func reauthenticate() async throws {
             reauthenticateCount += 1
             if let connectError { throw connectError }
@@ -116,8 +123,9 @@ final class ConversationViewModelTests: XCTestCase {
             createCallCount += 1
             return try createResult.get()
         }
-        func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+        func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
             resumeCallCount += 1
+            resumedProfiles.append(profile)
             return try resumeResult.get()
         }
         /// t_8401d3c3 — captured gap-recovery requests + scripted responses.
@@ -130,7 +138,7 @@ final class ConversationViewModelTests: XCTestCase {
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
             submittedTexts.append(text)
             if let submitError { throw submitError }
-            return PromptSubmission(status: "streaming")
+            return PromptSubmission(status: submissionStatus)
         }
         func interrupt(sessionID: String) async throws -> InterruptResult {
             if let interruptError { throw interruptError }
@@ -172,6 +180,31 @@ final class ConversationViewModelTests: XCTestCase {
         // MARK: event pushing
         func push(_ event: ConversationEvent) {
             streamPair.1.yield(event)
+        }
+    }
+
+    private final class ScriptedAttachmentStaging: AttachmentStagingProviding, @unchecked Sendable {
+        func attachFile(sessionID: String, name: String, dataURL: String) async throws -> StagedFileAttachment {
+            StagedFileAttachment(
+                name: name,
+                path: "fixture/\(name)",
+                refPath: "attachments/\(name)",
+                refText: "@file:attachments/\(name)",
+                uploaded: true)
+        }
+
+        func attachImageBytes(sessionID: String, filename: String, dataURL: String) async throws -> StagedImageAttachment {
+            StagedImageAttachment(path: "fixture/\(filename)", name: filename, count: 1)
+        }
+
+        func attachPDF(sessionID: String, filename: String, dataURL: String) async throws -> StagedPDFAttachment {
+            StagedPDFAttachment(filename: filename, pagesAttached: 1, pages: [
+                StagedPDFPage(path: "fixture/\(filename)-1.png", pageNumber: 1)
+            ], count: 1)
+        }
+
+        func detachImage(sessionID: String, path: String) async throws -> DetachedImageState {
+            DetachedImageState(detached: true, count: 0)
         }
     }
 
@@ -253,7 +286,7 @@ final class ConversationViewModelTests: XCTestCase {
     }
 
     private final class ScriptedSlashCommands: SlashCommandProviding, @unchecked Sendable {
-        private let catalog = [
+        private let catalogRows = [
             SlashCommandSuggestion(
                 text: "/hermes-change-review",
                 description: "Review a change",
@@ -266,23 +299,45 @@ final class ConversationViewModelTests: XCTestCase {
         var completionTexts: [String] = []
         var dispatchError: SlashCommandError?
 
-        func skillCatalog(sessionID: String?) async throws -> [SlashCommandSuggestion] {
-            catalog
+        private var catalogPayload: HermesCommandCatalog {
+            HermesCommandCatalog(
+                commands: catalogRows,
+                canon: [:],
+                commandMeta: [:],
+                skills: Dictionary(
+                    uniqueKeysWithValues: catalogRows.map {
+                        ($0.text, HermesCommandCatalog.SkillEntry(usage: 0, origin: "local"))
+                    }))
         }
 
-        func completeSkills(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
+        func catalog(sessionID: String?) async throws -> HermesCommandCatalog {
+            catalogPayload
+        }
+
+        func complete(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
             completionTexts.append(text)
             let query = text.dropFirst().lowercased()
-            return catalog.filter { $0.text.dropFirst().lowercased().hasPrefix(query) }
+            return catalogRows.filter { $0.text.dropFirst().lowercased().hasPrefix(query) }
         }
 
-        func dispatchSkill(sessionID: String, name: String, argument: String) async throws -> SkillCommandDispatch {
+        func dispatch(sessionID: String, name: String, argument: String) async throws -> HermesCommandDispatch {
             if let dispatchError { throw dispatchError }
-            return SkillCommandDispatch(
-                name: name,
+            return .skill(
                 message: "<expanded skill instructions>\(argument.isEmpty ? "" : " \(argument)")",
                 display: "/\(name)\(argument.isEmpty ? "" : " \(argument)")")
         }
+
+        func execute(sessionID: String, command: String) async throws -> HermesSlashExecution {
+            HermesSlashExecution(
+                output: nil,
+                warning: nil,
+                dispatch: try await dispatch(
+                    sessionID: sessionID,
+                    name: String(command.drop(while: { $0 == "/" }).prefix(while: { !$0.isWhitespace })),
+                    argument: command.contains(" ") ? String(command.split(separator: " ", maxSplits: 1)[1]) : ""))
+        }
+
+        func stopProcesses(sessionID: String) async throws -> Int { 0 }
     }
 
     // MARK: - Fixture
@@ -309,6 +364,148 @@ final class ConversationViewModelTests: XCTestCase {
     }
 
     // MARK: - Open/create/resume
+
+    /// `session.title` (methods_session.py:1427): the gateway auto-titles a
+    /// new chat mid/after the first turn — the header adopts it and NOTHING
+    /// renders in the transcript (the pre-fix bug printed "Unknown event:
+    /// session.title" rows into the chat).
+    func testSessionTitleEventAdoptsHeaderWithoutTranscriptRow() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.sessionTitleUpdate(sessionID: "s-1", title: "Good morning brother"))
+        await flush()
+        XCTAssertEqual(viewModel.sessionTitle, "Good morning brother",
+                       "the header must adopt the auto-title")
+        XCTAssertFalse(
+            viewModel.transcript.contains { $0.text.contains("Unknown event") },
+            "session.title must never surface as an Unknown-event transcript row")
+        XCTAssertFalse(
+            viewModel.transcript.contains { $0.text.contains("session.title") },
+            "no raw event name may leak into the transcript")
+    }
+
+    /// Top chip bar: session.info's cwd + profile_name are retained (the
+    /// folder/profile chips' data); nil fields keep the previous values.
+    func testSessionInfoRetainsCWDAndProfile() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.push(.sessionInfo(
+            sessionID: "s-1", model: "glm-4.6-flash", provider: "zai",
+            title: "T", cwd: "/home/dev/hermes-fleet", profileName: "default"))
+        await flush()
+        XCTAssertEqual(viewModel.sessionCWD, "/home/dev/hermes-fleet")
+        XCTAssertEqual(viewModel.sessionProfileName, "default")
+        // A later frame omitting both fields keeps the previous values.
+        scripted.push(.sessionInfo(
+            sessionID: "s-1", model: nil, provider: nil, title: nil,
+            cwd: nil, profileName: nil))
+        await flush()
+        XCTAssertEqual(viewModel.sessionCWD, "/home/dev/hermes-fleet")
+        XCTAssertEqual(viewModel.sessionProfileName, "default")
+    }
+
+    /// Turn clock (Hermes-parity working indicator): starts at submit,
+    /// cleared at message.complete and at interrupt; isWorking is the
+    /// full-turn signal (independent of the streaming phase).
+    func testTurnClockLifecycle() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        XCTAssertNil(viewModel.turnStartedAt, "idle: no clock")
+        XCTAssertFalse(viewModel.isWorking)
+
+        _ = await sendOrIgnore(viewModel, text: "hello")
+        XCTAssertNotNil(viewModel.turnStartedAt, "submit starts the clock")
+        XCTAssertTrue(viewModel.isWorking, "isWorking covers the pre-streaming window")
+
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil))
+        await flush()
+        XCTAssertNil(viewModel.turnStartedAt, "complete clears the clock")
+        XCTAssertFalse(viewModel.isWorking)
+    }
+
+    /// Helper: send() guards on state — tolerate the scripted seam's
+    /// non-streaming submission answer (clock behavior is under test).
+    private func sendOrIgnore(_ viewModel: ConversationViewModel, text: String) async -> Bool {
+        await viewModel.send(text)
+    }
+
+    /// OCR review t_ba85b063 (HIGH): the turn clock is started at submit, so
+    /// the two paths that produce NO terminal event-stream frame must settle
+    /// it themselves — a non-streaming accepted submission ...
+    func testTurnClockClearsOnNonStreamingSubmission() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.submissionStatus = "accepted"
+
+        let didSend = await viewModel.send("hello")
+
+        XCTAssertTrue(didSend, "the non-streaming seam still accepts the prompt")
+        XCTAssertNil(
+            viewModel.turnStartedAt,
+            "a submission with no stream has no message.complete to clear the clock")
+        XCTAssertFalse(
+            viewModel.isWorking,
+            "isWorking must not spin forever (reply actions gate on it)")
+        XCTAssertEqual(viewModel.phase, .ready)
+    }
+
+    /// ... and a REJECTED submission (the catch path). Both used to leave
+    /// `isWorking == true` permanently: the phase is already `.ready`, so no
+    /// Stop affordance exists and `canBranchReply` / `canRetryReply` /
+    /// `searchWebReply` stay disabled until some later streaming turn.
+    func testTurnClockClearsWhenSubmitFails() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.submitError = .rpcFailed("temporary submit failure")
+
+        let didSend = await viewModel.send("hello")
+
+        XCTAssertFalse(didSend)
+        XCTAssertNil(
+            viewModel.turnStartedAt,
+            "a rejected submission never completes on the stream — the clock must settle here")
+        XCTAssertFalse(viewModel.isWorking)
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertNotNil(viewModel.errorMessage, "the failure stays surfaced, never silent")
+    }
+
+    /// Foreground auto-heal: a `.disconnected` conversation reconnects on
+    /// activation (no manual banner tap); `.authRequired` stays manual (M11).
+    func testAppBecameActiveHealsDisconnectedNotAuthRequired() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        let baseline = scripted.connectCount
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        // A drop flips the VM to .disconnected (the status watcher's honest
+        // signal). Activation then heals it.
+        scripted.statusValue = .offline
+        await viewModel.appBecameActive()
+        // .ready sessions don't need healing — connectCount unchanged by the
+        // active-guard itself; force the disconnected phase and retry.
+        scripted.statusValue = .online
+        // Simulate the watcher's disconnected verdict directly:
+        await viewModel.appBecameActive()  // no-op while ready
+        XCTAssertEqual(scripted.connectCount, baseline, "ready sessions don't heal")
+
+        // Force .disconnected (as the watcher would after a suspension kill):
+        scripted.statusValue = .offline
+        await viewModel.forceDisconnectedForTesting()
+        await viewModel.appBecameActive()
+        XCTAssertGreaterThanOrEqual(scripted.connectCount, baseline + 1,
+                                    "activation must attempt a reconnect when disconnected")
+
+        // Auth-required is NEVER silently healed (M11).
+        scripted.statusValue = .authenticationRequired
+        await viewModel.forceAuthRequiredForTesting()
+        let before = scripted.connectCount
+        await viewModel.appBecameActive()
+        XCTAssertEqual(scripted.connectCount, before,
+                       "authRequired must not auto-reconnect")
+    }
 
     func testStartConnectsAndCreatesSession() async throws {
         let (scripted, viewModel) = try await makeFixture(sessionID: nil)
@@ -341,31 +538,31 @@ final class ConversationViewModelTests: XCTestCase {
         await viewModel.start()
 
         viewModel.updateSlashSuggestions(for: "/")
-        for _ in 0..<100 where viewModel.isLoadingSkillSuggestions {
+        for _ in 0..<100 where viewModel.isLoadingCommandSuggestions {
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTAssertEqual(viewModel.skillSuggestions.map(\.text), ["/hermes-change-review", "/hermes-plan"])
+        XCTAssertEqual(viewModel.commandSuggestions.map(\.text), ["/hermes-change-review", "/hermes-plan"])
 
         viewModel.updateSlashSuggestions(for: "/hermes-c")
-        for _ in 0..<100 where viewModel.isLoadingSkillSuggestions {
+        for _ in 0..<100 where viewModel.isLoadingCommandSuggestions {
             try await Task.sleep(for: .milliseconds(5))
         }
-        XCTAssertEqual(viewModel.skillSuggestions.map(\.text), ["/hermes-change-review"])
+        XCTAssertEqual(viewModel.commandSuggestions.map(\.text), ["/hermes-change-review"])
         XCTAssertEqual(scripted.slashBox.completionTexts, ["/hermes-c"])
     }
 
     func testUnknownSlashCommandStaysEditableAndDoesNotSubmit() async throws {
         let (scripted, viewModel) = try await makeFixture()
         await viewModel.start()
-        scripted.slashBox.dispatchError = .notSkillCommand("does-not-exist")
+        scripted.slashBox.dispatchError = .commandUnavailable("does-not-exist")
 
         let didSend = await viewModel.send("/does-not-exist keep this text")
 
         XCTAssertFalse(didSend)
         XCTAssertTrue(scripted.submittedTexts.isEmpty)
         XCTAssertEqual(
-            viewModel.skillSuggestionError,
-            "/does-not-exist is no longer an available skill. Refresh the list and try again.")
+            viewModel.commandSuggestionError,
+            "/does-not-exist is no longer available on this gateway. Refresh and try again.")
         XCTAssertTrue(viewModel.transcript.isEmpty)
     }
 
@@ -400,6 +597,7 @@ final class ConversationViewModelTests: XCTestCase {
 
         XCTAssertEqual(scripted.connectCount, 1)
         XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(scripted.resumedProfiles, ["default"], "existing-session resume must preserve the route profile")
         // Authoritative resume messages supersede cache.
         XCTAssertEqual(viewModel.transcript.count, 1)
         XCTAssertEqual(viewModel.transcript.first?.kind, .user)
@@ -459,6 +657,28 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.transcript.last?.kind, .assistant)
         XCTAssertTrue(viewModel.transcript.last?.isFailed == true)
         XCTAssertEqual(viewModel.errorMessage, "provider rejected")
+    }
+
+    func testFailedSubmitReturnsFalseAndPreservesStagedAttachmentsForRetry() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        let payload = Data("fixture".utf8)
+        await viewModel.stageAttachment(
+            name: "notes.md",
+            mime: "text/markdown",
+            byteCount: payload.count,
+            loadBytes: { payload })
+        scripted.submitError = .rpcFailed("temporary submit failure")
+
+        let didSend = await viewModel.send("retry this")
+
+        XCTAssertFalse(didSend, "the composer must retain its draft after a rejected submission")
+        XCTAssertEqual(viewModel.phase, .ready)
+        XCTAssertEqual(viewModel.pendingAttachments.count, 1)
+        XCTAssertEqual(viewModel.pendingAttachments.first?.refText, "@file:attachments/notes.md")
+        XCTAssertEqual(viewModel.transcript.last?.kind, .user)
+        XCTAssertEqual(viewModel.transcript.last?.text, "retry this\n@file:attachments/notes.md")
+        XCTAssertNotNil(viewModel.errorMessage)
     }
 
     // MARK: - P0-8 event taxonomy + turn isolation
@@ -578,6 +798,24 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.phase, .ready)
         XCTAssertEqual(viewModel.transcript.last?.text, "par")
         XCTAssertFalse(viewModel.transcript.last?.isStreaming == true)
+    }
+
+    func testFailedInterruptPreservesStreamingStateAndPartialRowForRetry() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        await viewModel.start()
+        await viewModel.send("hello")
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "partial", rendered: nil))
+        await flush()
+        scripted.interruptError = .rpcFailed("interrupt unavailable")
+
+        await viewModel.interrupt()
+
+        XCTAssertTrue(viewModel.isStreaming, "a failed interrupt cannot prove the turn stopped")
+        XCTAssertEqual(viewModel.phase, .streaming)
+        XCTAssertEqual(viewModel.transcript.last?.text, "partial")
+        XCTAssertTrue(viewModel.transcript.last?.isStreaming == true)
+        XCTAssertNotNil(viewModel.errorMessage)
     }
 
     // MARK: - Cold-start persisted history (M10)

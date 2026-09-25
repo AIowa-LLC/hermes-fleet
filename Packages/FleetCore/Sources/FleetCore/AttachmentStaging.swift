@@ -261,6 +261,79 @@ public enum AttachmentStagingRules {
         return String(cleaned.prefix(120))
     }
 
+    /// Reduce a picker-provided name to a bounded, path-safe basename before
+    /// it crosses the wire (Build 46). Parent path components are discarded,
+    /// separators and control characters become underscores, and the
+    /// extension is kept when a long name must be truncated — the gateway
+    /// routes images/PDFs by it.
+    ///
+    /// The returned name ALWAYS fits `maxBytes` UTF-8 bytes (the cap this
+    /// helper exists to guarantee; `maxBytes <= 0` means "no cap") and is
+    /// only ever cut on a scalar boundary, so a multibyte scalar is never
+    /// split and no U+FFFD is injected into a name that crosses the wire.
+    ///
+    /// Not yet wired into the composer's send path:
+    /// `ConversationViewModel.stageAttachment` still computes its name with
+    /// `sanitizedFilename` (FleetUI, out of this change's scope), so the
+    /// send-site swap remains a deliberate follow-up rather than an implied
+    /// guarantee here.
+    public static func pathSafeBasename(_ name: String, maxBytes: Int = 255) -> String {
+        let components = name
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .filter { $0 != "." && $0 != ".." }
+        let joined = components.isEmpty ? name : components.joined(separator: "_")
+        var safe = String.UnicodeScalarView()
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        for scalar in joined.unicodeScalars {
+            if scalar == "\\" || !allowed.contains(scalar) || scalar.properties.generalCategory == .control {
+                safe.append("_")
+            } else {
+                safe.append(scalar)
+            }
+        }
+        var result = String(safe).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if result.isEmpty { result = "attachment" }
+        guard result.utf8.count > maxBytes, maxBytes > 0 else { return result }
+
+        // Keep the extension when the byte budget allows it (the gateway
+        // routes by it). The old code clamped the stem to one byte and
+        // returned `truncated + suffix` regardless, so an extension longer
+        // than the whole budget could still cross the cap it enforces here.
+        let ext = (result as NSString).pathExtension
+        let suffix = ext.isEmpty ? "" : ".\(ext)"
+        guard suffix.utf8.count < maxBytes else {
+            // The extension alone cannot fit alongside any stem — there is
+            // nothing left to preserve, so bound the sanitized name itself
+            // (still scalar-aligned, still capped).
+            let bounded = utf8Prefix(result, maxBytes: maxBytes)
+            return bounded.isEmpty ? utf8Prefix("attachment", maxBytes: maxBytes) : bounded
+        }
+        let stem = String(result.dropLast(suffix.count))
+        let truncatedStem = utf8Prefix(stem, maxBytes: maxBytes - suffix.utf8.count)
+        let candidate = truncatedStem + suffix
+        // Bounded by construction: `truncatedStem <= maxBytes - suffix` and
+        // `suffix < maxBytes`. The fallback covers a budget smaller than the
+        // stem's first scalar (unreachable with the 255-byte default).
+        return candidate.isEmpty ? utf8Prefix("attachment", maxBytes: maxBytes) : candidate
+    }
+
+    /// The longest prefix of `text` that fits `maxBytes` UTF-8 bytes, cut on
+    /// a scalar boundary — a multibyte scalar is dropped whole, never split
+    /// (splitting one is what injected U+FFFD into the wire name).
+    private static func utf8Prefix(_ text: String, maxBytes: Int) -> String {
+        guard maxBytes > 0 else { return "" }
+        guard text.utf8.count > maxBytes else { return text }
+        var prefix = String.UnicodeScalarView()
+        var used = 0
+        for scalar in text.unicodeScalars {
+            let width = String(scalar).utf8.count
+            if used + width > maxBytes { break }
+            prefix.append(scalar)
+            used += width
+        }
+        return String(prefix)
+    }
+
     /// Extensions the gateway image pipeline accepts — `cli.py`
     /// `_IMAGE_EXTENSIONS` (3954-3958): png/jpg/jpeg/gif/webp/bmp/tiff/tif/
     /// svg/ico. (svg/ico are local `image.attach` paths; keep the set

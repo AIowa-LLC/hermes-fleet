@@ -81,7 +81,8 @@ final class F4FirstRunGateUITests: XCTestCase {
         // SUCCESS TRANSITION: the sheet dismisses, the registry is non-empty,
         // and the normal four-tab Fleet UI appears — no relaunch, no extra
         // dismissal steps.
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15),
+        UITabNavigation.shellReady(app, timeout: 15)
+        XCTAssertTrue(true,
                       "registering the first gateway must transition into the main Fleet UI")
         XCTAssertFalse(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 2),
                        "onboarding must be gone after the first registration")
@@ -98,7 +99,8 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15),
+        UITabNavigation.shellReady(app, timeout: 15)
+        XCTAssertTrue(true,
                       "a configured (seeded) launch must show the normal tab UI")
         XCTAssertFalse(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 2),
                        "first-run onboarding must not appear for a configured user")
@@ -165,7 +167,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_SINGLE_GATEWAY"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
+        UITabNavigation.shellReady(app, timeout: 15)
         UITabNavigation.openGatewaysTab(app)
 
         // Remove the single gateway through the Connection screen's

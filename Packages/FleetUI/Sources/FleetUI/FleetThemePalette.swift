@@ -175,6 +175,10 @@ public enum FleetThemePaletteAppearance: String, Codable, Equatable, Sendable {
     case adaptiveFleetDefault
     case adaptiveCustomHighlight
     case fixed
+    /// ADR-0009 mono accent (White): keeps the stored highlight in light
+    /// mode and resolves it to pure white in dark mode, over the
+    /// Fleet-default dark text/background.
+    case adaptiveMono
 }
 
 /// Versioned persisted user palette. V1 intentionally stores exactly one
@@ -203,17 +207,30 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
     }
 
     /// The persisted Fleet default is the light appearance representation.
-    /// Its explicit resolution mode supplies the existing dark Fleet default,
-    /// while a migrated/custom highlight has its own adaptive mode that keeps
-    /// that highlight and only adopts Fleet's dark text/background tokens.
+    /// Its explicit resolution mode supplies the existing dark Fleet default
+    /// (white highlight — see `fleetDefaultDark`), while a migrated/custom
+    /// highlight has its own adaptive mode that keeps that highlight and
+    /// only adopts Fleet's dark text/background tokens.
     public static let fleetDefault = FleetThemePalette(
         highlight: FleetStoredColor(hex: 0x5B35D5),
         text: FleetStoredColor(hex: 0x1C1C1E),
         background: FleetStoredColor(hex: 0xF8F9FC),
         appearance: .adaptiveFleetDefault)
 
+    /// Dark-appearance Fleet default. The dark highlight is WHITE (B41
+    /// direction): a near-white canvas needs a light interactive tint.
+    /// Light appearance keeps the legible Fleet violet (6.84:1 on canvas) —
+    /// white would be invisible there.
+    ///
+    /// Migration safety: only `adaptiveFleetDefault` palettes resolve here.
+    /// A persisted `.fixed`/`.adaptiveCustomHighlight` palette is preserved
+    /// verbatim — including an explicit violet selection, which storage
+    /// cannot distinguish from an old default and which is therefore NEVER
+    /// rewritten. A V1 payload without the `appearance` field is classified
+    /// as the untouched default ONLY when it equals the exact light default
+    /// triple (pre-existing decoder rule); any other triple stays `.fixed`.
     public static let fleetDefaultDark = FleetThemePalette(
-        highlight: FleetStoredColor(hex: 0xBDA7FF),
+        highlight: FleetStoredColor(hex: 0xFFFFFF),
         text: FleetStoredColor(hex: 0xF5F5F7),
         background: FleetStoredColor(hex: 0x101216),
         appearance: .fixed)
@@ -234,6 +251,25 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
         version == Self.currentVersion && highlight.isValid && text.isValid && background.isValid
     }
 
+    /// Whether resolving this palette in either appearance yields a
+    /// literally-INVISIBLE token pair (contrast < `FleetThemeContrast
+    /// .invisibleRatio`). `apply` refuses such palettes: the user picks any
+    /// color they want, but white-on-white controls must not be saveable.
+    /// Both the light resolution AND the derived dark resolution are checked
+    /// (an `.adaptiveCustomHighlight` white highlight over a white-ish light
+    /// background is exactly the failure this catches).
+    public var hasInvisiblePair: Bool {
+        let light = palette(forDarkAppearance: false)
+        let dark = palette(forDarkAppearance: true)
+        for resolved in [light, dark] {
+            if FleetThemeContrast.ratio(resolved.highlight, resolved.background)
+                < FleetThemeContrast.invisibleRatio { return true }
+            if FleetThemeContrast.ratio(resolved.text, resolved.background)
+                < FleetThemeContrast.invisibleRatio { return true }
+        }
+        return false
+    }
+
     public func palette(forDarkAppearance isDark: Bool) -> FleetThemePalette {
         guard isDark else { return self }
         switch appearance {
@@ -245,6 +281,16 @@ public struct FleetThemePalette: Codable, Equatable, Sendable {
                 highlight: highlight,
                 text: dark.text,
                 background: dark.background,
+                version: version,
+                appearance: .fixed)
+        case .adaptiveMono:
+            // ADR-0009: the mono accent resolves its highlight to pure
+            // white in dark mode over the Fleet-default dark text and
+            // background (light keeps the stored near-black representation).
+            return FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0xFFFFFF),
+                text: Self.fleetDefaultDark.text,
+                background: Self.fleetDefaultDark.background,
                 version: version,
                 appearance: .fixed)
         case .fixed:
@@ -359,6 +405,26 @@ public enum FleetThemeContrast {
         let blue = lhs.blue - rhs.blue
         return red * red + green * green + blue * blue
     }
+
+    // MARK: - Ink on a fill
+
+    /// The two ink candidates for content drawn ON a filled control. Picking
+    /// the higher-contrast candidate is guaranteed ≥ 4.58:1 for ANY opaque
+    /// fill (the worst case sits exactly at the black/white crossover).
+    public static let inkDark = FleetStoredColor(red: 0.05, green: 0.05, blue: 0.06)
+    public static let inkLight = FleetStoredColor(red: 1, green: 1, blue: 1)
+
+    /// Higher-contrast ink for text/glyphs placed on a fill of `color`.
+    /// Deterministic pure function of the fill (same constants as the
+    /// contrast report's control-text estimate).
+    public static func maxContrastInk(on color: FleetStoredColor) -> FleetStoredColor {
+        ratio(inkDark, color) >= ratio(inkLight, color) ? inkDark : inkLight
+    }
+
+    /// A pair this close in luminance is INVISIBLE, not merely low-contrast
+    /// (e.g. white highlight on a white background). Advisory warnings cover
+    /// the 1.2…4.5 band; below this the control is unusable.
+    public static let invisibleRatio = 1.2
 }
 
 /// Contrast values shown by the editor. Values are calculated from the
@@ -401,6 +467,7 @@ public struct FleetThemeValues: Sendable {
     private let resolvedSurface: FleetStoredColor
     private let resolvedSurfaceElevated: FleetStoredColor
     private let resolvedBorder: FleetStoredColor
+    private let resolvedShadow: FleetStoredColor
 
     public init(palette: FleetThemePalette, isDarkAppearance: Bool, isIncreasedContrast: Bool) {
         self.palette = palette
@@ -447,7 +514,18 @@ public struct FleetThemeValues: Sendable {
         self.resolvedSurface = surface
         self.resolvedSurfaceElevated = background.blended(toward: surface, amount: 0.5)
         self.resolvedBorder = text.blended(toward: background, amount: isIncreasedContrast ? 0.35 : 0.58)
+        // Floating-surface shadow ink: the resolved canvas driven to its dark
+        // end. A shadow DARKENS and never tints (`FleetTheme.scrim` parity);
+        // deriving it from the palette keeps a custom light canvas darkening
+        // correctly instead of inheriting a hard-coded platform black.
+        self.resolvedShadow = background.blended(
+            toward: FleetStoredColor(red: 0, green: 0, blue: 0),
+            amount: Self.shadowInkAmount)
     }
+
+    /// How far the shadow ink is driven from the resolved canvas toward black:
+    /// close enough to neutral that the ink reads as a shadow, not a tint.
+    private static let shadowInkAmount = 0.92
 
     public static let `default` = FleetThemeValues(
         palette: .fleetDefault,
@@ -455,6 +533,13 @@ public struct FleetThemeValues: Sendable {
         isIncreasedContrast: false)
 
     public var highlight: Color { resolvedHighlight.swiftUIColor }
+    /// Guaranteed-legible ink for text/glyphs drawn ON a highlight fill.
+    /// White-highlight controls (the new dark default) render dark ink; dark
+    /// highlights render light ink. Any opaque highlight resolves ≥ 4.58:1
+    /// by construction — no white-on-white controls.
+    public var onHighlight: Color {
+        FleetThemeContrast.maxContrastInk(on: resolvedHighlight).swiftUIColor
+    }
     public var textPrimary: Color { resolvedText.swiftUIColor }
     public var textSecondary: Color { resolvedSecondaryText.swiftUIColor }
     public var textMuted: Color { resolvedMutedText.swiftUIColor }
@@ -463,6 +548,14 @@ public struct FleetThemeValues: Sendable {
     public var surfaceElevated: Color { resolvedSurfaceElevated.swiftUIColor }
     public var surfaceIncreased: Color { isIncreasedContrast ? resolvedBackground.swiftUIColor : surface }
     public var border: Color { resolvedBorder.swiftUIColor }
+
+    /// Floating-surface shadow ink (the composer pill, floating clusters) at
+    /// the appearance's own strength: the same ink at 8% over the light canvas
+    /// and 20% over the darker one. Call sites use this token — never a
+    /// hard-coded `Color.black` (issue #6 theme call-site audit).
+    public var shadow: Color {
+        resolvedShadow.swiftUIColor.opacity(isDarkAppearance ? 0.20 : 0.08)
+    }
 
     /// Render-time correction result. This is diagnostic/presentation state;
     /// the controller persists only `palette` and never this derived value.
@@ -562,6 +655,7 @@ public final class FleetThemeController: @unchecked Sendable {
     @discardableResult
     public func apply(_ palette: FleetThemePalette) -> Bool {
         guard palette.isCurrent,
+              !palette.hasInvisiblePair,
               let data = try? JSONEncoder().encode(palette) else { return false }
         defaults.set(data, forKey: Self.persistKey)
         activePalette = palette
@@ -599,10 +693,11 @@ public final class FleetThemeController: @unchecked Sendable {
               let legacy = FleetAccent(rawValue: raw) else {
             return .fleetDefault
         }
-        return FleetThemePalette(
-            highlight: legacy.legacyHighlight,
-            text: FleetThemePalette.fleetDefault.text,
-            background: FleetThemePalette.fleetDefault.background,
-            appearance: .adaptiveCustomHighlight)
+        // The accent's OWN palette carries its per-appearance resolution: the
+        // mono accents (White, and Black since the dark-legibility fix) must
+        // resolve their highlight in dark mode on a migrated install too — a
+        // hard-coded `.adaptiveCustomHighlight` here would keep the
+        // invisible-on-canvas highlight this migration exists to avoid.
+        return legacy.palette
     }
 }

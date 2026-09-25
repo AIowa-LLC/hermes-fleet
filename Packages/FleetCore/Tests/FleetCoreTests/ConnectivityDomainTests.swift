@@ -39,6 +39,18 @@ final class ConnectivityDomainTests: XCTestCase {
         XCTAssertEqual(GatewayStatus.classify(failureDetail: "unknown close 4999: unclassified"), .offline)
     }
 
+    func testClassifyDoesNotMisreadNegativeURLErrorCodeAsCloseCode1011() {
+        // Dogfood r2 (2026-09-23): a URL-domain error -1011
+        // (NSURLErrorBadServerResponse) surfaces as
+        // "unknown close -1011: \u{2026}" — the classifier's loose "1011"
+        // substring matched it and rendered "Degraded" (server error) for a
+        // transient socket loss. The code -1011 is NOT close code 1011.
+        XCTAssertEqual(
+            GatewayStatus.classify(
+                failureDetail: "unknown close -1011: There was a bad response from the server."),
+            .offline)
+    }
+
     func testGatewayStatusIsReachable() {
         XCTAssertTrue(GatewayStatus.online.isReachable)
         XCTAssertTrue(GatewayStatus.degraded.isReachable)

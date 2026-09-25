@@ -154,6 +154,7 @@ struct GatewayPairingScannerView: View {
                 openSettings()
             } label: {
                 Label("Open Settings", systemImage: "gear")
+                    .foregroundStyle(theme.onHighlight)
             }
             .buttonStyle(.borderedProminent)
             .tint(theme.highlight)
@@ -242,6 +243,7 @@ struct GatewayPairingScannerView: View {
                         handleRaw(simulated)
                     } label: {
                         Label("Simulate Scanned Code", systemImage: "wand.and.stars")
+                            .foregroundStyle(theme.onHighlight)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.highlight)

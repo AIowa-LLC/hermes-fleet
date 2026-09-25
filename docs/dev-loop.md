@@ -49,7 +49,7 @@ before it can enter `main`.
 | --- | --- | --- | --- | --- | --- |
 | `pull_request` | yes | yes | yes | focused preflight subset | `CI Gate`, fail-closed |
 | `merge_group` | yes | yes | yes | complete 5-shard matrix | `CI Gate`, fail-closed |
-| `push` to `main` | yes | yes | yes | complete 5-shard matrix | informational |
+| `push` to `main` | yes | yes | yes | skipped (merge queue already validated) | informational |
 
 ### Pull-request UI preflight
 
@@ -67,8 +67,10 @@ The selector is self-tested by `scripts/c1_ui_preflight_test.sh` in the static
 job, and every suite it can select is validated against the canonical
 inventory in `scripts/c1_ui_matrix.sh`. The preflight trades exhaustiveness
 for speed by design; it must never be treated as a substitute for the
-merge-group matrix. The merge-group gate is unchanged: static, package,
-hosted-unit, and all five UI shards run against every queued candidate.
+merge-group matrix. The merge-group gate is authoritative: static, package,
+hosted-unit, and all five UI shards run against every queued candidate. Main
+pushes repeat static, package, and hosted-unit checks without rerunning the UI
+matrix.
 
 ## Adding a UI suite
 

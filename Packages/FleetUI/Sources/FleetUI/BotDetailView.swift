@@ -213,6 +213,10 @@ public struct BotDetailView: View {
                 .padding(.vertical, FleetTheme.spacingSm)
         }
         .buttonStyle(.fleetPressable)
+        .disabled(isGhost)
+        .accessibilityHint(isGhost
+            ? "Reconnect \(gatewayName) before starting a new session."
+            : "Starts a new conversation with this bot.")
         .accessibilityIdentifier("fleet.bot-detail.sessions.new")
 
         let sessions = environment.sessions(for: route)
@@ -329,49 +333,64 @@ public struct BotDetailView: View {
 
             // Slice 2 management actions — Edit sheet, Duplicate (with
             // inherited/not-copied confirmation), Delete (capability-gated
-            // honest state). Ghost writes are disabled: an offline-owning
-            // gateway cannot take metadata writes.
-            if isGhost || presence == .unreachable {
-                Label(
-                    "Write actions need the owning gateway online",
-                    systemImage: "wifi.slash"
-                )
-                .font(.caption)
-                .foregroundStyle(theme.textSecondary)
-                .accessibilityIdentifier("fleet.bot-detail.writes-offline")
-            } else {
-                VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                    HStack(spacing: FleetTheme.spacingSm) {
-                        Button {
-                            showingEdit = true
-                        } label: {
-                            Label("Edit", systemImage: "pencil")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("fleet.bot-detail.edit")
-                        BotActionsMenu(environment: environment, bot: bot)
+            // honest state). Build 43: the controls ALWAYS render. When the
+            // owning gateway is unreachable (or the bot is a ghost from the
+            // offline cache) they are DISABLED with an explanation naming
+            // the owning gateway — the entry point never silently
+            // disappears (the user must not have to guess that editing
+            // exists). Mutation safety is unchanged: no write is attempted
+            // while offline, nothing is queued, nothing reroutes.
+            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                if isGhost || presence == .unreachable {
+                    Label(editUnavailableExplanation, systemImage: "wifi.slash")
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.bot-detail.writes-offline")
+                }
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Button {
+                        showingEdit = true
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
                     }
-                    // FOS-2: profile-scoped management panes entered from
-                    // Bot Detail carry this Bot's Route — no picker, no
-                    // fallback (SPEC §8 scope selection rule).
-                    VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-                        NavigationLink(value: FleetScreen.skills(route.gatewayID, profile: route.profileSlug)) {
-                            Label("Skills", systemImage: "sparkles")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("fleet.bot-detail.skills")
-                        NavigationLink(value: FleetScreen.memoryGraph(route.gatewayID, profile: route.profileSlug)) {
-                            Label("Memory", systemImage: "point.3.connected.trianglepath.dotted")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("fleet.bot-detail.memory")
+                    .buttonStyle(.bordered)
+                    .disabled(isGhost || presence == .unreachable)
+                    // Mirrors the New Session hint above: the hint describes
+                    // what the button does NOW. Announcing "Reconnect …" for
+                    // an enabled button is misleading VoiceOver copy.
+                    .accessibilityHint(isGhost || presence == .unreachable
+                        ? editUnavailableHint
+                        : "Opens this bot's editor.")
+                    .accessibilityIdentifier("fleet.bot-detail.edit")
+                    BotActionsMenu(environment: environment, bot: bot)
+                        // Build 43 invariant: no write is attempted while
+                        // offline. The menu owns real gateway writes
+                        // (duplicate → createProfile, move → configureProfile)
+                        // and does not self-guard connectivity, so it is
+                        // gated with the Edit button it sits beside.
+                        .disabled(isGhost || presence == .unreachable)
+                        .accessibilityIdentifier("fleet.bot-detail.actions")
+                }
+                // FOS-2: profile-scoped management panes entered from
+                // Bot Detail carry this Bot's Route — no picker, no
+                // fallback (SPEC §8 scope selection rule).
+                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                    NavigationLink(value: FleetScreen.skills(route.gatewayID, profile: route.profileSlug)) {
+                        Label("Skills", systemImage: "sparkles")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("fleet.bot-detail.skills")
+                    NavigationLink(value: FleetScreen.memoryGraph(route.gatewayID, profile: route.profileSlug)) {
+                        Label("Memory", systemImage: "point.3.connected.trianglepath.dotted")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("fleet.bot-detail.memory")
                 }
             }
 
@@ -384,6 +403,23 @@ public struct BotDetailView: View {
 
     private var gatewayName: String {
         environment.gateway(for: route.gatewayID)?.displayName ?? route.gatewayID.rawValue
+    }
+
+    /// Build 43: honest per-state explanation for the disabled management
+    /// actions. A ghost is a CACHED identity (its gateway failed the latest
+    /// refresh); plain unreachability still has a live roster entry. Both
+    /// name the owning gateway so the user knows what to bring back online.
+    private var editUnavailableExplanation: String {
+        if isGhost {
+            return "Last known offline — editing needs \(gatewayName) online again."
+        }
+        return "Editing requires a connection to this Bot's gateway (\(gatewayName))."
+    }
+
+    private var editUnavailableHint: String {
+        isGhost
+            ? "This bot is a last-known copy. Reconnect \(gatewayName) to edit."
+            : "Reconnect \(gatewayName) to edit this bot."
     }
 
     private var presence: BotPresence {

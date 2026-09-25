@@ -34,8 +34,8 @@ policy guard in `scripts/ci_gate_policy_check.sh` fails if the trigger or gate
 contract is weakened. Its concurrency policy may supersede ordinary PR
 refreshes, but never cancels a `merge_group` run. The serial queue's
 `check_response_timeout_minutes` is 240: the five UI jobs each have a
-75-minute ceiling, leaving explicit margin for macOS runner capacity while a
-candidate waits for its checks.
+150-minute ceiling, leaving time for macOS runner capacity while a candidate
+waits for its checks.
 
 Dev Loop v2 (the pull request preflight) removes duplicated hosted validation
 before merge; it does not weaken the integration gate. The merge queue remains

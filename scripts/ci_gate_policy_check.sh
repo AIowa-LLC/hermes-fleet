@@ -62,6 +62,15 @@ require 'run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_requ
 require "  ui-shard:" "the full UI matrix job must remain present"
 require "    if: github.event_name == 'merge_group'" "the full UI matrix must run on merge groups only"
 require "      fail-fast: false" "a failing UI shard must not cancel its siblings"
+if ! awk '
+  /^  ui-shard:$/ { in_ui_shard=1; next }
+  /^  [[:alnum:]_-]+:$/ { if (in_ui_shard) exit }
+  in_ui_shard && /^    timeout-minutes: 150$/ { found=1 }
+  END { exit !found }
+' "$WORKFLOW"; then
+  echo "FAIL: the authoritative UI matrix must have a 150-minute ceiling" >&2
+  exit 1
+fi
 require "        shard: [1, 2, 3, 4, 5]" "all deterministic UI shards must remain configured"
 require "        shards: [5]" "the UI matrix must keep its five-shard split"
 require "        run: bash scripts/ci_gate_policy_check.sh" "CI must verify its own integration policy"

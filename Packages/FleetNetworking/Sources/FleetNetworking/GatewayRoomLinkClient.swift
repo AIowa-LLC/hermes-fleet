@@ -65,6 +65,11 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
     }
 
     static func decodeNegotiation(_ result: JSONValue) -> RoomLinkNegotiation {
+        // Integer reads below all go through `JSONValue.intValue`, whose bound
+        // (2^63-EXCLUSIVE, owned by `JSONValue.boundedInt`) keeps a buggy or
+        // hostile gateway from trapping the process through `Int(_:)`. An
+        // unrepresentable number reads exactly like a missing key at each
+        // site — never a fabricated version/epoch/seq the caller would use.
         let roomLink = result["room_link"]?.objectValue
         let catalog = roomLink?["catalog"]?.objectValue
         let endpoint = (catalog?["endpoint"]?.objectValue).map(Self.decodeEndpoint)
@@ -74,7 +79,10 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
             enabled: roomLink?["enabled"]?.boolValue ?? false,
             disabledReason: roomLink?["reason"]?.stringValue.map(RoomLinkDisabledReason.init(wireValue:)),
             profile: roomLink?["profile"]?.stringValue,
-            protocolVersions: catalog?["protocol_versions"]?.arrayValue?.compactMap(\.numberValue).map(Int.init) ?? [],
+            // `intValue` bounds each entry (2^63-exclusive): an
+            // unrepresentable protocol version drops out of the list — the
+            // same shape as a non-number entry — instead of trapping.
+            protocolVersions: catalog?["protocol_versions"]?.arrayValue?.compactMap(\.intValue) ?? [],
             installationID: catalog?["installation_id"]?.stringValue ?? "",
             linkModes: catalog?["link_modes"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             persistentProcess: catalog?["persistent_process"]?.boolValue ?? false,
@@ -97,11 +105,11 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
 
     static func decodePolicy(_ o: [String: JSONValue]) -> RoomLinkExecutionPolicy {
         RoomLinkExecutionPolicy(
-            version: o["version"]?.numberValue.map(Int.init) ?? 0,
+            version: o["version"]?.intValue ?? 0,
             targetProfile: o["target_profile"]?.stringValue ?? "",
             enabledToolsets: o["enabled_toolsets"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             approvalMode: o["approval_mode"]?.stringValue ?? "",
-            maxIterations: o["max_iterations"]?.numberValue.map(Int.init) ?? 0,
+            maxIterations: o["max_iterations"]?.intValue ?? 0,
             policyDigest: o["policy_digest"]?.stringValue ?? "")
     }
 
@@ -234,10 +242,10 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
             roomID: o["room_id"]?.stringValue ?? roomID,
             name: o["name"]?.stringValue ?? "",
             authorityGatewayID: authority?["gateway_id"]?.stringValue ?? "",
-            authorityEpoch: authority?["epoch"]?.numberValue.map(Int.init) ?? 0,
-            lastSeq: o["last_seq"]?.numberValue.map(Int.init) ?? 0,
-            latestSeq: o["latest_seq"]?.numberValue.map(Int.init) ?? 0,
-            eventBytes: o["event_bytes"]?.numberValue.map(Int.init) ?? 0,
+            authorityEpoch: authority?["epoch"]?.intValue ?? 0,
+            lastSeq: o["last_seq"]?.intValue ?? 0,
+            latestSeq: o["latest_seq"]?.intValue ?? 0,
+            eventBytes: o["event_bytes"]?.intValue ?? 0,
             createdAt: o["created_at"]?.numberValue ?? 0,
             updatedAt: o["updated_at"]?.numberValue ?? 0)
     }
@@ -264,10 +272,10 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
         let authority = o["authority"]?.objectValue
         return RoomReplicateReceipt(
             roomID: o["room_id"]?.stringValue ?? roomID,
-            storedSeq: o["stored_seq"]?.numberValue.map(Int.init) ?? 0,
-            ingested: o["ingested"]?.numberValue.map(Int.init) ?? 0,
+            storedSeq: o["stored_seq"]?.intValue ?? 0,
+            ingested: o["ingested"]?.intValue ?? 0,
             authorityGatewayID: authority?["gateway_id"]?.stringValue ?? "",
-            authorityEpoch: authority?["epoch"]?.numberValue.map(Int.init) ?? 0,
+            authorityEpoch: authority?["epoch"]?.intValue ?? 0,
             caughtUp: o["caught_up"]?.boolValue ?? false)
     }
 
@@ -285,11 +293,11 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
         return RoomPromotionReceipt(
             roomID: o["room_id"]?.stringValue ?? roomID,
             authorityGatewayID: o["authority_gateway_id"]?.stringValue ?? "",
-            authorityEpoch: o["authority_epoch"]?.numberValue.map(Int.init) ?? 0,
+            authorityEpoch: o["authority_epoch"]?.intValue ?? 0,
             previousGatewayID: o["previous_gateway_id"]?.stringValue ?? "",
-            previousEpoch: o["previous_epoch"]?.numberValue.map(Int.init) ?? 0,
-            claimSeq: o["claim_seq"]?.numberValue.map(Int.init) ?? 0,
-            latestSeq: o["latest_seq"]?.numberValue.map(Int.init) ?? 0)
+            previousEpoch: o["previous_epoch"]?.intValue ?? 0,
+            claimSeq: o["claim_seq"]?.intValue ?? 0,
+            latestSeq: o["latest_seq"]?.intValue ?? 0)
     }
 
     /// `groups.demote` with the observed authority (idempotent upstream).
@@ -362,7 +370,7 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
             name: name,
             members: ModernProfilesDecoder.toMetadataValue(members),
             authorityGatewayID: room["authority_gateway_id"]?.stringValue ?? "",
-            authorityEpoch: room["authority_epoch"]?.numberValue.map(Int.init) ?? 0)
+            authorityEpoch: room["authority_epoch"]?.intValue ?? 0)
     }
 
     /// One `groups.log` page (VERBATIM result object — submitted to
@@ -383,11 +391,11 @@ public struct GatewayRoomLinkClient: GatewaySessionDisconnecting, Sendable {
         return RoomReplayLogPage(
             roomID: roomID,
             page: ModernProfilesDecoder.toMetadataValue(result),
-            cursor: o["cursor"]?.numberValue.map(Int.init) ?? sinceSeq,
-            latestSeq: o["latest_seq"]?.numberValue.map(Int.init) ?? 0,
+            cursor: o["cursor"]?.intValue ?? sinceSeq,
+            latestSeq: o["latest_seq"]?.intValue ?? 0,
             hasMore: o["has_more"]?.boolValue ?? false,
             authorityGatewayID: authority?["gateway_id"]?.stringValue ?? "",
-            authorityEpoch: authority?["epoch"]?.numberValue.map(Int.init) ?? 0)
+            authorityEpoch: authority?["epoch"]?.intValue ?? 0)
     }
 }
 

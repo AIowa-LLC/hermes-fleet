@@ -87,7 +87,12 @@ public enum GatewayStatus: String, Hashable, Sendable, Codable, CaseIterable {
             || d.contains("4404") || d.contains("4408") {
             return .unsupported
         }
-        if d.contains("server error") || d.contains("1011") || d.contains("tls") {
+        // Server-internal error — the transport formats close 1011 as
+        // "server error (1011)". Match "server error", NEVER a bare "1011":
+        // a URL-domain code (-1011 = NSURLErrorBadServerResponse) reaching
+        // this classifier inside "unknown close -1011: …" must fall through
+        // to offline, not masquerade as a gateway close code (dogfood r2).
+        if d.contains("server error") || d.contains("tls") {
             return .degraded
         }
         // normal/going-away/abnormal/unknown → offline (endpoint not serving).

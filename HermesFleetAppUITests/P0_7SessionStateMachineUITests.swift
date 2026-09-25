@@ -164,9 +164,10 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     }
 
     private func tapBackButton(_ app: XCUIApplication) {
-        // Navigation back: iOS 26 exposes the system back as "BackButton"
-        // (toolbar actions share the bar query — never tap firstMatch).
-        let back = app.navigationBars.buttons["BackButton"]
+        // The conversation screen carries a custom header; its back control is
+        // "fleet.conversation.back" — there is no system "BackButton" on it
+        // (mirrors the lane's FleetUnreadBadgeUITests convention).
+        let back = app.buttons["fleet.conversation.back"].firstMatch
         XCTAssertTrue(back.waitForExistence(timeout: 10), "Back button must exist")
         back.tap()
     }

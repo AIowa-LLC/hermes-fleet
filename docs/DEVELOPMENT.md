@@ -22,6 +22,10 @@ Do not place new feature work directly on `main`.
 - Every TestFlight build maps to an exact commit and tag (see
   [`../RELEASES.md`](../RELEASES.md)); release-candidate commits are never
   ambiguous.
+- Build numbers are counters, not lineage. A build number alone never identifies
+  a tree; map every distributed build to its exact commit/tag.
+- Every distributed build records both its exact Git SHA and source
+  branch/worktree (preflight archives live under `build/release-preflight/<sha>/`).
 - Validate work with the local loop (`make dev-check`) before pushing; the
   merge queue runs the authoritative full matrix (see [`dev-loop.md`](dev-loop.md)).
 - Release candidates are produced only from a green `main` via the repository

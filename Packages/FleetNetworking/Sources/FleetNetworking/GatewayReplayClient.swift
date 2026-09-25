@@ -94,9 +94,11 @@ public struct GatewayReplayClient {
     public static func decode(sessionID: String, _ result: JSONValue) throws -> ReplayBatch {
         let events = result["events"]?.arrayValue?
             .compactMap(GatewayEvent.init(replayParams:)) ?? []
-        let latestSeq = result["latest_seq"]?.numberValue.map(Int.init) ?? 0
+        // `intValue` owns the 2^63-exclusive bound: an unrepresentable seq
+        // reads as this site's missing-value default instead of trapping.
+        let latestSeq = result["latest_seq"]?.intValue ?? 0
         let truncated = result["truncated"]?.boolValue ?? false
-        let count = result["count"]?.numberValue.map(Int.init) ?? events.count
+        let count = result["count"]?.intValue ?? events.count
         let epoch = result["epoch"]?.stringValue
         return ReplayBatch(
             sessionID: sessionID,

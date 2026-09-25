@@ -66,13 +66,17 @@ public struct GatewayConversationClient: ConversationProviding {
         }
     }
 
-    public func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+    public func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
         // M9 fail-closed guard (precedes the connected-state check on purpose).
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
+        if let profile, !RoutingGuard.isValidRouteComponent(profile) {
+            throw ConversationError.invalidSessionKey("profile is not a safe routing key: \(profile)")
+        }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         var params: [String: JSONValue] = ["session_id": .string(sessionID)]
+        if let profile { params["profile"] = .string(profile) }
         // t_8401d3c3 (Last-Event-ID subscribe): declare the resume point on
         // every subscribe/reconnect. The gateway reads only known keys on
         // `session.resume` and ignores extras (verified methods_session.py),
@@ -194,7 +198,7 @@ public struct GatewayConversationClient: ConversationProviding {
         }
         let messages = result["messages"]?.arrayValue?
             .compactMap(GatewaySessionHistoryClient.decodeMessage) ?? []
-        let count = result["message_count"]?.numberValue.map(Int.init) ?? messages.count
+        let count = result["message_count"]?.intValue ?? messages.count
         let info = result["info"]?.objectValue ?? [:]
         return ConversationSession(
             sessionID: sessionID,
@@ -238,6 +242,10 @@ public struct GatewayConversationClient: ConversationProviding {
                 approvalMode: payload["approval_mode"]?.stringValue,
                 seq: seq
             )
+        case .sessionTitle:
+            // methods_session.py:1427 — `{session_id, title}`. The header
+            // adopts the live title; nothing renders in the transcript.
+            return .sessionTitleUpdate(sessionID: sid, title: payload["title"]?.stringValue ?? "", seq: seq)
         case .approvalRequest:
             // R9-T1 (server.py:3102): a dangerous command is blocked. The
             // command is ALREADY gateway-redacted (#48456); the client-side
@@ -319,6 +327,11 @@ public struct GatewayConversationClient: ConversationProviding {
                 toolID: payload["tool_id"]?.stringValue ?? "",
                 name: payload["name"]?.stringValue ?? "",
                 summary: payload["summary"]?.stringValue,
+                // Card D: the tool RESULT rides through as compact JSON — the
+                // gateway emits it already parsed (`tool_progress.py`
+                // `_on_tool_complete`), and it is the only live source of a
+                // generated-image artifact path.
+                resultText: Self.compactJSON(payload["result"]),
                 seq: seq
             )
         case .backgroundComplete:
@@ -349,9 +362,12 @@ public struct GatewayConversationClient: ConversationProviding {
     /// conversation domain, dropping non-conversation handshake events and
     /// preserving unknown conversation types.
     static func eventStream(transport: GatewayWebSocketTransport) -> AsyncStream<ConversationEvent> {
-        AsyncStream { continuation in
+        // Register synchronously: a prompt may complete before the mapping
+        // task gets scheduled. The transport stream buffers those events.
+        let source = transport.subscribeToEvents()
+        return AsyncStream { continuation in
             let task = Task {
-                for await event in transport.subscribeToEvents() {
+                for await event in source {
                     if let conversationEvent = decodeEvent(event) {
                         continuation.yield(conversationEvent)
                     }

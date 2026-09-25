@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import FleetCore
 
 /// One renderer for gateway-owned assets and deterministic Bot identity.
@@ -24,8 +25,24 @@ public struct BotAvatar: View {
     private var shape: String {
         bot?.botModeMetadata?.shape ?? BotAvatarIdentity.defaultShape(forName: identity)
     }
+    /// Avatar identity color — PRECEDENCE (theme-independent by design):
+    ///   1. server-provided explicit `hermes-bots` color metadata
+    ///   2. stable per-Bot fallback derived from the canonical route id
+    /// The user's theme highlight is NEVER an avatar color source: interface
+    /// appearance and Bot identity are separate concerns, so changing the
+    /// highlight can no longer recolor (or whiten) metadata-less Bots.
     private var tint: Color {
-        BotAvatarAppearanceTint.color(hex: bot?.botModeMetadata?.color, fallback: theme.highlight)
+        BotAvatarAppearanceTint.resolvedTint(
+            metadataHex: bot?.botModeMetadata?.color,
+            identity: identityKey)
+    }
+
+    /// Canonical identity for the fallback derivation: the route id
+    /// (`gateway#slug`) whenever a real Bot is rendering; the display name
+    /// only for the name-only initializer (no route exists there).
+    private var identityKey: String {
+        if let bot { return bot.route.id }
+        return identity
     }
 
     public var body: some View {
@@ -55,15 +72,39 @@ public struct BotAvatar: View {
 
 /// Shared tint resolution for the persisted roster renderer AND the editor
 /// draft preview — one shape/color vocabulary (#7: the draft renderer and
-/// the roster renderer must not diverge).
+/// the roster renderer must not diverge). The FALLBACK is the identity-
+/// derived Bot color (never the theme highlight), so the editor preview and
+/// the saved roster avatar always agree.
 enum BotAvatarAppearanceTint {
-    /// Resolve a #RRGGBB metadata color to a SwiftUI tint (accent fallback).
-    static func color(hex raw: String?, fallback: Color) -> Color {
+    /// Resolve a #RRGGBB metadata color to a SwiftUI tint; nil when the
+    /// value is absent or malformed (the caller then uses the identity
+    /// fallback — an invalid explicit value is NOT authoritative).
+    static func metadataColor(hex raw: String?) -> Color? {
         guard let raw, raw.hasPrefix("#"), raw.count == 7,
-              let hex = UInt32(raw.dropFirst(), radix: 16) else { return fallback }
-        return Color(red: Double((hex >> 16) & 255) / 255,
-                     green: Double((hex >> 8) & 255) / 255,
-                     blue: Double(hex & 255) / 255)
+              let hex = UInt32(raw.dropFirst(), radix: 16) else { return nil }
+        return color(hexValue: hex)
+    }
+
+    /// Legacy entry retained for callers with an explicit fallback color.
+    static func color(hex raw: String?, fallback: Color) -> Color {
+        metadataColor(hex: raw) ?? fallback
+    }
+
+    static func color(hexValue: UInt32) -> Color {
+        Color(red: Double((hexValue >> 16) & 255) / 255,
+              green: Double((hexValue >> 8) & 255) / 255,
+              blue: Double(hexValue & 255) / 255)
+    }
+
+    /// The FULL avatar color precedence, shared by the roster renderer and
+    /// the editor preview (they must agree — #7):
+    ///   1. a valid explicit metadata color (server-authoritative)
+    ///   2. the identity-derived fallback (canonical route id)
+    /// There is deliberately NO theme parameter: avatar identity color is
+    /// not a function of interface appearance.
+    static func resolvedTint(metadataHex: String?, identity: String) -> Color {
+        if let explicit = metadataColor(hex: metadataHex) { return explicit }
+        return color(hexValue: BotAvatarIdentity.fallbackColorHex(identity: identity))
     }
 }
 
@@ -93,9 +134,20 @@ public struct BotAvatarAppearancePreview: View {
     @Environment(\.fleetTheme) private var theme
     let draft: BotAvatarAppearanceDraft
     let identityName: String
+    /// Canonical route id (`gateway#slug`) for the identity-derived fallback
+    /// color. Must match the roster renderer's derivation so the preview and
+    /// the saved avatar agree (#7). Falls back to `identityName` when no
+    /// route identity is available.
+    var canonicalIdentity: String = ""
 
     private var shape: String {
         draft.shape ?? BotAvatarIdentity.defaultShape(forName: identityName)
+    }
+
+    /// Identity key for the fallback color — same vocabulary as the roster
+    /// renderer (canonical route id first).
+    private var fallbackIdentity: String {
+        canonicalIdentity.isEmpty ? identityName : canonicalIdentity
     }
 
     /// VoiceOver / UI-test description of the staged appearance.
@@ -115,7 +167,9 @@ public struct BotAvatarAppearancePreview: View {
                 BotAvatarFace(
                     shape: shape,
                     seed: identityName,
-                    tint: BotAvatarAppearanceTint.color(hex: draft.color, fallback: theme.highlight))
+                    tint: BotAvatarAppearanceTint.resolvedTint(
+                        metadataHex: draft.color,
+                        identity: fallbackIdentity))
             }
         }
         .frame(width: 96, height: 96)
