@@ -8,10 +8,10 @@ import AVFoundation
 
 /// F2 — QR pairing scanner sheet for the Add-Gateway flow.
 ///
-/// Presents the system camera barcode/text scanner (VisionKit
-/// `DataScannerViewController`). Each recognized text is run through the SAME
-/// decode + apply path a simulated scan uses, so the deterministic test hook
-/// exercises production logic:
+/// Presents the system camera QR barcode scanner (VisionKit
+/// `DataScannerViewController`). Each recognized barcode payload goes through
+/// the SAME decode + apply path a simulated scan uses, so the deterministic
+/// test hook exercises production logic:
 ///
 ///     camera frame ──┐
 ///                    ├─▶ PairingPayload.decode ─▶ GatewayFormDraftStore.apply
@@ -309,15 +309,25 @@ struct GatewayPairingScannerView: View {
 }
 
 #if os(iOS)
-/// VisionKit live-scanner bridge. Recognized text is forwarded as-is; decode
-/// lives one layer up so camera and simulated scans share one code path.
+enum PairingScannerConfiguration {
+    /// Build 88: pairing codes are QR BARCODES. Text/OCR recognition must
+    /// never silently replace the barcode path again (regression guard:
+    /// HermesFleetAppTests/PairingScannerConfigurationTests).
+    static var recognizedDataTypes: [DataScannerViewController.RecognizedDataType] {
+        [.barcode(symbologies: [.qr])]
+    }
+}
+
+/// VisionKit live-scanner bridge. Recognized barcodes are forwarded as-is;
+/// decode lives one layer up so camera and simulated scans share one code
+/// path.
 private struct PairingCameraScanner: UIViewControllerRepresentable {
     var onRaw: (String) -> Void
     var onCameraError: (String) -> Void
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let controller = DataScannerViewController(
-            recognizedDataTypes: [.text()],
+            recognizedDataTypes: Set(PairingScannerConfiguration.recognizedDataTypes),
             qualityLevel: .balanced,
             recognizesMultipleItems: false,
             isHighFrameRateTrackingEnabled: false,
@@ -339,7 +349,7 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         private let onRaw: (String) -> Void
         private let onCameraError: (String) -> Void
-        /// Same text re-recognized frame after frame — deliver each once.
+        /// Same payload re-recognized frame after frame — deliver each once.
         private var seen: Set<String> = []
 
         init(onRaw: @escaping (String) -> Void, onCameraError: @escaping (String) -> Void) {
@@ -360,9 +370,10 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
             didAdd addedItems: [RecognizedItem],
             allItems: [RecognizedItem]
         ) {
-            for case .text(let text) in addedItems {
-                let raw = text.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !raw.isEmpty, seen.insert(raw).inserted else { continue }
+            for case .barcode(let barcode) in addedItems {
+                guard let raw = barcode.payloadStringValue?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty,
+                    seen.insert(raw).inserted else { continue }
                 onRaw(raw)
             }
         }
