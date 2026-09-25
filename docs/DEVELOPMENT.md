@@ -23,6 +23,8 @@ Do not place new feature work directly on `main`.
   [`../RELEASES.md`](../RELEASES.md)); release-candidate commits are never
   ambiguous.
 - Validate work with the local loop (`make dev-check`) before pushing; the
-  merge queue runs the authoritative full matrix (see [`dev-loop.md`](dev-loop.md)).
+  merge queue runs changed-area UI checks and the critical journey smoke. The
+  complete UI matrix remains available for nightly and manual deep validation
+  (see [`dev-loop.md`](dev-loop.md)).
 - Release candidates are produced only from a green `main` via the repository
   release procedure (see [`release-preflight.md`](release-preflight.md)).

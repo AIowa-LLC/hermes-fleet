@@ -1,15 +1,15 @@
 #!/bin/bash
 # C1 pull-request UI preflight — focused, changed-area suite selection.
 #
-# Dev Loop v2: ordinary pull-request CI validates a focused subset of the
-# deterministic UI inventory, selected from the pull request's changed files.
-# The complete five-shard matrix (merge_group / main pushes) remains the
-# authoritative integration gate; this preflight only catches obvious defects
-# earlier and must never be treated as a substitute for the full matrix.
+# Dev Loop v3: pull-request and merge-group CI validate a focused subset of
+# the deterministic UI inventory, selected from changed files against the
+# event's base commit. Merge groups also run a fixed critical-journey smoke.
+# The complete five-shard matrix remains available through the separate
+# scheduled/manual deep-validation workflow.
 #
 # Usage:
 #   scripts/c1_ui_preflight.sh                     # diff vs merge-base with the main ref
-#   scripts/c1_ui_preflight.sh --base <ref>        # diff <ref>...HEAD (CI passes the PR base SHA)
+#   scripts/c1_ui_preflight.sh --base <ref>        # diff <ref>...HEAD (CI passes the PR/merge-group base SHA)
 #   scripts/c1_ui_preflight.sh --files <list|->    # classify an explicit changed-file list (- = stdin)
 #   scripts/c1_ui_preflight.sh --print             # print the selection and exit without running xcodebuild
 #
@@ -51,15 +51,15 @@ has_class() { case " $KNOWN " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # Conservative broad journeys for ambiguous/broad product changes and for
 # product files without a more specific mapping. Keep this set deliberately
-# small: the complete five-shard merge_group matrix remains authoritative for
-# broad diffs, while pull-request preflight must finish within its own budget.
+# small: the separate five-shard full regression lane covers the complete
+# inventory, while changed-area preflight stays within its own budget.
 CORE="HermesFleetHappyPath P0_7SessionStateMachine"
-# A pull request can touch many product areas at once (for example, a
-# cross-cutting networking/security change).  Keep the PR signal bounded and
-# deterministic: the full five-shard merge_group matrix remains authoritative
-# for the complete inventory.  Oversized selections still run a mandatory,
-# conservative CORE journey set instead of timing out after an unbounded serial
-# list of xcodebuild invocations.
+# A pull request or merge candidate can touch many product areas at once (for
+# example, a cross-cutting networking/security change). Keep the signal bounded
+# and deterministic: the full five-shard deep lane covers the complete
+# inventory. Oversized selections still run a mandatory, conservative CORE
+# journey set instead of timing out after an unbounded serial list of
+# xcodebuild invocations.
 MAX_FOCUSED_CLASSES=12
 
 # Ordered area map (first match wins; specific before general).
@@ -173,7 +173,7 @@ fi
 
 # --- select ----------------------------------------------------------------------
 SELECTED=""
-echo "UI PREFLIGHT (Dev Loop v2) — changed-file source: $SRC"
+echo "UI PREFLIGHT (Dev Loop v3) — changed-file source: $SRC"
 if [ -s "$LIST" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -203,7 +203,7 @@ echo "SELECTED_CLASSES: $ORDERED"
 
 if [ "$PRINT" -eq 1 ]; then exit 0; fi
 if [ -z "$ORDERED" ]; then
-  echo "UI-PREFLIGHT: no UI-relevant changes in this diff; skipping focused UI run (merge_group remains the full authoritative matrix)."
+  echo "UI-PREFLIGHT: no UI-relevant changes in this diff; skipping focused UI run (merge-group critical smoke and full regression remain separate checks)."
   exit 0
 fi
 echo "UI-PREFLIGHT: running focused suites via scripts/c1_ui_matrix.sh --classes"

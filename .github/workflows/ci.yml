@@ -60,72 +60,62 @@ jobs:
       - name: Unit phase
         run: bash scripts/c1_units.sh
 
-  ui-shard:
-    name: UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
-    # Dev Loop v2: the complete five-shard matrix is the authoritative
-    # integration validation for merge_group candidates. Main pushes retain
-    # static/package/unit post-merge validation without paying for the same UI
-    # matrix a second time; pull requests run the focused ui-preflight below.
+  critical-smoke:
+    name: Critical UI smoke (merge candidate)
+    # This fixed, small journey set is required on the exact merge-group
+    # candidate. PRs use changed-area preflight; remaining suites stay in the
+    # separate full regression workflow.
     if: github.event_name == 'merge_group'
     runs-on: macos-latest
-    # Observed runner pace (run 34405682516): ~10 min initial build + first
-    # boot, then ~3.5-11 min per suite. 10 suites/shard measured 54-61 min
-    # and brushed the old 60-min ceiling; 5 shards x 8 suites lands ~45 min.
-    # 75 min leaves stabilization headroom for slow runners.
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5]
-        shards: [5]
+    timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout merge candidate
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run UI shard
-        run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
-
-      - name: Upload xcresults (failure diagnostics)
-        if: failure()
+      - name: Run critical UI journeys
+        run: bash scripts/c1_critical_smoke.sh
+      - name: Upload xcresults and xcodebuild logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcresults-shard-${{ matrix.shard }}
-          path: /tmp/hermes-c1-results/
+          name: xcresults-critical-smoke
+          path: |
+            /tmp/hermes-c1-results/
+            /tmp/c1_xctest_ui_*.log
           retention-days: 7
           if-no-files-found: ignore
 
   ui-preflight:
-    name: UI preflight (focused, pull request)
-    # Dev Loop v2: pull-request UI validation is a focused subset of the same
-    # deterministic inventory, selected from the changed files by
-    # scripts/c1_ui_preflight.sh. The merge_group matrix above remains the
-    # full authoritative gate; this job only catches obvious defects earlier.
-    if: github.event_name == 'pull_request'
+    name: UI preflight (focused, changed area)
+    # PRs get an early changed-area check; merge candidates repeat it against
+    # the merge-group base alongside the fixed critical smoke set.
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: macos-latest
     timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # The selector diffs against the pull request's base commit, so the
-          # full pull request history must be present.
+          # The selector diffs against the base commit, so the full history is
+          # needed for both pull requests and merge-group candidates.
           fetch-depth: 0
       - name: Run focused UI preflight (changed-area selection)
-        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha }}"
-
+        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
       - name: Upload xcresults (failure diagnostics)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: xcresults-pr-preflight
-          path: /tmp/hermes-c1-results/
+          name: xcresults-ui-preflight
+          path: |
+            /tmp/hermes-c1-results/
+            /tmp/c1_xctest_ui_*.log
           retention-days: 7
           if-no-files-found: ignore
 
   ci-gate:
     name: CI Gate
-    needs: [static-guards, packages, units, ui-shard, ui-preflight]
+    needs: [static-guards, packages, units, ui-preflight, critical-smoke]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -134,14 +124,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Require every validation job to have succeeded
+      - name: Require every merge validation job to have succeeded
         env:
           CI_GATE_EVENT_NAME: ${{ github.event_name }}
           CI_GATE_STATIC_RESULT: ${{ needs.static-guards.result }}
           CI_GATE_PACKAGES_RESULT: ${{ needs.packages.result }}
           CI_GATE_UNITS_RESULT: ${{ needs.units.result }}
-          CI_GATE_UI_SHARD_RESULT: ${{ needs.ui-shard.result }}
           CI_GATE_UI_PREFLIGHT_RESULT: ${{ needs.ui-preflight.result }}
+          CI_GATE_CRITICAL_SMOKE_RESULT: ${{ needs.critical-smoke.result }}
         run: |
           echo "CI Gate dependency results:"
           echo "${{ toJSON(needs.*.result) }}"
