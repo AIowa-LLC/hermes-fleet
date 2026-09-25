@@ -934,13 +934,13 @@ public struct RoomChatView: View {
         return latestScrollTargetFrame.frame.intersects(scrollViewportFrame)
     }
 
-    /// The target's bottom edge must reach the scroll viewport's end. Merely
-    /// intersecting the viewport can happen while a deep lazy stack is still
-    /// correcting its height estimates, before open-at-latest has converged.
+    /// The target's bottom edge must reach the viewport's composer-safe end.
+    /// Merely intersecting the viewport or sitting above this end can happen
+    /// while a deep lazy stack is still correcting its height estimates.
     private var isLatestScrollTargetAtEnd: Bool {
         guard isLatestScrollTargetVisible,
               let targetFrame = latestScrollTargetFrame?.frame else { return false }
-        return targetFrame.maxY <= scrollViewportFrame.maxY - 96
+        return targetFrame.maxY >= scrollViewportFrame.maxY - 96
     }
 
     /// Re-assert scrollTo(latest) until the target reaches the visible end of
