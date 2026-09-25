@@ -318,6 +318,61 @@ enum PairingScannerConfiguration {
     }
 }
 
+/// Build-88 dogfood fix: the scanner must START from the documented
+/// lifecycle point. VisionKit has NO "became ready" delegate callback — the
+/// delegate protocol declares only didAdd/didUpdate/didRemove/didTapOn/
+/// didZoom/becameUnavailableWithError (verified against the SDK interface
+/// AND the iOS 27 runtime binary, which contains no such selector anywhere)
+/// — the documented contract is an explicit `startScanning()` call once the
+/// scanner is on screen. The previous code called `startScanning()` from a
+/// method VisionKit never invokes, so the scanning session never started on
+/// a physical device: the camera preview and VisionKit's guidance text
+/// ("Slow down") ran while no barcode was ever decoded.
+///
+/// This container embeds the scanner and starts it EXACTLY ONCE when the
+/// view first appears (guard pinned by PairingScannerStartTests).
+final class PairingScannerContainerViewController: UIViewController {
+    private let scanner: DataScannerViewController
+    /// Exactly-once start bookkeeping (asserted by PairingScannerStartTests).
+    private(set) var startAttemptCount = 0
+    /// Honest, non-secret failure copy when the session cannot start.
+    var onStartFailure: ((String) -> Void)?
+
+    init(scanner: DataScannerViewController) {
+        self.scanner = scanner
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(scanner)
+        scanner.view.frame = view.bounds
+        scanner.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(scanner.view)
+        scanner.didMove(toParent: self)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        startScanningIfNeeded()
+    }
+
+    /// Starts the scanning session exactly once. `viewDidAppear` can fire
+    /// again (TCC prompt dismissal, re-presentation); a second
+    /// `startScanning()` call is never wanted.
+    func startScanningIfNeeded() {
+        guard startAttemptCount == 0 else { return }
+        startAttemptCount += 1
+        do {
+            try scanner.startScanning()
+        } catch {
+            onStartFailure?("Camera unavailable. Check the camera permission in Settings.")
+        }
+    }
+}
+
 /// VisionKit live-scanner bridge. Recognized barcodes are forwarded as-is;
 /// decode lives one layer up so camera and simulated scans share one code
 /// path.
@@ -325,7 +380,7 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
     var onRaw: (String) -> Void
     var onCameraError: (String) -> Void
 
-    func makeUIViewController(context: Context) -> DataScannerViewController {
+    func makeUIViewController(context: Context) -> PairingScannerContainerViewController {
         let controller = DataScannerViewController(
             recognizedDataTypes: Set(PairingScannerConfiguration.recognizedDataTypes),
             qualityLevel: .balanced,
@@ -336,10 +391,12 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
             isHighlightingEnabled: false
         )
         controller.delegate = context.coordinator
-        return controller
+        let container = PairingScannerContainerViewController(scanner: controller)
+        container.onStartFailure = onCameraError
+        return container
     }
 
-    func updateUIViewController(_ controller: DataScannerViewController, context: Context) {}
+    func updateUIViewController(_ controller: PairingScannerContainerViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onRaw: onRaw, onCameraError: onCameraError)
@@ -357,10 +414,19 @@ private struct PairingCameraScanner: UIViewControllerRepresentable {
             self.onCameraError = onCameraError
         }
 
-        func dataScannerDidBecomeReady(_ dataScanner: DataScannerViewController) {
-            do {
-                try dataScanner.startScanning()
-            } catch {
+        /// VisionKit's REAL unavailable callback (the protocol-validated
+        /// error path — replaces the previously dead, non-protocol
+        /// `dataScannerDidBecomeReady`, which the framework never invoked).
+        func dataScanner(
+            _ dataScanner: DataScannerViewController,
+            becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable
+        ) {
+            switch error {
+            case .unsupported:
+                onCameraError("Live camera scanning isn't available right now.")
+            case .cameraRestricted:
+                onCameraError("Camera unavailable. Check the camera permission in Settings.")
+            @unknown default:
                 onCameraError("Camera unavailable. Check the camera permission in Settings.")
             }
         }
