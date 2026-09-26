@@ -1,5 +1,6 @@
 import Foundation
 import os
+import UIKit
 import FleetCore
 import FleetNetworking
 import FleetSecurity
@@ -22,6 +23,12 @@ import FleetUI
 /// simulator. Release builds use the real production graph
 /// (`FleetServiceGraph.makeProductionEnvironment`).
 extension FleetServiceGraph {
+    /// UI-test knob: force fleet-wide Group creation through the device-local
+    /// bridge so creation, navigation, send, and relaunch can be exercised
+    /// without changing the default hosted fixture.
+    nonisolated static var bridgedRoomEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_BRIDGED_ROOM"] == "1"
+    }
 
     /// P2-5 UI-test knob: `HERMES_FLEET_ZERO_BOTS=1` makes EVERY scripted
     /// gateway report a healthy roster with ZERO bots, so the all-healthy
@@ -73,7 +80,7 @@ extension FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
-        return AppEnvironment(
+        let environment = AppEnvironment(
             registry: registry,
             roster: roster,
             cache: cache,
@@ -89,6 +96,15 @@ extension FleetServiceGraph {
             },
             managementSeamFactory: { gateway in
                 ScriptedManagementSeam(gatewayID: gateway.id)
+            },
+            cronDashboardFactory: { gateway in
+                ScriptedCronDashboard(gatewayID: gateway.id)
+            },
+            // Card D: scripted artifact transport — deterministic image bytes
+            // for any media-root path, plus env knobs for the honest
+            // expired/denied states (see ScriptedArtifactRetriever).
+            artifactRetrievalFactory: { gateway in
+                ScriptedArtifactRetriever(gatewayID: gateway.id)
             },
             learningSeamFactory: { gateway in
                 ScriptedLearningSeam(gatewayID: gateway.id)
@@ -119,7 +135,9 @@ extension FleetServiceGraph {
             // HERMES_FLEET_ROOMLINK=unsupported renders the honest
             // unsupported state; default is a supported direct/TLS catalog.
             roomLinkFactory: { gateway in
-                ScriptedRoomLinkEngine.shared
+                FleetServiceGraph.bridgedRoomEnabled
+                    ? nil
+                    : ScriptedRoomLinkEngine(gatewayID: gateway.id)
             },
             health: health,
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled
@@ -132,6 +150,80 @@ extension FleetServiceGraph {
             // deterministically in the simulator + UI tests — no live speech.
             voiceEngineFactory: { ScriptedVoiceEngine.shared }
         )
+        // Card D: `HERMES_FLEET_ARTIFACT_FIXTURE=1` seeds a deterministic
+        // observed-artifact library (gateway + source conversation) so the
+        // Artifacts destination is walkable without a live generation.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_ARTIFACT_FIXTURE"] == "1" {
+            let gatewayID = ScriptedFleet.registrations[0].id ?? GatewayID(rawValue: "workstation")
+            environment.recordObservedArtifact(
+                ArtifactReference(
+                    gatewayID: gatewayID,
+                    sessionID: "workstation.default.s1",
+                    profile: "default",
+                    path: "/home/u/.hermes/cache/images/fixture_briefing_chart.png"),
+                sourceTitle: "Fleet morning briefing",
+                sourceSubtitle: "default")
+            environment.recordObservedArtifact(
+                ArtifactReference(
+                    gatewayID: gatewayID,
+                    sessionID: "workstation.default.s1",
+                    profile: "default",
+                    path: "/home/u/.hermes/cache/images/fixture_ui_mock.png"),
+                sourceTitle: "Fleet morning briefing",
+                sourceSubtitle: "default")
+        }
+        return environment
+    }
+}
+
+/// Card D — scripted artifact retriever (DEBUG simulator only): deterministic
+/// image bytes for any media-root path, so inline generation media and the
+/// Artifacts destination are fully walkable without a live gateway.
+///
+/// Env knobs (the honest failure states):
+/// - `HERMES_FLEET_ARTIFACT_EXPIRED=1` → every retrieval reports `.expired`
+///   (the gateway no longer serves the path — terminal, never retried);
+/// - `HERMES_FLEET_ARTIFACT_DENIED=1` → `.notPermitted` (403-class refusal).
+final class ScriptedArtifactRetriever: ArtifactRetrieving, @unchecked Sendable {
+    let gatewayID: GatewayID
+
+    init(gatewayID: GatewayID) {
+        self.gatewayID = gatewayID
+    }
+
+    func retrieve(_ reference: ArtifactReference) async throws -> RetrievedArtifact {
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_ARTIFACT_EXPIRED"] == "1" {
+            throw ArtifactTransportError.expired(detail: "fixture: cache entry aged out")
+        }
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_ARTIFACT_DENIED"] == "1" {
+            throw ArtifactTransportError.notPermitted(detail: "fixture: outside the media roots")
+        }
+        guard reference.gatewayID == gatewayID else {
+            throw ArtifactTransportError.gatewayMismatch(expected: gatewayID, actual: reference.gatewayID)
+        }
+        return RetrievedArtifact(
+            reference: reference,
+            data: Self.fixturePNG(for: reference.name),
+            mimeType: "image/png")
+    }
+
+    /// Deterministic per-artifact gradient PNG (visually distinct rows).
+    static func fixturePNG(for name: String) -> Data {
+        let size = CGSize(width: 240, height: 150)
+        var seed = 0
+        for scalar in name.unicodeScalars {
+            seed = (seed &* 31 &+ Int(scalar.value)) & 0xFFFFFF
+        }
+        let hue = Double(seed % 360) / 360.0
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(hue: hue, saturation: 0.45, brightness: 0.85, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor(hue: (hue + 0.12).truncatingRemainder(dividingBy: 1),
+                    saturation: 0.5, brightness: 0.6, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: size.height * 0.6, width: size.width, height: size.height * 0.4))
+        }
+        return image.pngData() ?? Data()
     }
 }
 
@@ -222,7 +314,9 @@ final class ScriptedVoiceEngine: VoiceTranscribing, @unchecked Sendable {
 /// t_624b81cd: also scripts the board LIST + client-side pinning so the
 /// board selector is walkable deterministically (two boards, "R10
 /// Maintenance" active).
-private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Sendable {
+/// Build 41 scripted board operator. Internal (not `private`) so the hosted
+/// unit suite can exercise the scripted mutation semantics directly.
+final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
     private let lock = NSLock()
     private var continuations: [UUID: AsyncStream<KanbanEventBatch>.Continuation] = [:]
     private var pinned: String?
@@ -251,50 +345,7 @@ private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Senda
     }
 
     func snapshot() async throws -> KanbanBoardSnapshot {
-        let board: String? = unlocked { pinned }
-        // Side Quests (the non-active scripted board) gets a distinct,
-        // smaller snapshot so switching visibly changes the board content.
-        if board == "side-quests" {
-            return KanbanBoardSnapshot(
-                columns: ["todo", "done"],
-                cardsByColumn: [
-                    "todo": [
-                        KanbanCard(
-                            id: "t_side01", title: "Scripted: side quest one",
-                            status: "todo", assignee: "apple-dev",
-                            priority: 1, createdAt: 1_780_003_600, latestSummary: nil),
-                    ],
-                    "done": [
-                        KanbanCard(
-                            id: "t_side02", title: "Scripted: side quest two",
-                            status: "done", assignee: "apple-design",
-                            priority: 1, createdAt: 1_779_996_400, latestSummary: nil),
-                    ],
-                ],
-                latestEventID: 2,
-                now: 1_780_014_400
-            )
-        }
-        return KanbanBoardSnapshot(
-            columns: ["triage", "todo", "ready", "running", "blocked", "review", "done"],
-            cardsByColumn: [
-                "todo": [
-                    KanbanCard(id: "t_script01", title: "Scripted: port kanban stream client", status: "todo", assignee: "apple-dev", priority: 2, createdAt: 1_780_000_000, latestSummary: "Event-stream client pattern ported from the dashboard plugin contract."),
-                    KanbanCard(id: "t_script02", title: "Scripted: read-only board view", status: "todo", assignee: "apple-design", priority: 1, createdAt: 1_780_003_600, latestSummary: nil)
-                ],
-                "running": [
-                    KanbanCard(id: "t_script03", title: "Scripted: live reconnect coverage", status: "running", assignee: "apple-qa", priority: 3, createdAt: 1_780_007_200, latestSummary: "Reconnect resumes from the cursor — no events lost across the gap.")
-                ],
-                "review": [
-                    KanbanCard(id: "t_script04", title: "Scripted: design review pass", status: "review", assignee: "apple-design", priority: 2, createdAt: 1_780_010_800, latestSummary: "Gold Fleet tokens applied; columns as horizontal lanes.")
-                ],
-                "done": [
-                    KanbanCard(id: "t_script05", title: "Scripted: domain models", status: "done", assignee: "apple-dev", priority: 1, createdAt: 1_779_996_400, latestSummary: nil)
-                ]
-            ],
-            latestEventID: 41,
-            now: 1_780_014_400
-        )
+        snapshotFromState()
     }
 
     func changeEvents() async -> AsyncStream<KanbanEventBatch> {
@@ -340,12 +391,332 @@ private final class ScriptedKanbanWatcher: KanbanBoardWatching, @unchecked Senda
         for target in targets { target.finish() }
     }
 
-    /// Async-safe scoped lock helper (NSLock is unavailable in async
-    /// contexts on this toolchain).
-    private func unlocked<T>(_ body: () -> T) -> T {
+    // MARK: Build 41 — scripted mutations (in-memory board state)
+
+    /// Mutable scripted board state (create/move/comment/link/etc).
+    ///
+    /// RACE CONTRACT: every read and write of this state — `tasks`,
+    /// `comments`, `links`, `scriptedEvents`, `nextEventID`,
+    /// `nextTaskSequence`, `orchestration` — happens under `lock`, exactly
+    /// like `pinned`/`continuations`. The type is a non-actor
+    /// `@unchecked Sendable`, so its async methods run on the cooperative
+    /// pool: an unguarded mutation (create/update also force-unwrap
+    /// `tasks[id]!`) can interleave with a concurrent `snapshot()` read from
+    /// the view model's poll backstop and tear the dictionaries.
+    private var tasks: [String: (title: String, status: String, assignee: String?, priority: Int)] = [
+        "t_script01": ("Scripted: port kanban stream client", "todo", "apple-dev", 2),
+        "t_script02": ("Scripted: read-only board view", "todo", "apple-design", 1),
+        "t_script03": ("Scripted: live reconnect coverage", "running", "apple-qa", 3),
+        "t_script04": ("Scripted: design review pass", "review", "apple-design", 2),
+        "t_script05": ("Scripted: domain models", "done", "apple-dev", 1),
+    ]
+    private var comments: [String: [KanbanComment]] = [:]
+    private var links: [String: KanbanTaskLinks] = [:]
+    private var scriptedEvents: [KanbanTaskEventRecord] = []
+    private var nextEventID = 200
+    /// Monotonic scripted-task id sequence. The seeded board occupies
+    /// t_script01…t_script05; a counter — never `tasks.count` — is what keeps
+    /// a delete-then-create from reusing a LIVE id and silently overwriting
+    /// that task's row (plus its links) via `tasks[id] = …`.
+    private var nextTaskSequence = 5
+    private var orchestration = KanbanOrchestrationSettings(
+        orchestratorProfile: "apple-dev", defaultAssignee: "apple-dev",
+        autoDecompose: true, autoPromoteChildren: true,
+        resolvedOrchestratorProfile: "apple-dev", resolvedDefaultAssignee: "apple-dev",
+        activeProfile: "apple-dev")
+
+    /// Record one scripted event. Caller must hold `lock`.
+    private func recordEventLocked(_ taskID: String, _ kind: String) {
+        nextEventID += 1
+        scriptedEvents.append(KanbanTaskEventRecord(
+            id: nextEventID, taskID: taskID, runID: nil, kind: kind, createdAt: Date().timeIntervalSince1970))
+    }
+
+    /// Record one scripted event and return its change batch. Caller must
+    /// hold `lock`; broadcast the batch AFTER unlocking.
+    private func recordChangeLocked(_ taskID: String, _ kind: String) -> KanbanEventBatch {
+        recordEventLocked(taskID, kind)
+        return KanbanEventBatch(
+            events: [KanbanChangeEvent(id: nextEventID, taskID: taskID, kind: kind, createdAt: nil)],
+            cursor: nextEventID)
+    }
+
+    /// Yield a batch to every live subscriber. Never called while holding
+    /// `lock` (subscriber callbacks must not re-enter it).
+    private func broadcast(_ batch: KanbanEventBatch) {
+        let targets = unlocked { Array(continuations.values) }
+        for target in targets { target.yield(batch) }
+    }
+
+    /// Run one scripted-board mutation under `lock`. The body returns its
+    /// value plus the change batches to broadcast; the broadcasts happen
+    /// after the lock is released, so each mutation is atomic to every other
+    /// reader/writer while subscriber work stays outside the critical
+    /// section.
+    private func mutateBoard<T>(_ body: () throws -> (T, [KanbanEventBatch])) rethrows -> T {
+        let (value, batches) = try unlocked(body)
+        for batch in batches { broadcast(batch) }
+        return value
+    }
+
+    private func snapshotFromState() -> KanbanBoardSnapshot {
+        unlocked {
+            var byColumn: [String: [KanbanCard]] = [:]
+            if pinned == "side-quests" {
+                byColumn["todo"] = [
+                    KanbanCard(id: "t_side01", title: "Scripted: side quest one", status: "todo", assignee: "apple-dev", priority: 1, createdAt: 1_780_003_600, latestSummary: nil),
+                ]
+                byColumn["done"] = [
+                    KanbanCard(id: "t_side02", title: "Scripted: side quest two", status: "done", assignee: "apple-design", priority: 1, createdAt: 1_779_996_400, latestSummary: nil),
+                ]
+                return KanbanBoardSnapshot(columns: ["todo", "done"], cardsByColumn: byColumn, latestEventID: 2, now: 1_780_014_400)
+            }
+            let order = ["triage", "todo", "ready", "running", "blocked", "review", "done"]
+            for column in order { byColumn[column] = [] }
+            for (id, task) in tasks.sorted(by: { $0.value.priority > $1.value.priority }) {
+                let column = order.contains(task.status) ? task.status : "todo"
+                byColumn[column]?.append(KanbanCard(
+                    id: id, title: task.title, status: task.status, assignee: task.assignee,
+                    priority: task.priority, createdAt: 1_780_000_000, latestSummary: nil))
+            }
+            return KanbanBoardSnapshot(columns: order, cardsByColumn: byColumn, latestEventID: nextEventID, now: Date().timeIntervalSince1970)
+        }
+    }
+
+    func snapshot(includeArchived: Bool) async throws -> KanbanBoardSnapshot {
+        var snapshot = snapshotFromState()
+        if includeArchived {
+            snapshot = KanbanBoardSnapshot(
+                columns: snapshot.columns + ["archived"],
+                cardsByColumn: snapshot.cardsByColumn,
+                latestEventID: snapshot.latestEventID, now: snapshot.now)
+        }
+        return snapshot
+    }
+
+    func createTask(_ draft: KanbanTaskDraft) async throws -> KanbanCard {
+        mutateBoard {
+            nextTaskSequence += 1
+            let id = "t_script\(String(format: "%02d", nextTaskSequence))"
+            let status = draft.triage ? "triage" : "todo"
+            tasks[id] = (draft.title, status, draft.assignee, draft.priority)
+            for parent in draft.parents {
+                var parentLinks = links[parent] ?? KanbanTaskLinks(parents: [], children: [])
+                parentLinks = KanbanTaskLinks(
+                    parents: parentLinks.parents, children: parentLinks.children + [id])
+                links[parent] = parentLinks
+            }
+            let card = KanbanCard(id: id, title: draft.title, status: status, assignee: draft.assignee, priority: draft.priority, createdAt: Date().timeIntervalSince1970, latestSummary: nil)
+            return (card, [recordChangeLocked(id, "created")])
+        }
+    }
+
+    func updateTask(id: String, patch: KanbanTaskPatch) async throws -> KanbanCard {
+        try mutateBoard {
+            guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+            var batches: [KanbanEventBatch] = []
+            if let status = patch.status {
+                if status == "running" {
+                    throw KanbanMutationError.rejected("Cannot set status to 'running' directly; use the dispatcher/claim path")
+                }
+                tasks[id]?.status = status == "archived" ? "archived" : status
+                batches.append(recordChangeLocked(id, "status_changed"))
+            }
+            if let assignee = patch.assignee {
+                tasks[id]?.assignee = assignee.isEmpty ? nil : assignee
+                batches.append(recordChangeLocked(id, "assigned"))
+            }
+            if let priority = patch.priority {
+                tasks[id]?.priority = priority
+                batches.append(recordChangeLocked(id, "reprioritized"))
+            }
+            if let title = patch.title { tasks[id]?.title = title; batches.append(recordChangeLocked(id, "edited")) }
+            if let body = patch.body { _ = body; batches.append(recordChangeLocked(id, "edited")) }
+            guard let task = tasks[id] else { throw KanbanMutationError.rejected("task \(id) not found") }
+            let card = KanbanCard(id: id, title: task.title, status: task.status, assignee: task.assignee, priority: task.priority, createdAt: 1_780_000_000, latestSummary: nil)
+            return (card, batches)
+        }
+    }
+
+    func deleteTask(id: String) async throws {
+        mutateBoard {
+            tasks.removeValue(forKey: id)
+            return ((), [recordChangeLocked(id, "deleted")])
+        }
+    }
+
+    func fetchTaskDetail(id: String) async throws -> KanbanTaskDetail {
+        try unlocked {
+            guard let task = tasks[id] else { throw KanbanMutationError.rejected("task \(id) not found") }
+            let taskLinks = links[id] ?? KanbanTaskLinks(parents: [], children: [])
+            let children = taskLinks.children.compactMap { childID -> KanbanChildResult? in
+                guard let child = tasks[childID] else { return nil }
+                return KanbanChildResult(id: childID, title: child.title, status: child.status, latestSummary: nil, result: nil)
+            }
+            return KanbanTaskDetail(
+                task: KanbanTaskRecord(
+                    id: id, title: task.title, body: "Scripted task body for the walkthrough.",
+                    assignee: task.assignee, status: task.status, priority: task.priority,
+                    createdAt: 1_780_000_000, workspaceKind: "scratch"),
+                comments: comments[id] ?? [],
+                events: scriptedEvents.filter { $0.taskID == id }.suffix(10).map { $0 },
+                links: taskLinks,
+                childResults: children,
+                runs: [])
+        }
+    }
+
+    func addComment(taskID: String, body: String, author: String?) async throws {
+        try mutateBoard {
+            guard tasks[taskID] != nil else { throw KanbanMutationError.rejected("task \(taskID) not found") }
+            var list = comments[taskID] ?? []
+            list.append(KanbanComment(id: list.count + 1, taskID: taskID, author: author ?? "dashboard", body: body, createdAt: Date().timeIntervalSince1970))
+            comments[taskID] = list
+            return ((), [recordChangeLocked(taskID, "commented")])
+        }
+    }
+
+    func linkTasks(parentID: String, childID: String) async throws -> Bool {
+        try mutateBoard {
+            guard tasks[parentID] != nil, tasks[childID] != nil else {
+                throw KanbanMutationError.rejected("unknown task id")
+            }
+            var parentLinks = links[parentID] ?? KanbanTaskLinks(parents: [], children: [])
+            parentLinks = KanbanTaskLinks(parents: parentLinks.parents, children: parentLinks.children + [childID])
+            links[parentID] = parentLinks
+            return (true, [recordChangeLocked(childID, "linked")])
+        }
+    }
+
+    func unlinkTasks(parentID: String, childID: String) async throws {
+        mutateBoard {
+            var parentLinks = links[parentID] ?? KanbanTaskLinks(parents: [], children: [])
+            parentLinks = KanbanTaskLinks(parents: parentLinks.parents, children: parentLinks.children.filter { $0 != childID })
+            links[parentID] = parentLinks
+            return ((), [recordChangeLocked(childID, "unlinked")])
+        }
+    }
+
+    func bulkUpdate(_ patch: KanbanBulkPatch) async throws -> [KanbanBulkOutcome] {
+        var outcomes: [KanbanBulkOutcome] = []
+        for id in patch.ids {
+            do {
+                try await updateTask(id: id, patch: KanbanTaskPatch(
+                    status: patch.status, assignee: patch.assignee, priority: patch.priority))
+                outcomes.append(KanbanBulkOutcome(id: id, ok: true))
+            } catch {
+                outcomes.append(KanbanBulkOutcome(
+                    id: id, ok: false, error: Redaction.safeErrorDescription(error)))
+            }
+        }
+        return outcomes
+    }
+
+    func reclaimTask(id: String, reason: String?) async throws {
+        try mutateBoard {
+            guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+            if tasks[id]?.status != "running" {
+                throw KanbanMutationError.rejected("cannot reclaim \(id): not in a claimable state (not running, or unknown id)")
+            }
+            tasks[id]?.status = "ready"
+            return ((), [recordChangeLocked(id, "reclaimed")])
+        }
+    }
+
+    func specifyTask(id: String, author: String?) async throws -> KanbanSpecifyOutcome {
+        try mutateBoard {
+            guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+            recordEventLocked(id, "specified")
+            return (KanbanSpecifyOutcome(ok: true, taskID: id, reason: nil, newTitle: tasks[id]?.title), [])
+        }
+    }
+
+    func decomposeTask(id: String, author: String?) async throws -> KanbanDecomposeOutcome {
+        try mutateBoard {
+            guard let task = tasks[id] else { throw KanbanMutationError.rejected("task \(id) not found") }
+            let child1 = "t_dec\(nextEventID)a"
+            let child2 = "t_dec\(nextEventID)b"
+            tasks[child1] = ("\(task.title) — part 1", "todo", task.assignee, task.priority)
+            tasks[child2] = ("\(task.title) — part 2", "todo", task.assignee, task.priority)
+            var taskLinks = links[id] ?? KanbanTaskLinks(parents: [], children: [])
+            taskLinks = KanbanTaskLinks(parents: taskLinks.parents, children: taskLinks.children + [child1, child2])
+            links[id] = taskLinks
+            return (KanbanDecomposeOutcome(ok: true, taskID: id, reason: nil, fanout: true, childIDs: [child1, child2], newTitle: task.title),
+                    [recordChangeLocked(id, "decomposed")])
+        }
+    }
+
+    func reassignTask(id: String, profile: String?, reclaimFirst: Bool, reason: String?) async throws {
+        try mutateBoard {
+            guard tasks[id] != nil else { throw KanbanMutationError.rejected("task \(id) not found") }
+            if reclaimFirst, tasks[id]?.status == "running" {
+                tasks[id]?.status = "ready"
+            }
+            tasks[id]?.assignee = profile
+            return ((), [recordChangeLocked(id, "reassigned")])
+        }
+    }
+
+    func fetchAssignees() async throws -> [String] {
+        ["apple-dev", "apple-design", "apple-qa", "default"]
+    }
+
+    func orchestrationSettings() async throws -> KanbanOrchestrationSettings {
+        unlocked { orchestration }
+    }
+
+    func updateOrchestrationSettings(_ patch: KanbanOrchestrationPatch) async throws -> KanbanOrchestrationSettings {
+        unlocked {
+            if let p = patch.orchestratorProfile {
+                orchestration = KanbanOrchestrationSettings(
+                    orchestratorProfile: p,
+                    defaultAssignee: orchestration.defaultAssignee,
+                    autoDecompose: orchestration.autoDecompose,
+                    autoPromoteChildren: orchestration.autoPromoteChildren,
+                    resolvedOrchestratorProfile: p,
+                    resolvedDefaultAssignee: orchestration.resolvedDefaultAssignee,
+                    activeProfile: orchestration.activeProfile)
+            }
+            if let d = patch.defaultAssignee {
+                orchestration = KanbanOrchestrationSettings(
+                    orchestratorProfile: orchestration.orchestratorProfile,
+                    defaultAssignee: d,
+                    autoDecompose: orchestration.autoDecompose,
+                    autoPromoteChildren: orchestration.autoPromoteChildren,
+                    resolvedOrchestratorProfile: orchestration.resolvedOrchestratorProfile,
+                    resolvedDefaultAssignee: d,
+                    activeProfile: orchestration.activeProfile)
+            }
+            return orchestration
+        }
+    }
+
+    func dispatchNudge(dryRun: Bool, max: Int) async throws -> KanbanDispatchResult {
+        mutateBoard {
+            var spawned: [KanbanDispatchResult.Spawned] = []
+            var batches: [KanbanEventBatch] = []
+            if !dryRun {
+                for (id, task) in tasks where task.status == "ready" {
+                    tasks[id]?.status = "running"
+                    spawned.append(KanbanDispatchResult.Spawned(taskID: id, assignee: task.assignee ?? "default", workspacePath: "/tmp/kanban-\(id)"))
+                    batches.append(recordChangeLocked(id, "claimed"))
+                }
+            }
+            return (KanbanDispatchResult(
+                reclaimed: 0, promoted: 0, spawned: spawned,
+                skippedUnassigned: [], skippedPerProfileCapped: [],
+                crashed: [], autoBlocked: [], timedOut: [], stale: [],
+                rateLimited: [], skippedLocked: false, memoryPressure: nil), batches)
+        }
+    }
+
+    /// Scoped lock helper (NSLock is unavailable directly in async
+    /// contexts on this toolchain). `rethrows` so a guarded body can fail
+    /// (e.g. an unknown-task mutation) without a second copy of the helper.
+    private func unlocked<T>(_ body: () throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
-        return body()
+        return try body()
     }
 }
 
@@ -864,7 +1235,7 @@ private extension String {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable {
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
     let gatewayID: GatewayID
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
@@ -883,6 +1254,10 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     /// Issue #4: scripted Hermes skill discovery/completion/dispatch so the
     /// slash palette is walkable in simulator UI tests without a gateway.
     let slashCommandsBox: ScriptedSlashCommandBox
+    /// Dogfood r8: scripted reasoning seam (serves config.get, records
+    /// config.set calls + a scriptable starting level so the thinking
+    /// slider is fully walkable in the simulator + UI tests).
+    let reasoningBox = ScriptedReasoningBox()
 
     init(gatewayID: GatewayID) {
         self.gatewayID = gatewayID
@@ -934,6 +1309,11 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
         approvalsBox
     }
 
+    /// Dogfood r8: scripted reasoning seam.
+    var reasoning: any ReasoningProviding {
+        reasoningBox
+    }
+
     /// R9-T2/T3/T4: scripted tooling seam.
     var tooling: any ConversationToolingProviding {
         toolingBox
@@ -968,31 +1348,116 @@ private struct ScriptedConversationSession: ConversationSessionProviding, Approv
     }
 }
 
-/// Issue #4 scripted slash capability. The submitted expanded message still
-/// travels through the regular scripted conversation client, preserving the
-/// same streaming transcript path as a live Hermes gateway.
+/// Slash-command parity scripted capability: models the real Hermes wire
+/// shapes (commands.catalog / complete.slash / command.dispatch / slash.exec
+/// / process.stop) so the composer palette and command routing are walkable
+/// in simulator UI tests without a gateway.
 ///
-/// UI-test-only fixtures (DEBUG simulator builds) are selected by the
-/// existing scripted route/session combinations: workstation/default/s2 has
-/// no skills, workstation/researcher/s1 fails discovery, and render-box
-/// models a stale dispatch.
+/// Fixtures (DEBUG simulator builds, selected by the existing scripted
+/// route/session combinations): workstation/default/s2 has an empty catalog,
+/// workstation/researcher/s1 fails discovery, and render-box models a stale
+/// dispatch. The normal workstation/default/s1 conversation carries the full
+/// parity fixture set: /new, /reset (alias), /steer, /stop, /title, /branch,
+/// /fork (alias), /status, /help, one exec command, one prefill command, one
+/// installed skill, one dynamic quick/extension command, one terminal-only
+/// (unavailable) command, and one unknown-dispatch command.
 private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked Sendable {
     private enum FixtureMode: Equatable {
         case normal
-        case noSkills
+        case emptyCatalog
         case discoveryFailure
         case staleDispatch
     }
 
-    private let catalog: [SlashCommandSuggestion] = [
+    /// Mirrors the real 0.21.3 catalog shape: registry built-ins carry
+    /// argument modes + desktop dispositions; quick/plugin commands ride
+    /// `pairs` without `commands` meta; skills carry usage/origin.
+    private let catalogRows: [SlashCommandSuggestion] = [
+        SlashCommandSuggestion(
+            text: "/new",
+            description: "Start a new session (fresh session ID + history)",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/steer",
+            description: "Inject a message after the next tool call without interrupting",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/stop",
+            description: "Kill all running background processes",
+            kind: .command),
+        SlashCommandSuggestion(
+            text: "/title",
+            description: "Set a title for the current session",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/branch",
+            description: "Branch the current session (explore a different path)",
+            kind: .command,
+            argumentMode: .text),
+        SlashCommandSuggestion(
+            text: "/status",
+            description: "Show session, model, token, and context info",
+            kind: .command),
+        SlashCommandSuggestion(
+            text: "/help",
+            description: "Show available commands",
+            kind: .command),
+        SlashCommandSuggestion(
+            text: "/model",
+            description: "Switch model (session-scoped)",
+            kind: .command,
+            desktopDisposition: "hidden"),
+        SlashCommandSuggestion(
+            text: "/resume",
+            description: "Resume a previously-named session",
+            kind: .command,
+            argumentMode: .mixed),
+        // Exec-style backend command (plain worker output).
+        SlashCommandSuggestion(
+            text: "/usage",
+            description: "Show token usage and rate limits",
+            kind: .command),
+        // Prefill-style backend command (/undo returns a prefill directive).
+        SlashCommandSuggestion(
+            text: "/undo",
+            description: "Back up N user turns and re-prompt (default 1)",
+            kind: .command),
+        // Terminal-only: present in the catalog but never suggested on iOS.
+        SlashCommandSuggestion(
+            text: "/redraw",
+            description: "Force a full UI repaint (recovers from terminal drift)",
+            kind: .command,
+            desktopDisposition: "terminal"),
+        // Dynamic extension (quick command): no registry meta.
+        SlashCommandSuggestion(
+            text: "/deploy-check",
+            description: "exec: fleet-status --canary",
+            kind: .extensionCommand),
+        // Unknown-dispatch probe: backend-owned, returns a future type.
+        SlashCommandSuggestion(
+            text: "/future-probe",
+            description: "Returns a dispatch Fleet does not know",
+            kind: .command),
+        // Installed skills (usage-ranked in the fixture).
         SlashCommandSuggestion(
             text: "/hermes-change-review",
             description: "Review a change against its issue",
-            kind: .skill),
+            kind: .skill,
+            usage: 4),
         SlashCommandSuggestion(
             text: "/hermes-plan",
             description: "Build an implementation plan",
-            kind: .skill),
+            kind: .skill,
+            usage: 0),
+    ]
+
+    /// The canon map: aliases → canonical (mirrors `canon` on the wire).
+    private let canon: [String: String] = [
+        "/reset": "/new",
+        "/fork": "/branch",
     ]
 
     private let gatewayID: GatewayID
@@ -1010,7 +1475,7 @@ private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked S
         }
         switch sessionID {
         case "workstation.default.s2":
-            return .noSkills
+            return .emptyCatalog
         case "workstation.researcher.s1":
             return .discoveryFailure
         default:
@@ -1018,43 +1483,97 @@ private final class ScriptedSlashCommandBox: SlashCommandProviding, @unchecked S
         }
     }
 
-    func skillCatalog(sessionID: String?) async throws -> [SlashCommandSuggestion] {
+    private func catalogPayload(sessionID: String?) throws -> HermesCommandCatalog {
         switch mode(for: sessionID) {
         case .discoveryFailure:
-            throw SlashCommandError.rpcFailed("scripted skill discovery failed")
-        case .noSkills:
-            return []
+            throw SlashCommandError.rpcFailed("scripted command discovery failed")
+        case .emptyCatalog:
+            return HermesCommandCatalog(commands: [], canon: [:], commandMeta: [:], skills: [:])
         case .normal, .staleDispatch:
-            return catalog
+            var meta: [String: SlashCommandSuggestion] = [:]
+            for row in catalogRows where row.desktopDisposition != nil || row.argumentMode != nil {
+                meta[row.text.lowercased()] = row
+            }
+            let skills = Dictionary(
+                uniqueKeysWithValues: catalogRows.filter { $0.kind == .skill }.map {
+                    ($0.text, HermesCommandCatalog.SkillEntry(usage: $0.usage, origin: "local"))
+                })
+            return HermesCommandCatalog(
+                commands: catalogRows,
+                canon: canon,
+                commandMeta: meta,
+                skills: skills)
         }
     }
 
-    func completeSkills(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
-        switch mode(for: sessionID) {
-        case .discoveryFailure:
-            throw SlashCommandError.rpcFailed("scripted skill discovery failed")
-        case .noSkills:
-            return []
-        case .normal, .staleDispatch:
-            break
-        }
+    func catalog(sessionID: String?) async throws -> HermesCommandCatalog {
+        try catalogPayload(sessionID: sessionID)
+    }
+
+    func complete(sessionID: String?, text: String) async throws -> [SlashCommandSuggestion] {
+        let payload = try catalogPayload(sessionID: sessionID)
         let query = text.drop(while: { $0 == "/" }).split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
-        return catalog.filter { $0.text.dropFirst().lowercased().hasPrefix(query.lowercased()) }
+        let lowered = query.lowercased()
+        return payload.commands.filter { $0.text.dropFirst().lowercased().hasPrefix(lowered) }
     }
 
-    func dispatchSkill(sessionID: String, name: String, argument: String) async throws -> SkillCommandDispatch {
+    func dispatch(sessionID: String, name: String, argument: String) async throws -> HermesCommandDispatch {
         let canonical = name.hasPrefix("/") ? String(name.dropFirst()) : name
+        let lowered = canonical.lowercased()
         if mode(for: sessionID) == .staleDispatch {
-            throw SlashCommandError.notSkillCommand(canonical)
+            throw SlashCommandError.commandUnavailable(lowered)
         }
-        guard catalog.contains(where: { $0.text.dropFirst().lowercased() == canonical.lowercased() }) else {
-            throw SlashCommandError.notSkillCommand(canonical)
+        if lowered == "future-probe" {
+            throw SlashCommandError.unknownDispatchType("holodeck")
+        }
+        guard catalogRows.contains(where: { $0.text.dropFirst().lowercased() == lowered }) else {
+            throw SlashCommandError.commandUnavailable(lowered)
+        }
+        if lowered == "undo" {
+            return .prefill(message: "Edited follow-up prompt", notice: "Backed up 1 turn")
         }
         let display = argument.isEmpty ? "/" + canonical : "/" + canonical + " " + argument
-        return SkillCommandDispatch(
-            name: canonical,
+        return .skill(
             message: "[Scripted expanded skill: \(canonical)]\n\(argument)",
             display: display)
+    }
+
+    func execute(sessionID: String, command: String) async throws -> HermesSlashExecution {
+        let bare = command.drop(while: { $0 == "/" })
+        let parts = bare.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = parts.first.map(String.init) ?? ""
+        let argument = parts.count > 1 ? String(parts[1]) : ""
+        let lowered = name.lowercased()
+        if mode(for: sessionID) == .staleDispatch {
+            throw SlashCommandError.commandUnavailable(lowered)
+        }
+        if lowered == "future-probe" {
+            throw SlashCommandError.unknownDispatchType("holodeck")
+        }
+        guard catalogRows.contains(where: { $0.text.dropFirst().lowercased() == lowered }) else {
+            throw SlashCommandError.commandUnavailable(lowered)
+        }
+        if lowered == "undo" {
+            return HermesSlashExecution(
+                output: nil,
+                warning: nil,
+                dispatch: .prefill(message: "Edited follow-up prompt", notice: "Backed up 1 turn"))
+        }
+        if lowered == "usage" {
+            return HermesSlashExecution(output: "Session tokens: 1,234 input / 567 output", warning: nil)
+        }
+        let display = argument.isEmpty ? "/" + name : "/" + name + " " + argument
+        return HermesSlashExecution(
+            output: nil,
+            warning: nil,
+            dispatch: .skill(
+                message: "[Scripted expanded skill: \(name)]\n\(argument)",
+                display: display))
+    }
+
+    func stopProcesses(sessionID: String) async throws -> Int {
+        // Fixture: one background process existed and was killed.
+        1
     }
 }
 
@@ -1120,7 +1639,7 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
         )
     }
 
-    func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+    func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
         // R10-T2: fixture durable rows (row_id-stamped, one carrying a
         // seeded reaction) so long-press Tapback targets DURABLE rows in
         // the simulator + UI tests — mirroring what a real session.resume
@@ -1225,7 +1744,79 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                     contextPercent: 43
                 )
             ))
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_BRIDGED_ROOM"] == "1",
+               let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_BRIDGED_REPLY_DELAY_MS"],
+               let milliseconds = Int(raw), milliseconds > 0 {
+                try? await Task.sleep(for: .milliseconds(milliseconds))
+            }
+            // Card D demo hook (simulator only): `HERMES_FLEET_IMAGE_DEMO=1`
+            // makes every scripted turn run an image_generate call whose
+            // result names a retrievable gateway path — the inline artifact,
+            // the shared retrieval store and the prose echo-strip are then
+            // walkable end-to-end without a live gateway. Tools run BEFORE
+            // message.start (the real turn order: user → tools → reply).
+            let imageDemo = ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO"] == "1"
+            // Card E: the two REAL wire shapes of a turn that runs
+            // `image_generate`:
+            // - default (tools-first): user → tools → reply. The tool frames
+            //   (and their result) precede `message.start`; card D's inline
+            //   journey pins this layout, and `updateLastTool`'s turn-scoped
+            //   geometry requires the result before the assistant row;
+            // - `HERMES_FLEET_IMAGE_DEMO_ORDER=streaming`: the turn streams
+            //   first (`message.start` …) and the tool runs mid-turn — the
+            //   window in which the composer's Stop control exists (the phase
+            //   is `.ready` until `message.start`).
+            let imageDemoOrderStreaming =
+                ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_ORDER"] == "streaming"
+
+            func emitGenerationStart() {
+                // The live wire emits `tool.generating` BEFORE `tool.start`
+                // (P0-8 probe seq 66 vs 68) — mirrored exactly.
+                streamBox.yield(.toolGenerating(sessionID: sessionID, name: "image_generate"))
+                streamBox.yield(.toolStart(
+                    sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
+                    context: "scripted generation", argsText: nil))
+            }
+
+            func emitGenerationCompletion() async {
+                // Card E: `HERMES_FLEET_IMAGE_DEMO_HOLD_MS=<n>` keeps the
+                // generation IN FLIGHT for n ms (with a named progress frame
+                // mid-hold) so the branded animation is observable in UI tests
+                // and the manual demo; unset/0 preserves card D's immediate
+                // complete flow. `HERMES_FLEET_IMAGE_DEMO_FAIL=1` completes
+                // with an explicit failure instead — the stop path.
+                let holdMs = Int(ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_HOLD_MS"] ?? "") ?? 0
+                if holdMs > 0 {
+                    try? await Task.sleep(for: .milliseconds(holdMs / 2))
+                    streamBox.yield(.toolProgress(
+                        sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
+                        text: "generating (scripted)"))
+                    try? await Task.sleep(for: .milliseconds(holdMs / 2))
+                }
+                let failure = ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_FAIL"] == "1"
+                streamBox.yield(.toolComplete(
+                    sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
+                    summary: nil,
+                    resultText: failure
+                        ? #"{"success": false, "error": "scripted generation failure"}"#
+                        : #"{"success": true, "image": "/home/u/.hermes/cache/images/scripted_generation.png", "modality": "text", "upscaled": false}"#))
+            }
+
+            // Tools-first: BOTH the start and the result precede
+            // `message.start` — the shape card D's inline journey pins and the
+            // only shape `updateLastTool`'s turn-scoped geometry keeps on one
+            // chip.
+            if imageDemo && !imageDemoOrderStreaming {
+                emitGenerationStart()
+                await emitGenerationCompletion()
+            }
             streamBox.yield(.messageStart(sessionID: sessionID))
+            // Streaming: the turn is already streaming while the tool runs
+            // (the composer's Stop control exists in this window).
+            if imageDemo && imageDemoOrderStreaming {
+                emitGenerationStart()
+                await emitGenerationCompletion()
+            }
             if ProcessInfo.processInfo.arguments.contains("-issue5-markdown-fixture") {
                 // Keep the initial empty assistant row on screen long enough
                 // for the UI fixture to verify that the preceding user row
@@ -1275,6 +1866,29 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "You said: ", rendered: nil))
             streamBox.yield(.messageDelta(sessionID: sessionID, text: echoBase, rendered: nil))
             streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+            // Top chip bar UI-journey knob: after the turn, emit a
+            // session.info carrying cwd + profile_name (the live gateway's
+            // end-of-turn shape) so the folder/profile chips are testable.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_INFO_FIXTURE"] == "1" {
+                // Literal cwd (matches ScriptedToolingBox's default): the
+                // client has no tooling-box reference; the r9 folder-switch
+                // test drives a change through the sheet and asserts the
+                // chip readback before any next-turn fixture fires.
+                streamBox.yield(.sessionInfo(
+                    sessionID: sessionID,
+                    model: "glm-4.6-flash", provider: "zai",
+                    title: nil,
+                    cwd: "/home/dev/hermes-fleet",
+                    profileName: "default"))
+            }
+            // UI-journey knob (HERMES_FLEET_SESSION_TITLE_FIXTURE=1): mirror
+            // the live gateway's auto-title frame (methods_session.py:1427)
+            // so the header-adoption path is testable without a gateway.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_TITLE_FIXTURE"] == "1" {
+                streamBox.yield(.sessionTitleUpdate(
+                    sessionID: sessionID,
+                    title: "Scripted auto title"))
+            }
             streamBox.yield(.messageComplete(
                 sessionID: sessionID,
                 text: "Hello from the scripted fleet. You said: \(echoBase)",
@@ -1334,6 +1948,59 @@ final class ScriptedApprovalsBox: ApprovalsProviding, @unchecked Sendable {
     }
 }
 
+/// Dogfood r8: scripted reasoning seam (DEBUG simulator). Serves the
+/// scriptable current level on read, records every set call (thread-safe),
+/// and flips the served value so the chip reflects the applied stop without
+/// a real gateway. The default served level is the gateway's documented
+/// default (`medium`).
+final class ScriptedReasoningBox: ReasoningProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _level: FleetReasoningLevel = .defaultLevel
+    private var _setLevels: [FleetReasoningLevel] = []
+
+    /// The served current level (config.get readback).
+    var level: FleetReasoningLevel {
+        lock.lock(); defer { lock.unlock() }
+        return _level
+    }
+
+    /// Every setReasoning call in order (UI-test assertion material).
+    var setLevels: [FleetReasoningLevel] {
+        lock.lock(); defer { lock.unlock() }
+        return _setLevels
+    }
+
+    /// Scriptable starting level (fixture knob for tests that need a
+    /// non-default anchor).
+    func seed(_ level: FleetReasoningLevel) {
+        lock.lock(); defer { lock.unlock() }
+        _level = level
+    }
+
+    // Sync-record helpers (NSLock is unavailable from async contexts —
+    // the ScriptedApprovalsBox pattern).
+    private func syncLevel() -> FleetReasoningLevel {
+        lock.lock(); defer { lock.unlock() }
+        return _level
+    }
+
+    private func syncSet(_ level: FleetReasoningLevel) {
+        lock.lock(); defer { lock.unlock() }
+        _setLevels.append(level)
+        _level = level
+    }
+
+    func reasoning(sessionID: String) async throws -> ReasoningState {
+        let current = syncLevel()
+        return ReasoningState(level: current, rawValue: current.rawValue, display: "show")
+    }
+
+    func setReasoning(_ level: FleetReasoningLevel, sessionID: String) async throws -> FleetReasoningLevel {
+        syncSet(level)
+        return level
+    }
+}
+
 /// R9-T2/T3/T4: scripted tooling seam (DEBUG simulator). Deterministic
 /// fixture models for the picker; records steer/rename/branch calls; usage
 /// readback with a mid-turn context gauge. Thread-safe recorders.
@@ -1342,6 +2009,10 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
     private var _steerTexts: [String] = []
     private var _renames: [String] = []
     private var _branches: [String?] = []
+    private var _cwdSets: [String] = []
+    /// The cwd the box currently serves (seeded by session-info fixture;
+    /// flipped by each setCWD call — the UI test asserts the chip follows).
+    private var _servedCWD: String = "/home/dev/hermes-fleet"
 
     var steerTexts: [String] {
         lock.lock(); defer { lock.unlock() }
@@ -1354,6 +2025,14 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
     var branches: [String?] {
         lock.lock(); defer { lock.unlock() }
         return _branches
+    }
+    var cwdSets: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _cwdSets
+    }
+    var servedCWD: String {
+        lock.lock(); defer { lock.unlock() }
+        return _servedCWD
     }
 
     private func recordSteer(_ text: String) {
@@ -1438,6 +2117,23 @@ final class ScriptedToolingBox: ConversationToolingProviding, @unchecked Sendabl
             provider: "simulator",
             profileName: nil
         )
+    }
+
+    /// r9 toolbelt: flip the served cwd + record the write (UI tests assert
+    /// the chip's value follows the readback).
+    func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+        recordCWD(cwd)
+        return SessionCWDInfo(cwd: serveCWD(cwd), branch: "main", project: nil)
+    }
+
+    private func recordCWD(_ cwd: String) {
+        lock.lock(); defer { lock.unlock() }
+        _cwdSets.append(cwd)
+    }
+    private func serveCWD(_ cwd: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        _servedCWD = cwd
+        return _servedCWD
     }
 }
 
@@ -1734,13 +2430,16 @@ enum ScriptedFleet {
                     name: "default", path: "~/.hermes/profiles/default",
                     isDefault: true, model: "hermes", provider: "nous",
                     displayName: "Default", skillCount: 12, hasAvatar: true,
-                    lastSession: ScriptedFleet.session(on: "default")
+                    lastSession: ScriptedFleet.session(gateway: gatewayID, slug: "default")
                 )),
                 overlay(ProfileDescriptor(
                     name: "researcher", path: "~/.hermes/profiles/researcher",
                     isDefault: false, model: "hermes", provider: "openrouter",
                     displayName: "Researcher", skillCount: 8, hasAvatar: true,
-                    lastSession: ScriptedFleet.session(on: "researcher")
+                    lastSession: ScriptedFleet.session(gateway: gatewayID, slug: "researcher"),
+                    uiMeta: ProcessInfo.processInfo.environment["HERMES_FLEET_HIDDEN_BOT"] == "1"
+                        ? [BotModeContract.botsMetaKey: .object(BotModeMetadata(hidden: true).toWire())]
+                        : nil
                 )),
             ] + created
         case "render-box":
@@ -1749,7 +2448,7 @@ enum ScriptedFleet {
                     name: "default", path: "~/.hermes/profiles/default",
                     isDefault: true, model: "hermes", provider: "nous",
                     displayName: "Default", skillCount: 10, hasAvatar: true,
-                    lastSession: ScriptedFleet.session(on: "default")
+                    lastSession: ScriptedFleet.session(gateway: gatewayID, slug: "default")
                 )),
             ] + created
         default:
@@ -1770,21 +2469,29 @@ enum ScriptedFleet {
                 ]
             }
             return [
-                ScriptedFleet.session(on: "default"),
+                ScriptedFleet.session(gateway: route.gatewayID, slug: "default"),
                 SessionSummary(
                     id: "workstation.default.s2", title: "Replay plan review",
                     preview: "Discussing the reconnect/replay design.", startedAt: 1_755_000_000,
-                    messageCount: 24, source: "ios"
+                    // Dogfood r4: lastActive seeds the unread-dot contract
+                    // (0 = unknown = never unread; this row is the
+                    // deterministic dot target in the scripted fleet).
+                    lastActive: 1_755_000_600, messageCount: 24, source: "ios"
                 ),
             ]
         default:
-            return [ScriptedFleet.session(on: route.profileSlug.rawValue)]
+            return [ScriptedFleet.session(gateway: route.gatewayID, slug: route.profileSlug.rawValue)]
         }
     }
 
-    private static func session(on slug: String) -> SessionSummary {
+    /// Gateway-qualified session identity. A session id belongs to the
+    /// gateway that minted it: minting "workstation.<slug>.s1" for EVERY
+    /// gateway made render-box's default-profile session collide with
+    /// workstation's (two routes claiming one wire id — the Chats list
+    /// then attributes the row to the wrong gateway).
+    private static func session(gateway: GatewayID, slug: String) -> SessionSummary {
         SessionSummary(
-            id: "workstation.\(slug).s1", title: "Fleet setup",
+            id: "\(gateway.rawValue).\(slug).s1", title: "Fleet setup",
             preview: "Initial conversation about the Hermes fleet.",
             startedAt: 1_754_000_000, messageCount: 6, source: "ios"
         )
@@ -1818,11 +2525,23 @@ private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
         if FleetServiceGraph.connectSyncEnabled, gatewayID.rawValue == "workstation" {
             ScriptedConnectSyncStore.shared.markRecovered()
         }
+        // Build 43: a workstation connect also closes the roster-blip
+        // outage (HERMES_FLEET_ROSTER_BLIP user-driven journey).
+        if gatewayID.rawValue == "workstation" {
+            ScriptedConnectSyncStore.shared.markBlipReconnected()
+        }
         // No-op: scripted connect succeeds instantly.
     }
 
     func disconnect() async {
-        // No-op: scripted disconnect is safe from every state (spec §31).
+        // Build 43: with the roster-blip knob set, a user Disconnect of the
+        // workstation gateway fails its roster fetches until Connect heals
+        // them (deterministic offline-ghost journey). Without the knob this
+        // stays a no-op (scripted disconnect is safe from every state,
+        // spec §31).
+        if gatewayID.rawValue == "workstation" {
+            ScriptedConnectSyncStore.shared.markBlipDisconnected()
+        }
     }
 
     func currentGateway() async -> FleetGateway {
@@ -1835,6 +2554,16 @@ final class ScriptedConnectSyncStore: @unchecked Sendable {
     static let shared = ScriptedConnectSyncStore()
     private let lock = NSLock()
     private var _recovered = false
+    /// Build 43 UI-test knob (HERMES_FLEET_ROSTER_BLIP=1): while set, a user
+    /// DISCONNECT of the workstation gateway (Gateways row menu) also fails
+    /// its roster fetches, and Connect heals them. The fleet is healthy at
+    /// launch — the offline-ghost cache seeds from the launch refresh — so
+    /// the post-disconnect outage renders LAST-KNOWN ghost rows exactly
+    /// like a real gateway drop (a fetch-count window is NOT used: the two
+    /// concurrent launch refreshes race and can drop the first settlement,
+    /// leaving the cache empty).
+    private var _blipEnabled = ProcessInfo.processInfo.environment["HERMES_FLEET_ROSTER_BLIP"] == "1"
+    private var _blipDisconnected = false
 
     var recovered: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -1844,6 +2573,24 @@ final class ScriptedConnectSyncStore: @unchecked Sendable {
     func markRecovered() {
         lock.lock(); defer { lock.unlock() }
         _recovered = true
+    }
+
+    /// True while the user-driven roster-blip outage is open.
+    var rosterBlipOutage: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _blipEnabled && _blipDisconnected
+    }
+
+    /// A user Disconnect of the workstation gateway opened the outage.
+    func markBlipDisconnected() {
+        lock.lock(); defer { lock.unlock() }
+        if _blipEnabled { _blipDisconnected = true }
+    }
+
+    /// A user Connect closed the outage (gateway healthy again).
+    func markBlipReconnected() {
+        lock.lock(); defer { lock.unlock() }
+        _blipDisconnected = false
     }
 }
 
@@ -1931,12 +2678,22 @@ private struct ScriptedRosterSession: GatewayRosterSession {
 
     func fetchProfiles() async throws -> [ProfileDescriptor] {
         if isOutage { throw RosterError.notConnected }
+        // Build 43 roster blip: a user-disconnected workstation fails its
+        // roster fetches (offline-ghost journey; Connect heals).
+        if gatewayID.rawValue == "workstation",
+           ScriptedConnectSyncStore.shared.rosterBlipOutage {
+            throw RosterError.notConnected
+        }
         if hasNoBots { return [] }
         return ScriptedFleet.profiles(on: gatewayID)
     }
 
     func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
         if isOutage { throw RosterError.notConnected }
+        if gatewayID.rawValue == "workstation",
+           ScriptedConnectSyncStore.shared.rosterBlipOutage {
+            throw RosterError.notConnected
+        }
         return ScriptedFleet.sessions(on: route)
     }
 }
@@ -2304,6 +3061,7 @@ struct ScriptedRoomSource: FleetRoomSourceProviding {
     /// `groups.capabilities` probe (driver + groups.create advertised);
     /// other scripted gateways fail closed (.unknown).
     func createRoomCapability() async -> GroupsCreateCapability {
+        if FleetServiceGraph.bridgedRoomEnabled { return .unsupported }
         guard gatewayID.rawValue == "workstation" else { return .unknown }
         return .supported
     }
@@ -2331,6 +3089,8 @@ struct ScriptedRoomSource: FleetRoomSourceProviding {
 /// - `HERMES_FLEET_ROOM_FAILURE=1` — the room's transcript carries a typed
 ///   `turn.failed` (provider_auth_or_access) + a pending retry action.
 /// - `HERMES_FLEET_ROOM_APPROVAL=1` — a needs-you approval is pending.
+/// - `HERMES_FLEET_ROOM_REPLY_DELAY_MS=...` — scripted hosted work remains
+///   active for that duration after send, then lands a member reply.
 actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     static let shared = ScriptedRoomEngine()
 
@@ -2347,14 +3107,18 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     private var _approveChoices: [String] = []
     private var _pendingApproval: RoomPendingApproval?
     private var _pendingRetry: RoomPendingRetry?
+    private var _workingUntil: Date?
     private var _lastCreatedMembers: [[String: String]] = []
     private var _createdRoomNames: [String: String] = [:]
+    private var _createdRoomMembers: [String: [FleetRoomMember]] = [:]
+    private var _createdRoomAuthorities: [String: String] = [:]
 
     private init() {
         let seed = Self.makeSeed()
         _events = seed.events
         _seq = seed.seq
         _pendingRetry = seed.pendingRetry
+        _workingUntil = nil
         _pendingApproval = seed.pendingApproval
     }
 
@@ -2377,9 +3141,23 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
         append(kind: "message.member", actorKind: "member", actorID: "researcher",
                actorProfile: "researcher", text: "Draft is ready for review.")
+        // D3 (iPad lane): deterministic pre-seeded history for the
+        // scroll-overflow suites. Typed filler text reflows width-dependent
+        // — on the iPad canvas it shrinks ~3x and the transcript can fit
+        // the viewport entirely, making "reading history" unreachable.
+        // Seeded log lines overflow ANY canvas width. Env-gated; unset for
+        // every other suite keeps the two-event seed unchanged.
+        let env = ProcessInfo.processInfo.environment
+        if let depthLine = env["HERMES_FLEET_ROOM_HISTORY_DEPTH"],
+           let depth = Int(depthLine), depth > 0 {
+            for index in 1...depth {
+                append(kind: "message.member", actorKind: "member", actorID: "researcher",
+                       actorProfile: "researcher",
+                       text: "Seeded history \(index) of \(depth): durable room log line for scroll-overflow coverage.")
+            }
+        }
         var pendingRetry: RoomPendingRetry?
         var pendingApproval: RoomPendingApproval?
-        let env = ProcessInfo.processInfo.environment
         if env["HERMES_FLEET_ROOM_FAILURE"] == "1" {
             append(kind: "turn.failed", actorKind: "gateway", actorID: "gateway",
                    actorProfile: "researcher",
@@ -2408,11 +3186,14 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         _retryCount = 0
         _approveChoices = []
         _lastCreatedMembers = []
+        _createdRoomMembers = [:]
+        _createdRoomAuthorities = [:]
         let seed = Self.makeSeed()
         _events = seed.events
         _seq = seed.seq
         _pendingApproval = seed.pendingApproval
         _pendingRetry = seed.pendingRetry
+        _workingUntil = nil
     }
 
     var roomKey: String { "room-alpha" }
@@ -2441,7 +3222,7 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
                 FleetRoomMember(name: "Default", handle: "default"),
             ],
             hosted: HostedRoomState(
-                authorityGatewayID: gatewayID.rawValue,
+                authorityGatewayID: "install:\(gatewayID.rawValue)",
                 authorityEpoch: 1,
                 latestSeq: _seq,
                 advertisedMethods: [
@@ -2453,12 +3234,13 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
 
     @discardableResult
     private func append(
+        roomID: String? = nil,
         kind: String, actorKind: String, actorID: String, actorProfile: String? = nil,
         text: String?, reason: String? = nil
     ) -> HostedRoomEventValue {
         _seq += 1
         let event = HostedRoomEventValue(
-            roomID: roomKey, seq: _seq, eventID: "se-\(_seq)", kind: kind,
+            roomID: roomID ?? self.roomKey, seq: _seq, eventID: "se-\(_seq)", kind: kind,
             actorKind: actorKind, actorID: actorID, actorProfile: actorProfile,
             payloadText: text, reasonCode: reason, createdAt: Date().timeIntervalSince1970)
         _events.append(event)
@@ -2474,30 +3256,35 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
             cursor: _seq,
             latestSeq: _seq,
             hasMore: window.count > limit,
-            authorityGatewayID: "workstation",
+            authorityGatewayID: _createdRoomAuthorities[roomID] ?? "install:workstation",
             authorityEpoch: 1)
     }
 
     func send(roomID: String, text: String, threadID: String?) async throws -> Int {
         _sendCount += 1
-        append(kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
+        append(roomID: roomID, kind: "message.user", actorKind: "user", actorID: "desktop", text: text)
+        if let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_ROOM_REPLY_DELAY_MS"],
+           let milliseconds = Int(raw), milliseconds > 0 {
+            _workingUntil = Date().addingTimeInterval(Double(milliseconds) / 1_000)
+        }
         return _seq
     }
 
     func rename(roomID: String, name: String) async throws {
         _renameCount += 1
         _roomName = name
-        append(kind: "room.renamed", actorKind: "system", actorID: "system", text: name)
+        append(roomID: roomID, kind: "room.renamed", actorKind: "system", actorID: "system", text: name)
     }
 
     func disband(roomID: String) async throws {
         _disbanded = true
-        append(kind: "room.disbanded", actorKind: "system", actorID: "system", text: nil)
+        append(roomID: roomID, kind: "room.disbanded", actorKind: "system", actorID: "system", text: nil)
     }
 
     func stop(roomID: String) async throws -> Int {
         _stopCount += 1
-        append(kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
+        _workingUntil = nil
+        append(roomID: roomID, kind: "room.stop_requested", actorKind: "gateway", actorID: "gateway", text: nil)
         return 1
     }
 
@@ -2511,13 +3298,36 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
         _pendingApproval = nil
     }
 
-    func createRoom(name: String, members: [[String: String]]) async throws -> String {
-        let roomID = "room-\(_createdRooms.count + 1)"
-        _createdRooms.append(roomID)
-        _createdRoomNames[roomID] = name
+    func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
+        let roomKey = roomID.isEmpty ? "room-\(_createdRooms.count + 1)" : roomID
+        recordCreatedRoom(
+            roomID: roomKey,
+            name: name,
+            members: members.map {
+                FleetRoomMember(
+                    name: $0["display_name"] ?? $0["name"] ?? $0["profile"] ?? "Bot",
+                    handle: $0["profile"])
+            })
         _lastCreatedMembers = members
-        append(kind: "room.created", actorKind: "system", actorID: "system", text: nil)
-        return roomID
+        append(roomID: roomKey, kind: "room.created", actorKind: "system", actorID: "system", text: nil)
+        return roomKey
+    }
+
+    func recordCreatedRoom(roomID: String, name: String, members: [FleetRoomMember]) {
+        if !_createdRooms.contains(roomID) {
+            _createdRooms.append(roomID)
+        }
+        _createdRoomNames[roomID] = name
+        _createdRoomMembers[roomID] = members
+        _createdRoomAuthorities[roomID] = _createdRoomAuthorities[roomID] ?? "install:workstation"
+    }
+
+    func recordLinkedRoom(
+        roomID: String, name: String, members: [FleetRoomMember], authorityGatewayID: String
+    ) {
+        recordCreatedRoom(roomID: roomID, name: name, members: members)
+        _createdRoomAuthorities[roomID] = authorityGatewayID
+        append(roomID: roomID, kind: "room.created", actorKind: "system", actorID: "system", text: nil)
     }
 
     /// FleetRoom rows for created rooms (fresh log per room; frozen roster
@@ -2527,9 +3337,9 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
             FleetRoom(
                 id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
                 name: _createdRoomNames[roomID] ?? roomID,
-                members: [],
+                members: _createdRoomMembers[roomID] ?? [],
                 hosted: HostedRoomState(
-                    authorityGatewayID: gatewayID.rawValue,
+                    authorityGatewayID: _createdRoomAuthorities[roomID] ?? "install:\(gatewayID.rawValue)",
                     authorityEpoch: 1,
                     advertisedMethods: [
                         "groups.create", "groups.send", "groups.rename", "groups.log",
@@ -2542,8 +3352,14 @@ actor ScriptedRoomEngine: RoomChatCommanding, RoomDriverStatusProviding {
     // MARK: RoomDriverStatusProviding
 
     func driverStatus(roomID: String) async throws -> RoomDriverStatus? {
-        RoomDriverStatus(
-            working: false,
+        if let until = _workingUntil, until <= Date() {
+            _workingUntil = nil
+            append(roomID: roomID, kind: "message.member", actorKind: "member",
+                   actorID: "researcher", actorProfile: "researcher",
+                   text: "Scripted reply after work.")
+        }
+        return RoomDriverStatus(
+            working: _workingUntil != nil,
             blocked: _pendingApproval != nil || _pendingRetry != nil,
             counts: [:],
             pendingRetries: _pendingRetry.map { [$0] } ?? [],
@@ -2583,8 +3399,10 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
     private var _promoteConfirms: [Bool] = []
     private var _replicateCount = 0
     private var _replicaCaughtUp: Bool
+    private let gatewayID: GatewayID
 
-    private init() {
+    init(gatewayID: GatewayID = GatewayID(rawValue: "workstation")) {
+        self.gatewayID = gatewayID
         _replicaCaughtUp = ProcessInfo.processInfo.environment["HERMES_FLEET_ROOMLINK"] != "stale"
     }
 
@@ -2603,28 +3421,32 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
         _replicaCaughtUp = mode != .staleReplica
     }
 
-    private var supportedNegotiation: RoomLinkNegotiation {
-        RoomLinkNegotiation(
-            authorityGatewayID: "install:workstation",
+    private func supportedNegotiation(profile: String = "default") -> RoomLinkNegotiation {
+        let identity = "install:\(gatewayID.rawValue)"
+        return RoomLinkNegotiation(
+            authorityGatewayID: identity,
             enabled: true,
-            profile: "default",
+            profile: profile,
             protocolVersions: [2],
-            installationID: "workstation",
+            installationID: identity,
             linkModes: ["direct"],
             persistentProcess: true,
             textOnly: true,
             attachmentsSupported: false,
-            catalogDigest: String(repeating: "c", count: 64),
+            catalogDigest: String(repeating: String(gatewayID.rawValue.first ?? "c"), count: 64),
             executionPolicy: RoomLinkExecutionPolicy(
-                version: 1, targetProfile: "default",
+                version: 1, targetProfile: profile,
                 enabledToolsets: ["bot_room"], approvalMode: "manual",
-                maxIterations: 12, policyDigest: String(repeating: "p", count: 64)),
+                maxIterations: 12, policyDigest: String(repeating: String(profile.first ?? "p"), count: 64)),
             endpoint: RoomLinkEndpoint(
                 available: true,
-                url: "https://roomlink.fixture.test/v1",
+                url: "https://\(gatewayID.rawValue).roomlink.fixture.test/v1",
                 transportSecurity: "tls"),
             methods: [
-                "groups.capabilities", "groups.peer.invite", "groups.peer.register",
+                "groups.capabilities", "groups.create", "groups.state", "groups.send",
+                "groups.rename", "groups.log", "groups.disband", "groups.stop",
+                "groups.retry", "groups.approve",
+                "groups.peer.invite", "groups.peer.register",
                 "groups.peer.revoke", "groups.replica_state", "groups.replicate",
                 "groups.promote", "groups.demote",
             ])
@@ -2635,10 +3457,10 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
     func negotiate() async throws -> RoomLinkNegotiation {
         switch mode {
         case .supported, .staleReplica:
-            return supportedNegotiation
+            return supportedNegotiation()
         case .unsupported:
             return RoomLinkNegotiation(
-                authorityGatewayID: "install:workstation",
+                authorityGatewayID: "install:\(gatewayID.rawValue)",
                 enabled: false,
                 disabledReason: .durableRunStorageRequired)
         }
@@ -2654,7 +3476,7 @@ actor ScriptedRoomLinkEngine: RoomLinkCommanding {
         let now = Date()
         return RoomLinkGrant(
             id: "grant-\(_inviteCount)",
-            token: "fixture-grant-\(_inviteCount)-0123456789abcdef",
+            token: "fixture-token-not-a-secret-\(_inviteCount)",
             roomID: roomID,
             memberID: memberID ?? "researcher",
             targetProfile: "researcher",
@@ -2763,6 +3585,126 @@ private struct ScriptedRoomReplaySource: RoomReplaySourceProviding {
             hasMore: false,
             authorityGatewayID: "install:hub",
             authorityEpoch: 3)
+    }
+}
+
+/// The simulator's cross-gateway setup uses the same capability and grant
+/// gates as production, while keeping the room state in the in-memory hosted
+/// room engine. This lets UI tests exercise a real multi-route create without
+/// pretending that a local roster union is server replication.
+extension ScriptedRoomLinkEngine: CrossGatewayRoomCommanding {
+    func roomLinkTarget(profile: String) async throws -> RoomLinkTargetSnapshot {
+        guard mode != .unsupported else {
+            return RoomLinkTargetSnapshot(
+                negotiation: RoomLinkNegotiation(
+                    authorityGatewayID: "install:\(gatewayID.rawValue)",
+                    enabled: false,
+                    disabledReason: .durableRunStorageRequired,
+                    profile: profile),
+                catalog: .object([:]),
+                driver: false)
+        }
+        let negotiation = supportedNegotiation(profile: profile)
+        return RoomLinkTargetSnapshot(
+            negotiation: negotiation,
+            catalog: Self.catalog(for: negotiation),
+            driver: true)
+    }
+
+    func createScopedRoom(
+        roomID: String, name: String, members: [MetadataValue]
+    ) async throws -> FleetRoom {
+        guard mode != .unsupported else {
+            throw RoomCommandFailure.unsupportedMethod("groups.create")
+        }
+        let normalized = members.compactMap(Self.decodeMember)
+        let room = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+            name: name,
+            members: normalized,
+            hosted: HostedRoomState(
+                authorityGatewayID: "install:\(gatewayID.rawValue)",
+                authorityEpoch: 1,
+                latestSeq: 0,
+                advertisedMethods: supportedNegotiation().methods,
+                driverAvailable: true))
+        await ScriptedRoomEngine.shared.recordLinkedRoom(
+            roomID: roomID, name: name, members: normalized,
+            authorityGatewayID: "install:\(gatewayID.rawValue)")
+        return room
+    }
+
+    func inviteScopedRoom(
+        room: FleetRoom, profile: String, memberID: String
+    ) async throws -> ScopedRoomGrant {
+        guard mode != .unsupported else {
+            throw RoomCommandFailure.unsupportedMethod("groups.peer.invite")
+        }
+        _inviteCount += 1
+        let negotiation = supportedNegotiation(profile: profile)
+        return ScopedRoomGrant(
+            token: "fixture-token-not-a-secret-\(_inviteCount)",
+            profile: profile,
+            catalog: Self.catalog(for: negotiation))
+    }
+
+    func registerScopedPeer(
+        roomID: String, memberID: String, target: RoomLinkTargetSnapshot,
+        grant: ScopedRoomGrant
+    ) async throws {
+        guard target.supportsTarget,
+              grant.profile == target.negotiation.profile,
+              grant.catalog == target.catalog else {
+            throw RoomCommandFailure.rpcFailed(
+                "The target policy or capability catalog changed; refresh before linking.", 0)
+        }
+        _registerCount += 1
+    }
+
+    func revokeScopedPeer(_ grant: ScopedRoomGrant) async throws {
+        _revokeCount += 1
+    }
+
+    private static func decodeMember(_ value: MetadataValue) -> FleetRoomMember? {
+        guard let object = value.objectValue,
+              let name = object["display_name"]?.stringValue
+                ?? object["profile"]?.stringValue else { return nil }
+        let target = object["target"]?.objectValue
+        return FleetRoomMember(
+            name: name,
+            handle: object["profile"]?.stringValue,
+            connectionID: target?["installation_id"]?.stringValue,
+            sourceScoped: target?["kind"]?.stringValue == "peer")
+    }
+
+    private static func catalog(for negotiation: RoomLinkNegotiation) -> MetadataValue {
+        var object: [String: MetadataValue] = [
+            "protocol_versions": .array(negotiation.protocolVersions.map { .number(Double($0)) }),
+            "installation_id": .string(negotiation.installationID),
+            "link_modes": .array(negotiation.linkModes.map(MetadataValue.string)),
+            "persistent_process": .bool(negotiation.persistentProcess),
+            "text": .bool(negotiation.textOnly),
+            "attachments": .bool(negotiation.attachmentsSupported),
+            "catalog_digest": .string(negotiation.catalogDigest),
+        ]
+        if let policy = negotiation.executionPolicy {
+            object["execution_policy"] = .object([
+                "version": .number(Double(policy.version)),
+                "target_profile": .string(policy.targetProfile),
+                "enabled_toolsets": .array(policy.enabledToolsets.map(MetadataValue.string)),
+                "approval_mode": .string(policy.approvalMode),
+                "max_iterations": .number(Double(policy.maxIterations)),
+                "policy_digest": .string(policy.policyDigest),
+            ])
+        }
+        if let endpoint = negotiation.endpoint {
+            object["endpoint"] = .object([
+                "available": .bool(endpoint.available),
+                "url": endpoint.url.map(MetadataValue.string) ?? .null,
+                "transport_security": endpoint.transportSecurity.map(MetadataValue.string) ?? .null,
+            ])
+        }
+        return .object(object)
     }
 }
 

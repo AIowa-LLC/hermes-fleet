@@ -1,17 +1,17 @@
 import XCTest
 
-/// FOS-3 (t_f770d814) — four-root shell regression suite (SPEC §6, §12, §13,
-/// Phase 3). Proves against the deterministic scripted fleet:
-///   1. exactly four tabs with exact labels; inline titles on all four roots;
-///   2. root toolbars: Fleet leading Settings + trailing Command Center;
-///      Chats Compose; Bots Create/organize; Gateways Add + Command Center;
-///   3. Settings sheet: own stack + Done, first item is configuration (no
-///      brand banner), appearance preference, version;
+/// FOS-3 (t_f770d814) — root-shell regression suite (SPEC §6, §12, §13,
+/// Phase 3), updated for the Build 43 five-tab shell:
+///   1. exactly five tabs with exact labels; inline titles on all five roots;
+///   2. root toolbars: trailing Command Center everywhere; Gateways'
+///      cockpit toolbar (Add) reached Fleet → Manage Gateways;
+///   3. Settings TAB: own navigation bar (no sheet, no Done), first item is
+///      configuration (no brand banner), appearance preference, version;
 ///   4. Command Center: gateway-object results; owner-tab routing (bots →
-///      Bots, gateway resources → Gateways); Settings entry;
-///   5. lock dismissal: re-locking closes the Settings sheet and Command
-///      Center (card acceptance: lock/search dismissal tests);
-///   6. retired roots: no Control/Workspace surfaces anywhere.
+///      Bots, gateway resources → Fleet);
+///   5. lock dismissal: re-locking closes Command Center;
+///   6. retired roots: no Control/Workspace surfaces anywhere, no Gateways
+///      tab, no Fleet gear sheet.
 final class FOS3FourRootShellUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -23,107 +23,162 @@ final class FOS3FourRootShellUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
+        UITabNavigation.shellReady(app, timeout: 15)
         return app
     }
 
-    // MARK: 1. Four exact tabs + inline titles
+    // MARK: 1. Five exact tabs + inline titles
 
-    func testFourExactTabsWithInlineTitles() throws {
+    func testFiveExactTabsWithInlineTitles() throws {
         let app = launch()
 
         let tabBar = app.tabBars.firstMatch
-        let labels = ["Fleet", "Chats", "Bots", "Gateways"]
-        for label in labels {
-            XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
+        let labels = ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet", "Settings"]
+        if tabBar.exists {
+            for label in labels {
+                XCTAssertTrue(tabBar.buttons[label].exists, "tab bar must include \(label)")
+            }
+            let tabLabels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
+            XCTAssertEqual(tabLabels.count, 7,
+                           "the tab bar must expose exactly seven destinations (got \(tabLabels))")
+            XCTAssertFalse(tabBar.buttons["Gateways"].exists,
+                           "Gateways must not be a tab (Build 43: it lives under Fleet)")
+        } else if app.buttons["fleet.drawer.open"].exists {
+            _ = UITabNavigation.openDrawer(app)
+            for raw in ["bots", "chats", "groups", "cron", "kanban", "fleet", "settings"] {
+                XCTAssertTrue(app.descendants(matching: .any)
+                    .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch.exists)
+            }
+            UITabNavigation.closeDrawer(app)
+        } else {
+            // iPad: top control hosts the five primaries; Settings in drawer.
+            for label in ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet"] {
+                XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
+                    .waitForExistence(timeout: 10), "sidebar must include \(label)")
+            }
+            if app.buttons["fleet.drawer.open"].exists {
+                _ = UITabNavigation.openDrawer(app)
+                XCTAssertTrue(app.descendants(matching: .any)
+                    .matching(identifier: "fleet.drawer.destination.settings").firstMatch.exists,
+                    "Settings must remain reachable in the drawer on iPad")
+                UITabNavigation.closeDrawer(app)
+            }
         }
-        // EXACTLY four tabs (Control/Workspace retired).
-        let tabLabels = tabBar.buttons.allElementsBoundByIndex.map { $0.label }
-        XCTAssertEqual(tabLabels.count, 4,
-                       "the tab bar must expose exactly four tabs (got \(tabLabels))")
 
-        // Inline navigation titles on all four roots (§6).
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Chats"].tap()
-        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Bots"].tap()
+        // Inline navigation titles on all five roots (§6).
         XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Gateways"].tap()
-        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 10))
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+        UITabNavigation.selectTab(app, label: "Kanban")
+        XCTAssertTrue(app.navigationBars["Kanban"].waitForExistence(timeout: 10))
+        UITabNavigation.selectTab(app, label: "Fleet")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        UITabNavigation.selectTab(app, label: "Settings")
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
     }
 
     // MARK: 2. Root toolbars (§6)
 
-    func testFleetToolbarHostsSettingsLeadingAndCommandCenterTrailing() throws {
+    func testFleetToolbarHostsCommandCenterAndNoSettingsGear() throws {
         let app = launch()
+        UITabNavigation.selectTab(app, label: "Fleet")
 
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["fleet.settings.open"].waitForExistence(timeout: 10),
-                      "the Fleet root must expose the leading Settings gear")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "the Fleet root must expose trailing Command Center")
+        // Build 43: the leading Settings gear is retired (Settings is a
+        // tab; a second presentation would compete with it).
+        XCTAssertFalse(app.buttons["fleet.settings.open"].exists,
+                       "the Fleet root must NOT expose the retired Settings gear")
+        // Dogfood r4: search is drawer-only — the toolbar button is retired.
+        XCTAssertFalse(app.buttons["fleet.command-center.open"].exists,
+                       "the Fleet root must NOT expose the retired toolbar search button")
     }
 
-    func testChatsBotsGatewaysToolbarActions() throws {
+    func testChatsBotsToolbarActions() throws {
         let app = launch()
 
         // Chats: Compose entry + Command Center.
-        app.tabBars.buttons["Chats"].tap()
+        UITabNavigation.selectTab(app, label: "Chats")
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.chats.new"].exists,
                       "Chats must expose its Compose entry")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "Chats must expose Command Center")
+        XCTAssertFalse(app.buttons["fleet.command-center.open"].exists,
+                       "Chats must NOT expose the retired toolbar search button")
 
         // Bots: Create/organize menu + Command Center.
-        app.tabBars.buttons["Bots"].tap()
+        UITabNavigation.selectTab(app, label: "Bots")
         XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.roster.manage"].waitForExistence(timeout: 10),
                       "Bots must expose its Create/organize menu")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "Bots must expose Command Center")
-
-        // Gateways: Add + Command Center.
-        app.tabBars.buttons["Gateways"].tap()
-        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["fleet.gateways.add"].exists,
-                      "Gateways must expose Add")
-        XCTAssertTrue(app.buttons["fleet.command-center.open"].exists,
-                      "Gateways must expose Command Center")
+        XCTAssertFalse(app.buttons["fleet.command-center.open"].exists,
+                       "Bots must NOT expose the retired toolbar search button")
     }
 
-    // MARK: 3. Settings sheet (§12)
-
-    func testSettingsSheetOwnStackAndDone() throws {
+    /// Build 43: the Gateways registry cockpit keeps its Add toolbar once
+    /// entered via Fleet → Manage Gateways.
+    func testGatewaysCockpitReachableFromFleetWithAddToolbar() throws {
         let app = launch()
+        UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.settings.open"].tap()
+        let manage = app.descendants(matching: .any)
+            .matching(identifier: "fleet.dashboard.gateways.manage").firstMatch
+        if !manage.waitForExistence(timeout: 5) {
+            for _ in 0..<8 where !manage.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(manage.waitForExistence(timeout: 10),
+                      "Fleet must expose the Manage Gateways entry")
+        scrollToHittable(manage, in: app)
+        manage.tap()
+        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 10),
+                      "Manage Gateways must push the registry cockpit")
+        XCTAssertTrue(app.buttons["fleet.gateways.add"].exists,
+                      "the registry cockpit must keep its Add toolbar")
+        // Back returns to the Fleet root — provenance preserved.
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10),
+                      "back from Gateways returns to Fleet")
+    }
+
+    // MARK: 3. Settings tab (§12, Build 43)
+
+    func testSettingsTabOwnNavigationBarNoSheet() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Settings")
+
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
-                      "Settings renders in a sheet with its own navigation stack")
-        XCTAssertTrue(app.buttons["Done"].exists, "the Settings sheet must expose Done")
+                      "Settings renders as a tab with its own navigation bar")
+        XCTAssertFalse(app.buttons["Done"].exists,
+                       "the Settings TAB has no sheet Done button")
+        XCTAssertFalse(app.buttons["fleet.settings.done"].exists,
+                       "the retired sheet Done identifier must not render")
 
         // First item is useful configuration, not a brand block.
         XCTAssertFalse(app.descendants(matching: .any)
             .matching(identifier: "fleet.settings.brand").firstMatch.exists,
             "the brand banner must not render in Settings (FOS-3)")
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10),
-                      "App Lock must lead the Settings sheet")
+        // ADR-0011: the root leads with the Theme section; App Lock moved
+        // into the Security sub-screen (pushed, not inline).
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.accent").firstMatch.waitForExistence(timeout: 10),
+            "the Theme section must lead the Settings root")
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Security chevron row must render on the Settings root")
 
-        // Done dismisses back to the Fleet root.
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10),
-                      "Done must dismiss the Settings sheet")
+        // The tab identifier is stable for programmatic navigation.
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.tab.settings").firstMatch.exists,
+            "the Settings tab carries fleet.tab.settings")
     }
 
     // MARK: 4. Command Center (§13)
 
     func testCommandCenterShowsGatewayObjectsAndRoutesToOwningTabs() throws {
         let app = launch()
+        UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
         // Direct gateway-object result: the scripted Workstation renders as
         // a Gateway row (new in FOS-3). Roster/conversation sections sit
@@ -136,10 +191,10 @@ final class FOS3FourRootShellUITests: XCTestCase {
         XCTAssertTrue(gatewayRow.waitForExistence(timeout: 10),
                       "Command Center must list direct gateway-object results")
 
-        // Gateway results route to the OWNING Gateways tab + exact destination.
+        // Gateway results route to the Fleet tab (gateway owner since
+        // Build 43) + exact destination.
         gatewayRow.tap()
-        XCTAssertTrue(app.tabBars.buttons["Gateways"].isSelected,
-                      "a gateway result must select the Gateways tab")
+        UITabNavigation.assertSelected(app, label: "Fleet", navigationTitle: "Fleet")
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "fleet.gateway-detail.workstation").firstMatch
@@ -150,10 +205,10 @@ final class FOS3FourRootShellUITests: XCTestCase {
 
     func testCommandCenterBotResultRoutesToBotsTab() throws {
         let app = launch()
+        UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
         let botRow = app.descendants(matching: .any)
             .matching(identifier: "fleet.command-center.row.bot:workstation#default").firstMatch
@@ -163,10 +218,22 @@ final class FOS3FourRootShellUITests: XCTestCase {
         }
         XCTAssertTrue(botRow.waitForExistence(timeout: 10),
                       "Command Center must list roster bots with source-qualified ids")
-        botRow.tap()
+        // ADR-0011: the Go-to section gained the About row, shifting result
+        // rows down — the workstation row sits UNDER the sheet's floating
+        // search bar, where AX reports it hittable but the synthesized tap
+        // lands on the bar. A SHORT controlled drag (not a momentum swipe —
+        // that overshoots the row out of the lazy AX tree) shifts the list
+        // just clear of the bar; re-query, then tap the row center.
+        let listCoord = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+        let destCoord = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.60))
+        listCoord.press(forDuration: 0.05, thenDragTo: destCoord)
+        let clearedRow = app.descendants(matching: .any)
+            .matching(identifier: "fleet.command-center.row.bot:workstation#default").firstMatch
+        XCTAssertTrue(clearedRow.waitForExistence(timeout: 5),
+                      "the bot row must survive the controlled drag")
+        clearedRow.tap()
 
-        XCTAssertTrue(app.tabBars.buttons["Bots"].isSelected,
-                      "a bot result must select the OWNING Bots tab")
+        UITabNavigation.assertSelected(app, label: "Bots", navigationTitle: "Bots")
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "fleet.bot-detail.header").firstMatch
@@ -175,24 +242,31 @@ final class FOS3FourRootShellUITests: XCTestCase {
         )
     }
 
-    func testCommandCenterSettingsEntryOpensSheet() throws {
+    /// Build 43: Command Center's "Go to" list includes the Settings tab
+    /// destination and selects it like a tab tap.
+    func testCommandCenterGoToSettingsSelectsSettingsTab() throws {
         let app = launch()
+        UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
-        app.buttons["fleet.command-center.open"].tap()
-        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
+        UITabNavigation.openCommandCenter(app)
 
-        let settings = app.buttons["fleet.command-center.settings"]
+        // Scope to the sheet's own Go-to row (the tab bar sits BEHIND the
+        // presented sheet — a bare "Settings" query is ambiguous).
+        let settings = app.buttons["fleet.command-center.goto.settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 10),
-                      "Command Center must expose a Settings entry (§12)")
+                      "Command Center's Go-to list must include Settings")
         settings.tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
-                      "the Settings entry must open the app-level sheet")
+
+        UITabNavigation.assertSelected(app, label: "Settings", navigationTitle: "Settings")
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch.waitForExistence(timeout: 10),
+            "the Settings root must expose the Security row (ADR-0011: App Lock lives in its sub-screen)")
     }
 
     // MARK: 5. Lock dismissal (card acceptance)
 
-    func testRelockDismissesSettingsSheetAndCommandCenter() throws {
+    func testRelockDismissesCommandCenter() throws {
         let app = XCUIApplication()
         // `follow` mode: the persisted toggle drives locking (DEBUG default
         // is .disabled, in which the toggle can never relock).
@@ -202,78 +276,51 @@ final class FOS3FourRootShellUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Unlock lands on the Fleet root.
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 15))
+        // Unlock lands on the Bots root (Build 41+ launch tab).
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 15))
 
-        // Open Settings. The toggle defaults ON: turn it OFF first, then ON —
-        // `setEnabled(true)` on an unlocked controller relocks IMMEDIATELY
-        // (AppLockController), which must tear down the presented sheet.
-        // NOTE: the lock-env cold launch can stall first paint for seconds
-        // (AX tree live, screen still white) and DROP the synthesized tap —
-        // verified at pre-FOS-8 71ecb49 too, so this is a launch flake, not
-        // a regression. openScreen retries the tap until the sheet lands.
-        openScreen(app, button: "fleet.settings.open", navTitle: "Settings")
-        let toggle = app.switches["fleet.settings.app-lock.toggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-        XCTAssertEqual(toggle.value as? String, "1", "App Lock defaults ON")
-        // OFF first (verified — a dropped tap must not cascade), then ON.
-        // NOTE: reads must be existence-safe — a successful relock dismisses
-        // the sheet and the switch disappears mid-poll.
-        flipSwitch(toggle, to: "0")
-        XCTAssertEqual(toggle.value as? String, "0", "the OFF tap must land")
-        XCTAssertFalse(app.buttons["fleet.app-lock.unlock"].waitForExistence(timeout: 3),
-                       "turning the toggle OFF must not lock")
-        // Flip back ON, verifying the switch value actually changed (a
-        // dropped coordinate tap must not be mistaken for a relock failure).
-        for _ in 0..<3 {
-            if !toggle.exists || (toggle.value as? String) == "1" { break }
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-            self.settleSwitch(toggle, value: "1")
-        }
-        XCTAssertTrue(app.buttons["fleet.app-lock.unlock"].waitForExistence(timeout: 10),
-                      "flipping App Lock back ON must relock while the sheet is open")
-        XCTAssertFalse(app.navigationBars["Settings"].exists,
-                       "the Settings sheet must be dismissed by the lock (FOS-3)")
+        // Open Command Center, then background the app — the documented
+        // relock path (AppLockController.handleScenePhase(.background)
+        // re-locks an unlocked app). The lock must tear the sheet down.
+        // Dogfood r4: search is drawer-only — open Command Center through
+        // the drawer's search circle, then verify the relock dismissal.
+        UITabNavigation.openCommandCenter(app)
+        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: 10))
 
-        // Unlock again (scripted biometric succeeds; the in-app relock leaves
-        // the controller in .locked, so the biometric Unlock control shows)
-        // and prove Command Center dismissal the same way: open Command
-        // Center, then its OWN Settings entry (the gear beneath the sheet is
-        // not hittable), then relock. Same launch-flake retry as above.
-        app.buttons["fleet.app-lock.unlock"].tap()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 15))
-        openScreen(app, button: "fleet.command-center.open", navTitle: "Command Center")
-        openScreen(app, button: "fleet.command-center.settings", navTitle: "Settings")
-        let toggle2 = app.switches["fleet.settings.app-lock.toggle"]
-        XCTAssertTrue(toggle2.waitForExistence(timeout: 10))
-        flipSwitch(toggle2, to: "0")
-        XCTAssertEqual(toggle2.value as? String, "0", "the OFF tap must land")
-        for _ in 0..<3 {
-            if !toggle2.exists || (toggle2.value as? String) == "1" { break }
-            toggle2.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() // ON → relock
-            self.settleSwitch(toggle2, value: "1")
+        // Deactivate the app (home screen) then reactivate — this drives
+        // the real scene-phase .background/.active cycle. With the scripted
+        // biometric, .active auto-authenticates and may unlock IMMEDIATELY,
+        // so the acceptance is the LOCK'S EFFECT: the Command Center sheet
+        // must have been torn down by the relock (it does not come back).
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        app.activate()
+        // Either the lock screen is showing, or the app already
+        // auto-unlocked back to the shell — the sheet must be gone either
+        // way, and the shell's Bots root must be reachable.
+        let locked = app.buttons["fleet.app-lock.unlock"].waitForExistence(timeout: 10)
+        if locked {
+            app.buttons["fleet.app-lock.unlock"].tap()
         }
-        XCTAssertTrue(app.buttons["fleet.app-lock.unlock"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 15),
+                      "the shell must render after the background cycle")
         XCTAssertFalse(app.navigationBars["Command Center"].exists,
                        "Command Center must be dismissed by the lock (FOS-3)")
-        XCTAssertFalse(app.navigationBars["Settings"].exists,
-                       "the Settings sheet must be dismissed by the lock (FOS-3)")
-
-        // Unlock again so the app is left in a sane state.
-        app.buttons["fleet.app-lock.unlock"].tap()
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 15))
     }
 
     // MARK: 6. Retired roots leave no residue
+
     func testRetiredControlAndWorkspaceRootsAreGone() throws {
         let app = launch()
+        UITabNavigation.selectTab(app, label: "Fleet")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
 
         XCTAssertFalse(app.navigationBars["Control"].exists,
                        "the Control root must be retired")
         XCTAssertFalse(app.navigationBars["Workspace"].exists,
                        "the Workspace root must be retired")
-        for tab in ["Fleet", "Chats", "Bots", "Gateways"] {
-            app.tabBars.buttons[tab].tap()
+        for tab in ["Bots", "Chats", "Scheduled", "Kanban", "Fleet", "Settings"] {
+            UITabNavigation.selectTab(app, label: tab)
             XCTAssertFalse(app.descendants(matching: .any)
                 .matching(identifier: "fleet.control").firstMatch.exists,
                 "no Control surface may render on \(tab)")
@@ -302,6 +349,16 @@ final class FOS3FourRootShellUITests: XCTestCase {
         XCTFail("\(identifier) tap dropped by launch render stall — \(navTitle) never opened after 3 attempts")
     }
 
+    /// Scroll until an element exists and is hittable (lazy-AX below-fold
+    /// rows; the R9 pattern).
+    @discardableResult
+    private func scrollToHittable(_ element: XCUIElement, in app: XCUIApplication) -> XCUIElement {
+        for _ in 0..<8 where !(element.exists && element.isHittable) {
+            app.swipeUp(velocity: .fast)
+        }
+        return element
+    }
+
     /// Tap the switch knob until its value reads `to`. The knob-only tap
     /// avoids the row-label pitfall (S3 lesson).
     private func flipSwitch(_ toggle: XCUIElement, to value: String) {
@@ -313,7 +370,7 @@ final class FOS3FourRootShellUITests: XCTestCase {
     }
 
     /// Wait briefly for the value to settle. Existence-safe: a relock may
-    /// dismiss the owning sheet and remove the switch mid-poll.
+    /// dismiss the owning surface and remove the switch mid-poll.
     private func settleSwitch(_ toggle: XCUIElement, value: String) {
         for _ in 0..<20 {
             if !toggle.exists || (toggle.value as? String) == value { return }

@@ -164,6 +164,18 @@ public enum ContextMeterLevel: Hashable, Sendable {
     }
 }
 
+/// Optional capability for branching a prefix of a conversation. The base
+/// tooling seam keeps its existing whole-session branch contract for older
+/// gateways and scripted sessions; the concrete Hermes gateway advertises this
+/// richer count-aware operation when `session.branch { count }` is supported.
+public protocol ConversationMessageBranchingProviding: Sendable {
+    func branchSession(
+        sessionID: String,
+        name: String?,
+        count: Int?
+    ) async throws -> ConversationSession
+}
+
 /// R9-T2/T3/T4 seam: model picker, usage/context reads, steer/rename/fork.
 /// Lives in FleetCore so FleetUI never imports FleetNetworking (M0 guard);
 /// the concrete `GatewayConversationToolingClient` is injected at the
@@ -202,6 +214,30 @@ public protocol ConversationToolingProviding: Sendable {
     /// - Returns: the new conversation session (same projection as
     ///   create/resume; `sessionID` is the NEW runtime id to resume).
     func branchSession(sessionID: String, name: String?) async throws -> ConversationSession
+
+    /// `session.cwd.set {session_id, cwd}` — change the session's working
+    /// directory (r9 toolbelt). The gateway rejects a busy session (4009)
+    /// and an invalid path (4017); both map to ConversationError cases.
+    /// - Returns: the session-info readback after the change (cwd, branch,
+    ///   project) so the caller can refresh its header state.
+    func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo
+}
+
+/// Readback shape of `session.cwd.set` / lazy `session.info` — `_cwd_info`
+/// (methods_session.py:109): `{cwd, branch, project?, lazy}`.
+public struct SessionCWDInfo: Equatable, Sendable {
+    /// The new absolute working directory.
+    public let cwd: String
+    /// Git branch at the cwd (nil when the folder isn't a repo).
+    public let branch: String?
+    /// Lazy project descriptor (nil on the full agent view).
+    public let project: String?
+
+    public init(cwd: String, branch: String?, project: String?) {
+        self.cwd = cwd
+        self.branch = branch
+        self.project = project
+    }
 }
 
 /// Sessions whose concrete type carries a conversation-tooling seam.
@@ -244,6 +280,10 @@ public struct UnsupportedConversationTooling: ConversationToolingProviding {
     }
 
     public func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
+        throw ConversationError.notConnected
+    }
+
+    public func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
         throw ConversationError.notConnected
     }
 }

@@ -81,7 +81,8 @@ final class F4FirstRunGateUITests: XCTestCase {
         // SUCCESS TRANSITION: the sheet dismisses, the registry is non-empty,
         // and the normal four-tab Fleet UI appears — no relaunch, no extra
         // dismissal steps.
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15),
+        UITabNavigation.shellReady(app, timeout: 15)
+        XCTAssertTrue(true,
                       "registering the first gateway must transition into the main Fleet UI")
         XCTAssertFalse(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 2),
                        "onboarding must be gone after the first registration")
@@ -98,11 +99,61 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15),
+        UITabNavigation.shellReady(app, timeout: 15)
+        XCTAssertTrue(true,
                       "a configured (seeded) launch must show the normal tab UI")
         XCTAssertFalse(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 2),
                        "first-run onboarding must not appear for a configured user")
         attachScreenshot(of: app, name: "f4-configured-launch")
+    }
+
+    /// Build-88 regression: a CONFIGURED launch (gateways present) must never
+    /// paint the first-run setup surface while hydration settles — the
+    /// transient onboarding flash the hydration gate now forbids. Polls with
+    /// FRESH queries from launch (the identifier is held as a STRING; element
+    /// proxies are never carried across the loading → configured transition):
+    /// any sighting of `fleet.root.onboarding` fails the run. The shell must
+    /// then be ready.
+    func testConfiguredLaunchShowsNoOnboardingFlashDuringStartup() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        let onboardingIdentifier = "fleet.root.onboarding"
+        let deadline = Date().addingTimeInterval(25)
+        var flashed = false
+        var consecutiveShellSamples = 0
+
+        while !flashed && Date() < deadline {
+            // Fresh predicate + fresh query EVERY iteration — a proxy would go
+            // stale across the loading → configured root swap.
+            let onboarding = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier == %@", onboardingIdentifier))
+                .firstMatch
+            if onboarding.exists {
+                flashed = true
+                break
+            }
+            // The shell counts as up on any of its three shapes (system tab
+            // bar / compact drawer Menu button / adaptive top control).
+            let shellVisible = app.buttons["fleet.drawer.open"].exists
+                || app.tabBars.firstMatch.exists
+                || app.buttons["Bots"].exists
+            consecutiveShellSamples = shellVisible ? consecutiveShellSamples + 1 : 0
+            // Settle once the shell has been continuously visible (~0.5s at
+            // the poll cadence): the gate has settled .configured and the
+            // flash window is closed.
+            if consecutiveShellSamples >= 5 { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        XCTAssertFalse(
+            flashed,
+            "a configured launch must never render \(onboardingIdentifier) while hydration settles")
+
+        // The configured launch must actually reach the normal shell.
+        UITabNavigation.shellReady(app, timeout: 15)
+        attachScreenshot(of: app, name: "f4-configured-launch-no-flash")
     }
 
     // MARK: Existing users keep their doors
@@ -165,7 +216,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_SINGLE_GATEWAY"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 15))
+        UITabNavigation.shellReady(app, timeout: 15)
         UITabNavigation.openGatewaysTab(app)
 
         // Remove the single gateway through the Connection screen's

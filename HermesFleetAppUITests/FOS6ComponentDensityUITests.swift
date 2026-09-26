@@ -69,6 +69,12 @@ final class FOS6ComponentDensityUITests: XCTestCase {
 
     func testGlanceStripFactsRenderAsSingleAXElements() throws {
         let app = launch()
+        // Build 41+: cold launch lands on BOTS — this test asserts FLEET
+        // dashboard content (the glance strip), so select Fleet first via
+        // the verified-switch helper contract the sibling dashboard suites
+        // (U4Dashboard / FOS4TruthfulHome) already use. NAV_RESET clears
+        // persisted state; it does not select the Fleet tab.
+        UITabNavigation.openTabToFleet(app)
         let connected = app.staticTexts["fleet.dashboard.glance.connected"]
         XCTAssertTrue(connected.waitForExistence(timeout: 15), "connected fact renders")
         XCTAssertTrue(connected.label.contains(":"),

@@ -1,6 +1,6 @@
 # Hermes Fleet Privacy Policy
 
-Last updated: 2026-09-13
+Last updated: 2026-09-19
 
 Hermes Fleet is an iOS client for Hermes Agent gateways that the person using
 the app selects and controls. This policy describes the behavior of the
@@ -29,9 +29,11 @@ retention rules.
 
 Hermes Fleet does not include advertising identifiers, third-party analytics,
 or a Hermes Fleet account. The app does not operate a central service that
-receives gateway content. GitHub may receive information when the user opens
-the support or policy links; GitHub's own terms and privacy policy apply to
-that visit.
+receives gateway content. The official policy and terms documents are hosted at
+hermes-fleet.aiowa.dev; the hosting operator may receive standard web-server
+request information (such as IP address) when a document is opened, as may
+GitHub when the user opens the support or repository links. GitHub's and the
+host's own terms and privacy policies apply to those visits.
 
 ## Retention and deletion
 
@@ -49,6 +51,23 @@ Hermes Fleet is designed for direct, authenticated gateway connections. Users
 should use an encrypted gateway endpoint for traffic that leaves the local
 device, review the endpoint before saving a pairing payload, and never paste
 credentials into a public issue or support request.
+
+## Your choices
+
+You control the data Hermes Fleet handles. You can revoke consent and
+request deletion at any time by:
+
+- Removing a gateway in the app (deletes its stored credential and
+  gateway-local cached data immediately).
+- Using Settings → Data & Storage → Delete Local Cache (removes cached
+  conversations, roster snapshots, health history, and recent destinations;
+  saved gateways and Keychain credentials are kept).
+- Deleting the app (removes its local data, subject to iOS backup behavior).
+- Contacting us through the support channel below to ask questions or
+  request that we correct information we hold about you.
+
+Data already sent to a gateway is controlled by that gateway's operator and
+must be deleted through the gateway's own controls.
 
 ## Contact
 

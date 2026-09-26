@@ -32,13 +32,24 @@ final class U6ConversationSkinUITests: XCTestCase {
         )
         tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
 
-        // U6 bot header on the conversation canvas.
+        // U6 bot header on the conversation canvas. Dogfood top-space fix:
+        // the container uses .contain (children stay addressable), so the
+        // bot name is asserted on its leaf identifier; the status pill
+        // moved into the inline navigation bar.
         let header = firstMatch(in: app, identifier: "fleet.conversation.header")
         XCTAssertTrue(header.waitForExistence(timeout: 10),
-                      "the conversation must render the U6 bot header")
-        let label = header.label
-        XCTAssertTrue(label.contains("Default"), "header shows the bot display name (label: \(label))")
-        XCTAssertTrue(label.contains("Status:"), "header shows a status pill (label: \(label))")
+                      "the conversation must render the compact bot header")
+        let name = firstMatch(in: app, identifier: "fleet.conversation.header.name")
+        XCTAssertTrue(name.waitForExistence(timeout: 5),
+                      "the bot display name must render in the header")
+        XCTAssertTrue(name.label.contains("Default"), "header shows the bot display name (label: \(name.label))")
+        // Compaction round 2: the StatusPill is gone — the header identity
+        // element carries the spoken status ("Name, status Online").
+        let identity = firstMatch(in: app, identifier: "fleet.conversation.header.identity")
+        XCTAssertTrue(identity.waitForExistence(timeout: 5),
+                      "the identity element must render in the header row")
+        XCTAssertTrue(identity.label.lowercased().contains("status"),
+                      "identity announces the status (label: \(identity.label))")
 
         // The composer still exists under the new skin.
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),

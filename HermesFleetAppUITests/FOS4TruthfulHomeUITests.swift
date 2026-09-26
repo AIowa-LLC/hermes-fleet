@@ -18,11 +18,16 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    private func launch(navReset: Bool = true, extra: [String: String] = [:]) -> XCUIApplication {
+    private func launch(navReset: Bool = true, selectFleet: Bool = true, extra: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         if navReset { app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1" }
         for (key, value) in extra { app.launchEnvironment[key] = value }
         app.launch()
+        // Build 41+: cold launch lands on BOTS — this suite asserts FLEET
+        // dashboard content, so select Fleet first (verified switch, the
+        // shared-helper contract). The zero-gateway case skips it: the
+        // first-run setup gate owns the whole UI.
+        if selectFleet { UITabNavigation.openTabToFleet(app) }
         return app
     }
 
@@ -53,7 +58,9 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
     }
 
     func testGlanceStripEmptyFleetSaysNoGateways() throws {
-        let app = launch(extra: ["HERMES_FLEET_ZERO_GATEWAYS": "1"])
+        // Zero-gateway fleet: the first-run gate owns the UI (no tab shell
+        // at all) — launch WITHOUT the Fleet selection.
+        let app = launch(selectFleet: false, extra: ["HERMES_FLEET_ZERO_GATEWAYS": "1"])
         // First-run gate: a hydrated ZERO-gateway fleet never renders the
         // dashboard at all — it lands on the first-server setup experience.
         // The old guarantee (never fabricate "0/0" stats for an empty fleet)

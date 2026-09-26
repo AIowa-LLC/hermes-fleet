@@ -142,9 +142,9 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
                       "scripted passcode success should unlock to the roster")
     }
 
-    // MARK: - Settings sheet (FOS-3: app-level sheet, first item is config)
+    // MARK: - Settings tab (Build 43: Settings is a first-class tab, first item is config)
 
-    func testSettingsSheetRendersConfigurationFirst() throws {
+    func testSettingsTabRendersConfigurationFirst() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
@@ -156,18 +156,22 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
         // not render; the first content is useful configuration (App Lock).
         XCTAssertFalse(
             firstMatch(in: app, identifier: "fleet.settings.brand").exists,
-            "the brand banner must not render in the Settings sheet (FOS-3)"
+            "the brand banner must not render in Settings (FOS-3)"
         )
 
-        // The sheet carries its own navigation bar with a Done action.
+        // Build 43: Settings is a tab with its own navigation bar (no sheet
+        // Done button).
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
-                      "Settings renders as a sheet with its own stack")
-        XCTAssertTrue(app.buttons["Done"].exists, "the Settings sheet must expose Done")
+                      "Settings renders as a tab with its own stack")
+        XCTAssertFalse(app.buttons["fleet.settings.done"].exists,
+                       "the retired sheet Done button must not render")
 
-        // The H1 acceptance surface is untouched.
-        let toggle = app.switches["fleet.settings.app-lock.toggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "App Lock toggle should render")
-        attachScreenshot(of: app, name: "u7-settings-sheet")
+        // ADR-0011 W3: the App Lock toggle moved into the Security
+        // sub-screen; the Settings root contract is the chevron row.
+        let securityRow = firstMatch(in: app, identifier: "fleet.settings.security")
+        XCTAssertTrue(securityRow.waitForExistence(timeout: 10),
+                      "the Security row must render on the Settings root")
+        attachScreenshot(of: app, name: "u7-settings-tab")
     }
 
     func testSettingsAppearancePreferenceOffersSystemLightDark() throws {
@@ -178,25 +182,22 @@ final class U7GatewayQrLockSettingsUITests: XCTestCase {
 
         UITabNavigation.openSettings(app)
 
-        // FOS-3 (§12 Appearance): System / Light / Dark, default System.
-        // Scroll the Appearance section into view (below Security).
+        // ADR-0011 W2: Appearance is a ONE-ROW value picker (ChatGPT
+        // anatomy) at the TOP of Settings — no scroll needed. The options
+        // render when the menu opens.
         let picker = firstMatch(in: app, identifier: "fleet.settings.appearance")
-        if !picker.exists || !picker.isHittable {
-            for _ in 0..<4 where !(picker.exists && picker.isHittable) { app.swipeUp() }
-        }
         XCTAssertTrue(picker.waitForExistence(timeout: 10),
                       "the Appearance preference must render in Settings")
+        picker.tap()
         for label in ["System", "Light", "Dark"] {
-            XCTAssertTrue(app.buttons[label].exists || app.staticTexts[label].exists,
-                          "Appearance must offer \(label)")
+            XCTAssertTrue(app.buttons[label].waitForExistence(timeout: 5),
+                          "Appearance must offer \(label) in its menu")
         }
-        // Version row renders (Setup & help group).
-        let version = firstMatch(in: app, identifier: "fleet.settings.version")
-        if !version.exists {
-            for _ in 0..<4 where !version.exists { app.swipeUp() }
-        }
-        XCTAssertTrue(version.waitForExistence(timeout: 10),
-                      "Settings must show the app version")
+        // ADR-0011 W8 + dogfood round 2: the version row moved to the About
+        // tab, whose entry point is the Settings root's About row.
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.about").firstMatch.exists,
+            "Settings must expose the About row (the About tab's entry point)")
         attachScreenshot(of: app, name: "u7-settings-appearance")
     }
 

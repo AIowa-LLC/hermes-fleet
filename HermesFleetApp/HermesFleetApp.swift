@@ -1,4 +1,5 @@
 import SwiftUI
+import AppIntents
 import FleetUI
 
 /// Composition root for Hermes Fleet.
@@ -50,13 +51,26 @@ struct HermesFleetApp: App {
                     #endif
                 }
             }
+            .task {
+                HermesFleetShortcuts.updateAppShortcutParameters()
+            }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
+            .onOpenURL { url in
+                guard let target = FleetConversationDeepLink.target(from: url) else { return }
+                environment.openConversationFromShortcut(
+                    route: target.route,
+                    sessionID: target.sessionID,
+                    canonical: target.canonical)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
             if phase == .active && !lockController.isLocked {
-                Task { await environment.restoreIntendedConnections() }
+                Task {
+                    await environment.restoreIntendedConnections()
+                    await environment.restoreConversationSessions()
+                }
             }
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
@@ -70,8 +84,15 @@ struct HermesFleetApp: App {
                 Task {
                     await environment.hydrateIfNeeded()
                     await environment.restoreIntendedConnections()
+                    await environment.restoreConversationSessions()
                 }
             }
+        }
+        .onChange(of: lockController.isEnabled) { _, _ in
+            // App Intents caches entity display representations for system
+            // surfaces. Refresh those labels whenever the privacy setting
+            // changes so a previously unlocked name is not left cached.
+            HermesFleetShortcuts.updateAppShortcutParameters()
         }
     }
 }

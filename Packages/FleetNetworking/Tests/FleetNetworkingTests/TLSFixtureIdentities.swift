@@ -5,39 +5,44 @@ import Foundation
 import Security
 
 enum TLSFixtureIdentities {
-    static let p12Passphrase = "hermes-fixture"
-
-    /// The legitimate gateway: self-signed identity (PKCS#12) + leaf DER.
-    static let gatewayP12 = Data(base64Encoded: "MIIDWgIBAzCCAyAGCSqGSIb3DQEHAaCCAxEEggMNMIIDCTCCAf8GCSqGSIb3DQEHBqCCAfAwggHsAgEAMIIB5QYJKoZIhvcNAQcBMBwGCiqGSIb3DQEMAQYwDgQIKpOrVxAcZSoCAggAgIIBuCWezSEBCojN3dsxTj7Uu3pnbFHKI1zDNTtTSr/F/HfZG0OUcEVUCIEMSkysKmI37bruxZ54loblt/UsIlOT2cnwCRS5ALFB7oPbQOwbfF4p/zuUHNU6ij0+ttNNct4ubVqEvVBBBTGKS8Yn67W0/vRW75BDXwkQN7+SohhHoZdw4YFlFm0015sHDoO1vOtrgO/+tPc/Z8lAujXoeZYPb+70FEMR8b1lYIVOmKc2bIclJB2UCzbR0U3E5K2Th4qpfEWr6bHPR90loZQ4kk91upDLk6kl+F7EXKCUdT3ob3sD1aLLH0PMjuUKsVXwsLTwqSj4NSaI7AEJ8vknsG25J7AIlf9wNV4IaFxPRCyfk9O03W+cUfZLyOmsmGgY5YZj1dKXnVIVE7rOa0AuR+BbJRsJCf6u7byacjklWTWR/oEHC74IbQLbagO0XAw11YdV7ahFiLSAVvT/vkV9WdSnvr8HbjCILzHoKxf0oAGXgFyqwXrOsq+lnAs6fbyZ8q6q0nW1h5OrMhUdoaBTsL0DII9w+W/mTMQP81TcjcHW5ul+7sv6wDQ3l1s9QycHmfd1Pgs9v3HorQ3KMIIBAgYJKoZIhvcNAQcBoIH0BIHxMIHuMIHrBgsqhkiG9w0BDAoBAqCBtDCBsTAcBgoqhkiG9w0BDAEDMA4ECNnxVRIfK5cFAgIIAASBkHI3mzhMaQkDCHafBh6eVTESW4/PTitG1uNltmFXV7Go/1LU4hLwUIt5Zd3X1ei/Z1MVpigLJq9AK33sZbKd2SeRjOBsvd0rFIMAe/+Pf+wEj45pMS9TsEDgvVIh2PJgMEFDqaN96kdgs6qVxyMtBYkeqek2MsTroxFEc4tZC15jhF6BAxtsWvb1FH8b+Zo2PzElMCMGCSqGSIb3DQEJFTEWBBRqDaC8lmjmGDPXAWFcQnCaAtUNMTAxMCEwCQYFKw4DAhoFAAQUJ5Ik3Rlcr4IggSqjn/ZeSj/kUqEECOVtEnoFFp5nAgIIAA==")!
-    static let gatewayCertificateDER = Data(base64Encoded: "MIIBVzCB/aADAgECAgkAlzhcJBRiiScwCgYIKoZIzj0EAwIwITEfMB0GA1UEAwwWaGVybWVzLWdhdGV3YXktZml4dHVyZTAeFw0yNjA5MDIwMTU0NDNaFw00NjA4MjgwMTU0NDNaMCExHzAdBgNVBAMMFmhlcm1lcy1nYXRld2F5LWZpeHR1cmUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQ14DZrde1gCCcUPZoe+lzHQevdO62MrLE5G8z8KNwzIXWUEnZRaWZz2yupDTKOsV1l0hAuCVoRn69IO//rU6bKox4wHDAaBgNVHREEEzARhwR/AAABgglsb2NhbGhvc3QwCgYIKoZIzj0EAwIDSQAwRgIhAJvUHEtwzF3NZwabH3OYVcQO3D2DnwEoVHux1rtvlxOwAiEA806/nz5HqLdypvfI+b3Wo5HX/cBF+DI5IvUUEgWdAJU=")!
+    /// The legitimate gateway's synthetic cert and matching P-256 test key.
+    static let gatewayPrivateKeyX963 = Data(base64Encoded: "BO3hVW8FW9WBFkj9ub7a5JdmyczezvMnVsuDky6MLzj5NeDHaeDQuF3sEVM//pH46yhc8zSh+oMPqaNejIhMxzg3xd79NqdfpEwbrUQBSQBo7bDV3sD4uL1K6680ZBS4oQ==")!
+    static let gatewayCertificateDER = Data(base64Encoded: "MIIBVzCB/aADAgECAgkA+oIUXbGapFUwCgYIKoZIzj0EAwIwITEfMB0GA1UEAwwWaGVybWVzLWdhdGV3YXktZml4dHVyZTAeFw0yNjA5MjQwNzM3MjlaFw00NjA5MTkwNzM3MjlaMCExHzAdBgNVBAMMFmhlcm1lcy1nYXRld2F5LWZpeHR1cmUwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATt4VVvBVvVgRZI/bm+2uSXZsnM3s7zJ1bLg5MujC84+TXgx2ng0Lhd7BFTP/6R+OsoXPM0ofqDD6mjXoyITMc4ox4wHDAaBgNVHREEEzARhwR/AAABgglsb2NhbGhvc3QwCgYIKoZIzj0EAwIDSQAwRgIhAIkRUZslTUw+15Yr2qYlN0Zx2jSzWH7X15hFAa5r+9YfAiEAiixZ5EBqlmJjMVCo7RQJpnFoqxkCilGa8DTJfiXk4RE=")!
     /// SPKI SHA-256 base64 of the gateway cert (openssl-computed reference).
-    static let gatewaySPKIBase64 = "jkcQWo0PJpsP9STn2vxemMm5pxJGJnVYoSjqwMzw1M8="
+    static let gatewaySPKIBase64 = "cVHgL9Z89Wbfc7y4S2AypmccSjn5Ac89WLNwSN37zAI="
 
     /// A different self-signed identity (the MITM / replaced-cert actor).
-    static let mitmP12 = Data(base64Encoded: "MIIDUgIBAzCCAxgGCSqGSIb3DQEHAaCCAwkEggMFMIIDATCCAfcGCSqGSIb3DQEHBqCCAegwggHkAgEAMIIB3QYJKoZIhvcNAQcBMBwGCiqGSIb3DQEMAQYwDgQID8sfNTNQX28CAggAgIIBsCOmbZ7X/YVxWpnv8I8C4dqACm44O9QVTf4Iab0x8838ayLZTIn77nWAjd2DqByBnDXCz6MaQmqs2ftIodVmHJ7bmZqW45EywNFBlyajIhKrg1KA5DxTuied23tJTisF1FX9eRADaV7WnE6YleNHcU9KlQ+LYMMyrefJiMgvt/tQUnXfzIJR2bMd9OOIqBqHfGNvLFj4FKiCu8pP4KxJHyNrwYnT7J6bEGl4p90NWl0xpzIJ/od89Km5JZC1AwJzmfQqolfodxhcTQ9gFy9GEC8jPwiBzlyiFjGtEyQRpDBIPjXM4iAOFaZGamcCK4/07SIpJIJC81/Ga7dkKr9LDpHj2AT+bwkjIURzyBTLaF4krKiCLKDbZRB9zz6zYj5EiXapJhLWtjsx8UjDnADqUcR6oTcBSVpjqJbiPVxOCjosOSBofAKkgmvMYX+qvBbuAC9/V8hLETjcdNWAz4He3J4kc8DuCXfcMikXEWRtq3kwE5zFRENGRrngNshTSa6Zxjw5QL8zkO/qG0t0FpamM3AH2YTqSbxFbRE7GRng/JEL5y1b9aIdAr2xhowM/M87LzCCAQIGCSqGSIb3DQEHAaCB9ASB8TCB7jCB6wYLKoZIhvcNAQwKAQKggbQwgbEwHAYKKoZIhvcNAQwBAzAOBAjSzicAc2sdSwICCAAEgZDmrWzCvFDoNgG4Duqj53I3Fa/AsN898lNkwkI3JCkbkWFGOvKVN0+LJB3pAbr+x3t6iPdm/Eq/BWJ7rBUQSqIdsnCrPh/Pm315DZ8MUhXL0N6ofBKGOwyZ2cV0SzVQosLnJX1822JdZw6gANIlDRz0nXntGgFp0QuvF0zWPYH8O2eu79YXfB6bVGuK7E8OC7cxJTAjBgkqhkiG9w0BCRUxFgQUz2a8Cu10NDHDgHq9+oVIgeoBf90wMTAhMAkGBSsOAwIaBQAEFCA4AGD1ZnyX80C1oWpzqStP5K/OBAgsCj9w6R3xKAICCAA=")!
-    static let mitmCertificateDER = Data(base64Encoded: "MIIBUzCB+6ADAgECAgkAjQSU6wJuVJYwCgYIKoZIzj0EAwIwIDEeMBwGA1UEAwwVbWl0bS1hdHRhY2tlci1maXh0dXJlMB4XDTI2MDkwMjAxNTQ0M1oXDTQ2MDgyODAxNTQ0M1owIDEeMBwGA1UEAwwVbWl0bS1hdHRhY2tlci1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEw/XvyEn1UfGyd3VnlSnKUQorjLOVmLJyPcz8EuxQe4Xlm0dXfLAi6AyHuLqw3WQxJlAYY5+5kfO2ypYK0mdM+qMeMBwwGgYDVR0RBBMwEYcEfwAAAYIJbG9jYWxob3N0MAoGCCqGSM49BAMCA0cAMEQCIGNV6m3DdlOwNcJUBk5fnTdAE1+NBnznRhHwA4cqMy9gAiAqutb24ZEwZSayJVjHhVTkG9FNPeZnZEOj8cvmCfs+2w==")!
-    static let mitmSPKIBase64 = "IgI8x5N8znB9SU31vuMgGOp468oFRDPZyCnEe2R6EAg="
+    static let mitmPrivateKeyX963 = Data(base64Encoded: "BFzrHoLTHrPIgUSnckW1WiUQN0pzm3V1GttmeWFXyfFKDKdqx9gOjZxQ+7/kkM2zruPqT1M0BQNYppQnStRKU2JmW79XV6RRStsl2VvJVAIHcMglKhYNrJFp7lmmtVSwKg==")!
+    static let mitmCertificateDER = Data(base64Encoded: "MIIBVDCB+6ADAgECAgkAnZ+WG7pufoYwCgYIKoZIzj0EAwIwIDEeMBwGA1UEAwwVbWl0bS1hdHRhY2tlci1maXh0dXJlMB4XDTI2MDkyNDA3MzcyOVoXDTQ2MDkxOTA3MzcyOVowIDEeMBwGA1UEAwwVbWl0bS1hdHRhY2tlci1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXOsegtMes8iBRKdyRbVaJRA3SnObdXUa22Z5YVfJ8UoMp2rH2A6NnFD7v+SQzbOu4+pPUzQFA1imlCdK1EpTYqMeMBwwGgYDVR0RBBMwEYcEfwAAAYIJbG9jYWxob3N0MAoGCCqGSM49BAMCA0gAMEUCIGQDPnmUB8gQQYuLMCN+xFPS91GsYaXw31euII59FObKAiEAxBAjnn0BA19NcqBufT3WAbnfNlGySojtUfI7ADHQc54=")!
+    static let mitmSPKIBase64 = "LYL7REqnjTKYyow+f600rSb/RY5lhZTfh/n8cvyb5Xw="
 
     /// A certificate with an UNSUPPORTED key type (RSA-1024) — the extractor
     /// must fail closed on it.
-    static let weakCertificateDER = Data(base64Encoded: "MIIB4DCCAUmgAwIBAgIJAOjJHgmFF7oNMA0GCSqGSIb3DQEBCwUAMCIxIDAeBgNVBAMMF3Vuc3VwcG9ydGVkLWtleS1maXh0dXJlMB4XDTI2MDkwMjAxNTQ0M1oXDTQ2MDgyODAxNTQ0M1owIjEgMB4GA1UEAwwXdW5zdXBwb3J0ZWQta2V5LWZpeHR1cmUwgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJAoGBAM+X/jEl8stuGt8aRFoznQLLKMQziMOYpmdrHRLZYXNfLFNFOr3q4/fE7f+bToAwIKiLa3cOOwRfoUS/TmWvwLGI/vM2FyYwkVwKN0Sdd03L2+wcZuNQgA3gnLknUbxIN/ovnOmoiwTQUyTkN2rtgLMyxNardU11bLhurPUpxZbJAgMBAAGjHjAcMBoGA1UdEQQTMBGHBH8AAAGCCWxvY2FsaG9zdDANBgkqhkiG9w0BAQsFAAOBgQDCScILhil07ay63he9msWwOWzuU6BmfaXeU4S6EZFH4KqLb4MGs1FNo8uAgxemsWUSvzvQcGYyuaMgePxQSRpjbYbM+nR/QND9Vk8K2fXKuqSDjqFbU1Gmi+DogLPRKXqhp0GMEOP+wYB+YsepizAHzIZfT2tYT/UHbC4O/TCSmg==")!
+    static let weakCertificateDER = Data(base64Encoded: "MIIB4DCCAUmgAwIBAgIJAIwJ9ss8EoArMA0GCSqGSIb3DQEBCwUAMCIxIDAeBgNVBAMMF3Vuc3VwcG9ydGVkLWtleS1maXh0dXJlMB4XDTI2MDkyNDA3MzcyOVoXDTQ2MDkxOTA3MzcyOVowIjEgMB4GA1UEAwwXdW5zdXBwb3J0ZWQta2V5LWZpeHR1cmUwgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJAoGBALmfxaGRy7KlSZlVoH3sNZOfxpT9kf2dfD0bFyBkQJhRX5mN2MqcHki6QIMcpVWQZpmlmCVjbbkv6LyQN6x2iT5ABk3nzmZRNo93GDu2F29eh63eZF/F/SnU92rvLe8r8+75UuFbzKVs8pdjWWF95E4b9yQly56YxRFfcBtxZ6GvAgMBAAGjHjAcMBoGA1UdEQQTMBGHBH8AAAGCCWxvY2FsaG9zdDANBgkqhkiG9w0BAQsFAAOBgQBYac+EMOVdFpTmC4v97uKw8E7qvP5/5KHqFpTngEDGd4Ub/+5xf9nTLoSeI+4nOA6Ytx8TB9qINa86nr1+h5ICYDJOzaupCMT4Z4vP/DSpsvXEavgXP9+k8WWvBvgxCaE1fCnxHJdxuHV7pvo30LLbxBQJMxN11qc0PqGVJJe08A==")!
 
-    /// Import a PKCS#12 blob and return the SecIdentity (the server identity
-    /// a TLS fixture presents). No keychain needed — SecPKCS12Import without
-    /// a keychain option returns a usable ephemeral identity reference.
-    static func identity(p12: Data) throws -> SecIdentity {
-        var imported: CFArray?
-        let options: [String: Any] = [
-            kSecImportExportPassphrase as String: p12Passphrase,
-        ]
-        let status = SecPKCS12Import(p12 as CFData, options as CFDictionary, &imported)
-        guard status == errSecSuccess,
-              let items = imported as? [[String: Any]],
-              let first = items.first,
-              let ref = first[kSecImportItemIdentity as String] else {
+    /// Pair the synthetic certificate with an in-memory software key. This
+    /// keeps TLS signing out of SecurityServer/keychain-backed identities.
+    static func identity(certificateDER: Data, privateKeyX963: Data) throws -> SecIdentity {
+        guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData) else {
             throw NSError(domain: "TLSFixture", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "p12 import failed (status \(status))"])
+                          userInfo: [NSLocalizedDescriptionKey: "certificate fixture could not be created"])
         }
-        return ref as! SecIdentity
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecAttrIsPermanent as String: false,
+        ]
+        var keyError: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateWithData(privateKeyX963 as CFData, attributes as CFDictionary, &keyError) else {
+            throw keyError?.takeRetainedValue() ?? NSError(
+                domain: "TLSFixture", code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "private key fixture could not be created"])
+        }
+        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
+            throw NSError(domain: "TLSFixture", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "certificate and private key do not match"])
+        }
+        return identity
     }
 }

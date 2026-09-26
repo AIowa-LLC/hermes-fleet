@@ -82,7 +82,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
             func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
                 ConversationSession(sessionID: "s-1", profileName: "default")
             }
-            func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+            func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
                 let messages = state.sync { _resumeMessages }
                 return ConversationSession(sessionID: sessionID, messages: messages, profileName: "default")
             }
@@ -360,7 +360,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
             func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
                 ConversationSession(sessionID: "s-1", profileName: "default")
             }
-            func resumeSession(sessionID: String, lastEventID: Int? = nil) async throws -> ConversationSession {
+            func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
                 ConversationSession(sessionID: sessionID, profileName: "default")
             }
             func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

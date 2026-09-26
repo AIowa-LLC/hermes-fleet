@@ -32,6 +32,53 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         }
     }
 
+    /// Scripted per-attempt outcome for `RecoveringConnection`.
+    private enum RecoveryOutcome {
+        case success
+        case failure(GatewayConnectivityError, DisconnectReason)
+    }
+
+    /// Dogfood r2 (2026-09-23): scripted connection with a MUTABLE status and
+    /// a typed disconnect reason — drives the runtime's bounded auto-recovery
+    /// (failed connect / post-open drop → policy-gated retry).
+    private final class RecoveringConnection: GatewayConnectivityProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        /// Each entry = the outcome of the next connect attempt (exhausted =
+        /// success).
+        nonisolated(unsafe) var scripted: [RecoveryOutcome]
+        nonisolated(unsafe) var statusValue: GatewayStatus = .offline
+        nonisolated(unsafe) var reasonValue: DisconnectReason?
+        nonisolated(unsafe) private(set) var connectCount = 0
+
+        init(gatewayID: GatewayID, scripted: [RecoveryOutcome]) {
+            self.gatewayID = gatewayID
+            self.scripted = scripted
+        }
+
+        var status: GatewayStatus { statusValue }
+        func lastDisconnectReason() async -> DisconnectReason? { reasonValue }
+
+        func connect() async throws {
+            connectCount += 1
+            let outcome: RecoveryOutcome = scripted.isEmpty ? .success : scripted.removeFirst()
+            switch outcome {
+            case .success:
+                statusValue = .online
+                reasonValue = nil
+            case .failure(let error, let reason):
+                statusValue = GatewayStatus(connectivityError: error)
+                reasonValue = reason
+                throw error
+            }
+        }
+
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
+        }
+    }
+
     private struct EmptyRosterSession: GatewayRosterSession {
         let gatewayID: GatewayID
         var status: GatewayStatus { .online }
@@ -61,6 +108,62 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         GatewayRegistration(
             id: GatewayID(rawValue: id), displayName: id,
             endpoint: URL(string: "http://127.0.0.1:\(9000 + id.count)")!)
+    }
+
+    /// Scripted conversation session for restore tests (status-driven, no
+    /// transport). Mirrors the suite's ScriptedConnection shape.
+    private final class ScriptedConversationSession: ConversationSessionProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        var statusValue: GatewayStatus = .online
+        var connectCount = 0
+        let conversation: any ConversationProviding = UnreachableConversation()
+        let replay: any ReplayProviding = UnreachableReplay()
+        let history: any SessionHistoryProviding = UnreachableHistory()
+
+        init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
+
+        var status: GatewayStatus { statusValue }
+        var liveness: ConnectionLivenessSnapshot? { nil }
+
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func connect() async throws { connectCount += 1 }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
+        }
+        func reauthenticate() async throws {}
+    }
+
+    private struct UnreachableConversation: ConversationProviding {
+        var events: AsyncStream<ConversationEvent> { AsyncStream { $0.finish() } }
+        func createSession(title: String?, profile: String?, model: String?, provider: String?, cols: Int?) async throws -> ConversationSession {
+            throw GatewayConnectivityError.unreachable
+        }
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
+        func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
+            throw GatewayConnectivityError.unreachable
+        }
+        func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {
+            PromptSubmission(status: "ok")
+        }
+        func interrupt(sessionID: String) async throws -> InterruptResult {
+            InterruptResult(status: "ok")
+        }
+    }
+
+    private struct UnreachableReplay: ReplayProviding {
+        let gatewayID = GatewayID(rawValue: "workstation")
+        func watermarks() async -> [SessionEventWatermark] { [] }
+        func replayAfterReconnect() async throws -> [ReplayOutcome] { [] }
+    }
+
+    private struct UnreachableHistory: SessionHistoryProviding {
+        func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
+            SessionHistory(sessionID: sessionID, count: 0, messages: [])
+        }
+        func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
+            SessionStatus(rawOutput: "", sessionID: sessionID)
+        }
     }
 
     private func makeEnvironment(
@@ -97,6 +200,221 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
 
     private func suiteDefaults() -> UserDefaults {
         UserDefaults(suiteName: "connection-intent-\(UUID().uuidString)")!
+    }
+
+    private func makeRecoveryEnvironment(
+        id: GatewayID,
+        connection: RecoveringConnection,
+        timing: ConnectionRecoveryTiming
+    ) async -> AppEnvironment {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { _, _ in connection })
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in EmptyRosterSession(gatewayID: gateway.id) })
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: EmptySessions(),
+            connectionFactory: { _, _ in connection },
+            health: TestHealth(),
+            seedRegistrations: [registration(id.rawValue)],
+            connectionIntentDefaults: suiteDefaults(),
+            recoveryTiming: timing)
+        await environment.load()
+        return environment
+    }
+
+    /// Poll until the condition holds or the deadline passes (recovery runs on
+    /// watch/backoff timers — never assert on a bare sleep).
+    private func waitUntil(
+        timeout: TimeInterval = 3,
+        _ condition: @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return condition()
+    }
+
+    // MARK: Dogfood r2 — bounded auto-recovery for failed connections
+
+    func testTransientConnectFailureAutoRetriesUntilSuccess() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [
+            .failure(.unreachable, .abnormalClosure),
+            .success,
+        ])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        XCTAssertEqual(environment.connectionStates[id], .failed(.offline), "first attempt failed")
+
+        let healed = await waitUntil { environment.connectionStates[id] == .connected }
+        XCTAssertTrue(healed, "a transient failure heals via bounded auto-retry")
+        XCTAssertEqual(connection.connectCount, 2)
+    }
+
+    func testPostOpenDropIsMirroredAndAutoRetried() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.3, maxDelay: 0.3, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+
+        // Simulate a post-open drop: the transport reports failed while the
+        // runtime's observable state still says connected.
+        connection.statusValue = .offline
+        connection.reasonValue = .abnormalClosure
+
+        let mirrored = await waitUntil { environment.connectionStates[id] == .failed(.offline) }
+        XCTAssertTrue(mirrored, "a drop is mirrored, never left stale-'connected'")
+        let healed = await waitUntil { environment.connectionStates[id] == .connected }
+        XCTAssertTrue(healed, "a post-open drop heals via bounded auto-retry")
+        XCTAssertEqual(connection.connectCount, 2)
+    }
+
+    func testDisconnectAllStopsRecoveryWatchUntilForegroundRestore() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.025, maxDelay: 0.025, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        connection.statusValue = .offline
+        connection.reasonValue = .abnormalClosure
+        let observedDrop = await waitUntil {
+            environment.connectionStates[id] == .failed(.offline)
+        }
+        XCTAssertTrue(observedDrop, "the recovery watch observes the transient drop")
+
+        await environment.disconnectAll()
+        XCTAssertEqual(environment.connectionStates[id], .disconnected)
+        XCTAssertTrue(environment.isConnectionIntended(id), "background teardown preserves intent")
+
+        let retriedWhileSuspended = await waitUntil(timeout: 0.2) {
+            connection.connectCount > 1
+        }
+        XCTAssertFalse(retriedWhileSuspended, "disconnectAll stops recovery until foreground restore")
+        XCTAssertEqual(connection.connectCount, 1)
+
+        await environment.restoreIntendedConnections()
+        let restored = await waitUntil {
+            environment.connectionStates[id] == .connected
+        }
+        XCTAssertTrue(restored, "foreground restore reconnects the intended gateway")
+        XCTAssertEqual(connection.connectCount, 2)
+    }
+
+    func testAuthRequiredFailureDoesNotAutoRetry() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [
+            .failure(.authenticationRequired, .reauthenticationRequired),
+            .success,
+        ])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        _ = await waitUntil(timeout: 0.5) { false }
+        XCTAssertEqual(connection.connectCount, 1, "authRequired is surfaced, never silently retried (M11)")
+        XCTAssertEqual(environment.connectionStates[id], .failed(.authenticationRequired))
+    }
+
+    func testTLSApprovalFailureNeverAutoRetries() async {
+        // T3: a pin mismatch must NEVER be auto-retried (possible MITM) —
+        // even though its classified status is plain `offline`.
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [
+            .failure(.unreachable, .tlsPinMismatch),
+            .success,
+        ])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        _ = await waitUntil(timeout: 0.5) { false }
+        XCTAssertEqual(connection.connectCount, 1, "pin mismatch is never auto-retried")
+    }
+
+    func testReconnectAttemptsAreBounded() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: Array(
+            repeating: .failure(.unreachable, .abnormalClosure), count: 8))
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        let exhausted = await waitUntil { connection.connectCount == 3 }
+        XCTAssertTrue(exhausted, "initial attempt + 2 retries")
+        _ = await waitUntil(timeout: 0.4) { false }
+        XCTAssertEqual(connection.connectCount, 3, "the retry budget bounds the loop")
+    }
+
+    func testManualDisconnectCancelsPendingRetry() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [
+            .failure(.unreachable, .abnormalClosure),
+            .success,
+        ])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.4, maxDelay: 0.4, maxAttempts: 2))
+
+        await environment.connect(to: id)
+        // Let the watch observe the failure and schedule its retry…
+        _ = await waitUntil(timeout: 0.12) { false }
+        await environment.disconnect(from: id)
+        // …then prove the pending retry was cancelled before it fired.
+        _ = await waitUntil(timeout: 0.9) { false }
+        XCTAssertEqual(connection.connectCount, 1, "manual disconnect cancels the pending retry")
+        XCTAssertFalse(environment.isConnectionIntended(id))
+    }
+
+    /// Foreground auto-heal for conversation sessions: an unreachable
+    /// session's transport reconnects on restore; a reachable one is left
+    /// alone; `.authenticationRequired` is surfaced, never silently healed
+    /// (M11).
+    func testRestoreConversationSessionsHealsDroppedSkipsReachableAndAuth() async {
+        let id = GatewayID(rawValue: "workstation")
+        let conversation = ScriptedConversationSession(gatewayID: id)
+
+        // Reachable: no reconnect.
+        conversation.statusValue = .online
+        await AppEnvironment.restoreConversationSessionsTestHarness([conversation])
+        XCTAssertEqual(conversation.connectCount, 0, "reachable sessions skip restore")
+
+        // Dropped: reconnect once.
+        conversation.statusValue = .offline
+        await AppEnvironment.restoreConversationSessionsTestHarness([conversation])
+        XCTAssertEqual(conversation.connectCount, 1, "dropped sessions heal")
+
+        // Auth required: NEVER silently re-authenticated (M11).
+        conversation.statusValue = .authenticationRequired
+        await AppEnvironment.restoreConversationSessionsTestHarness([conversation])
+        XCTAssertEqual(conversation.connectCount, 1, "authRequired is surfaced, not healed")
     }
 
     func testTransportTeardownPreservesIntentAndRestores() async {
