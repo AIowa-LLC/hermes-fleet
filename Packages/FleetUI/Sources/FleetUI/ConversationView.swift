@@ -68,12 +68,6 @@ public enum ConversationOpenPolicy {
 /// FleetUI depends only on FleetCore seams; the transport module is wired by
 /// the app composition root (M0 hard guard).
 public struct ConversationView: View {
-    private struct FollowSignature: Equatable {
-        let id: String
-        let textCount: Int
-        let detailCount: Int
-        let isStreaming: Bool
-    }
     @Environment(\.fleetTheme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openFleetDrawer) private var openDrawer
@@ -1145,56 +1139,8 @@ enum ConversationHeaderChips {
     /// last row) so a spring animation never replays on every delta; true
     /// only for a brand-new row arriving or an explicit "Latest" jump.
     private func scrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
-        #if DEBUG
-        let scrollDiagnostic = ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"]
-        if scrollDiagnostic == "no-follow" { return }
-        if scrollDiagnostic == "deferred-follow" {
-            Task { @MainActor in
-                await Task.yield()
-                performScrollToLive(id, proxy: proxy, animate: animate)
-            }
-            return
-        }
-        if scrollDiagnostic == "delayed-follow" {
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1))
-                guard followingLatest, !isUserInteractingWithScroll else { return }
-                performScrollToLive(id, proxy: proxy, animate: animate)
-            }
-            return
-        }
-        #endif
-        performScrollToLive(id, proxy: proxy, animate: animate)
-    }
-
-    /// iOS 26.5 repeatedly enters ScrollView layout when a programmatic
-    /// follow overlaps a newly cited image. The tool row was followed when
-    /// generation started; let its image grow without another automatic
-    /// scroll during the immediate tool/assistant handoff. Explicit Latest
-    /// remains available, and ordinary later rows resume automatic follow.
-    private func shouldAutoFollow(_ model: ConversationViewModel) -> Bool {
-        let hasRecentImage = model.transcript.suffix(3).contains {
-            !($0.artifacts ?? []).isEmpty
-        }
-        if hasRecentImage,
-           ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
-            NSLog("HFInline skip automatic follow near image")
-        }
-        return !hasRecentImage
-    }
-
-    private func performScrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
-        if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
-            NSLog("HFInline scrollToLive id=%@ animate=%@", id, animate.description)
-        }
         isProgrammaticFollow = true
-        var shouldAnimate = animate && !reduceMotion
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"] == "no-animation" {
-            shouldAnimate = false
-        }
-        #endif
-        if shouldAnimate {
+        if animate && !reduceMotion {
             withAnimation { proxy.scrollTo(id, anchor: .bottom) }
         } else {
             proxy.scrollTo(id, anchor: .bottom)
@@ -1203,6 +1149,15 @@ enum ConversationHeaderChips {
             await Task.yield()
             isProgrammaticFollow = false
         }
+    }
+
+    /// iOS 26.5 can re-enter ScrollView layout indefinitely when an automatic
+    /// scroll overlaps a newly cited image. The tool row was followed when
+    /// generation began, so let it grow through the image/assistant handoff.
+    /// Later rows resume auto-follow once this image leaves the recent tail;
+    /// the explicit Latest action still calls scrollToLive directly.
+    private func shouldAutoFollow(_ model: ConversationViewModel) -> Bool {
+        !model.transcript.suffix(3).contains { !($0.artifacts ?? []).isEmpty }
     }
 
     private func transcriptList(_ model: ConversationViewModel) -> some View {
@@ -1270,29 +1225,19 @@ enum ConversationHeaderChips {
             // Coming back to the bottom under a real drag re-follows (the
             // floating "Latest" chevron hides again).
             .onScrollGeometryChange(for: Bool.self) { geometry in
-                #if DEBUG
-                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"] == "no-geometry" {
-                    return true
-                }
-                #endif
-                return geometry.contentSize.height
+                geometry.contentSize.height
                     - geometry.contentOffset.y
                     - geometry.visibleRect.height <= 64
             } action: { _, atBottom in
-                // A delivered image changes row height without a user drag.
-                // Writing view state during that geometry pass feeds another
-                // SwiftUI layout update on iOS 26.5. Only a user-driven
-                // scroll may change follow state; programmatic growth keeps
-                // following the live transcript.
+                isAtBottomLatest = atBottom
                 guard isUserInteractingWithScroll, !isProgrammaticFollow else { return }
-                if isAtBottomLatest != atBottom { isAtBottomLatest = atBottom }
                 // A drag usually STARTS at the live bottom, so the phase
                 // callback alone never sees "away from bottom"; the first
                 // non-bottom geometry update during a user-driven scroll is
                 // the explicit history escape (same rule as RoomChatView).
                 // Arriving back at the bottom under the user's own scroll
                 // re-follows and hides the floating Latest chevron.
-                if followingLatest != atBottom { followingLatest = atBottom }
+                followingLatest = atBottom
             }
             // B87 round 2: the user's own drag away from the bottom is the
             // ONLY thing that unfollows — a brand-new row, in-place
@@ -1361,13 +1306,8 @@ enum ConversationHeaderChips {
             // WITHOUT animation: this can fire on every streamed token, and
             // a spring animation replaying per-token would itself jank.
             .onChange(of: model.transcript.last.map {
-                FollowSignature(id: $0.id, textCount: $0.text.count,
-                                detailCount: $0.detail?.count ?? 0, isStreaming: $0.isStreaming)
-            }) { old, new in
-                // A new row is already followed by the identity observer above.
-                // Calling scrollTo twice in this same update re-enters the
-                // image row's layout pass on iOS 26.5.
-                guard old?.id == new?.id else { return }
+                "\($0.id)#\($0.text.count)#\($0.detail?.count ?? 0)#\($0.isStreaming)"
+            }) { _, _ in
                 guard followingLatest, shouldAutoFollow(model),
                       let last = model.transcript.last else { return }
                 scrollToLive(last.id, proxy: proxy, animate: false)

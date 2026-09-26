@@ -135,13 +135,7 @@ public final class ArtifactImageStore {
         let task = Task<State?, Never> { [weak self] in
             let outcome: State
             do {
-                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
-                    NSLog("HFInline artifact retrieval started")
-                }
                 let retrieved = try await retriever.retrieve(reference)
-                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
-                    NSLog("HFInline artifact retrieval returned")
-                }
                 let payload = Payload(
                     reference: retrieved.reference,
                     data: retrieved.data,
@@ -229,16 +223,10 @@ public final class ArtifactImageStore {
     private func store(_ state: State, for reference: ArtifactReference) {
         switch state {
         case .loaded(let payload):
-            if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
-                NSLog("HFInline artifact store begin")
-            }
             evictIfNeeded(beforeInserting: reference)
             states[reference] = .loaded(payload)
             if let image = UIImage(data: payload.data) {
                 decoded[reference] = image
-            }
-            if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
-                NSLog("HFInline artifact image decoded")
             }
             loadedOrder.removeAll { $0 == reference }
             loadedOrder.append(reference)
