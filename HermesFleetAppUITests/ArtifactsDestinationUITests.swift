@@ -162,6 +162,10 @@ final class ArtifactsDestinationUITests: XCTestCase {
         runInlineImageFlow(scrollDiagnostic: "deferred-follow")
     }
 
+    func testInlineImageWithDelayedFollowDiagnostic() {
+        runInlineImageFlow(scrollDiagnostic: "delayed-follow")
+    }
+
     private func runInlineImageFlow(scrollDiagnostic: String? = nil) {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"

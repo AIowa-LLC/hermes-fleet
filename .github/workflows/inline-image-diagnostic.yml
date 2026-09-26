@@ -45,17 +45,16 @@ jobs:
             exit 1
           fi
           echo 'BUILD: succeeded'
-      - name: Compare suppressed follow with next-cycle follow
+      - name: Test follow after image layout settles
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
           overall=0
-          for variant in no-follow deferred-follow; do
+          for variant in delayed-follow; do
             case "$variant" in
-              no-follow) method=testInlineImageWithoutAutoFollowDiagnostic ;;
-              deferred-follow) method=testInlineImageWithDeferredFollowDiagnostic ;;
+              delayed-follow) method=testInlineImageWithDelayedFollowDiagnostic ;;
             esac
             echo "TEST: $variant, fresh app launch, no repetition or retry flags"
             bundle="$evidence/InlineVariant-$variant.xcresult"

@@ -1149,11 +1149,22 @@ enum ConversationHeaderChips {
             }
             return
         }
+        if scrollDiagnostic == "delayed-follow" {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard followingLatest, !isUserInteractingWithScroll else { return }
+                performScrollToLive(id, proxy: proxy, animate: animate)
+            }
+            return
+        }
         #endif
         performScrollToLive(id, proxy: proxy, animate: animate)
     }
 
     private func performScrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
+            NSLog("HFInline scrollToLive id=%@ animate=%@", id, animate.description)
+        }
         isProgrammaticFollow = true
         var shouldAnimate = animate && !reduceMotion
         #if DEBUG
