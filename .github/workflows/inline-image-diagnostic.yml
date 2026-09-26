@@ -45,16 +45,16 @@ jobs:
             exit 1
           fi
           echo 'BUILD: succeeded'
-      - name: Test single follow per row transition
+      - name: Test coalesced follow after handoff
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
           overall=0
-          for variant in single-follow; do
+          for variant in coalesced-follow; do
             case "$variant" in
-              single-follow) method=testGeneratedImageRendersInlineInTheCitingToolRow ;;
+              coalesced-follow) method=testGeneratedImageRendersInlineInTheCitingToolRow ;;
             esac
             echo "TEST: $variant, fresh app launch, no repetition or retry flags"
             bundle="$evidence/InlineVariant-$variant.xcresult"
