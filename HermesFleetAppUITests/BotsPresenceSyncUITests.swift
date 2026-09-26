@@ -26,13 +26,13 @@ final class BotsPresenceSyncUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_CONNECT_SYNC"] = "1"
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 20))
-        app.tabBars.buttons["Bots"].tap()
+        UITabNavigation.shellReady(app, timeout: 20)
+        UITabNavigation.selectTab(app, label: "Bots")
         let outage = firstMatch(app, "fleet.roster.outage.workstation")
         let ghost = firstMatch(app, "fleet.roster.row.workstation#researcher")
         XCTAssertTrue(outage.waitForExistence(timeout: 15) || ghost.waitForExistence(timeout: 5))
 
-        app.tabBars.buttons["Gateways"].tap()
+        UITabNavigation.openGatewaysTab(app)
         let row = firstMatch(app, "fleet.gateways.row.workstation")
         XCTAssertTrue(row.waitForExistence(timeout: 15))
         row.tap()
@@ -40,7 +40,7 @@ final class BotsPresenceSyncUITests: XCTestCase {
         XCTAssertTrue(connect.waitForExistence(timeout: 15))
         connect.tap()
 
-        app.tabBars.buttons["Bots"].tap()
+        UITabNavigation.selectTab(app, label: "Bots")
         let recovered = firstMatch(app, "fleet.roster.row.workstation#researcher")
         XCTAssertTrue(recovered.waitForExistence(timeout: 20))
         let predicate = NSPredicate(format: "label CONTAINS[c] %@", "Online")

@@ -134,3 +134,22 @@ counts onto a newer test inventory. A command failure, missing summary, partial
 count, or failed assertion cannot become green. Full package logs are retained
 and uploaded for successful and failed jobs, and assertion lines are printed
 before the summary. Five mocked Swift contract cases verify these rules.
+
+## Build 90 reconciliation
+
+The integrated candidate retains all 59 deterministic and 11 environmental UI
+suites from the recorded Build 90 source. Environmental suites still require
+their real gateway/device context and are not silently counted as CI passes.
+The five-way deep workflow keeps the release line's historical runtime weights;
+these predate build reuse and are balancing inputs, not speed forecasts.
+Package baselines follow the unchanged source: 619 core, 545 networking,
+39 persistence, and 37 security tests. Focused selection maps the newer Kanban,
+artifacts, image generation, cron, reasoning, slash-parity, cached-launch,
+unread-state, About, and compact-chrome surfaces to their registered suites.
+
+Run `python3 scripts/build90_source_check.py --source <snapshot-sha> --target
+<candidate-commit-or-tree>` to compare every non-infrastructure tracked entry.
+The allowlist permits only scripts, workflows, documentation, AGENTS.md, and
+the release ledger to differ. This checks source preservation, not archive
+provenance or product correctness. The reported public release is not a waiver
+of required tests on the integrated candidate.

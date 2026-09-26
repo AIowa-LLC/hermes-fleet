@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 import FleetCore
 
 /// One rendered row in the conversation transcript (U3).
@@ -39,6 +40,18 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
     /// R10-T2: reactions rendered under this bubble (a live view over the
     /// VM's `reactionsByRowID`, updated by the view). Nil = none.
     public var reactions: [MessageReaction]?
+    /// Card D: generated-image artifacts this row CITED (a tool row whose
+    /// `image_generate` result named retrievable media). Provenance-bound —
+    /// each reference carries its gateway + session. Nil/empty = none. The
+    /// view retrieves bytes through the shared `ArtifactImageStore`.
+    public var artifacts: [ArtifactReference]?
+    /// Card E: the in-flight `image_generate` lifecycle for THIS tool row,
+    /// derived from verified wire frames only (`ImageGenerationRules`). Nil =
+    /// no generation observed on the row. `.generating` renders the branded
+    /// indeterminate animation; the terminal states render nothing (the
+    /// artifact slot / tool chip already tells the outcome) — so the
+    /// animation can never overlap a delivered image.
+    public var generationActivity: ImageGenerationActivity?
 
     public init(
         id: String,
@@ -144,8 +157,14 @@ public final class ConversationViewModel {
     private let session: any ConversationSessionProviding
     private let cache: any CacheStoring
     public let route: Route
-    /// The runtime session id to resume, or nil to create a new conversation.
+    /// The stored/list session id to resume, or nil to create a new conversation.
     public let sessionID: String?
+
+    /// r9 toolbelt: apply a `session.cwd.set` readback — refreshes the
+    /// working-folder chip (and any derived header state) after a change.
+    public func refreshCWD(_ info: SessionCWDInfo) {
+        sessionCWD = info.cwd
+    }
     /// R9-T1/T2/T3 — biometric seam for the approval gate (FaceID-gated
     /// approve, confirmed YOLO enable). Injected by the composition root;
     /// defaults to the app-lock provider's seam.
@@ -160,20 +179,52 @@ public final class ConversationViewModel {
     /// cache), so capping the window never loses history.
     public var transcript: [ConversationRow] {
         var rows = Array(allRows.suffix(maxDisplayRows))
+        // Offset of the display window inside the authoritative array (the
+        // window is a suffix, so allRows index = offset + row index).
+        let offset = allRows.count - rows.count
         // R10-T2: project the reaction state onto each row for rendering
         // (durable-keyed; a live row reads its in-flight optimistic state
         // under the live-* key).
         for index in rows.indices {
             let key = rows[index].rowID ?? Self.liveRowKey(kind: rows[index].kind)
             rows[index].reactions = reactionsByRowID[key]?.reactions
+            // Card D: an assistant row of a turn whose tool rows cited a
+            // generated image renders the agent's PROSE only — the artifact
+            // itself presents through the citing tool row, so the model's
+            // restated path/URL is stripped (desktop-verified de-dupe).
+            if rows[index].kind == .assistant {
+                let sources = turnEchoSources(beforeAssistantAt: offset + index)
+                if !sources.isEmpty {
+                    rows[index].text = GeneratedImageRules.strippingEchoes(in: rows[index].text, sources: sources)
+                }
+            }
         }
         return rows
     }
     public private(set) var isStreaming = false
+    /// Turn clock (Hermes parity): when the in-flight turn started — set at
+    /// prompt submit, cleared at message.complete / turn error / interrupt.
+    /// Drives the "Working for Ns" indicator; covers the WHOLE turn
+    /// (tool runs, reasoning, streaming), not just the streaming phase.
+    public private(set) var turnStartedAt: Date?
+    /// True while a turn is in flight (any phase). The honest full-turn
+    /// signal — `isStreaming` alone misses the pre-message.start window.
+    public var isWorking: Bool { turnStartedAt != nil }
     /// R10-T2: reactions per transcript row id — rendered under the bubbles.
     /// Sources: history-carried `display_metadata.reactions` (durable rows)
     /// and post-`message.react` server truth / optimistic updates.
     public private(set) var reactionsByRowID: [String: MessageReactionsSnapshot] = [:]
+
+    // MARK: Card D — generated-image artifacts (inline media)
+
+    /// Citations declared by each TOOL row (row id → citations). Drives the
+    /// prose-echo de-dupe for the row's turn: once a generation succeeded the
+    /// model's restated path/URL is a duplicate of the artifact slot.
+    @ObservationIgnored private var citationsByRowID: [String: [GeneratedImageCitation]] = [:]
+    /// Observed-artifact sink (composition root wires the device-local
+    /// library). Called once per NEW (gateway, path) citation — replayed
+    /// frames never re-record the same identity.
+    public var onArtifactObserved: ((ArtifactReference, _ sourceTitle: String?, _ sourceProfile: String?) -> Void)?
     public private(set) var replayNotice: String?
     /// t_8401d3c3 — non-secret stream-integrity notice shown when a gap was
     /// detected on the live event stream (recovered via targeted replay, or
@@ -181,25 +232,34 @@ public final class ConversationViewModel {
     public private(set) var integrityNotice: String?
     /// Non-secret error / auth surface text.
     public private(set) var errorMessage: String?
-    /// Issue #4 — live skill suggestions for the slash composer palette.
-    public private(set) var skillSuggestions: [SlashCommandSuggestion] = []
+    /// Slash-command parity — live command suggestions (built-ins, quick
+    /// commands, plugins, skills) for the composer palette.
+    public private(set) var commandSuggestions: [SlashCommandSuggestion] = []
+    /// The last full catalog fetch (route/session-scoped, ephemeral — never
+    /// persisted, never shared across gateways).
+    public private(set) var commandCatalog: HermesCommandCatalog?
     /// True while a catalog/completion request is in flight.
-    public private(set) var isLoadingSkillSuggestions = false
+    public private(set) var isLoadingCommandSuggestions = false
     /// Non-secret discovery/dispatch compatibility or stale-command error.
     /// The composer keeps the text editable while this is shown.
-    public private(set) var skillSuggestionError: String?
+    public private(set) var commandSuggestionError: String?
     /// Whether the composer is currently editing slash-prefixed input. This
     /// remains true for an empty catalog so the palette can honestly render
-    /// its "No skills available" state.
+    /// its "No commands available" state.
     public private(set) var isSlashInputActive = false
     /// Whether the slash palette should render above the input.
     public var isSlashPaletteVisible: Bool {
-        isSlashInputActive || isLoadingSkillSuggestions || !skillSuggestions.isEmpty || skillSuggestionError != nil
+        isSlashInputActive || isLoadingCommandSuggestions || !commandSuggestions.isEmpty || commandSuggestionError != nil
     }
     /// R9-T1 — the approval banner state (pending request + YOLO readback).
     /// Lazily built once the session opens; nil when the concrete session
     /// exposes no approvals seam (fail-soft feature detection).
     public private(set) var approvalViewModel: ApprovalViewModel?
+
+    /// Dogfood r8: reasoning (thinking level) VM — session-scoped
+    /// config.get/set `reasoning`. nil until the session opens with a
+    /// reasoning seam (chip hidden, fail-closed absence).
+    public private(set) var reasoningViewModel: ReasoningViewModel?
     /// R9-T2/T3/T4 — the conversation-tooling state (sticky model pick,
     /// live context meter, steer/rename/fork). Lazily built once the
     /// session opens; nil when the concrete session exposes no tooling seam.
@@ -208,6 +268,20 @@ public final class ConversationViewModel {
     /// observes this, replaces the open conversation, and clears it
     /// (`consumeForkedSession()`).
     public private(set) var forkedSession: ConversationSession?
+
+    /// Assistant-reply toolbar action state. Errors are non-secret and are
+    /// rendered in the conversation rather than silently discarded.
+    public private(set) var replyActionError: String?
+    public private(set) var replyActionInFlight = false
+    /// Non-nil only while the selected reply's web-search prompt is being
+    /// submitted; the normal conversation working indicator covers streaming.
+    public private(set) var searchingWebRowID: String?
+
+    /// r9 toolbelt: adopt a branch created from the dossier sheet (the
+    /// existing view routing consumes it identically).
+    public func adoptFork(_ branch: ConversationSession) {
+        forkedSession = branch
+    }
     /// True when the current transcript was hydrated from the persisted cache
     /// (M10 cold-start) rather than a live server fetch.
     public private(set) var hydratedFromCache = false
@@ -230,6 +304,13 @@ public final class ConversationViewModel {
     public private(set) var historyLoadError: String?
     /// Best-effort session metadata from session.info.
     public private(set) var sessionTitle: String?
+    /// The session's working directory (session.info `cwd`; the opened
+    /// session projection does not carry it). Drives the header's project
+    /// folder chip; nil hides the chip honestly.
+    public private(set) var sessionCWD: String?
+    /// The effective profile for this conversation (session.info
+    /// `profile_name`; falls back to the route's slug). Header profile chip.
+    public private(set) var sessionProfileName: String?
     public private(set) var sessionModel: String?
 
     // MARK: R10-T1 — attachment staging (composer tray)
@@ -300,15 +381,29 @@ public final class ConversationViewModel {
     /// `deinit` (the established eventTask/statusWatcher pattern); all
     /// creation/nil-out happens on the main actor.
     nonisolated(unsafe) private var micTask: Task<Void, Never>?
+    /// Polls the shared speech seam for its natural completion callback. The
+    /// seam intentionally stays small, so the monitor clears footer state when
+    /// AVSpeechSynthesizer reports that the utterance has finished.
+    nonisolated(unsafe) private var readAloudCompletionTask: Task<Void, Never>?
 
     // MARK: Internal state
 
     private var openedSessionID: String?
-    /// FOS-4: the session id the Continue index may record (the RESOLVED
-    /// open — either the resumed exact session or the freshly created one).
+    private var openedStoredSessionID: String?
+    /// FOS-4: the durable session id the Continue index and device-local
+    /// unread state may record. The transport's runtime id is intentionally
+    /// kept separate: `session.resume` returns both identities.
     /// Exposed read-only so ConversationView records the open only after
     /// the destination actually resolved (SPEC §17).
-    public var resolvedSessionID: String? { openedSessionID ?? sessionID }
+    public var resolvedSessionID: String? {
+        openedStoredSessionID ?? sessionID ?? openedSessionID
+    }
+
+    static func durableSessionID(
+        listedSessionID: String?, opened: ConversationSession
+    ) -> String? {
+        listedSessionID ?? opened.storedSessionID ?? opened.sessionID
+    }
     /// t_8401d3c3 — the client's last APPLIED event id for the open session's
     /// stream (the "last event id" of Last-Event-ID semantics). Advances only
     /// when an event is actually rendered into the transcript; sent as
@@ -373,6 +468,9 @@ public final class ConversationViewModel {
         self.maxDisplayRows = maxDisplayRows
         // R10-T4: fail-closed voice default when no engine is injected.
         self.voice = voice ?? UnsupportedVoiceTranscriber()
+        // Stage 1: the footer's Read Aloud renders only where a real engine
+        // was injected (the fail-closed default throws on every speak).
+        self.voiceCanSpeak = !(self.voice is UnsupportedVoiceTranscriber)
         // R10-T1: one cast at build time (the ApprovalsCapable discipline).
         if let capable = session as? AttachmentStagingCapable {
             self.attachments = capable.attachments
@@ -402,7 +500,14 @@ public final class ConversationViewModel {
         eventTask?.cancel()
         statusWatcher?.cancel()
         micTask?.cancel()
+        readAloudCompletionTask?.cancel()
         slashSuggestionTask?.cancel()
+        // Parity with `teardown()`: a VM released without ever disappearing
+        // (a parent path that skips `onDisappear`, a programmatic owner) must
+        // not leave the notification-listening loop or the delayed retry
+        // running after its owner is gone.
+        foregroundObserver?.cancel()
+        foregroundRetryTask?.cancel()
     }
 
     // MARK: Lifecycle
@@ -502,10 +607,13 @@ public final class ConversationViewModel {
                     // subscription itself.
                     let resumed = try await session.conversation.resumeSession(
                         sessionID: sessionID,
-                        lastEventID: lastAppliedEventID
+                        lastEventID: lastAppliedEventID,
+                        profile: route.profileSlug.rawValue
                     )
                     guard isCurrent(token) else { return false }
                     openedSessionID = resumed.sessionID
+                    openedStoredSessionID = Self.durableSessionID(
+                        listedSessionID: sessionID, opened: resumed)
                     applyOpenedSession(resumed)
                 } else {
                     // R9-T2: ride the sticky per-device model pick on
@@ -523,6 +631,8 @@ public final class ConversationViewModel {
                     )
                     guard isCurrent(token) else { return false }
                     openedSessionID = created.sessionID
+                    openedStoredSessionID = Self.durableSessionID(
+                        listedSessionID: nil, opened: created)
                     applyOpenedSession(created)
                 }
             } catch {
@@ -634,10 +744,10 @@ public final class ConversationViewModel {
     public private(set) var botDraftNotice: String?
 
     ///
-    /// Issue #4 keeps skill display text separate from the expanded model
-    /// payload. The Bool tells the SwiftUI composer whether it may clear the
-    /// field: a stale/unknown slash command returns false so the invocation
-    /// remains editable for correction.
+    /// Slash-command parity: a leading slash is routed through the Fleet
+    /// command router (native action / picker / rpc / backend exec), never
+    /// submitted as ordinary chat. Failed or unavailable commands leave the
+    /// draft editable.
     @discardableResult
     public func send(_ text: String) async -> Bool {
         if isVoiceModeEnabled {
@@ -650,40 +760,394 @@ public final class ConversationViewModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !pendingAttachments.isEmpty else { return false }
 
-        // A leading slash is a deliberate skill invocation. Never pass it to
-        // ordinary prompt.submit: dispatch is the canonical Hermes expansion
-        // path, and a failed/stale dispatch must leave the field editable.
+        // A leading slash is a deliberate command invocation.
         if let invocation = Self.parseSlashInvocation(in: text) {
-            do {
-                let dispatch = try await slashCommands.dispatchSkill(
-                    sessionID: sid,
-                    name: invocation.name,
-                    argument: invocation.argument)
-                skillSuggestionError = nil
-                return await sendPrepared(
-                    modelText: dispatch.message,
-                    displayText: dispatch.display.isEmpty ? trimmed : dispatch.display,
-                    sessionID: sid)
-            } catch {
-                skillSuggestionError = Self.nonSecret(error)
-                return false
-            }
+            return await routeCommand(
+                name: invocation.name,
+                argument: invocation.argument,
+                sessionID: sid)
         }
         if Self.isSlashPrefixed(text) {
-            skillSuggestionError = "Enter a skill name after /, or remove / to send ordinary chat."
+            commandSuggestionError = "Enter a command after /, or remove / to send ordinary chat."
             return false
         }
 
         return await sendPrepared(modelText: trimmed, displayText: trimmed, sessionID: sid)
     }
 
+    // MARK: - Hermes command routing (slash parity)
+
+    /// Where the composer should navigate after a command produced a new
+    /// session (used by /new, /branch, /fork).
+    public private(set) var commandNavigation: CommandNavigation?
+    public enum CommandNavigation: Equatable, Sendable {
+        /// Push a fresh conversation (same route, new session id).
+        case newConversation(sessionID: String)
+        /// Open Fleet's native model picker.
+        case modelPicker
+        /// Open Fleet's native sessions list (Chats tab).
+        case sessionsList
+    }
+
+    /// Text the composer should adopt (prefill directives). Editable; never
+    /// auto-submitted.
+    public private(set) var prefillText: String?
+
+    /// Render a command result row into the transcript as a system/output
+    /// row (used by exec output, status output, notices).
+    private func appendCommandRow(_ text: String) {
+        appendRow(.init(id: nextRowID(), kind: .system, text: text))
+    }
+
+    /// Route one parsed slash invocation through the fulfillment rule:
+    /// native Fleet action → picker → dedicated RPC → backend exec.
+    private func routeCommand(name: String, argument: String, sessionID sid: String) async -> Bool {
+        await routeCommandRouted(name: name, argument: argument, sessionID: sid, aliasDepth: 0)
+    }
+
+    private func routeCommandRouted(name: String, argument: String, sessionID sid: String, aliasDepth: Int) async -> Bool {
+        commandSuggestionError = nil
+        prefillText = nil
+        // The gateway is the source of truth for existence/aliases/disposition.
+        // Fetch the catalog once per session if the composer has not already
+        // loaded it (fail-soft: routing falls back to the typed token).
+        if commandCatalog == nil {
+            commandCatalog = try? await slashCommands.catalog(sessionID: sid)
+        }
+        let typedKey = "/" + name.lowercased()
+        let canonicalToken = commandCatalog?.canonicalForm(of: typedKey) ?? typedKey
+        let canonicalName = String(canonicalToken.dropFirst())
+        // Disposition lives on the catalog rows (folded from the wire
+        // commands map at decode time) — resolve via canonical, then typed.
+        let disposition = commandCatalog?.commands
+            .first { $0.text.lowercased() == canonicalToken.lowercased() }?.desktopDisposition
+            ?? commandCatalog?.commands
+            .first { $0.text.lowercased() == typedKey }?.desktopDisposition
+        let surface = FleetCommandRouter.surface(
+            for: canonicalName,
+            desktopDisposition: disposition)
+        switch surface {
+        case .action(let action):
+            return await runNativeAction(action, argument: argument, sessionID: sid)
+        case .picker(let picker):
+            return await runPicker(picker, argument: argument, sessionID: sid)
+        case .rpc(let rpc):
+            return await runRPC(rpc, argument: argument, sessionID: sid)
+        case .exec:
+            return await runBackendCommand(
+                name: name,
+                canonicalName: canonicalName,
+                argument: argument,
+                sessionID: sid,
+                aliasDepth: aliasDepth)
+        case .unavailable(let reason):
+            let slash = "/" + canonicalName
+            commandSuggestionError = "\(slash) \(reason.message)"
+            return false
+        }
+    }
+
+    /// /new, /steer, /stop, /title, /branch, /help.
+    private func runNativeAction(_ action: FleetCommandAction, argument: String, sessionID sid: String) async -> Bool {
+        switch action {
+        case .new:
+            // A new chat must feel exactly like Fleet's own New Chat: create
+            // a genuinely new Hermes session (with Hermes' optional naming
+            // semantics via `title`), never submit "/new" as model text.
+            let title = argument.isEmpty ? nil : argument
+            do {
+                let modelParams = toolingViewModel?.createModelParams
+                    ?? (model: nil as String?, provider: nil as String?)
+                let created = try await session.conversation.createSession(
+                    title: title,
+                    profile: route.profileSlug.rawValue,
+                    model: modelParams.model,
+                    provider: modelParams.provider,
+                    cols: nil)
+                commandNavigation = .newConversation(sessionID: created.sessionID)
+                return true
+            } catch {
+                commandSuggestionError = "Could not start a new conversation: \(Self.nonSecret(error))"
+                return false
+    }
+        case .steer:
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                commandSuggestionError = "Usage: /steer <guidance> — injects guidance after the next tool call."
+                return false
+            }
+            // The tooling seam is authoritative: session.steer on the exact
+            // active session; no new user turn, no duplicate RPC client.
+            guard let tooling = toolingViewModel else {
+                commandSuggestionError = "Steering is not available on this session."
+                return false
+            }
+            await tooling.steer(text: trimmed)
+            commandNavigation = nil
+            return true
+        case .stop:
+            // Desktop semantics: interrupt the active turn, then clean up
+            // background processes (process.stop). No fake success when one
+            // half fails; safe when nothing is running.
+            var lines: [String] = []
+            if isStreaming {
+                do {
+                    let result = try await session.conversation.interrupt(sessionID: sid)
+                    if result.isInterrupted {
+                        finalizeStreamingRow()
+                        isStreaming = false
+                        phase = .ready
+                        await persistTranscript()
+                        lines.append("Stopped the active turn.")
+                    } else {
+                        lines.append("No active turn to stop.")
+                    }
+                } catch {
+                    lines.append("Could not stop the active turn: \(Self.nonSecret(error))")
+                }
+            } else {
+                lines.append("No active turn to stop.")
+            }
+            do {
+                let stopped = try await slashCommands.stopProcesses(sessionID: sid)
+                if stopped > 0 {
+                    lines.append("Stopped \(stopped) background process\(stopped == 1 ? "" : "es").")
+                }
+            } catch SlashCommandError.unsupportedCapability {
+                // Older gateway without process.stop — honest partial state.
+                lines.append("Background process cleanup is unavailable on this gateway.")
+            } catch {
+                lines.append("Could not stop background processes: \(Self.nonSecret(error))")
+            }
+            appendCommandRow(lines.joined(separator: "\n"))
+            return true
+        case .title:
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                commandSuggestionError = "Usage: /title <name> — renames the current session."
+                return false
+            }
+            if let resolved = await toolingViewModel?.rename(title: trimmed) {
+                sessionTitle = resolved
+                return true
+            }
+            commandSuggestionError = "Could not rename this session."
+            return false
+        case .branch:
+            guard let branch = await toolingViewModel?.fork(name: argument.isEmpty ? nil : argument) else {
+                commandSuggestionError = "Could not branch this session."
+                return false
+            }
+            forkedSession = branch
+            return true
+        case .help:
+            appendCommandRow(commandHelpText)
+            return true
+        }
+    }
+
+    /// `/model`, `/resume`, `/sessions`, `/switch`.
+    private func runPicker(_ picker: FleetCommandPicker, argument: String, sessionID sid: String) async -> Bool {
+        switch picker {
+        case .model:
+            // Typed arguments are honored when the exact model id matches a
+            // live choice; otherwise Fleet's native picker stays the surface.
+            // The sticky-local rule is preserved: `select` persists per-device
+            // and rides the NEXT session.create — never a config write.
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, let tooling = toolingViewModel {
+                var choices = tooling.modelChoices ?? []
+                if choices.isEmpty {
+                    choices = (try? await tooling.liveModelChoices(sessionID: sid)) ?? []
+                }
+                if let match = choices.first(where: { $0.model.lowercased() == trimmed.lowercased() }) {
+                    tooling.select(match)
+                    appendCommandRow("Model set to \(match.model) for this session.")
+                    return true
+                }
+                commandSuggestionError = "No model named \"\(trimmed)\" — opening the model picker."
+                commandNavigation = .modelPicker
+                return true
+            }
+            commandNavigation = .modelPicker
+            return true
+        case .sessions:
+            commandNavigation = .sessionsList
+            return true
+        }
+    }
+
+    /// `/status` — session.status via the history seam (structured output,
+    /// never raw JSON).
+    private func runRPC(_ rpc: FleetCommandRPC, argument: String, sessionID sid: String) async -> Bool {
+        switch rpc {
+        case .status:
+            do {
+                let status = try await session.history.fetchSessionStatus(sessionID: sid)
+                appendCommandRow(status.rawOutput)
+                return true
+            } catch {
+                commandSuggestionError = "Could not read session status: \(Self.nonSecret(error))"
+                return false
+            }
+        }
+    }
+
+    /// Backend-owned execution: `slash.exec` → `command.dispatch` fallback
+    /// (the Desktop-verified flow), interpreted by the shared dispatch
+    /// interpreter with alias redispatch and cycle protection.
+    private func runBackendCommand(name: String, canonicalName: String, argument: String, sessionID sid: String, aliasDepth: Int) async -> Bool {
+        let execution: HermesSlashExecution
+        do {
+            execution = try await slashCommands.execute(
+                sessionID: sid,
+                command: "/\(name) \(argument)".trimmingCharacters(in: .whitespaces))
+        } catch SlashCommandError.unknownDispatchType(let type) {
+            commandSuggestionError = SlashCommandError.unknownDispatchType(type).errorDescription ?? "Unknown response."
+            appendCommandRow(commandSuggestionError!)
+            return true
+        } catch SlashCommandError.commandUnavailable {
+            commandSuggestionError = "/\(name) is no longer available on this gateway. Refresh and try again."
+            return false
+        } catch {
+            // command.dispatch fallback (Desktop: slash.exec timeout/route-noise
+            // falls back to command.dispatch; keep the worker error when the
+            // fallback adds nothing).
+            do {
+                let dispatch = try await slashCommands.dispatch(
+                    sessionID: sid,
+                    name: name,
+                    argument: argument)
+                return await interpret(dispatch: dispatch, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+            } catch SlashCommandError.unknownDispatchType(let type) {
+                commandSuggestionError = "This Hermes command returned a response this version of Fleet does not understand (type \(type))."
+                appendCommandRow(commandSuggestionError!)
+                return true
+            } catch let error as SlashCommandError {
+                commandSuggestionError = Self.nonSecret(error)
+                return false
+            } catch {
+                commandSuggestionError = "Command failed: \(Self.nonSecret(error))"
+                return false
+            }
+        }
+        return await interpret(execution: execution, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+    }
+
+    /// The shared dispatch interpreter for structured directives (alias /
+    /// exec / plugin / send / skill / prefill), with alias cycle protection.
+    private func interpret(
+        execution: HermesSlashExecution? = nil,
+        dispatch: HermesCommandDispatch? = nil,
+        name: String,
+        canonicalName: String,
+        argument: String,
+        sessionID sid: String,
+        aliasDepth: Int = 0
+    ) async -> Bool {
+        // Normalize: slash.exec may embed a dispatch.
+        let directive: HermesCommandDispatch?
+        if let dispatch { directive = dispatch }
+        else if let exec = execution?.dispatch { directive = exec }
+        else { directive = nil }
+
+        // Plain worker output.
+        if directive == nil {
+            let out = execution?.output ?? "(no output)"
+            let warning = execution?.warning
+            appendCommandRow(warning.map { "warning: \($0)\n\(out)" } ?? out)
+            return true
+        }
+        return await interpretDirective(directive!, name: name, canonicalName: canonicalName, argument: argument, sessionID: sid, aliasDepth: aliasDepth)
+    }
+
+    private func interpretDirective(
+        _ directive: HermesCommandDispatch,
+        name: String,
+        canonicalName: String,
+        argument: String,
+        sessionID sid: String,
+        aliasDepth: Int = 0
+    ) async -> Bool {
+        switch directive {
+        case .exec(let output, let warning):
+            let out = output ?? "(no output)"
+            appendCommandRow(warning.map { "warning: \($0)\n\(out)" } ?? out)
+            return true
+        case .plugin(let output):
+            appendCommandRow(output ?? "(no output)")
+            return true
+        case .alias(let target):
+            // Resolve/redispatch safely with cycle/depth protection.
+            guard aliasDepth < 5 else {
+                appendCommandRow("/\(name): alias chain too deep — refusing to continue.")
+                return true
+            }
+            let targetName = target.hasPrefix("/") ? String(target.dropFirst()) : target
+            return await routeCommandRouted(
+                name: targetName,
+                argument: argument,
+                sessionID: sid,
+                aliasDepth: aliasDepth + 1)
+        case .send(let message, let display, let notice):
+            if let notice, !notice.isEmpty {
+                appendCommandRow(notice)
+            }
+            return await sendPrepared(
+                modelText: message,
+                displayText: display ?? "/" + name + (argument.isEmpty ? "" : " " + argument),
+                sessionID: sid)
+        case .skill(let message, let display):
+            return await sendPrepared(
+                modelText: message,
+                displayText: display ?? "/" + name + (argument.isEmpty ? "" : " " + argument),
+                sessionID: sid)
+        case .prefill(let message, let notice):
+            if let notice, !notice.isEmpty {
+                appendCommandRow(notice)
+            }
+            prefillText = message
+            return true
+        }
+    }
+
+    /// `/help` content: the live Fleet-compatible Hermes catalog, never a
+    /// hard-coded help string.
+    private var commandHelpText: String {
+        guard let catalog = commandCatalog else {
+            return "Commands are still loading — try again in a moment."
+        }
+        var lines: [String] = ["Commands"]
+        let suggestible = catalog.commands.filter {
+            FleetCommandRouter.isSuggestible($0, canon: catalog.canon)
+        }
+        for row in suggestible where row.kind != .skill {
+            lines.append("\(row.text)\(row.description.isEmpty ? "" : " — \(row.description)")")
+        }
+        let skills = suggestible.filter { $0.kind == .skill }
+        if !skills.isEmpty {
+            lines.append("")
+            lines.append("Skills")
+            for row in skills {
+                lines.append("\(row.text)\(row.description.isEmpty ? "" : " — \(row.description)")")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+
     /// The shared send path for ordinary messages and expanded skill
     /// invocations. Attachments are appended to both representations so the
     /// transcript remains honest while the model receives the staged refs.
-    private func sendPrepared(modelText: String, displayText: String, sessionID sid: String) async -> Bool {
+    private func sendPrepared(
+        modelText: String,
+        displayText: String,
+        sessionID sid: String,
+        includeAttachments: Bool = true
+    ) async -> Bool {
         guard !isStreaming,
               phase == .ready || phase == .streaming else { return false }
-        let refTexts = pendingAttachments.map(\.refText)
+        let refTexts = includeAttachments ? pendingAttachments.map(\.refText) : []
         let prepared = prepareBotDraft?(modelText, sid) ?? BotConversationDraft(text: modelText)
         botDraftNotice = prepared.notice
         let modelPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: prepared.text)
@@ -694,83 +1158,162 @@ public final class ConversationViewModel {
         let visibleText = modelText == displayText ? prepared.text : displayText
         let displayPayload = AttachmentStagingRules.promptAppending(refs: refTexts, to: visibleText)
         guard !modelPayload.isEmpty else { return false }
+        let submittedAttachmentIDs = includeAttachments
+            ? Set(pendingAttachments.map(\.id))
+            : []
 
         appendRow(.init(id: nextRowID(), kind: .user, text: displayPayload))
-        // The refs were staged successfully at pick time — the tray clears
-        // with the send (image/PDF bytes are already queued server-side;
-        // removing them here would orphan the upload).
-        pendingAttachments = []
+        // Turn clock: starts at submit — the user waits from HERE, through
+        // tools/reasoning, until the turn completes.
+        turnStartedAt = Date()
         do {
             let submission = try await session.conversation.submitPrompt(sessionID: sid, text: modelPayload)
+            // The refs were staged successfully at pick time. Keep them in
+            // the tray until submit succeeds so a rejected prompt remains
+            // retryable with the same attachment references. An upload staged
+            // while submitPrompt was in flight belongs to the next draft.
+            pendingAttachments.removeAll { submittedAttachmentIDs.contains($0.id) }
             guard submission.isStreaming else {
+                // The gateway accepted the prompt without a stream, so no
+                // `message.complete` / `.error` will ever arrive for this
+                // turn: the clock must settle HERE. Leaving it set pins
+                // `isWorking == true` forever (Working-for-Ns spins with no
+                // Stop affordance once `phase` is `.ready`, and every action
+                // gated on `!isWorking` stays disabled).
+                turnStartedAt = nil
                 phase = .ready
                 return true
             }
         } catch {
+            // Same non-completing path for a rejected submission: the event
+            // stream carries no terminal frame for a prompt that never
+            // started, so classifyTurnFailure alone would leave the turn
+            // clock running.
             classifyTurnFailure(error)
+            turnStartedAt = nil
+            return false
         }
         return true
     }
 
-    // MARK: Issue #4 — slash discovery/composer state
+    // MARK: Slash-command parity — discovery/composer state
 
-    /// Update the palette for a composer edit. Bare `/` uses the catalog;
-    /// every other slash-prefixed value uses Hermes' live completer.
-    /// Requests are canceled and generation-fenced so an older response can
-    /// never replace a newer query's results.
+    /// Update the palette for a composer edit. Bare `/` uses the catalog
+    /// (filtered to Fleet-suggestible rows, commands ranked ahead of skills
+    /// with browsing-usage ordering inside each group); every other
+    /// slash-prefixed value uses Hermes' live completer (backend ranking
+    /// preserved, query matches never hidden). Requests are canceled and
+    /// generation-fenced so an older response can never replace a newer
+    /// query's results.
     public func updateSlashSuggestions(for text: String) {
         slashSuggestionTask?.cancel()
         slashSuggestionGeneration += 1
         let generation = slashSuggestionGeneration
         guard let slashText = Self.normalizedSlashInput(text) else {
             isSlashInputActive = false
-            skillSuggestions = []
-            skillSuggestionError = nil
-            isLoadingSkillSuggestions = false
+            commandSuggestions = []
+            commandSuggestionError = nil
+            isLoadingCommandSuggestions = false
             return
         }
         isSlashInputActive = true
         guard let sessionID = openedSessionID else {
-            skillSuggestions = []
-            skillSuggestionError = nil
-            isLoadingSkillSuggestions = false
+            commandSuggestions = []
+            commandSuggestionError = nil
+            isLoadingCommandSuggestions = false
             return
         }
 
-        skillSuggestions = []
-        skillSuggestionError = nil
-        isLoadingSkillSuggestions = true
+        commandSuggestions = []
+        commandSuggestionError = nil
+        isLoadingCommandSuggestions = true
         let provider = slashCommands
         slashSuggestionTask = Task { [weak self] in
             do {
-                let suggestions: [SlashCommandSuggestion]
+                var suggestions: [SlashCommandSuggestion]
                 if slashText == "/" {
-                    suggestions = try await provider.skillCatalog(sessionID: sessionID)
+                    let catalog = try await provider.catalog(sessionID: sessionID)
+                    guard !Task.isCancelled, let self,
+                          generation == self.slashSuggestionGeneration else { return }
+                    self.commandCatalog = catalog
+                    suggestions = catalog.commands
+                        .filter { FleetCommandRouter.isSuggestible($0, canon: catalog.canon) }
+                    // Browsing rank: Commands group first, Skills ranked by
+                    // live usage (most-used first) within their group — a
+                    // browsing-only ordering; a typed query keeps backend
+                    // ranking untouched.
+                    suggestions = Self.browsingOrdered(suggestions)
                 } else {
-                    suggestions = try await provider.completeSkills(
-                        sessionID: sessionID,
-                        text: slashText)
+                    let raw = try await provider.complete(sessionID: sessionID, text: slashText)
+                    guard !Task.isCancelled, let self,
+                          generation == self.slashSuggestionGeneration else { return }
+                    // Typed query = search: keep backend ranking, drop only
+                    // aliases and genuinely unavailable rows.
+                    let canon = self.commandCatalog?.canon ?? [:]
+                    suggestions = raw.filter { FleetCommandRouter.isSuggestible($0, canon: canon) }
+                    // Fold catalog metadata (dispositions/argument modes) into
+                    // completion rows so the router sees the same picture.
+                    if let catalog = self.commandCatalog {
+                        suggestions = suggestions.map { row in
+                            Self.row(row, enrichedWith: catalog)
+                        }
+                    }
                 }
                 guard !Task.isCancelled, let self,
                       generation == self.slashSuggestionGeneration else { return }
-                self.skillSuggestions = suggestions
-                self.isLoadingSkillSuggestions = false
+                self.commandSuggestions = suggestions
+                self.isLoadingCommandSuggestions = false
             } catch is CancellationError {
                 // A newer keystroke owns the palette state.
             } catch {
                 guard !Task.isCancelled, let self,
                       generation == self.slashSuggestionGeneration else { return }
-                self.skillSuggestions = []
-                self.skillSuggestionError = Self.nonSecret(error)
-                self.isLoadingSkillSuggestions = false
+                self.commandSuggestions = []
+                self.commandSuggestionError = Self.nonSecret(error)
+                self.isLoadingCommandSuggestions = false
             }
         }
     }
 
-    /// Insert a selected canonical skill token while retaining any argument
-    /// suffix already typed. The view restores focus after calling this.
-    public func selectedSkillText(_ suggestion: SlashCommandSuggestion, replacing text: String) -> String {
-        guard suggestion.kind == .skill else { return text }
+    /// Browsing order for a bare `/`: commands (incl. extensions) first in
+    /// backend order, then skills by live usage (desc), A–Z tiebreak —
+    /// mirroring Desktop's `rankSkillCommands` browsing behavior.
+    private static func browsingOrdered(_ rows: [SlashCommandSuggestion]) -> [SlashCommandSuggestion] {
+        let commands = rows.filter { $0.kind != .skill }
+        let skills = rows
+            .filter { $0.kind == .skill }
+            .sorted { lhs, rhs in
+                if lhs.usage != rhs.usage { return lhs.usage > rhs.usage }
+                return lhs.text.localizedStandardCompare(rhs.text) == .orderedAscending
+            }
+        return commands + skills
+    }
+
+    /// Fold catalog metadata into a completion row (dispositions and
+    /// argument modes live only in the catalog's `commands` map).
+    private static func row(
+        _ row: SlashCommandSuggestion,
+        enrichedWith catalog: HermesCommandCatalog
+    ) -> SlashCommandSuggestion {
+        let key = row.text.lowercased()
+        let canonicalKey = catalog.canon[key] ?? key
+        guard let meta = catalog.commandMeta[canonicalKey] ?? catalog.commandMeta[key] else { return row }
+        return SlashCommandSuggestion(
+            text: row.text,
+            display: row.display,
+            description: row.description,
+            kind: row.kind,
+            argumentMode: meta.argumentMode ?? row.argumentMode,
+            canonical: row.canonical,
+            desktopDisposition: meta.desktopDisposition ?? row.desktopDisposition,
+            usage: row.usage)
+    }
+
+    /// Insert a selected command token while retaining any argument suffix
+    /// already typed. The view restores focus after calling this. Selection
+    /// never auto-executes: the token lands in the composer for argument
+    /// entry.
+    public func selectedCommandText(_ suggestion: SlashCommandSuggestion, replacing text: String) -> String {
         let leading = String(text.prefix(while: { $0.isWhitespace }))
         let body = String(text.dropFirst(leading.count))
         guard body.first == "/" else { return text }
@@ -782,9 +1325,9 @@ public final class ConversationViewModel {
     public func clearSlashSuggestions() {
         slashSuggestionTask?.cancel()
         slashSuggestionGeneration += 1
-        skillSuggestions = []
-        skillSuggestionError = nil
-        isLoadingSkillSuggestions = false
+        commandSuggestions = []
+        commandSuggestionError = nil
+        isLoadingCommandSuggestions = false
         isSlashInputActive = false
     }
 
@@ -941,6 +1484,11 @@ public final class ConversationViewModel {
         attachmentError = nil
     }
 
+    /// Dismiss a non-secret assistant-reply action error.
+    public func clearReplyActionError() {
+        replyActionError = nil
+    }
+
     private func setAttachmentError(_ error: AttachmentStagingError) {
         attachmentError = Redaction.safeText(error.description)
     }
@@ -953,11 +1501,18 @@ public final class ConversationViewModel {
             if result.isInterrupted {
                 finalizeStreamingRow()
                 isStreaming = false
+                turnStartedAt = nil
                 phase = .ready
+                // Card E: the user cancelled the turn — the generation
+                // animation stops with it.
+                stopInFlightImageGenerations(reason: .cancelled)
                 await persistTranscript()
             }
         } catch {
-            classifyTurnFailure(error)
+            // A failed interrupt does not prove that the gateway stopped the
+            // turn. Keep the streaming state and partial row intact so Stop
+            // remains retryable and the UI never claims the turn is ready.
+            errorMessage = Self.nonSecret(error)
         }
     }
 
@@ -1018,8 +1573,11 @@ public final class ConversationViewModel {
     public func setVoiceMode(_ enabled: Bool) async {
         isVoiceModeEnabled = enabled
         if !enabled {
+            readAloudCompletionTask?.cancel()
+            readAloudCompletionTask = nil
             await voice.stopSpeaking()
             await speechQueue.drain()
+            readAloudRowID = nil
         }
     }
 
@@ -1047,6 +1605,93 @@ public final class ConversationViewModel {
         }
     }
 
+    // MARK: Stage 1 — assistant-reply footer actions (read aloud)
+
+    /// Row id currently being spoken by an explicit Read Aloud tap (footer
+    /// toggling). Nil = idle. Streaming voice-mode speech does not set this
+    /// (it is not footer-addressable while in flight).
+    public private(set) var readAloudRowID: String?
+
+    /// True when the shared engine has an utterance in flight (footer state
+    /// and the ellipsis Stop affordance read this — ONE source of truth).
+    public var isReadingAloud: Bool { voice.isSpeaking }
+
+    /// Speak one completed assistant reply through the EXISTING R10 engine
+    /// (same SpeechQueue + AVSpeechSynthesizer path as voice mode — no new
+    /// TTS). Re-tapping the same row stops it (toggle); tapping another row
+    /// cuts the old utterance first (mark_speech_interrupted semantics).
+    /// Returns false when no engine can speak (fail-closed wiring).
+    @discardableResult
+    public func readReplyAloud(rowID: String, text: String) async -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard voiceCanSpeak else { return false }
+        if readAloudRowID == rowID {
+            await stopReadingReply()
+            return true
+        }
+        // Do not send a spurious stop to an idle engine on the first tap.
+        // When another row (or voice mode) owns the synthesizer, cut it before
+        // replacing the queued utterance. The explicit footer path awaits the
+        // shared queue so the state and tests do not race a fire-and-forget
+        // streaming TTS task.
+        if readAloudRowID != nil || voice.isSpeaking {
+            await voice.stopSpeaking()
+            await speechQueue.drain()
+        } else {
+            await speechQueue.drain()
+        }
+        readAloudRowID = rowID
+        let voice = self.voice
+        await speechQueue.enqueue {
+            try? await voice.speak(text: text)
+        }
+        startReadAloudCompletionMonitor(rowID: rowID)
+        return true
+    }
+
+    /// Stop the in-flight Read Aloud utterance and drop queued chunks.
+    public func stopReadingReply() async {
+        readAloudCompletionTask?.cancel()
+        readAloudCompletionTask = nil
+        await voice.stopSpeaking()
+        await speechQueue.drain()
+        readAloudRowID = nil
+    }
+
+    private func startReadAloudCompletionMonitor(rowID: String) {
+        readAloudCompletionTask?.cancel()
+        let voice = self.voice
+        readAloudCompletionTask = Task { [weak self] in
+            var observedSpeaking = false
+            for tick in 0..<20 where !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                let speaking = voice.isSpeaking
+                observedSpeaking = observedSpeaking || speaking
+                // A short grace period handles engines whose speak() returns
+                // before the synthesizer flips its speaking flag; after that,
+                // a false flag is an honest natural-completion signal.
+                if (!speaking && (observedSpeaking || tick >= 3)) {
+                    await MainActor.run {
+                        guard let self, self.readAloudRowID == rowID else { return }
+                        self.readAloudRowID = nil
+                        self.readAloudCompletionTask = nil
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    /// Fail-closed probe: the fail-closed default engine cannot speak; an
+    /// injected real engine can. Memoized at init (one cast, no repeated
+    /// protocol existential checks per row).
+    private let voiceCanSpeak: Bool
+
+    /// Stage 1 footer visibility probe (read-aloud ellipsis renders only
+    /// where a real voice engine was wired).
+    public var voiceCanSpeakFooter: Bool { voiceCanSpeak }
+
     // MARK: R9-T2/T3/T4 — tooling actions (steer/rename/fork/usage)
 
     /// Steer the running turn via the tooling seam (see-through to the
@@ -1071,9 +1716,156 @@ public final class ConversationViewModel {
         forkedSession = branch
     }
 
+    /// Whether the selected completed reply can be branched with the gateway's
+    /// count-aware `session.branch` operation.
+    public func canBranchReply(rowID: String) -> Bool {
+        !isWorking && !replyActionInFlight && toolingViewModel != nil
+            && AssistantReplyActionPolicy.branchMessageCount(rows: allRows, selectedRowID: rowID) != nil
+            && (toolingViewModel?.supportsMessageBranching ?? false)
+    }
+
+    /// Branch the exact visible history prefix through one assistant reply.
+    /// The original session is untouched; the view navigates to the returned
+    /// distinct session through the existing forked-session route.
+    @discardableResult
+    public func branchReply(rowID: String) async -> Bool {
+        guard canBranchReply(rowID: rowID),
+              let count = AssistantReplyActionPolicy.branchMessageCount(
+                rows: allRows, selectedRowID: rowID),
+              let toolingViewModel else { return false }
+        replyActionError = nil
+        replyActionInFlight = true
+        defer { replyActionInFlight = false }
+        guard let branch = await toolingViewModel.fork(name: nil, messageCount: count) else {
+            return false
+        }
+        forkedSession = branch
+        return true
+    }
+
+    /// `/retry` is the gateway-owned regeneration path. It rewinds the latest
+    /// completed user turn, returns the authoritative original prompt, then
+    /// submits that prompt once through the normal send path.
+    public func canRetryReply(rowID: String) -> Bool {
+        !isWorking && !replyActionInFlight
+            && AssistantReplyActionPolicy.canRetry(
+                rows: allRows, selectedRowID: rowID, isStreaming: isStreaming)
+    }
+
+    @discardableResult
+    public func retryReply(rowID: String) async -> Bool {
+        guard canRetryReply(rowID: rowID) else {
+            replyActionError = "Retry is available only for the latest completed assistant reply."
+            return false
+        }
+        guard pendingAttachments.isEmpty else {
+            replyActionError = "Retry is unavailable while an attachment is staged. Send or remove the attachment first."
+            return false
+        }
+        guard let sid = openedSessionID,
+              let selectedIndex = allRows.firstIndex(where: { $0.id == rowID }),
+              let userIndex = allRows[..<selectedIndex].lastIndex(where: { $0.kind == .user }) else {
+            replyActionError = "The original user turn could not be recovered for retry."
+            return false
+        }
+
+        replyActionError = nil
+        replyActionInFlight = true
+        defer { replyActionInFlight = false }
+        let prompt: String
+        do {
+            // Use one mutating RPC. Falling back to slash.exec after an
+            // ambiguous transport response can rewind the gateway twice.
+            let dispatch = try await slashCommands.dispatch(
+                sessionID: sid, name: "retry", argument: "")
+            prompt = try Self.retryPrompt(from: dispatch)
+        } catch {
+            // The command may have committed its rewind before the transport
+            // reported an error. Never restore stale local rows; reconcile
+            // from the authoritative session history instead.
+            await refetchAuthoritativeHistory(sessionID: sid)
+            replyActionError = Self.nonSecret(error)
+            return false
+        }
+
+        // The gateway has already rewound its durable history. Mirror that
+        // prefix locally before appending the one new user row, so the old
+        // user/assistant pair is never displayed twice.
+        allRows.removeSubrange(userIndex...)
+        let sent = await sendPrepared(
+            modelText: prompt,
+            displayText: prompt,
+            sessionID: sid,
+            includeAttachments: false)
+        if !sent {
+            await refetchAuthoritativeHistory(sessionID: sid)
+            replyActionError = replyActionError ?? "Retry could not be submitted."
+        }
+        return sent
+    }
+
+    /// Search through the real Hermes agent turn/tool path. The prompt asks
+    /// the gateway to use its configured `web_search` tool and to say plainly
+    /// when that tool is unavailable; Fleet never fabricates search results.
+    @discardableResult
+    public func searchWebReply(rowID: String, text: String) async -> Bool {
+        guard !isWorking, !replyActionInFlight,
+              phase == .ready,
+              let sid = openedSessionID,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        replyActionError = nil
+        replyActionInFlight = true
+        searchingWebRowID = rowID
+        defer {
+            replyActionInFlight = false
+            searchingWebRowID = nil
+        }
+        let prompt = """
+        Use Hermes's configured web_search tool to verify or expand the assistant response below. Return current search results with source URLs. If web_search is unavailable, say that plainly instead of answering from memory.
+
+        Assistant response to verify:
+        \(text)
+        """
+        let display = "Search the Web: \(String(text.prefix(80)))"
+        let sent = await sendPrepared(
+            modelText: prompt,
+            displayText: display,
+            sessionID: sid,
+            includeAttachments: false)
+        if !sent {
+            replyActionError = replyActionError ?? "Web search could not be submitted."
+        }
+        return sent
+    }
+
+    private static func retryPrompt(from dispatch: HermesCommandDispatch) throws -> String {
+        guard case .send(let message, _, _) = dispatch,
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SlashCommandError.malformedResponse("retry did not return a user prompt")
+        }
+        return message
+    }
+
     /// Clear the pending fork navigation target (view consumed it).
     public func consumeForkedSession() {
         forkedSession = nil
+    }
+
+    /// Clear the pending command navigation (view consumed it). Resetting to
+    /// nil lets a SECOND identical command (/model twice) re-fire onChange.
+    public func consumeCommandNavigation() {
+        commandNavigation = nil
+    }
+
+    /// Hand the pending prefill to the view and clear it. Called synchronously
+    /// by the composer's submit path AFTER send() returns, so the composer
+    /// adopts the draft deterministically instead of racing an onChange
+    /// against its own post-submit clear.
+    public func consumePrefill() -> String? {
+        defer { prefillText = nil }
+        return prefillText
     }
 
     /// Refresh the context meter after a completed turn (the streamed ticks
@@ -1089,8 +1881,75 @@ public final class ConversationViewModel {
     /// re-created after cancellation), so it is left running and dies with the
     /// VM; a re-appear restarts the status watcher via `start()`.
     public func teardown() {
+        readAloudCompletionTask?.cancel()
+        readAloudCompletionTask = nil
         statusWatcher?.cancel()
         statusWatcher = nil
+        foregroundObserver?.cancel()
+        foregroundObserver = nil
+        foregroundRetryTask?.cancel()
+        foregroundRetryTask = nil
+    }
+
+    // MARK: Foreground auto-heal (dogfood: stale connection on app return)
+
+    /// Reacts to scene activation: a conversation left `.disconnected` by a
+    /// suspension kill reconnects WITHOUT the manual banner tap. Bounded (one
+    /// immediate attempt + one 2s-delayed retry) and fenced by the normal
+    /// operation generation. `.authRequired` is DELIBERATELY untouched — M11:
+    /// re-authentication is never silent.
+    /// `nonisolated(unsafe)`: both are only ever CANCELED from `deinit` (the
+    /// established eventTask/statusWatcher pattern); all creation/nil-out
+    /// happens on the main actor.
+    nonisolated(unsafe) private var foregroundObserver: Task<Void, Never>?
+    nonisolated(unsafe) private var foregroundRetryTask: Task<Void, Never>?
+    private var isHealingFromForeground = false
+
+    public func appBecameActive() async {
+        guard phase == .disconnected, !isHealingFromForeground else { return }
+        isHealingFromForeground = true
+        defer { isHealingFromForeground = false }
+        await reconnect()
+        guard phase == .disconnected else { return }
+        // One bounded retry after a short grace period — never a loop (F1's
+        // login rate-limit lesson: user-paced attempts, not a polling pump).
+        foregroundRetryTask?.cancel()
+        foregroundRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                guard self.phase == .disconnected else { return }
+                Task { await self.reconnect() }
+            }
+        }
+    }
+
+    /// Starts the foreground observer (called from the view's onAppear so
+    /// only live conversation screens auto-heal).
+    #if DEBUG
+    /// Test hooks: place the VM in the watcher's post-drop states without a
+    /// real transport kill (the scripted seam's status is polled, not pushed).
+    public func forceDisconnectedForTesting() {
+        phase = .disconnected
+    }
+
+    public func forceAuthRequiredForTesting() {
+        phase = .authRequired
+    }
+    #endif
+
+    public func startForegroundHealing() {
+        guard foregroundObserver == nil else { return }
+        foregroundObserver = Task { [weak self] in
+            let notifications = NotificationCenter.default
+            while !Task.isCancelled {
+                for await _ in NotificationCenter.default.notifications(
+                    named: UIApplication.didBecomeActiveNotification) {
+                    guard !Task.isCancelled else { break }
+                    await self?.appBecameActive()
+                }
+            }
+        }
     }
 
     // MARK: Cold-start hydration (M10)
@@ -1118,11 +1977,16 @@ public final class ConversationViewModel {
             // same identities and does not tear down/recreate every bubble
             // — the cache→authoritative handoff must not visibly jump.
             let authoritative = opened.messages
+            let previousRows = allRows
             if hydratedFromCache {
                 allRows = Self.mergePreservingIDs(
                     existing: allRows, authoritative: authoritative,
                     nextRowID: { nextRowID() }
                 )
+                // Cards D+E: a preserved row identity keeps its cited
+                // artifacts (the wire's history projection carries no tool
+                // results) and any in-flight generation animation.
+                carryDerivedRowState(into: &allRows, from: previousRows)
             } else {
                 allRows = authoritative.map { Self.row(from: $0, id: nextRowID()) }
             }
@@ -1143,6 +2007,7 @@ public final class ConversationViewModel {
             Task { await refetchAuthoritativeHistory(sessionID: opened.sessionID) }
         }
         sessionTitle = opened.profileName
+        sessionProfileName = opened.profileName ?? route.profileSlug.rawValue
         if let model = opened.model, let provider = opened.provider {
             sessionModel = "\(model) · \(provider)"
         } else if let model = opened.model {
@@ -1177,6 +2042,23 @@ public final class ConversationViewModel {
         } else {
             toolingViewModel?.bind(sessionID: opened.sessionID)
         }
+        // Dogfood r8: same one-cast build for the reasoning seam (thinking
+        // level slider — config.get/set reasoning, session-scoped).
+        if reasoningViewModel == nil {
+            if let capable = session as? ReasoningCapable {
+                let vm = ReasoningViewModel(reasoning: capable.reasoning)
+                vm.bind(sessionID: opened.sessionID)
+                reasoningViewModel = vm
+            }
+        } else {
+            reasoningViewModel?.bind(sessionID: opened.sessionID)
+        }
+        // Slash parity: a different session may expose a different command
+        // surface — invalidate the cached catalog so the next `/` refetches
+        // against THIS session's gateway/profile route. (Catalog state is
+        // ephemeral and per-VM; a VM instance is bound to exactly one route,
+        // so cross-gateway leakage is structurally impossible.)
+        commandCatalog = nil
         Task { await persistTranscript() }
     }
 
@@ -1333,10 +2215,15 @@ public final class ConversationViewModel {
             if hydratedFromCache {
                 // H1 flash-free swap (see applyOpenedSession): preserve row
                 // identities across the cache→authoritative handoff.
+                let previousRows = allRows
                 allRows = Self.mergePreservingIDs(
                     existing: allRows, authoritative: history.messages,
                     nextRowID: { nextRowID() }
                 )
+                // Cards D+E: preserved row identities keep their cited
+                // artifacts (the wire's history projection carries no tool
+                // results) and any in-flight generation animation.
+                carryDerivedRowState(into: &allRows, from: previousRows)
             } else {
                 allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
             }
@@ -1405,6 +2292,7 @@ public final class ConversationViewModel {
             }
             spokenThisTurn = false
             isStreaming = false
+            turnStartedAt = nil
             phase = .ready
             // P0-8: a completed turn must not carry buffered reasoning into
             // the next one (e.g. an errored turn that never minted a row).
@@ -1415,6 +2303,10 @@ public final class ConversationViewModel {
             if isError, let error {
                 errorMessage = error
             }
+            // Card E: the turn settled — a generation that never reported its
+            // own result is over (failed when the turn failed, cut short
+            // otherwise). The animation never outlives its turn.
+            stopInFlightImageGenerations(reason: isError ? .failed : .cancelled)
             Task { await persistTranscript() }
 
         case .thinkingDelta(_, let text, _),
@@ -1433,35 +2325,57 @@ public final class ConversationViewModel {
             // duplicated inline. (Search scoped to the current turn, matching
             // updateLastTool's geometry.)
             let lowerBound = (lastAssistantIndex ?? -1) + 1
+            let rowIndex: Int
             if let idx = allRows[lowerBound...].lastIndex(where: { $0.kind == .tool && $0.text == name }) {
                 if let context, !context.isEmpty {
                     allRows[idx].detail = context
                 }
+                rowIndex = idx
             } else {
                 appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context))
+                rowIndex = allRows.count - 1
             }
+            // Card E: a verified generation start (by tool name) begins the
+            // branded animation on this row.
+            applyGenerationTransition(triggeredBy: event, onRowAt: rowIndex)
 
         case .toolGenerating(_, let name, _):
-            updateLastTool(name, generating: true)
+            applyGenerationTransition(triggeredBy: event, onRowAt: updateLastTool(name, generating: true))
 
         case .toolProgress(_, _, let name, let text, _):
             if let name {
-                updateLastTool(name, generating: true, progress: text)
+                applyGenerationTransition(
+                    triggeredBy: event,
+                    onRowAt: updateLastTool(name, generating: true, progress: text))
             }
 
-        case .toolComplete(_, _, let name, let summary, _):
-            updateLastTool(name, generating: false, progress: summary)
+        case .toolComplete(_, _, let name, let summary, let resultText, _):
+            let rowIndex = updateLastTool(name, generating: false, progress: summary)
+            // Card D: a completed generation result becomes an inline artifact
+            // on THIS row (dedupe by reference identity across replay/reconnect).
+            if let rowIndex {
+                // Card E: settle the animation FIRST — delivered (result) or
+                // stopped (explicit failure) — so it hands straight over to
+                // the artifact slot and can never overlap the image.
+                applyGenerationTransition(triggeredBy: event, onRowAt: rowIndex)
+                attachGeneratedImageCitations(toolName: name, resultText: resultText, toRowAt: rowIndex)
+            }
 
         case .backgroundComplete(_, _, let text, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: text ?? "Background task complete"))
 
-        case .sessionInfo(_, let model, let provider, let title, _, _, let yolo, let approvalMode, _):
+        case .sessionInfo(_, let model, let provider, let title, let cwd, let profileName, let yolo, let approvalMode, _):
             if let model, let provider {
                 sessionModel = "\(model) · \(provider)"
             } else if let model {
                 sessionModel = model
             }
             sessionTitle = title ?? sessionTitle
+            // Top chip bar: retain the working folder + profile so the
+            // header chips stay live (nil keeps the previous value — the
+            // gateway only re-sends fields that changed).
+            if let cwd { sessionCWD = cwd }
+            if let profileName { sessionProfileName = profileName }
             // R9-T3: adopt the approval-bypass readback (effective OR of
             // config mode / env / session flag — server.py:7758).
             approvalViewModel?.applySessionInfo(yolo: yolo, approvalMode: approvalMode)
@@ -1488,8 +2402,16 @@ public final class ConversationViewModel {
         case .error(_, let message, _):
             appendRow(.init(id: nextRowID(), kind: .error, text: message, isFailed: true))
             isStreaming = false
+            turnStartedAt = nil
             phase = .ready
             errorMessage = message
+            // Card E: a turn-level error ends any in-flight generation.
+            stopInFlightImageGenerations(reason: .failed)
+
+        case .sessionTitleUpdate(_, let title, _):
+            // The gateway auto-titled the session (methods_session.py:1427).
+            // Adopt into the header state; the transcript stays clean.
+            sessionTitle = title
 
         case .unknown(_, let rawType, _):
             appendRow(.init(id: nextRowID(), kind: .system, text: "Unknown event: \(rawType)"))
@@ -1530,6 +2452,9 @@ public final class ConversationViewModel {
                 phase = .disconnected
                 errorMessage = nil
             }
+            // Card E: the transport dropped — an in-flight generation can no
+            // longer report, so the animation stops (never spins forever).
+            stopInFlightImageGenerations(reason: .disconnected)
         case .authenticationRequired:
             // M11: 4401 → surface re-auth UX, NEVER a silent retry.
             if phase == .streaming || phase == .ready {
@@ -1538,6 +2463,7 @@ public final class ConversationViewModel {
             }
             phase = .authRequired
             errorMessage = "Authentication required — re-authenticate to continue."
+            stopInFlightImageGenerations(reason: .disconnected)
         case .online, .degraded, .connecting:
             break
         }
@@ -1624,7 +2550,7 @@ public final class ConversationViewModel {
         allRows[idx].isStreaming = false
     }
 
-    private func updateLastTool(_ name: String, generating: Bool, progress: String? = nil) {
+    private func updateLastTool(_ name: String, generating: Bool, progress: String? = nil) -> Int? {
         // P0-8: match within the CURRENT turn only. A turn's tool rows arrive
         // AFTER the previous assistant reply (user → reasoning → tools →
         // message.start), so the search range starts past the last assistant
@@ -1638,8 +2564,109 @@ public final class ConversationViewModel {
             } else {
                 allRows[idx].detail = generating ? "Generating…" : allRows[idx].detail
             }
+            return idx
         } else {
             appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: generating ? "Generating…" : nil))
+            return allRows.count - 1
+        }
+    }
+
+    // MARK: Card E — image-generation animation lifecycle
+
+    /// Apply one frame to a tool row's generation activity. The pure rule
+    /// owns what counts as a verified start/terminal frame; the VM only
+    /// routes frames to the row the frame addressed.
+    private func applyGenerationTransition(triggeredBy event: ConversationEvent, onRowAt index: Int?) {
+        guard let index, allRows.indices.contains(index) else { return }
+        guard let next = ImageGenerationRules.transition(
+            current: allRows[index].generationActivity, event: event) else { return }
+        allRows[index].generationActivity = next
+    }
+
+    /// Stop every in-flight generation when the turn/transport settles
+    /// without the tool's own terminal frame (turn error, turn end without a
+    /// result, interrupt, disconnect). The animation is a claim about work in
+    /// flight — it must never outlive the work.
+    private func stopInFlightImageGenerations(reason: ImageGenerationStop) {
+        for index in allRows.indices {
+            guard let next = ImageGenerationRules.stopped(
+                allRows[index].generationActivity, reason: reason) else { continue }
+            allRows[index].generationActivity = next
+        }
+    }
+
+    // MARK: Card D — generated-image artifact capture
+
+    /// Record an `image_generate` citation on the TOOL row that cited it (the
+    /// "correct bubble" is the row whose result named the artifact — never a
+    /// positional guess). Replayed/re-delivered frames hit the same row and
+    /// the same reference identity, so nothing duplicates; the echo-strip set
+    /// is recorded even when no gateway-local path is retrievable (URL-only
+    /// results still de-dupe prose).
+    private func attachGeneratedImageCitations(toolName: String, resultText: String?, toRowAt index: Int) {
+        guard allRows.indices.contains(index),
+              let citation = GeneratedImageRules.citation(toolName: toolName, resultJSON: resultText) else { return }
+        let rowID = allRows[index].id
+        if !(citationsByRowID[rowID]?.contains(citation) ?? false) {
+            citationsByRowID[rowID, default: []].append(citation)
+        }
+        guard let reference = GeneratedImageRules.artifactReference(
+            for: citation,
+            gatewayID: route.gatewayID,
+            sessionID: openedSessionID ?? sessionID,
+            profile: route.profileSlug.rawValue) else { return }
+        var artifacts = allRows[index].artifacts ?? []
+        guard !artifacts.contains(reference) else { return }
+        artifacts.append(reference)
+        allRows[index].artifacts = artifacts
+        onArtifactObserved?(reference, sessionTitle, route.profileSlug.rawValue)
+    }
+
+    /// The de-dupe set for the assistant row at `index`: citations declared by
+    /// the tool rows of THAT turn (between the previous assistant row and this
+    /// one). Turn-scoped by construction — an earlier or later turn's artifact
+    /// never scrubs prose it did not cite.
+    private func turnEchoSources(beforeAssistantAt index: Int) -> [String] {
+        guard allRows.indices.contains(index), allRows[index].kind == .assistant else { return [] }
+        var cursor = index - 1
+        while cursor >= 0, allRows[cursor].kind != .assistant { cursor -= 1 }
+        let lower = cursor + 1
+        guard lower < index else { return [] }
+        var sources: [String] = []
+        for rowIndex in lower..<index {
+            if let citations = citationsByRowID[allRows[rowIndex].id] {
+                sources.append(contentsOf: citations.flatMap(\.echoSources))
+            }
+        }
+        return sources
+    }
+
+    /// Carry derived row state the wire does not re-deliver across a
+    /// transcript rebuild that preserved row identities (the
+    /// cache→authoritative swap): cited artifact references (card D — the
+    /// history projection carries no tool results) and the image-generation
+    /// activity of an in-flight call (card E — the projection cannot know a
+    /// tool is still running). The row identity is what keeps both attached
+    /// to the bubble they belong to.
+    private func carryDerivedRowState(into rows: inout [ConversationRow], from previous: [ConversationRow]) {
+        var artifactsByID: [String: [ArtifactReference]] = [:]
+        var activityByID: [String: ImageGenerationActivity] = [:]
+        for row in previous {
+            if !(row.artifacts ?? []).isEmpty {
+                artifactsByID[row.id] = row.artifacts
+            }
+            if let activity = row.generationActivity {
+                activityByID[row.id] = activity
+            }
+        }
+        guard !artifactsByID.isEmpty || !activityByID.isEmpty else { return }
+        for index in rows.indices {
+            if let carried = artifactsByID[rows[index].id], rows[index].artifacts == nil {
+                rows[index].artifacts = carried
+            }
+            if let carried = activityByID[rows[index].id], rows[index].generationActivity == nil {
+                rows[index].generationActivity = carried
+            }
         }
     }
 

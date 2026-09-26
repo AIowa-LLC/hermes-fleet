@@ -120,9 +120,9 @@ public struct GatewayProjectsClient: GatewayProjectsProviding, GatewaySessionDis
             color: o["color"]?.stringValue,
             isAuto: o["isAuto"]?.boolValue ?? false,
             isNoProject: o["isNoProject"]?.boolValue ?? false,
-            sessionCount: o["sessionCount"]?.numberValue.map(Int.init) ?? repos.reduce(0) { $0 + $1.sessionCount },
+            sessionCount: o["sessionCount"]?.intValue ?? repos.reduce(0) { $0 + $1.sessionCount },
             lastActive: o["lastActive"]?.numberValue ?? 0,
-            totalTokens: o["totalTokens"]?.numberValue.map(Int.init) ?? 0,
+            totalTokens: o["totalTokens"]?.intValue ?? 0,
             totalCostUsd: o["totalCostUsd"]?.numberValue ?? 0,
             repos: repos,
             previewSessions: previews)
@@ -137,7 +137,7 @@ public struct GatewayProjectsClient: GatewayProjectsProviding, GatewaySessionDis
             id: id,
             label: o["label"]?.stringValue ?? id,
             path: o["path"]?.stringValue,
-            sessionCount: o["sessionCount"]?.numberValue.map(Int.init) ?? groups.reduce(0) { $0 + $1.sessions.count },
+            sessionCount: o["sessionCount"]?.intValue ?? groups.reduce(0) { $0 + $1.sessions.count },
             groups: groups)
     }
 
@@ -169,10 +169,10 @@ public struct GatewayProjectsClient: GatewayProjectsProviding, GatewaySessionDis
             endedAt: o["ended_at"]?.numberValue,
             cwd: o["cwd"]?.stringValue ?? "",
             gitBranch: o["git_branch"]?.stringValue ?? "",
-            messageCount: o["message_count"]?.numberValue.map(Int.init) ?? 0,
-            toolCallCount: o["tool_call_count"]?.numberValue.map(Int.init) ?? 0,
-            inputTokens: o["input_tokens"]?.numberValue.map(Int.init) ?? 0,
-            outputTokens: o["output_tokens"]?.numberValue.map(Int.init) ?? 0,
+            messageCount: o["message_count"]?.intValue ?? 0,
+            toolCallCount: o["tool_call_count"]?.intValue ?? 0,
+            inputTokens: o["input_tokens"]?.intValue ?? 0,
+            outputTokens: o["output_tokens"]?.intValue ?? 0,
             actualCostUsd: o["actual_cost_usd"]?.numberValue,
             estimatedCostUsd: o["estimated_cost_usd"]?.numberValue,
             model: o["model"]?.stringValue ?? "",

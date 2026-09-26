@@ -30,7 +30,7 @@ import FleetCore
 ///   `{pending, title}`.
 /// - `session.branch` — methods_session.py:3282: `{session_id, count?,
 ///   name?}` → the full new-session payload (same decode as create/resume).
-public struct GatewayConversationToolingClient: ConversationToolingProviding {
+public struct GatewayConversationToolingClient: ConversationToolingProviding, ConversationMessageBranchingProviding {
     public let gatewayID: GatewayID
     private let transport: GatewayWebSocketTransport
 
@@ -161,12 +161,26 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
     }
 
     public func branchSession(sessionID: String, name: String?) async throws -> ConversationSession {
+        try await branchSession(sessionID: sessionID, name: name, count: nil)
+    }
+
+    /// Count-aware branch used by the assistant-reply toolbar. The gateway
+    /// copies only the visible user/assistant prefix through the selected row;
+    /// later turns remain in the original session.
+    public func branchSession(
+        sessionID: String,
+        name: String?,
+        count: Int?
+    ) async throws -> ConversationSession {
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey(
                 "session_id is not a safe session key: \(sessionID)")
         }
         guard case .connected = transport.state else { throw ConversationError.notConnected }
         var params: [String: JSONValue] = ["session_id": .string(sessionID)]
+        if let count, count > 0 {
+            params["count"] = .number(Double(count))
+        }
         if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             params["name"] = .string(name.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -174,6 +188,47 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
             let result = try await transport.request(method: "session.branch", params: .object(params))
             // Same projection as session.create/resume (methods_session.py:3497-3505).
             return try GatewayConversationClient.decodeSession(result)
+        } catch let error as JSONRPCError {
+            throw Self.mapError(error)
+        } catch let error as TransportError {
+            throw Self.mapTransportError(error)
+        }
+    }
+
+    public func setCWD(sessionID: String, cwd: String) async throws -> SessionCWDInfo {
+        guard RoutingGuard.isValidSessionKey(sessionID) else {
+            throw ConversationError.invalidSessionKey(
+                "session_id is not a safe session key: \(sessionID)")
+        }
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ConversationError.invalidRequest("cwd required")
+        }
+        guard case .connected = transport.state else { throw ConversationError.notConnected }
+        let params: JSONValue = .object([
+            "session_id": .string(sessionID),
+            "cwd": .string(trimmed),
+        ])
+        do {
+            let result = try await transport.request(method: "session.cwd.set", params: params)
+            // `_cwd_info` readback: {cwd, branch?, project?, lazy?}. The cwd
+            // echo is the only required member; branch/project are best
+            // effort (a non-repo folder has no branch).
+            guard let echoed = result["cwd"]?.stringValue, !echoed.isEmpty else {
+                throw ConversationError.malformedPayload("session.cwd.set result missing 'cwd'")
+            }
+            let project: String?
+            if let p = result["project"]?.objectValue,
+               let name = p["name"]?.stringValue {
+                project = name
+            } else {
+                project = result["project"]?.stringValue
+            }
+            return SessionCWDInfo(
+                cwd: echoed,
+                branch: result["branch"]?.stringValue,
+                project: project
+            )
         } catch let error as JSONRPCError {
             throw Self.mapError(error)
         } catch let error as TransportError {
@@ -213,16 +268,18 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
     /// (unknown), never a fabricated 0.
     static func decodeUsage(_ result: JSONValue) -> SessionUsageSnapshot {
         let o = result.objectValue ?? [:]
-        func int(_ key: String) -> Int { o[key]?.numberValue.map(Int.init) ?? 0 }
+        // `intValue` owns the 2^63-exclusive bound; an unrepresentable number
+        // degrades to this helper's existing missing-value default (0).
+        func int(_ key: String) -> Int { o[key]?.intValue ?? 0 }
         return SessionUsageSnapshot(
             model: o["model"]?.stringValue,
             input: int("input"),
             output: int("output"),
             total: int("total"),
             calls: int("calls"),
-            contextUsed: o["context_used"]?.numberValue.map(Int.init),
-            contextMax: o["context_max"]?.numberValue.map(Int.init),
-            contextPercent: o["context_percent"]?.numberValue.map(Int.init)
+            contextUsed: o["context_used"]?.intValue,
+            contextMax: o["context_max"]?.intValue,
+            contextPercent: o["context_percent"]?.intValue
         )
     }
 
@@ -236,15 +293,15 @@ public struct GatewayConversationToolingClient: ConversationToolingProviding {
             return ContextBreakdownCategory(
                 id: id,
                 label: co["label"]?.stringValue ?? id,
-                tokens: co["tokens"]?.numberValue.map(Int.init) ?? 0
+                tokens: co["tokens"]?.intValue ?? 0
             )
         } ?? []
         return ContextBreakdown(
             categories: categories,
-            contextMax: o["context_max"]?.numberValue.map(Int.init) ?? 0,
-            contextPercent: o["context_percent"]?.numberValue.map(Int.init) ?? 0,
-            contextUsed: o["context_used"]?.numberValue.map(Int.init) ?? 0,
-            estimatedTotal: o["estimated_total"]?.numberValue.map(Int.init) ?? 0,
+            contextMax: o["context_max"]?.intValue ?? 0,
+            contextPercent: o["context_percent"]?.intValue ?? 0,
+            contextUsed: o["context_used"]?.intValue ?? 0,
+            estimatedTotal: o["estimated_total"]?.intValue ?? 0,
             model: o["model"]?.stringValue ?? ""
         )
     }

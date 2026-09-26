@@ -92,7 +92,7 @@ final class ConversationDomainTests: XCTestCase {
         XCTAssertEqual(ptext, "fetching…")
 
         let complete = ConversationEvent.toolComplete(sessionID: "s1", toolID: "t1", name: "web_search", summary: "3 results")
-        guard case .toolComplete(_, let cid, let cname, let summary, _) = complete else {
+        guard case .toolComplete(_, let cid, let cname, let summary, _, _) = complete else {
             return XCTFail("expected toolComplete")
         }
         XCTAssertEqual(cid, "t1")

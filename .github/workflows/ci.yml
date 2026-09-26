@@ -44,6 +44,8 @@ jobs:
         run: python3 scripts/c1_xcresult_parse_test.py
       - name: Package runner fail-closed contract tests
         run: bash scripts/c1_packages_contract_test.sh
+      - name: Release source preservation guard contract tests
+        run: python3 scripts/build90_source_check_test.py
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)

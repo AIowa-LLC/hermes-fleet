@@ -14,6 +14,8 @@ public final class InProcessTLSServer: @unchecked Sendable {
     private var _connection: NWConnection?
     private var _inboundCount = 0
     private var _connectionCount = 0
+    private var _openFramesSent = false
+    private var _failureDescription: String?
 
     /// - Parameters:
     ///   - scripts: one script per accepted connection (index clamped).
@@ -46,6 +48,11 @@ public final class InProcessTLSServer: @unchecked Sendable {
     public var connectionCount: Int {
         stateLock.lock(); defer { stateLock.unlock() }
         return _connectionCount
+    }
+
+    public var failureDescription: String? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _failureDescription
     }
 
     public var listeningPort: UInt16 {
@@ -83,12 +90,37 @@ public final class InProcessTLSServer: @unchecked Sendable {
         let index = min(_connectionCount - 1, scripts.count - 1)
         let script = scripts[index]
         _connection = connection
+        _openFramesSent = false
         stateLock.unlock()
-        connection.start(queue: .global())
-        for frame in script.onOpen {
-            sendText(frame, on: connection)
+        // TLS and the WebSocket upgrade are still in progress after start().
+        // Wait for Network.framework's ready state before sending the
+        // gateway.ready script; sending while preparing can race the upgrade.
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let self, let connection else { return }
+            switch state {
+            case .ready:
+                self.stateLock.lock()
+                let shouldSendOpenFrames = self._connection === connection && !self._openFramesSent
+                if shouldSendOpenFrames { self._openFramesSent = true }
+                self.stateLock.unlock()
+                guard shouldSendOpenFrames else { return }
+                for frame in script.onOpen {
+                    self.sendText(frame, on: connection)
+                }
+            case .failed(let error):
+                self.recordFailure(error)
+            default:
+                break
+            }
         }
+        connection.start(queue: .global())
         runReceiveLoop(connection, script: script)
+    }
+
+    private func recordFailure(_ error: any Error) {
+        stateLock.lock()
+        _failureDescription = String(describing: error)
+        stateLock.unlock()
     }
 
     private func runReceiveLoop(_ connection: NWConnection, script: InProcessWebSocketServer.Script) {
@@ -147,7 +179,9 @@ public final class InProcessTLSServer: @unchecked Sendable {
         connection.send(
             content: string.data(using: .utf8),
             contentContext: context,
-            completion: .contentProcessed { _ in }
+            completion: .contentProcessed { [weak self] error in
+                if let error { self?.recordFailure(error) }
+            }
         )
     }
 }

@@ -78,6 +78,29 @@ final class FOS2GatewayDetailUITests: XCTestCase {
         attachScreenshot(of: app, name: "fos2-cockpit-resources")
     }
 
+    /// RC-84 P1: the capability report disclosure — detected from this
+    /// phone's real probes; expanding it lists the feature rows. States are
+    /// policy-derived (asserted in unit tests); this pins the surface +
+    /// honest wiring in the live app.
+    func testCapabilityReportDisclosureExpandsWithHonestRows() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        UITabNavigation.openGatewayDetail(app, gateway: "workstation")
+
+        let disclosure = firstMatch(in: app, identifier: "fleet.gateway-detail.workstation.capabilities")
+        XCTAssertTrue(ensureVisible(disclosure, in: app), "capability disclosure must render")
+        disclosure.tap()
+
+        for key in ["chats", "bots", "groups", "roomLink"] {
+            let row = firstMatch(in: app, identifier: "fleet.gateway-detail.workstation.capability.\(key)")
+            XCTAssertTrue(ensureVisible(row, in: app),
+                          "capability row \(key) must render after expansion")
+        }
+        attachScreenshot(of: app, name: "rc84-capability-report")
+    }
+
     /// 3. Two profiles, no prior choice ⇒ the CHOOSER renders; nothing is
     /// preselected silently. 4. An explicit choice scopes the pane and the
     /// scope bar names it.

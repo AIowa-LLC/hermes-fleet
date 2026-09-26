@@ -30,6 +30,7 @@ final class RoomLinkMentionsUITests: XCTestCase {
     private func launch(extraEnv: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         self.app = app
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "roster"
         for (key, value) in extraEnv {
             app.launchEnvironment[key] = value
@@ -38,18 +39,9 @@ final class RoomLinkMentionsUITests: XCTestCase {
         return app
     }
 
-    /// Scroll the roster until an element exists AND is hittable.
-    ///
-    /// A row can be present in the AX tree while its frame lies entirely
-    /// outside the window (materialized just below the fold — e.g. the roster
-    /// outage card pushed "Groups" rows past the bottom edge). Asking for
-    /// `isHittable` on such an element does NOT return false: it fails the
-    /// test outright with "Failed to determine hittability … Activation point
-    /// invalid and no suggested hit points based on element frame"
-    /// (merge-group run 34699513638, shard 5), killing the run before the
-    /// scroll below ever gets a chance to bring the row into view. So only
-    /// consult hittability once the frame actually overlaps the window;
-    /// otherwise keep scrolling.
+    /// Scroll the roster until an element is fully inside its scroll viewport
+    /// and hittable. Window intersection alone is insufficient: the bottom
+    /// tab bar overlaps part of the window and can cover a room row.
     private func scrollToFind(
         _ app: XCUIApplication, identifier: String? = nil,
         attempts: Int = 20
@@ -57,32 +49,31 @@ final class RoomLinkMentionsUITests: XCTestCase {
         func found() -> XCUIElement {
             app.descendants(matching: .any)[identifier ?? ""]
         }
-        let window = app.windows.firstMatch
+        let roster = app.scrollViews["fleet.roster"].firstMatch
         func hittable() -> Bool {
-            guard found().exists else { return false }
-            let windowFrame = window.frame
-            // An unmaterialized/zero frame never legitimately intersects; and
-            // if the window itself cannot be measured, keep the old behaviour.
-            if !windowFrame.isEmpty && !found().frame.intersects(windowFrame) { return false }
-            return found().isHittable
+            let row = found()
+            guard row.exists, roster.exists else { return false }
+            let rowFrame = row.frame
+            let viewport = roster.frame
+            guard !rowFrame.isEmpty, !viewport.isEmpty,
+                  rowFrame.minY >= viewport.minY,
+                  rowFrame.maxY <= viewport.maxY else { return false }
+            return row.isHittable
         }
         if hittable() { return found() }
         for _ in 0..<attempts {
-            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
-                .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
+            roster.swipeUp()
             if hittable() { return found() }
         }
-        if found().exists { return found() }
-        XCTFail("element not found: identifier=\(identifier ?? "-")")
+        XCTFail("element not fully visible and hittable in fleet.roster: identifier=\(identifier ?? "-")")
         return found()
     }
 
     private func openHostedRoom(_ app: XCUIApplication) {
         let row = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
+        let room = app.descendants(matching: .any)["fleet.room.chat"]
         row.tap()
-        XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10),
-            "room chat screen renders")
+        XCTAssertTrue(room.waitForExistence(timeout: 10), "room chat screen renders")
     }
 
     private func openRoomLink(_ app: XCUIApplication) {

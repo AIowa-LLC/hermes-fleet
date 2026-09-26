@@ -18,6 +18,14 @@ struct HostedRoomProvider: FleetRoomProviding {
         self.client = client
     }
 
+    /// Upper bound on `groups.list` pages for ONE room-list load. The drain
+    /// loop follows the server's `next_offset` cursor, so a malformed or
+    /// adversarial gateway could otherwise page forever. 50 pages × the
+    /// client's 200-row page limit (10 000 rooms) is far beyond any real
+    /// hosted room list — the cap bounds the request count, it does not
+    /// shape normal loads.
+    static let maxRoomListPages = 50
+
     /// Gateway-level create capability (F1): derived from the gateway's own
     /// `groups.capabilities` probe, independent of any room row — a capable
     /// gateway with ZERO hosted rooms still reports `.supported` so the
@@ -48,8 +56,25 @@ struct HostedRoomProvider: FleetRoomProviding {
             throw error
         }
         guard let caps else { return [] }
-        let page = try await client.listRooms()
-        return page.rooms.map { row in
+        // Include tombstones so FleetRoomUnion can remember authoritative
+        // disbands and prevent stale Desktop mirrors from resurrecting rows.
+        // Drain every bounded page; the gateway's room list is offset-based.
+        // The cursor is SERVER-supplied, so the drain is additionally capped:
+        // a malformed/adversarial gateway that returns a strictly increasing
+        // `next_offset` forever (even with empty pages) must not wedge the
+        // room-load path in unbounded requests.
+        var rows: [HostedRoomRow] = []
+        var offset = 0
+        var pages = 0
+        while pages < Self.maxRoomListPages {
+            try Task.checkCancellation()
+            let page = try await client.listRooms(offset: offset, includeDisbanded: true)
+            pages += 1
+            rows.append(contentsOf: page.rooms)
+            guard let next = page.nextOffset, next > offset else { break }
+            offset = next
+        }
+        return rows.map { row in
             FleetRoom(
                 id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: row.roomID),
                 name: row.name,
@@ -70,7 +95,6 @@ struct HostedRoomProvider: FleetRoomProviding {
                 )
             )
         }
-        .filter { !$0.isDeleted }
     }
 }
 
@@ -197,8 +221,21 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
     }
 
     func send(roomID: String, text: String, threadID: String?) async throws -> Int {
+        try await send(roomID: roomID, text: text, threadID: threadID, idempotencyKey: nil)
+    }
+
+    func send(
+        roomID: String,
+        text: String,
+        threadID: String?,
+        idempotencyKey: String?
+    ) async throws -> Int {
         do {
-            return try await client.send(roomID: roomID, text: text, threadID: threadID).seq
+            return try await client.send(
+                roomID: roomID,
+                text: text,
+                threadID: threadID,
+                eventID: idempotencyKey).seq
         } catch {
             throw Self.map(error)
         }
@@ -252,14 +289,15 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
         }
     }
 
-    func createRoom(name: String, members: [[String: String]]) async throws -> String {
+    func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
         let wireMembers: [JSONValue] = members.map { member in
             var object: [String: JSONValue] = [:]
             for (key, value) in member { object[key] = .string(value) }
             return JSONValue.object(object)
         }
         do {
-            return try await client.createRoom(name: name, members: wireMembers, profile: nil).roomID
+            return try await client.createRoom(
+                roomID: roomID, name: name, members: wireMembers, profile: nil).roomID
         } catch {
             throw Self.map(error)
         }
@@ -276,7 +314,11 @@ struct GatewayRoomCommandAdapter: RoomChatCommanding {
             kind: event.kind,
             actorKind: event.actorKind,
             actorID: event.actorID,
+            actorDisplayName: event.actorDisplayName,
+            actorProfile: event.actorProfile,
+            actorConnectionID: event.actorConnectionID,
             payloadText: event.text.isEmpty ? nil : event.text,
+            reasonCode: event.reasonCode,
             createdAt: event.createdAt)
     }
 
@@ -344,7 +386,10 @@ struct GatewayRoomDriverStatusAdapter: RoomDriverStatusProviding {
                 approvals.append(RoomPendingApproval(
                     memberID: memberID,
                     taskID: taskID,
-                    executionGeneration: object["execution_generation"]?.numberValue.map(Int.init) ?? 0,
+                    // An unrepresentable generation (e.g. a hostile 2^63)
+                    // degrades to this site's missing-value shape — `?? 0` —
+                    // instead of trapping `Int(_:)`.
+                    executionGeneration: object["execution_generation"]?.intValue ?? 0,
                     runID: object["run_id"]?.stringValue,
                     sessionID: object["session_id"]?.stringValue,
                     requestID: object["request_id"]?.stringValue,
@@ -354,7 +399,9 @@ struct GatewayRoomDriverStatusAdapter: RoomDriverStatusProviding {
         var counts: [String: Int] = [:]
         if let countsObject = status["counts"]?.objectValue {
             for (key, value) in countsObject {
-                counts[key] = value.numberValue.map(Int.init) ?? 0
+                // Same bound as above: a count outside `Int`'s range reads as
+                // the key's missing-value shape (`0`), never a clamped count.
+                counts[key] = value.intValue ?? 0
             }
         }
         return RoomDriverStatus(

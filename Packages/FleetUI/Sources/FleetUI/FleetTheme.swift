@@ -126,9 +126,23 @@ public enum FleetTheme {
         #endif
     }()
 
+    /// Scrim — semantic dimming veil for modal overlays (drawer, sheets).
+    /// Black in both appearances: it darkens content, never tints it.
+    public static let scrim: Color = Color.black.opacity(0.32)
+
+    /// Drawer scrim — the navigation drawer floats OVER live content and
+    /// needs a deeper veil than sheets (ChatGPT-parity drawer pass).
+    public static let drawerScrim: Color = Color.black.opacity(0.55)
+
     /// Elevated inline surface (chips, active-now capsules). System tertiary
     /// so it adapts natively; never translucent glass behind body content.
     public static let surfaceElevated: Color = Color(uiColor: .tertiarySystemBackground)
+
+    /// Neutral drawer fill (ADR-0008 round-3): selected navigation rows and
+    /// the drawer's circular controls. Explicit per-appearance values — the
+    /// system tertiary background is invisible on the near-white canvas in
+    /// light mode (round-3 QA catch: no visible selection on #F8F9FC).
+    public static let neutralFill: Color = adaptive(dark: 0x2C2C2E, light: 0xE4E4E9)
 
     /// Contrast-aware card surface. Increase Contrast lifts to the opaque
     /// system background; this seam keeps that behavior testable.
@@ -153,10 +167,11 @@ public enum FleetTheme {
 
     // MARK: - Interactive (fixed Fleet violet)
 
-    /// Links, selected controls, and the primary action tint. FOS-7 (SPEC
+    /// Links, controls, badges, and the primary action tint. FOS-7 (SPEC
     /// §14): one fixed Fleet violet — the V7.5 accent picker no longer
     /// applies. The stored pick is preserved untouched for rollback.
     /// Increase Contrast resolves to the stronger silhouette variants.
+    /// Navigation selection uses the neutral elevated surface (ADR-0008).
     public static let accent: Color = adaptiveHighContrast(
         dark: FleetColors.interactiveDark,
         light: FleetColors.interactiveLight,
