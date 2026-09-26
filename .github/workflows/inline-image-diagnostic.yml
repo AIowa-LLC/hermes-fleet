@@ -48,28 +48,29 @@ jobs:
       - name: Run one case and sample the target app
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
           echo 'TEST: launching once, no repetition or retry flags'
           xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR" -derivedDataPath "$evidence/DerivedData" -skipMacroValidation test-without-building -resultBundlePath "$evidence/InlineDiagnostic.xcresult" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test.log" 2>&1 &
           test_pid=$!
           for ((i=0; i<150; i++)); do
-            if grep -q 'Waiting 40.0s for.*fleet.artifact.image' "$evidence/test.log"; then
-              echo 'PROFILE: image lookup reached'
+            if grep -q 'Waiting 20.0s for.*fleet.conversation.row.row-2' "$evidence/test.log"; then
+              echo 'PROFILE: citing-row query reached'
               targets=$(ps -axo pid=,command= | awk -v sim="$SIMULATOR" 'index($0,sim)>0 && index($0,"/HermesFleetApp.app/HermesFleetApp")>0 {print $1}')
               count=$(printf '%s\n' "$targets" | awk 'NF {n++} END {print n+0}')
               printf 'target_count=%s\n' "$count" > "$evidence/sample-target.txt"
               if [[ "$count" -eq 1 ]]; then
                 printf 'pid=%s\n' "$targets" >> "$evidence/sample-target.txt"
-                /usr/bin/sample "$targets" 15 -file "$evidence/app.sample.txt" > "$evidence/sample.log" 2>&1 || true
+                /usr/bin/sample "$targets" 25 -file "$evidence/app.sample.txt" > "$evidence/sample.log" 2>&1 || true
               fi
               break
             fi
             kill -0 "$test_pid" 2>/dev/null || break
             sleep 1
           done
-          wait "$test_pid"
-          status=$?
+          status=0
+          wait "$test_pid" || status=$?
           printf '%s\n' "$status" > "$evidence/test-exit.txt"
           echo "TEST: process exit $status"
           tail -45 "$evidence/test.log"
