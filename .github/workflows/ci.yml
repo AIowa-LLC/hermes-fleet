@@ -105,7 +105,7 @@ jobs:
           if-no-files-found: ignore
 
   ui-preflight:
-    name: UI preflight ${{ matrix.shard }}/4 (changed area)
+    name: UI preflight ${{ matrix.shard }}/12 (changed area)
     # PRs get an early changed-area check; merge candidates repeat it against
     # the merge-group base alongside the fixed critical smoke set.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -113,8 +113,9 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: true
+      max-parallel: 6
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -123,7 +124,7 @@ jobs:
           # needed for both pull requests and merge-group candidates.
           fetch-depth: 0
       - name: Run focused UI preflight (changed-area selection)
-        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" --shard "${{ matrix.shard }}" --shards 4
+        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" --shard "${{ matrix.shard }}" --shards 12
       - name: Upload focused UI evidence
         if: always()
         uses: actions/upload-artifact@v4
