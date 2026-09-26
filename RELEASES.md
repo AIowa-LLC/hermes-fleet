@@ -1,9 +1,9 @@
 # Hermes Fleet release records
 
-Every distributed build (internal dogfood, external TestFlight, or App Store)
-maps to exactly one commit and one tag. A record is added or updated in the
-same change that creates the tag, and the tag always points at the commit that
-produced the uploaded build.
+Distributed builds (internal dogfood, external TestFlight, or App Store) should
+map to one source commit and one tag. The Build 90 record below retains its
+source-to-archive attestation and tag limitations rather than asserting a
+proven link that the retained evidence cannot establish.
 
 ## 0.2.0 (90)
 
@@ -22,10 +22,14 @@ produced the uploaded build.
   separately; no cryptographically proven source-to-IPA claim is made.
 - Source tag: not created by this reconciliation. Existing release tags and the
   distributed archive remain unchanged.
-- Integration: pending required PR/merge-candidate checks. Reconciliation must
-  preserve the snapshot's app source, resources, dependency locks, entitlements,
-  generated project, version/build configuration, and product tests. Known
-  group-history behavior still requires its regression test.
+- Repository integration: PR #57 starts from the recorded Build 90 snapshot but
+  carries a later inline-image scroll correction in `ConversationView.swift`,
+  an associated UI-test harness repair, and CI capacity changes. These are new
+  integration changes; they do not modify the distributed Build 90 archive,
+  existing release tags, or TestFlight availability. Required PR and merge
+  checks, including the group-history regression, determine acceptance of the
+  repository candidate. Any later distributed binary needs its own build number
+  and source record.
 
 ## 0.2.0 (86)
 
