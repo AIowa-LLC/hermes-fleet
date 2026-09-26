@@ -4,6 +4,57 @@ import UniformTypeIdentifiers
 import FleetCore
 import FleetPersistence
 
+/// B87 follow-up ("Cannot open chat"): what `ConversationView.body` should
+/// render for a given (VM presence, fleet hydration, gateway registration)
+/// snapshot. Before this, `viewModel == nil` always meant `.unavailable` —
+/// including while the fleet was still hydrating on cold launch, or (with a
+/// persisted navigation path) for a route whose gateway hadn't answered
+/// yet. Pure and testable so the loading/unavailable split doesn't depend on
+/// a live `AppEnvironment`.
+public enum ConversationOpenState: Equatable, Sendable {
+    /// A `ConversationViewModel` exists — render the canvas.
+    case ready
+    /// No VM yet, but there is something to wait on (the fleet is still
+    /// hydrating, or this route's gateway has not answered yet) — show a
+    /// loading placeholder and retry, never the dead-end unavailable state.
+    case loading
+    /// Hydration has settled and this route has nothing left to wait on
+    /// (its gateway was removed, or the gateway has no conversation seam
+    /// wired) — nothing to retry; show the honest unavailable state.
+    case unavailable
+}
+
+/// Pure decision the view's `.task(id:)` and `body` both read from.
+public enum ConversationOpenPolicy {
+    /// - Parameters:
+    ///   - hasViewModel: `ConversationView.viewModel != nil`.
+    ///   - hydrationPhase: `AppEnvironment.hydrationPhase` at render time.
+    ///   - attemptedOpen: whether VM creation has been attempted against
+    ///     the CURRENT (hydration, gateway-registration) snapshot. Reset on
+    ///     every `openTrigger` change so a gateway appearing re-arms loading.
+    public static func resolve(
+        hasViewModel: Bool,
+        hydrationPhase: AppEnvironment.HydrationPhase,
+        attemptedOpen: Bool
+    ) -> ConversationOpenState {
+        if hasViewModel { return .ready }
+        // Fleet-wide restore hasn't settled yet (cold launch, or a restored
+        // navigation path racing the durable gateway read) — the registry is
+        // not authoritative yet, so a missing gateway right now proves
+        // nothing. Keep waiting.
+        if hydrationPhase == .loading { return .loading }
+        // Settled, but this snapshot has not been tried yet (first frame
+        // before `.task` runs, or a trigger change mid-flight): show loading,
+        // never a flash of the dead-end state.
+        if !attemptedOpen { return .loading }
+        // Settled AND tried against this exact snapshot with no VM: the
+        // gateway is gone or has no conversation seam — terminal until the
+        // snapshot changes (which re-arms `attemptedOpen`). Never an endless
+        // spinner.
+        return .unavailable
+    }
+}
+
 /// Conversation canvas (U3) — the full streaming/replay/reconnect screen.
 ///
 /// Drives a `ConversationViewModel` (observable) built by the composition root
@@ -121,10 +172,47 @@ public struct ConversationView: View {
         self.sessionID = sessionID
     }
 
+    /// B87 follow-up: whether this route's gateway is registered right now.
+    /// Read fresh on every access (never cached) — it is the live signal
+    /// both the render decision and the retry trigger key off of.
+    private var isGatewayPresent: Bool {
+        environment.gateway(for: route.gatewayID) != nil
+    }
+
+    /// The retry key for `.task(id:)`: VM creation is re-attempted whenever
+    /// the fleet's hydration settles or this route's gateway registration
+    /// changes, instead of freezing forever on whatever was true at the
+    /// instant this screen first mounted.
+    /// The `openTrigger` snapshot VM creation was last attempted against
+    /// (nil = never). `openState` is `.unavailable` only once the CURRENT
+    /// snapshot has been tried and produced no VM.
+    @State private var attemptedOpenTrigger: OpenTrigger?
+    /// True while a `.task(id:)` run is inside `viewModel.start()` and its
+    /// post-open bookkeeping (see the guard there).
+    @State private var isStartInFlight = false
+
+    private struct OpenTrigger: Equatable {
+        let hydrationPhase: AppEnvironment.HydrationPhase
+        let gatewayPresent: Bool
+    }
+
+    private var openTrigger: OpenTrigger {
+        OpenTrigger(hydrationPhase: environment.hydrationPhase, gatewayPresent: isGatewayPresent)
+    }
+
+    private var openState: ConversationOpenState {
+        ConversationOpenPolicy.resolve(
+            hasViewModel: viewModel != nil,
+            hydrationPhase: environment.hydrationPhase,
+            attemptedOpen: attemptedOpenTrigger == openTrigger)
+    }
+
     public var body: some View {
         Group {
             if let viewModel {
                 canvas(viewModel)
+            } else if openState == .loading {
+                loadingPlaceholder
             } else {
                 unavailable
             }
@@ -135,19 +223,40 @@ public struct ConversationView: View {
         // status, timeline and latest all live in the compact header row /
         /// the floating latest chevron / the ⋯ menu).
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
-        .task {
+        // B87 follow-up: the compact in-canvas header (with its own back
+        // control) exists only once a VM is live. Loading and unavailable
+        // render before that header exists, so the system navigation bar —
+        // and its back button — must stay visible, or the screen is a dead
+        // end with no way out.
+        .toolbar(viewModel == nil ? .visible : .hidden, for: .navigationBar)
+        .task(id: openTrigger) {
             if viewModel == nil {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
+                attemptedOpenTrigger = openTrigger
             }
+            // Nothing to (re)start yet — the next retrigger of `openTrigger`
+            // (hydration settling, or the gateway appearing/disappearing)
+            // tries again. `start()` below is idempotent for an
+            // already-live VM (P2-3), so a retrigger after success is safe.
+            guard let viewModel else { return }
+            // `.task(id:)` cancellation is cooperative and `start()` has no
+            // re-entrancy guard until `openedSessionID` lands, so a trigger
+            // change while the first open is still awaiting would run a
+            // SECOND concurrent open (for a new chat: two createSession
+            // calls). The in-flight run finishes the open and its
+            // post-open bookkeeping; a later run (re-appear) still restarts
+            // the status watcher as before.
+            guard !isStartInFlight else { return }
+            isStartInFlight = true
+            defer { isStartInFlight = false }
             // Foreground auto-heal: a mounted conversation reconnects itself
             // when the app returns (no manual banner tap).
-            viewModel?.startForegroundHealing()
-            await viewModel?.start()
+            viewModel.startForegroundHealing()
+            await viewModel.start()
             // FOS-4 (SPEC §7 Continue / §17): record the open ONLY after the
             // destination resolved — the view model's resolved id is the
             // exact session (resumed or created), never a title guess.
-            if let resolved = viewModel?.resolvedSessionID {
+            if let resolved = viewModel.resolvedSessionID {
                 // Dogfood r4 (decision 1): opening marks read. Use the
                 // LISTED session's lastActive when this entry came from a
                 // list read; a brand-new session has nothing unread yet.
@@ -169,9 +278,9 @@ public struct ConversationView: View {
             // photo/document pickers (which cannot be driven deterministically
             // on the simulator).
             if ProcessInfo.processInfo.environment["HERMES_FLEET_ATTACHMENT_PICK"] == "1",
-               viewModel?.pendingAttachments.isEmpty == true {
+               viewModel.pendingAttachments.isEmpty {
                 let fixture = Data("# fixture notes\nR10-T1 scripted attachment.\n".utf8)
-                await viewModel?.stageAttachment(
+                await viewModel.stageAttachment(
                     name: "notes.md",
                     mime: "text/markdown",
                     byteCount: fixture.count,
@@ -2015,6 +2124,22 @@ enum ConversationHeaderChips {
         }
     }
 
+    /// B87 follow-up: shown instead of `unavailable` while there is still
+    /// something to wait on (fleet hydration settling, or this route's
+    /// gateway not having answered yet) — `openTrigger` retries VM creation
+    /// the moment either changes, so this is never the terminal state.
+    private var loadingPlaceholder: some View {
+        VStack(spacing: FleetTheme.spacingMd) {
+            ProgressView()
+            Text("Opening conversation…")
+                .font(FleetTheme.secondaryFont)
+                .foregroundStyle(theme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.conversation.loading")
+    }
+
     private var unavailable: some View {
         ContentUnavailableView {
             Label {
@@ -2024,7 +2149,17 @@ enum ConversationHeaderChips {
                     .foregroundStyle(theme.textSecondary)
             }
         } description: {
-            Text("This gateway has no conversation session wired.")
+            Text(isGatewayPresent
+                ? "This gateway has no conversation session wired."
+                : "This conversation's gateway is no longer in your fleet.")
+        } actions: {
+            // B87 follow-up: the compact in-canvas header (with its own back
+            // control) never mounts in this state, and the system nav bar's
+            // back button depends on the platform default rendering one —
+            // an explicit, always-present way out so the screen is never a
+            // dead end.
+            Button("Go Back") { dismiss() }
+                .accessibilityIdentifier("fleet.conversation.unavailable.back")
         }
         .accessibilityIdentifier("fleet.conversation.unavailable")
     }

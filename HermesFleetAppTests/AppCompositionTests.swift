@@ -314,6 +314,47 @@ extension AppCompositionTests {
 
 
 extension AppCompositionTests {
+    /// B87 "Cannot open chat" regression: `BotDetailView` is pushed on the
+    /// BOTS stack, but every ordinary (non-canonical) `.conversation` screen
+    /// is owned by CHATS (`FleetScreen.owner`). A raw `NavigationLink` there
+    /// pushes onto the Bots `NavigationStack`'s own path binding while that
+    /// binding's setter simultaneously calls `FleetNavigationState.open`,
+    /// which reroutes the SAME screen onto the Chats path and flips
+    /// `selection` — two competing writes in one update that can drop the
+    /// navigation. `requestScreen` (→ `pendingScreenNavigation`) is the one
+    /// path that settles owner + path as a single state change; this guard
+    /// keeps Bot Detail's session rows off the raw `NavigationLink` that
+    /// reintroduced the race.
+    func testBotDetailConversationRowsUseRequestScreenNotNavigationLink() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Packages/FleetUI/Sources/FleetUI/BotDetailView.swift"),
+            encoding: .utf8)
+        XCTAssertFalse(
+            source.contains("NavigationLink(value: FleetScreen.conversation"),
+            "Bot Detail must not push .conversation via a raw NavigationLink — "
+                + "it is pushed on the Bots stack but ordinary conversations are "
+                + "owned by Chats (FleetScreen.owner); use environment.requestScreen instead")
+        XCTAssertTrue(
+            source.contains("environment.requestScreen(\n            .conversation(route, sessionID: nil, canonical: false))")
+                || source.contains("environment.requestScreen(.conversation(route, sessionID: nil, canonical: false))"),
+            "the New Session action must open through requestScreen, source-qualified and non-canonical")
+        XCTAssertTrue(
+            source.contains(".conversation(route, sessionID: session.id, canonical: false))"),
+            "existing session rows must open through requestScreen with the exact session id")
+    }
+
+    /// Documents the exact hazard the guard above prevents: an ordinary
+    /// conversation's owner is ALWAYS Chats, never the tab the screen
+    /// happens to be pushed from.
+    func testOrdinaryConversationIsAlwaysChatsOwned() {
+        let route = Route(gatewayID: GatewayID(rawValue: "workstation"), profileSlug: ProfileSlug(rawValue: "default"))
+        XCTAssertEqual(FleetScreen.conversation(route, sessionID: "s1", canonical: false).owner, .chats)
+        XCTAssertEqual(FleetScreen.conversation(route, sessionID: nil, canonical: false).owner, .chats)
+        XCTAssertEqual(FleetScreen.conversation(route, sessionID: "s1", canonical: true).owner, .bots)
+    }
+
     func testCanonicalOpenEmitsBotsIntentFromEnvironment() async {
         let environment = FleetServiceGraph.makeDefaultEnvironment()
         await environment.load()
@@ -325,6 +366,59 @@ extension AppCompositionTests {
         if let target = environment.pendingBotChatNavigation { state.open(target) }
         XCTAssertEqual(state.selection, .bots)
         XCTAssertEqual(state.paths[.chats], [.conversation(route, sessionID: "ordinary")])
+    }
+}
+
+/// B87 round 2 ("Cannot open chat"): `ConversationView` used to treat
+/// `viewModel == nil` as permanently unavailable — including while the fleet
+/// was still hydrating on cold launch, or for a route whose gateway had not
+/// answered yet (a restored navigation path racing the durable gateway
+/// read). `ConversationOpenPolicy.resolve` is the pure decision the view's
+/// `body`/`.task(id:)` now read instead, so the loading/unavailable split is
+/// testable without a live `AppEnvironment` or a simulator.
+final class ConversationOpenPolicyTests: XCTestCase {
+    private let allPhases: [AppEnvironment.HydrationPhase] = [.loading, .unconfigured, .configured]
+    private let settledPhases: [AppEnvironment.HydrationPhase] = [.unconfigured, .configured]
+
+    func testHasViewModelIsAlwaysReady() {
+        for hydrationPhase in allPhases {
+            for attempted in [true, false] {
+                XCTAssertEqual(
+                    ConversationOpenPolicy.resolve(
+                        hasViewModel: true, hydrationPhase: hydrationPhase, attemptedOpen: attempted),
+                    .ready,
+                    "an existing VM must always render, whatever hydration says")
+            }
+        }
+    }
+
+    func testStillHydratingIsLoadingEvenAfterAFailedAttempt() {
+        // A route mounted before the durable gateway read answered: a miss
+        // now proves nothing, so it must never read as "gone".
+        for attempted in [true, false] {
+            XCTAssertEqual(
+                ConversationOpenPolicy.resolve(
+                    hasViewModel: false, hydrationPhase: .loading, attemptedOpen: attempted),
+                .loading)
+        }
+    }
+
+    func testSettledButNotYetAttemptedIsLoadingNotADeadEndFlash() {
+        for hydrationPhase in settledPhases {
+            XCTAssertEqual(
+                ConversationOpenPolicy.resolve(
+                    hasViewModel: false, hydrationPhase: hydrationPhase, attemptedOpen: false),
+                .loading)
+        }
+    }
+
+    func testSettledAndAttemptedWithNoViewModelIsUnavailableNeverAnEndlessSpinner() {
+        for hydrationPhase in settledPhases {
+            XCTAssertEqual(
+                ConversationOpenPolicy.resolve(
+                    hasViewModel: false, hydrationPhase: hydrationPhase, attemptedOpen: true),
+                .unavailable)
+        }
     }
 }
 

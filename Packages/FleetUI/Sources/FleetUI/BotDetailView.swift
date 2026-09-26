@@ -205,7 +205,24 @@ public struct BotDetailView: View {
         // conversation canvas (session.create over the mutating
         // ConversationProviding seam; sessionID nil = create).
         // FOS-5: disabled for a ghost (offline owner cannot take writes).
-        NavigationLink(value: FleetScreen.conversation(route, sessionID: nil)) {
+        //
+        // Bug fix (B87 "Cannot open chat"): an ordinary conversation's owning
+        // tab is ALWAYS Chats (FleetScreen.owner), never Bots — but this
+        // screen is itself pushed on the BOTS stack. A `NavigationLink`
+        // here would push directly onto the Bots NavigationStack's path
+        // binding while `FleetNavigationState.open` (invoked from that same
+        // binding's setter) reroutes the destination onto the Chats path and
+        // flips `selection` to `.chats` in the SAME update — the Bots stack
+        // never receives the push it just staged, and the two competing path
+        // mutations can drop the navigation entirely. `requestScreen` (the
+        // same cross-tab hop `ComposeBotPickerSheet` and the Command Center
+        // use) goes through `pendingScreenNavigation` instead, so
+        // `FleetTabView` applies the owning-tab switch and the path append
+        // as one settled state change, never racing a NavigationLink's own
+        // optimistic push.
+        Button {
+            environment.requestScreen(.conversation(route, sessionID: nil, canonical: false))
+        } label: {
             Label("New Session", systemImage: "plus.circle.fill")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(theme.highlight)
@@ -272,7 +289,14 @@ public struct BotDetailView: View {
         } else {
             VStack(spacing: FleetTheme.spacingSm) {
                 ForEach(sessions ?? []) { session in
-                    NavigationLink(value: FleetScreen.conversation(route, sessionID: session.id)) {
+                    // Bug fix (B87 "Cannot open chat"): same cross-tab hop as
+                    // "New Session" above — `requestScreen` (not a raw
+                    // `NavigationLink`) so opening an existing session from
+                    // Bot Detail lands cleanly on its owning Chats stack.
+                    Button {
+                        environment.requestScreen(
+                            .conversation(route, sessionID: session.id, canonical: false))
+                    } label: {
                         SessionRowView(session: session)
                     }
                     .buttonStyle(.fleetPressable)
