@@ -1220,15 +1220,20 @@ enum ConversationHeaderChips {
                     - geometry.contentOffset.y
                     - geometry.visibleRect.height <= 64
             } action: { _, atBottom in
-                isAtBottomLatest = atBottom
+                // A delivered image changes row height without a user drag.
+                // Writing view state during that geometry pass feeds another
+                // SwiftUI layout update on iOS 26.5. Only a user-driven
+                // scroll may change follow state; programmatic growth keeps
+                // following the live transcript.
                 guard isUserInteractingWithScroll, !isProgrammaticFollow else { return }
+                if isAtBottomLatest != atBottom { isAtBottomLatest = atBottom }
                 // A drag usually STARTS at the live bottom, so the phase
                 // callback alone never sees "away from bottom"; the first
                 // non-bottom geometry update during a user-driven scroll is
                 // the explicit history escape (same rule as RoomChatView).
                 // Arriving back at the bottom under the user's own scroll
                 // re-follows and hides the floating Latest chevron.
-                followingLatest = atBottom
+                if followingLatest != atBottom { followingLatest = atBottom }
             }
             // B87 round 2: the user's own drag away from the bottom is the
             // ONLY thing that unfollows — a brand-new row, in-place
