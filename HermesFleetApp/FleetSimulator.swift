@@ -1770,6 +1770,9 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_ORDER"] == "streaming"
 
             func emitGenerationStart() {
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
+                    NSLog("HFInline fixture generation start")
+                }
                 // The live wire emits `tool.generating` BEFORE `tool.start`
                 // (P0-8 probe seq 66 vs 68) — mirrored exactly.
                 streamBox.yield(.toolGenerating(sessionID: sessionID, name: "image_generate"))
@@ -1793,6 +1796,9 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                         text: "generating (scripted)"))
                     try? await Task.sleep(for: .milliseconds(holdMs / 2))
                 }
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
+                    NSLog("HFInline fixture hold complete")
+                }
                 let failure = ProcessInfo.processInfo.environment["HERMES_FLEET_IMAGE_DEMO_FAIL"] == "1"
                 streamBox.yield(.toolComplete(
                     sessionID: sessionID, toolID: "t-img-1", name: "image_generate",
@@ -1800,6 +1806,9 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                     resultText: failure
                         ? #"{"success": false, "error": "scripted generation failure"}"#
                         : #"{"success": true, "image": "/home/u/.hermes/cache/images/scripted_generation.png", "modality": "text", "upscaled": false}"#))
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
+                    NSLog("HFInline fixture completion yielded")
+                }
             }
 
             // Tools-first: BOTH the start and the result precede

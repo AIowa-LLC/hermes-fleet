@@ -2350,6 +2350,9 @@ public final class ConversationViewModel {
             }
 
         case .toolComplete(_, _, let name, let summary, let resultText, _):
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1", name == "image_generate" {
+                NSLog("HFInline model completion received")
+            }
             let rowIndex = updateLastTool(name, generating: false, progress: summary)
             // Card D: a completed generation result becomes an inline artifact
             // on THIS row (dedupe by reference identity across replay/reconnect).
@@ -2359,6 +2362,9 @@ public final class ConversationViewModel {
                 // the artifact slot and can never overlap the image.
                 applyGenerationTransition(triggeredBy: event, onRowAt: rowIndex)
                 attachGeneratedImageCitations(toolName: name, resultText: resultText, toRowAt: rowIndex)
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1", name == "image_generate" {
+                    NSLog("HFInline model citation attached")
+                }
             }
 
         case .backgroundComplete(_, _, let text, _):

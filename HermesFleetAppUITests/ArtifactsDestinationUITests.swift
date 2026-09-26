@@ -147,6 +147,7 @@ final class ArtifactsDestinationUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_INLINE_TRACE"] = "1"
         // Keep the tool row stable while XCUITest resolves its accessibility
         // elements. Immediate completion races the transcript snapshot on
         // hosted simulators as the animation hands off to the delivered image.
