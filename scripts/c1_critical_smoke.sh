@@ -18,7 +18,7 @@ CRITICAL_SMOKE_TESTS=(
 # while keeping this runner compatible with the current Build 86 main tree.
 LATEST_ROOM_TEST="FOS8Accessibility/testGroupConversationOpensAtLatestWithDeepHistory"
 LATEST_ROOM_SOURCE="HermesFleetAppUITests/FOS8AccessibilityUITests.swift"
-if [ -f "$LATEST_ROOM_SOURCE" ] && rg -q '^[[:space:]]*func[[:space:]]+testGroupConversationOpensAtLatestWithDeepHistory\(' "$LATEST_ROOM_SOURCE"; then
+if [ -f "$LATEST_ROOM_SOURCE" ] && grep -Eq '^[[:space:]]*func[[:space:]]+testGroupConversationOpensAtLatestWithDeepHistory\(' "$LATEST_ROOM_SOURCE"; then
   CRITICAL_SMOKE_TESTS+=("$LATEST_ROOM_TEST")
 fi
 

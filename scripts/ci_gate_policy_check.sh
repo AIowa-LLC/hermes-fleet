@@ -68,7 +68,7 @@ fi
 SMOKE_TESTS="$(bash scripts/c1_critical_smoke.sh --list-tests)"
 EXPECTED_SMOKE_TESTS="F3Onboarding/testFreshInstallLandsOnOnboardingAsRootSurface U3TabNavigation/testBotsTabOpensFleetRoster HermesFleetHappyPath/testHappyPathGatewaysToConversationStreamedAnswer RoomChat/testHostedRoomOpenSendAndTranscriptRender"
 LATEST_ROOM_TEST="FOS8Accessibility/testGroupConversationOpensAtLatestWithDeepHistory"
-if rg -q '^[[:space:]]*func[[:space:]]+testGroupConversationOpensAtLatestWithDeepHistory\(' HermesFleetAppUITests/FOS8AccessibilityUITests.swift; then
+if grep -Eq '^[[:space:]]*func[[:space:]]+testGroupConversationOpensAtLatestWithDeepHistory\(' HermesFleetAppUITests/FOS8AccessibilityUITests.swift; then
   EXPECTED_SMOKE_TESTS="$EXPECTED_SMOKE_TESTS $LATEST_ROOM_TEST"
 fi
 [ "$SMOKE_TESTS" = "$EXPECTED_SMOKE_TESTS" ] || {
@@ -88,7 +88,7 @@ for selector in $SMOKE_TESTS; do
     *" $cls "*) : ;;
     *) echo "FAIL: critical smoke references unknown suite $cls" >&2; exit 1 ;;
   esac
-  if ! rg -q "^[[:space:]]*func[[:space:]]+${method}\\(" "HermesFleetAppUITests/${cls}UITests.swift"; then
+  if ! grep -Eq "^[[:space:]]*func[[:space:]]+${method}\\(" "HermesFleetAppUITests/${cls}UITests.swift"; then
     echo "FAIL: critical smoke references missing test ${cls}/${method}" >&2
     exit 1
   fi

@@ -138,7 +138,7 @@ if [ "$MODE" = tests ]; then
     [ "$found" -eq 1 ] || die "--tests class is not a deterministic CI suite: $cls"
     test_file="HermesFleetAppUITests/${cls}UITests.swift"
     [ -f "$test_file" ] || die "--tests source file not found: $test_file"
-    rg -q "^[[:space:]]*func[[:space:]]+${method}\\(" "$test_file" \
+    grep -Eq "^[[:space:]]*func[[:space:]]+${method}\\(" "$test_file" \
       || die "--tests method not found in ${test_file}: ${method}"
   done
 fi

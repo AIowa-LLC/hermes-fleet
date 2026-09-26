@@ -120,6 +120,9 @@ class RunnerContract(unittest.TestCase):
         shutil.copy2(ROOT / 'project.yml', self.root / 'project.yml')
         self.bin = self.root / 'bin'
         self.bin.mkdir()
+        unavailable_rg = self.bin / 'rg'
+        unavailable_rg.write_text('#!/bin/sh\nexit 127\n')
+        unavailable_rg.chmod(0o755)
         for name in ('xcrun', 'xcodebuild'):
             path = self.bin / name
             path.write_text(MOCK)
