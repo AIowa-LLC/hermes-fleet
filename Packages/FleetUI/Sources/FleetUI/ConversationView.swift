@@ -1142,11 +1142,24 @@ enum ConversationHeaderChips {
         #if DEBUG
         let scrollDiagnostic = ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"]
         if scrollDiagnostic == "no-follow" { return }
+        if scrollDiagnostic == "deferred-follow" {
+            Task { @MainActor in
+                await Task.yield()
+                performScrollToLive(id, proxy: proxy, animate: animate)
+            }
+            return
+        }
         #endif
+        performScrollToLive(id, proxy: proxy, animate: animate)
+    }
+
+    private func performScrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
         isProgrammaticFollow = true
         var shouldAnimate = animate && !reduceMotion
         #if DEBUG
-        if scrollDiagnostic == "no-animation" { shouldAnimate = false }
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"] == "no-animation" {
+            shouldAnimate = false
+        }
         #endif
         if shouldAnimate {
             withAnimation { proxy.scrollTo(id, anchor: .bottom) }

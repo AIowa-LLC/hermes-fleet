@@ -45,17 +45,17 @@ jobs:
             exit 1
           fi
           echo 'BUILD: succeeded'
-      - name: Compare suppressed follow with unanimated follow
+      - name: Compare suppressed follow with next-cycle follow
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
           overall=0
-          for variant in no-follow no-animation; do
+          for variant in no-follow deferred-follow; do
             case "$variant" in
               no-follow) method=testInlineImageWithoutAutoFollowDiagnostic ;;
-              no-animation) method=testInlineImageWithoutAnimatedFollowDiagnostic ;;
+              deferred-follow) method=testInlineImageWithDeferredFollowDiagnostic ;;
             esac
             echo "TEST: $variant, fresh app launch, no repetition or retry flags"
             bundle="$evidence/InlineVariant-$variant.xcresult"
