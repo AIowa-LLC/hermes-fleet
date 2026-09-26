@@ -169,12 +169,24 @@ final class ArtifactsDestinationUITests: XCTestCase {
         let generating = firstMatch(app, "fleet.conversation.imagegen.activity.row-2")
         XCTAssertTrue(generating.waitForExistence(timeout: 20),
                       "image generation must start inside the tool row")
-        let transcript = app.scrollViews["fleet.conversation.transcript"]
-        let citingToolRow = transcript.descendants(matching: .any)["fleet.conversation.row.row-2"]
+        let transcript = app.scrollViews["fleet.conversation.transcript"].firstMatch
+        let citingToolRow = transcript.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.row.row-2").firstMatch
         XCTAssertTrue(citingToolRow.waitForExistence(timeout: 20))
-        let inlineImage = citingToolRow.buttons["fleet.artifact.image.row-2.scripted_generation.png"].firstMatch
+        recordImageCheckpoint("inline-image-generating")
+
+        // Wait for the stable delivered-image control without repeatedly
+        // traversing an Any-type parent while the tool row is reconfigured.
+        // The complete identifier fixes both the citing row and artifact.
+        // Once delivered, separately prove the same control belongs to that
+        // tool row. Do not remove the ancestry, preview, or sharing assertions.
+        let imageIdentifier = "fleet.artifact.image.row-2.scripted_generation.png"
+        let inlineImage = transcript.buttons[imageIdentifier].firstMatch
         XCTAssertTrue(inlineImage.waitForExistence(timeout: 40),
                       "the generated image must render inline in the transcript")
+        recordImageCheckpoint("inline-image-delivered-before-ancestry-query")
+        XCTAssertTrue(citingToolRow.buttons[imageIdentifier].firstMatch.exists,
+                      "the delivered image must be a descendant of the citing tool row")
 
         // The scripted turn layout is user, tool, assistant; row-2 in the
         // exact image identifier proves the artifact is attached to the tool.
@@ -187,14 +199,15 @@ final class ArtifactsDestinationUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
 
-    /// Open the scripted workstation/default conversation through the real
-    /// navigation (Fleet → Manage Gateways → workstation → Bots → session).
+    /// Open the scripted conversation from the real cold-launch Bots roster.
+    /// This image regression does not need the unrelated drawer/Gateways tour;
+    /// that navigation remains covered by its own existing regression tests.
+    /// No auto-navigation or injected successful image replaces the real UI.
     private func openConversation(_ app: XCUIApplication) {
-        _ = UITabNavigation.openGatewaysTab(app)
-        tap(app.descendants(matching: .any)["fleet.gateways.row.workstation"])
-        UITabNavigation.openGatewayBots(app, gateway: "workstation")
-        tap(app.descendants(matching: .any)["fleet.roster.row.workstation#default"])
-        tap(app.descendants(matching: .any)["fleet.bot-detail.sessions.row.workstation.default.s1"])
+        tap(app.descendants(matching: .any)
+            .matching(identifier: "fleet.roster.row.workstation#default").firstMatch)
+        tap(app.descendants(matching: .any)
+            .matching(identifier: "fleet.bot-detail.sessions.row.workstation.default.s1").firstMatch)
 
         let composer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 15))
@@ -203,6 +216,14 @@ final class ArtifactsDestinationUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.2)
         }
         XCTAssertTrue(composer.isEnabled, "composer should enable after session open")
+    }
+
+    private func recordImageCheckpoint(_ name: String) {
+        // Screen capture does not require the failing nested element query.
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func tap(_ element: XCUIElement) {
