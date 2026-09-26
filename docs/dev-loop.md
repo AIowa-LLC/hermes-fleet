@@ -21,12 +21,12 @@ release/deep validation. A failure in a nonblocking workflow remains a failure.
 
 `scripts/c1_ui_preflight.sh` selects suites from the actual PR or merge-group
 base, not from a stale local branch or another build. CI partitions the selected
-suites over four jobs. All four must succeed; failure or cancellation cannot be
+suites over twelve smaller jobs, with at most six running concurrently. All must succeed; failure or cancellation cannot be
 converted into a successful aggregate.
 
 The former 12-suite cap and fallback to two CORE journeys are removed. Every
-selected suite is assigned exactly once. `c1_ui_partition.py` balances by source
-test-method count, a deterministic heuristic, not a claim of measured duration.
+selected suite is assigned exactly once. `c1_ui_partition.py` balances by the canonical historical suite
+runtime weights. These are balancing inputs, not completion-time promises.
 
 Shared FleetCore, networking, persistence, security, dependency manifests/lock
 files, and composition-root changes select the complete deterministic inventory.
@@ -38,7 +38,7 @@ longer inherit the entire suite automatically.
 
 ```sh
 bash scripts/c1_ui_preflight.sh --base origin/main --print
-bash scripts/c1_ui_preflight.sh --base origin/main --shard 1 --shards 4 --print
+bash scripts/c1_ui_preflight.sh --base origin/main --shard 1 --shards 12 --print
 bash scripts/c1_ui_preflight_test.sh
 ```
 
@@ -153,3 +153,18 @@ The allowlist permits only scripts, workflows, documentation, AGENTS.md, and
 the release ledger to differ. This checks source preservation, not archive
 provenance or product correctness. The reported public release is not a waiver
 of required tests on the integrated candidate.
+
+## Broad catch-up timeout correction
+
+Run 36223033127 selected all 59 deterministic suites. The original four
+method-count-balanced partitions assigned 14-15 suites per job; three hit the
+75-minute limit. Forty-nine suites completed, while ten did not complete.
+The saved raw logs also contained failed image-test attempts, so timeout is not
+evidence that the remaining product checks would pass.
+
+The revised preflight retains the same 75-minute job limit and complete suite
+selection, but splits the work into twelve runtime-weighted partitions with a
+six-job concurrency cap. Queue time and total suite work still exist. This is
+not a blanket timeout extension or permission to skip unfinished regressions.
+Focused reproduction of the image and deep-history checks remains separate
+from this scheduling correction.
