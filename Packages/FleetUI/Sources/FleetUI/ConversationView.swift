@@ -68,6 +68,12 @@ public enum ConversationOpenPolicy {
 /// FleetUI depends only on FleetCore seams; the transport module is wired by
 /// the app composition root (M0 hard guard).
 public struct ConversationView: View {
+    private struct FollowSignature: Equatable {
+        let id: String
+        let textCount: Int
+        let detailCount: Int
+        let isStreaming: Bool
+    }
     @Environment(\.fleetTheme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openFleetDrawer) private var openDrawer
@@ -1338,8 +1344,13 @@ enum ConversationHeaderChips {
             // WITHOUT animation: this can fire on every streamed token, and
             // a spring animation replaying per-token would itself jank.
             .onChange(of: model.transcript.last.map {
-                "\($0.id)#\($0.text.count)#\($0.detail?.count ?? 0)#\($0.isStreaming)"
-            }) { _, _ in
+                FollowSignature(id: $0.id, textCount: $0.text.count,
+                                detailCount: $0.detail?.count ?? 0, isStreaming: $0.isStreaming)
+            }) { old, new in
+                // A new row is already followed by the identity observer above.
+                // Calling scrollTo twice in this same update re-enters the
+                // image row's layout pass on iOS 26.5.
+                guard old?.id == new?.id else { return }
                 guard followingLatest, let last = model.transcript.last else { return }
                 scrollToLive(last.id, proxy: proxy, animate: false)
             }

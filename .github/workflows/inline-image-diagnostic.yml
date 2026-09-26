@@ -45,16 +45,16 @@ jobs:
             exit 1
           fi
           echo 'BUILD: succeeded'
-      - name: Test follow after image layout settles
+      - name: Test single follow per row transition
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
           overall=0
-          for variant in delayed-follow; do
+          for variant in single-follow; do
             case "$variant" in
-              delayed-follow) method=testInlineImageWithDelayedFollowDiagnostic ;;
+              single-follow) method=testGeneratedImageRendersInlineInTheCitingToolRow ;;
             esac
             echo "TEST: $variant, fresh app launch, no repetition or retry flags"
             bundle="$evidence/InlineVariant-$variant.xcresult"
