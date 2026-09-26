@@ -143,11 +143,26 @@ final class ArtifactsDestinationUITests: XCTestCase {
     /// media path (`HERMES_FLEET_IMAGE_DEMO=1`); the retrieved image must land
     /// INSIDE the citing tool row's bubble, and tapping it opens the preview.
     func testGeneratedImageRendersInlineInTheCitingToolRow() {
+        runInlineImageFlow()
+    }
+
+    func testInlineImageWithoutAutoFollowDiagnostic() {
+        runInlineImageFlow(scrollDiagnostic: "no-follow")
+    }
+
+    func testInlineImageWithoutGeometryObservationDiagnostic() {
+        runInlineImageFlow(scrollDiagnostic: "no-geometry")
+    }
+
+    private func runInlineImageFlow(scrollDiagnostic: String? = nil) {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
         app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO"] = "1"
         app.launchEnvironment["HERMES_FLEET_INLINE_TRACE"] = "1"
+        if let scrollDiagnostic {
+            app.launchEnvironment["HERMES_FLEET_INLINE_SCROLL_DIAG"] = scrollDiagnostic
+        }
         // Keep the tool row stable while XCUITest resolves its accessibility
         // elements. Immediate completion races the transcript snapshot on
         // hosted simulators as the animation hands off to the delivered image.

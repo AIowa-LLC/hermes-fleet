@@ -45,40 +45,48 @@ jobs:
             exit 1
           fi
           echo 'BUILD: succeeded'
-      - name: Run one case, then two fresh-launch checks after a pass
+      - name: Compare auto-follow and geometry observation in separate launches
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
-          for attempt in 1 2 3; do
-            echo "TEST: attempt $attempt, fresh app launch, no repetition or retry flags"
-            bundle="$evidence/InlineAttempt-$attempt.xcresult"
-            xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR" -derivedDataPath "$evidence/DerivedData" -skipMacroValidation test-without-building -resultBundlePath "$bundle" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test-$attempt.log" 2>&1
+          overall=0
+          for variant in no-follow no-geometry; do
+            case "$variant" in
+              no-follow) method=testInlineImageWithoutAutoFollowDiagnostic ;;
+              no-geometry) method=testInlineImageWithoutGeometryObservationDiagnostic ;;
+            esac
+            echo "TEST: $variant, fresh app launch, no repetition or retry flags"
+            bundle="$evidence/InlineVariant-$variant.xcresult"
+            xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR" -derivedDataPath "$evidence/DerivedData" -skipMacroValidation test-without-building -resultBundlePath "$bundle" "-only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/$method" > "$evidence/test-$variant.log" 2>&1
             status=$?
-            printf '%s\n' "$status" > "$evidence/test-$attempt-exit.txt"
-            echo "TEST: attempt $attempt process exit $status"
-            tail -18 "$evidence/test-$attempt.log"
+            printf '%s\n' "$status" > "$evidence/test-$variant-exit.txt"
+            echo "TEST: $variant process exit $status"
+            tail -18 "$evidence/test-$variant.log"
             if [[ -d "$bundle" ]]; then
-              xcrun xcresulttool get test-results summary --path "$bundle" --compact > "$evidence/summary-$attempt.json" || true
-              xcrun xcresulttool get test-results tests --path "$bundle" --compact > "$evidence/tests-$attempt.json" || true
-              xcrun xcresulttool export attachments --path "$bundle" --output-path "$evidence/attachments-$attempt" > "$evidence/attachment-export-$attempt.log" 2>&1 || true
+              xcrun xcresulttool get test-results summary --path "$bundle" --compact > "$evidence/summary-$variant.json" || true
+              xcrun xcresulttool get test-results tests --path "$bundle" --compact > "$evidence/tests-$variant.json" || true
+              xcrun xcresulttool export attachments --path "$bundle" --output-path "$evidence/attachments-$variant" > "$evidence/attachment-export-$variant.log" 2>&1 || true
             fi
-            if [[ ! -f "$evidence/summary-$attempt.json" || ! -f "$evidence/tests-$attempt.json" ]]; then
-              echo "RESULT: attempt $attempt missing complete result evidence"
-              exit 1
+            if [[ ! -f "$evidence/summary-$variant.json" || ! -f "$evidence/tests-$variant.json" ]]; then
+              echo "RESULT: $variant missing complete result evidence"
+              overall=1
+              xcrun simctl terminate "$SIMULATOR" com.aiowa.hermesfleet >/dev/null 2>&1 || true
+              continue
             fi
-            python3 scripts/c1_xcresult_parse.py --summary "$evidence/summary-$attempt.json" --tests "$evidence/tests-$attempt.json" --requested ArtifactsDestinationUITests --expect-case 'testGeneratedImageRendersInlineInTheCitingToolRow()' > "$evidence/parsed-$attempt.txt"
+            python3 scripts/c1_xcresult_parse.py --summary "$evidence/summary-$variant.json" --tests "$evidence/tests-$variant.json" --requested ArtifactsDestinationUITests --expect-case "$method()" > "$evidence/parsed-$variant.txt"
             parse_status=$?
-            read -r count failures complete present recovered < "$evidence/parsed-$attempt.txt"
-            echo "RESULT: attempt=$attempt exit=$status cases=$count failures=$failures complete=$complete present=$present recovered=$recovered parse_exit=$parse_status"
-            xcrun simctl spawn "$SIMULATOR" log show --style compact --last 5m --predicate 'process == "HermesFleetApp" AND (eventMessage CONTAINS "HFInline" OR eventMessage CONTAINS "OnScrollGeometryChange Modifier")' > "$evidence/app-events-$attempt.log" 2>&1 || true
+            read -r count failures complete present recovered < "$evidence/parsed-$variant.txt"
+            echo "RESULT: variant=$variant exit=$status cases=$count failures=$failures complete=$complete present=$present recovered=$recovered parse_exit=$parse_status"
+            xcrun simctl spawn "$SIMULATOR" log show --style compact --last 5m --predicate 'process == "HermesFleetApp" AND (eventMessage CONTAINS "HFInline" OR eventMessage CONTAINS "OnScrollGeometryChange Modifier")' > "$evidence/app-events-$variant.log" 2>&1 || true
             if [[ "$status" -ne 0 || "$parse_status" -ne 0 || "$count" -ne 1 || "$failures" -ne 0 || "$complete" -ne 1 || "$present" -ne 1 || "$recovered" -ne 0 ]]; then
-              exit 1
+              overall=1
             fi
             xcrun simctl terminate "$SIMULATOR" com.aiowa.hermesfleet >/dev/null 2>&1 || true
           done
-          echo 'TEST: all three fresh-launch executions passed'
+          echo "TEST: isolation comparison complete, overall=$overall"
+          exit "$overall"
       - name: Preserve private diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,7 +96,7 @@ jobs:
             ${{ runner.temp }}/inline-diagnostic/*.txt
             ${{ runner.temp }}/inline-diagnostic/*.log
             ${{ runner.temp }}/inline-diagnostic/*.json
-            ${{ runner.temp }}/inline-diagnostic/InlineAttempt-*.xcresult/
+            ${{ runner.temp }}/inline-diagnostic/InlineVariant-*.xcresult/
             ${{ runner.temp }}/inline-diagnostic/attachments-*/
           retention-days: 7
           if-no-files-found: warn

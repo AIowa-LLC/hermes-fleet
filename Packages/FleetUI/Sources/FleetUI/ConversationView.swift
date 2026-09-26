@@ -1139,6 +1139,9 @@ enum ConversationHeaderChips {
     /// last row) so a spring animation never replays on every delta; true
     /// only for a brand-new row arriving or an explicit "Latest" jump.
     private func scrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"] == "no-follow" { return }
+        #endif
         isProgrammaticFollow = true
         if animate && !reduceMotion {
             withAnimation { proxy.scrollTo(id, anchor: .bottom) }
@@ -1216,7 +1219,12 @@ enum ConversationHeaderChips {
             // Coming back to the bottom under a real drag re-follows (the
             // floating "Latest" chevron hides again).
             .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentSize.height
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"] == "no-geometry" {
+                    return true
+                }
+                #endif
+                return geometry.contentSize.height
                     - geometry.contentOffset.y
                     - geometry.visibleRect.height <= 64
             } action: { _, atBottom in
