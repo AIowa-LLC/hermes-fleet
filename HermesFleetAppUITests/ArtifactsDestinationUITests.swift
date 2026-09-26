@@ -154,6 +154,10 @@ final class ArtifactsDestinationUITests: XCTestCase {
         runInlineImageFlow(scrollDiagnostic: "no-geometry")
     }
 
+    func testInlineImageWithoutAnimatedFollowDiagnostic() {
+        runInlineImageFlow(scrollDiagnostic: "no-animation")
+    }
+
     private func runInlineImageFlow(scrollDiagnostic: String? = nil) {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"

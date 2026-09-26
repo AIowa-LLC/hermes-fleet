@@ -1140,10 +1140,15 @@ enum ConversationHeaderChips {
     /// only for a brand-new row arriving or an explicit "Latest" jump.
     private func scrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
         #if DEBUG
-        if ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"] == "no-follow" { return }
+        let scrollDiagnostic = ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_SCROLL_DIAG"]
+        if scrollDiagnostic == "no-follow" { return }
         #endif
         isProgrammaticFollow = true
-        if animate && !reduceMotion {
+        var shouldAnimate = animate && !reduceMotion
+        #if DEBUG
+        if scrollDiagnostic == "no-animation" { shouldAnimate = false }
+        #endif
+        if shouldAnimate {
             withAnimation { proxy.scrollTo(id, anchor: .bottom) }
         } else {
             proxy.scrollTo(id, anchor: .bottom)
