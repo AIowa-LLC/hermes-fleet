@@ -1,0 +1,92 @@
+name: Build 90 inline-image harness validation
+
+on:
+  push:
+    branches: [fix/build90-inline-ui-harness]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build90-inline-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  inline-image:
+    name: Inline image, independent attempt ${{ matrix.attempt }}
+    runs-on: macos-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        attempt: [1, 2, 3]
+    steps:
+      - name: Checkout exact harness revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the production source and test-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.dont_write_bytecode = True
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from build90_source_check import source_tree, differences
+          repo = Path.cwd()
+          source = source_tree(repo, 'dbb3fb9450b72a177100ac758950777649431353')
+          target = source_tree(repo, 'HEAD')
+          expected = ['HermesFleetAppUITests/ArtifactsDestinationUITests.swift']
+          actual = differences(source, target)
+          if not source or actual != expected:
+              raise SystemExit(f'Unexpected source delta: {actual}')
+          print(f'{len(source)-1} non-infrastructure entries unchanged; one reviewed UI test file differs.')
+          print('This is not the original all-source preservation claim; production inputs are unchanged.')
+          PY
+          git diff 5f565ff29d34a85f49b1fe53342b2eecee2a389a HEAD -- HermesFleetAppUITests/ArtifactsDestinationUITests.swift
+      - name: Run the single regression without retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/inline-image-evidence"
+          mkdir -p "$evidence"
+          sim_name=$(xcrun simctl list devices available | sed -nE 's/^[[:space:]]*(iPhone[^()]*) \(.*/\1/p' | head -1)
+          test -n "$sim_name"
+          destination="platform=iOS Simulator,name=$sim_name,OS=latest"
+          { git rev-parse HEAD; xcodebuild -version; printf 'destination=%s\nretries=0\n' "$destination"; } > "$evidence/provenance.txt"
+          xc=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp -destination "$destination" -derivedDataPath "$RUNNER_TEMP/InlineDerivedData" -skipMacroValidation)
+          if ! xcodebuild "${xc[@]}" build-for-testing > "$evidence/build.log" 2>&1; then
+            tail -60 "$evidence/build.log"
+            exit 1
+          fi
+          status=0
+          xcodebuild "${xc[@]}" test-without-building -test-iterations 1 -resultBundlePath "$evidence/InlineImage.xcresult" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test.log" 2>&1 || status=$?
+          tail -50 "$evidence/test.log"
+          test -d "$evidence/InlineImage.xcresult"
+          xcrun xcresulttool get test-results summary --path "$evidence/InlineImage.xcresult" --compact > "$evidence/summary.json"
+          xcrun xcresulttool get test-results tests --path "$evidence/InlineImage.xcresult" --compact > "$evidence/tests.json"
+          parsed=$(python3 scripts/c1_xcresult_parse.py --summary "$evidence/summary.json" --tests "$evidence/tests.json" --requested ArtifactsDestinationUITests --expect-case 'testGeneratedImageRendersInlineInTheCitingToolRow()')
+          read -r count failures complete present recovered <<< "$parsed"
+          printf 'exit=%s cases=%s failures=%s complete=%s present=%s recovered=%s\n' "$status" "$count" "$failures" "$complete" "$present" "$recovered"
+          test "$status" -eq 0 && test "$count" -eq 1 && test "$failures" -eq 0 && test "$complete" -eq 1 && test "$present" -eq 1 && test "$recovered" -eq 0
+      - name: Export captured screen evidence
+        if: always()
+        shell: bash
+        run: |
+          evidence="$RUNNER_TEMP/inline-image-evidence"
+          if [ -d "$evidence/InlineImage.xcresult" ]; then
+            xcrun xcresulttool export attachments --path "$evidence/InlineImage.xcresult" --output-path "$evidence/attachments" > "$evidence/attachment-export.log" 2>&1 || cat "$evidence/attachment-export.log"
+          fi
+      - name: Preserve all attempt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inline-image-harness-${{ matrix.attempt }}
+          path: ${{ runner.temp }}/inline-image-evidence/
+          retention-days: 7
+          if-no-files-found: warn
