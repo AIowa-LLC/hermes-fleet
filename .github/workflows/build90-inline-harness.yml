@@ -19,9 +19,10 @@ jobs:
     timeout-minutes: 25
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 1
       matrix:
-        attempt: [1, 2, 3]
+        # One runner first; expand reliability sampling only after real execution.
+        attempt: [1]
     steps:
       - name: Checkout exact harness revision
         uses: actions/checkout@v4
@@ -64,8 +65,9 @@ jobs:
             tail -60 "$evidence/build.log"
             exit 1
           fi
+          # A single execution uses no repetition flags. Xcode rejects a repetition count of one.
           status=0
-          xcodebuild "${xc[@]}" test-without-building -test-iterations 1 -resultBundlePath "$evidence/InlineImage.xcresult" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test.log" 2>&1 || status=$?
+          xcodebuild "${xc[@]}" test-without-building -resultBundlePath "$evidence/InlineImage.xcresult" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test.log" 2>&1 || status=$?
           tail -50 "$evidence/test.log"
           test -d "$evidence/InlineImage.xcresult"
           xcrun xcresulttool get test-results summary --path "$evidence/InlineImage.xcresult" --compact > "$evidence/summary.json"
