@@ -89,6 +89,7 @@ bash scripts/ci_gate_policy_contract_test.sh
 bash scripts/c1_ui_preflight_test.sh
 python3 scripts/c1_ui_runner_contract_test.py
 python3 scripts/c1_xcresult_parse_test.py
+bash scripts/c1_packages_contract_test.sh
 ```
 
 Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
@@ -118,3 +119,18 @@ release source tag after squash integration; record the new main SHA separately.
 
 No upload, public promotion, existing release-tag movement, automatic feature
 implementation, or claim of upstream parity is implied by this CI policy.
+
+## Package-runner migration
+
+The historical main package runner discarded assertion details and ignored the
+actual `swift test` exit code. The safer runner from the preserved newer source
+is now included in this CI-only migration, with exact expected counts for this
+main baseline: FleetCore 415, FleetNetworking 418, FleetPersistence 31, and
+FleetSecurity 37. Those counts are source-specific, not permanent limits.
+
+When reconciling the newer product source, preserve its corresponding counts
+and update them deliberately with test additions. Do not transplant historical
+counts onto a newer test inventory. A command failure, missing summary, partial
+count, or failed assertion cannot become green. Full package logs are retained
+and uploaded for successful and failed jobs, and assertion lines are printed
+before the summary. Five mocked Swift contract cases verify these rules.
