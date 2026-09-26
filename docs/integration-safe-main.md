@@ -1,82 +1,65 @@
-# Integration-safe main
+# Safe reconciliation of a validated release
 
-Hermes Fleet treats `main` as the only release-candidate source. A green pull
-request is not enough if another pull request can change the integration base
-before it merges.
+## Keep three facts separate
 
-## Merge contract
+- Release source: the exact commit used to produce the accepted binary.
+- Integration source: the combined candidate tested for a merge into main.
+- Distribution state: the archive/build actually uploaded and accepted for the
+  intended TestFlight audience.
 
-Every pull request targeting `main` follows this sequence:
+A successful unit run, clean working tree, archive export, or TestFlight upload
+alone does not prove all three. Record each with its own evidence.
 
-1. The pull request workflow runs the fast Fleet CI Gate: static guards,
-   package tests, hosted unit tests, and a focused UI preflight whose suite
-   subset is selected from the changed files (`scripts/c1_ui_preflight.sh`).
-   The complete five-shard matrix does not run for pull requests.
-2. The pull request is kept current with `main`; strict required-status-check
-   enforcement causes the gate to run again after `main` advances.
-3. The pull request enters GitHub's native merge queue. GitHub creates a
-   merge-group candidate containing the queued integration state.
-4. The `merge_group` event runs the complete authoritative C1 — static,
-   package, hosted-unit, and all five deterministic UI-shard jobs — against
-   that exact candidate.
-5. The required `CI Gate` check passes only when every dependency expected for
-   that event reports `success` and the job that must not run for that event
-   reports `skipped`; a failure, a cancellation, or substituted/missing
-   validation in either topology therefore blocks the queue.
-6. GitHub merges the candidate through the queue after the required checks and
-   configured thread-resolution requirements are satisfied. This solo-
-   maintainer policy does not require a second approving review or approval
-   from the last pusher.
+## One-time catch-up sequence
 
-The workflow is intentionally not path-filtered. A required aggregate check
-must not disappear for a docs-only change or any other unmatched path. The
-policy guard in `scripts/ci_gate_policy_check.sh` fails if the trigger or gate
-contract is weakened. Its concurrency policy may supersede ordinary PR
-refreshes, but never cancels a `merge_group` run. The serial queue's
-`check_response_timeout_minutes` is 240: the five UI jobs each have a
-75-minute ceiling, leaving explicit margin for macOS runner capacity while a
-candidate waits for its checks.
+1. Leave any active build checkout and existing artifacts untouched. Work in a
+   separate clone/worktree and inventory local branches before retiring any.
+2. Preserve the clean candidate commit remotely. Mark it as a candidate until
+   acceptance is complete; do not create a falsely verified release record.
+3. Land the CI-only Dev Loop v3 policy through the existing protected PR/queue
+   path. The required `CI Gate` and repository rules stay enabled. No admin
+   bypass, fabricated status, force-push, or temporary protection removal.
+4. Once the release candidate is accepted, create one authoritative reconciliation
+   PR for that accepted product state. Preserve historical release records;
+   do not replay every intermediate build as an independent release merge.
+5. Compare the candidate with the intended integration source. Audit app code,
+   resources, dependencies, generated project state, entitlements, privacy and
+   build configuration, not only version numbers or commit titles.
+6. Run the required gate on the actual combined candidate. For Build 87+ the
+   deep-history group-room latest-entry regression must pass. An ordinary-chat
+   scrolling fix is not evidence that the group-room defect is resolved.
+7. Merge only after complete required checks and resolution of actual blockers.
+   Record both the original release SHA/tag and the squash integration SHA.
+8. Retire superseded PRs and branches only after confirming all unique work and
+   evidence are accounted for. Never delete another worker's active branch.
 
-Dev Loop v2 (the pull request preflight) removes duplicated hosted validation
-before merge; it does not weaken the integration gate. The merge queue remains
-the only path into `main`, the five-shard matrix still runs on every queued
-candidate, and `scripts/ci_gate_policy_check.sh` fails if a pull request ever
-substitutes the full matrix for the preflight, if the preflight ever
-substitutes for the full matrix, or if either topology stops failing closed.
+## Current migration constraint
 
-## Main and release eligibility
+The migration started with Build 86 source on main, verified Build 87 source in
+PR #54, and subsequent local candidates. PR #54 records a real deep-history
+room-opening defect. Changing CI policy does not resolve that product defect or
+approve any later candidate. Recheck live repository and build evidence before
+performing reconciliation; this document is not a live status report.
 
-The active `protect-main` ruleset retains deletion and non-fast-forward
-protections and requires the `CI Gate` check, strict up-to-date enforcement,
-and the native merge queue. It has no bypass actors, requires zero approving
-reviews, and does not require last-push approval; resolved review threads and
-the other configured protections remain in force. Direct pushes and merges
-outside the queue are not the normal integration path.
+The CI-only change may land against the older main without rewriting the active
+release candidate. New validation policy is intentionally separate from product
+acceptance. Missing evidence means the next phase remains pending.
 
-If `main` is ever red after a merge, it is immediately non-releasable. The
-failure must be repaired and a new green `main` SHA established before any RC,
-archive, or TestFlight action. The release preflight in
-`docs/release-preflight.md` does not override this integration gate.
+## Acceptance record
 
-## Maintainer verification
+Record the source SHA, source tag, application version/build number, dependency
+and configuration identity, archive/IPA identity, upload destination and receipt,
+physical-device/Internal TestFlight acceptance, required hosted checks and their
+candidate SHAs, known issues, and explicit promotion authorization.
 
-The repository ruleset is GitHub-hosted configuration rather than a versioned
-file. Inspect it with:
+Private signing material, device identifiers, credentials, private endpoints,
+and personal filesystem paths must never appear in public evidence. Public
+records reference sanitized evidence rather than copying sensitive logs.
 
-```bash
-gh api repos/AIowa-LLC/hermes-fleet/rulesets/22489588
-```
+## Ongoing branch hygiene
 
-Verify that the returned active ruleset targets `refs/heads/main`, includes
-`required_status_checks` for `CI Gate` with
-`strict_required_status_checks_policy: true`, includes a `merge_queue` rule,
-and retains `deletion` and `non_fast_forward`. Verify that the pull-request
-rule has `required_approving_review_count: 0` and
-`require_last_push_approval: false`, that the queue response timeout is 240
-minutes, and that `bypass_actors` is empty before changing release policy.
-
-The merge-group proof for this remediation uses a disposable PR with a
-deterministic failure enabled only for `merge_group`; it is queued only long
-enough to observe the merge-group workflow and fail-closed `CI Gate`, then is
-removed/closed without merging and the temporary branch is deleted. Main's
-SHA is checked before and after the exercise.
+After catch-up, branch from synchronized main, integrate small changes promptly,
+and freeze a release candidate separately when needed. Release tags are stable;
+main can continue to receive validated work without pretending those commits are
+already in TestFlight. Use [upstream-compatibility.md](upstream-compatibility.md)
+to turn upstream changes into bounded, testable feature work.

@@ -90,8 +90,10 @@ def parse(
     tests: Any,
     requested: str,
     allowed_skips: set[str] | None = None,
+    expected_cases: set[str] | None = None,
 ) -> tuple[int, int, int, int, int]:
     allowed_skips = allowed_skips or set()
+    expected_cases = expected_cases or set()
     cases: OrderedDict[str, list[tuple[int, int | None, str]]] = OrderedDict()
     order = 0
     for node in walk(tests):
@@ -136,7 +138,9 @@ def parse(
             value = summary.get(key)
             if isinstance(value, int):
                 total = max(total, value)
-    complete = int(summary_result == "Passed" and total > 0)
+    actual_case_names = {case_key_from_result_key(key) for key in cases}
+    exact_selection = not expected_cases or actual_case_names == expected_cases
+    complete = int(summary_result == "Passed" and total > 0 and exact_selection)
     present = int(bool(cases))
     return executed, failures, complete, present, recovered
 
@@ -158,12 +162,24 @@ def main() -> int:
         default=[],
         help="stable test-case name that may be skipped on this destination",
     )
+    parser.add_argument(
+        "--expect-case",
+        action="append",
+        default=[],
+        help="require this exact selected test-case name (repeat for multiple cases)",
+    )
     args = parser.parse_args()
 
     try:
         summary = load_json(args.summary)
         tests = load_json(args.tests)
-        values = parse(summary, tests, args.requested, set(args.allow_skipped))
+        values = parse(
+            summary,
+            tests,
+            args.requested,
+            set(args.allow_skipped),
+            set(args.expect_case),
+        )
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as error:
         print(f"xcresult parse failure: {error}", file=sys.stderr)
         print("0 0 0 0 0")

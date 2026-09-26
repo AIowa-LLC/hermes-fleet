@@ -1,0 +1,43 @@
+name: Upstream feature compatibility
+description: Track a verified Hermes/Nous capability from contract to Fleet release.
+title: "compat: "
+body:
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Authoritative upstream evidence
+      description: Repository, release or exact commit, feature, and relevant protocol implementation. Do not include secrets or private endpoints.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Capability and compatibility contract
+      description: Request/response/events, capability detection or minimum gateway version, older-gateway fallback, streaming/cancellation, and error handling.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Smallest Fleet implementation
+      description: User-facing behavior, affected layers, security/approval implications, and explicit exclusions.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and release evidence
+      description: Synthetic fixtures, regression tests, relevant device/gateway checks, PR/candidate SHA, and eventual TestFlight build. Mark missing evidence as pending.
+    validations:
+      required: true
+  - type: checkboxes
+    id: stages
+    attributes:
+      label: Progress
+      options:
+        - label: Contract verified against authoritative upstream evidence
+        - label: Older or unsupported gateway behavior covered
+        - label: Implementation and regression tests complete
+        - label: Exact merge candidate passed required checks
+        - label: Exact build validated internally
+        - label: Distributed build recorded in release ledger

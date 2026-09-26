@@ -1,0 +1,62 @@
+name: Full UI Regression
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 8 * * *'
+
+concurrency:
+  # Deep runs are evidence for a particular source ref; do not cancel one
+  # because another validation run starts on the same ref.
+  group: ui-regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ui-shard:
+    name: Full UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
+    runs-on: macos-latest
+    # Deep validation retains a generous independent ceiling. Measure its
+    # actual runtime separately from the focused merge path.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+        shards: [5]
+    steps:
+      - name: Checkout selected source ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run full deterministic UI shard
+        run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
+      - name: Upload xcresults and xcodebuild logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcresults-full-ui-shard-${{ matrix.shard }}
+          path: |
+            /tmp/hermes-c1-results*/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  ui-regression-gate:
+    name: Full UI Regression Gate
+    needs: [ui-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every full-matrix shard to pass
+        env:
+          UI_MATRIX_RESULT: ${{ needs.ui-shard.result }}
+        run: |
+          echo "Full UI matrix result: $UI_MATRIX_RESULT"
+          if [ "$UI_MATRIX_RESULT" != "success" ]; then
+            echo "::error::Full deterministic UI matrix did not pass. Inspect shard logs and xcresult artifacts."
+            exit 1
+          fi
+          echo "Full deterministic UI matrix passed."

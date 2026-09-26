@@ -4,13 +4,14 @@
 # Usage:
 #   scripts/c1_ui_matrix.sh --all                  # every suite, serially (local full C1)
 #   scripts/c1_ui_matrix.sh --shard N --shards M   # shard N of M (CI parallel topology)
-#   scripts/c1_ui_matrix.sh --classes "A B C"      # explicit deterministic subset (focused PR preflight)
+#   scripts/c1_ui_matrix.sh --classes "A B C"      # explicit deterministic suite subset (focused preflight)
+#   scripts/c1_ui_matrix.sh --tests "A/testOne B/testTwo" # exact method-level subset
 #   scripts/c1_ui_matrix.sh --list-classes         # print the deterministic CI class inventory
 #   scripts/c1_ui_matrix.sh --audit                # print shard mapping + coverage proof, run nothing
 #
 # DESIGN NOTES (carried from c1_ci_validate.sh):
 #  - Each suite runs as its OWN xcodebuild test invocation with a class-level
-#    -only-testing selector (P1-7 fix: never mix a bare-bundle selector with
+#    -only-testing selector, after one build-for-testing (P1-7 fix: never mix a bare-bundle selector with
 #    class-level selectors in one invocation — xcodebuild silently drops the
 #    bare bundle).
 #  - The ENVIRONMENTAL live-gateway suites (real `hermes serve` / LAN /
@@ -20,10 +21,11 @@
 #    to HermesFleetAppUITests makes --audit (and every shard run) FAIL LOUDLY
 #    until it is added to UI_CLASSES (and, if it is environmental, to
 #    ENVIRONMENTAL_CLASSES). No suite can silently disappear.
-#  - --classes is used by the focused pull-request preflight
-#    (scripts/c1_ui_preflight.sh, Dev Loop v2). It selects a deterministic
-#    SUBSET of this same inventory and never forks it; the full five-shard
-#    matrix remains the authoritative merge_group gate.
+#  - --classes is used by the changed-area preflight, and --tests is used by
+#    the critical merge smoke (scripts/c1_ui_preflight.sh and
+#    scripts/c1_critical_smoke.sh, Dev Loop v3). Each selects a deterministic
+#    SUBSET of this inventory and never forks it; the full five-shard matrix
+#    remains available in the separate manual/nightly regression lane.
 set -u
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
@@ -83,7 +85,7 @@ audit() {
 shard_for_index() { echo $(( $1 % SHARDS + 1 )); }
 
 # --- argument parsing --------------------------------------------------------
-MODE=all; SHARD=1; SHARDS=5; CLASSES=""
+MODE=all; SHARD=1; SHARDS=5; CLASSES=""; TESTS=""; FAIL_FAST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) MODE=all ;;
@@ -91,7 +93,9 @@ while [ $# -gt 0 ]; do
     --shard) MODE=shard; SHARD="${2:?--shard needs a value}"; shift ;;
     --shards) SHARDS="${2:?--shards needs a value}"; shift ;;
     --classes) MODE=classes; CLASSES="${2:?--classes needs a value}"; shift ;;
+    --tests) MODE=tests; TESTS="${2:?--tests needs a value}"; shift ;;
     --list-classes) MODE=listclasses ;;
+    --fail-fast) FAIL_FAST=1 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -116,6 +120,28 @@ if [ "$MODE" = classes ]; then
     [ "$found" -eq 1 ] || die "--classes entry is not a deterministic CI suite: $wanted"
   done
 fi
+if [ "$MODE" = tests ]; then
+  [ -n "$TESTS" ] || die "--tests needs at least one Class/testMethod selector"
+  for selector in $TESTS; do
+    case "$selector" in
+      */*) ;;
+      *) die "--tests entry must be Class/testMethod: $selector" ;;
+    esac
+    cls="${selector%%/*}"
+    method="${selector#*/}"
+    case "$selector" in *"/"*"/"*) die "--tests entry must contain one slash: $selector" ;; esac
+    case "$method" in ''|*[!A-Za-z0-9_]*) die "invalid test method name: $method" ;; esac
+    found=0
+    for known in "${UI_CLASSES[@]}"; do
+      if [ "$cls" = "$known" ]; then found=1; break; fi
+    done
+    [ "$found" -eq 1 ] || die "--tests class is not a deterministic CI suite: $cls"
+    test_file="HermesFleetAppUITests/${cls}UITests.swift"
+    [ -f "$test_file" ] || die "--tests source file not found: $test_file"
+    grep -Eq "^[[:space:]]*func[[:space:]]+${method}\\(" "$test_file" \
+      || die "--tests method not found in ${test_file}: ${method}"
+  done
+fi
 
 audit  # every mode audits first — fail loudly before running anything
 
@@ -126,6 +152,11 @@ for i in "${!UI_CLASSES[@]}"; do
     all) SELECTED+=("${UI_CLASSES[$i]}") ;;
     shard) [ "$(shard_for_index "$i")" -eq "$SHARD" ] && SELECTED+=("${UI_CLASSES[$i]}") ;;
     classes) case " $CLASSES " in *" ${UI_CLASSES[$i]} "*) SELECTED+=("${UI_CLASSES[$i]}") ;; esac ;;
+    tests)
+      for selector in $TESTS; do
+        [ "${selector%%/*}" = "${UI_CLASSES[$i]}" ] && { SELECTED+=("${UI_CLASSES[$i]}"); break; }
+      done
+      ;;
   esac
 done
 
@@ -141,6 +172,10 @@ if [ "$MODE" = audit ]; then
   exit 0
 fi
 
+if [ "$MODE" = tests ]; then
+  echo "selected method-level smoke tests: $TESTS"
+fi
+
 # --- resolve simulator --------------------------------------------------------
 SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*//')
 [ -n "$SIM_NAME" ] || SIM_NAME="iPhone 16"
@@ -152,24 +187,55 @@ DD="$REPO/build/C1Ui"
 # explicitly bypass fingerprint validation; this does not bypass macro
 # execution or package resolution.
 XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation \
-    -retry-tests-on-failure -test-iterations 2 \
+    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation)
+RETRY=(-retry-tests-on-failure -test-iterations 2 \
     -test-repetition-relaunch-enabled YES)
 
 # --- run -----------------------------------------------------------------------
-rm -rf /tmp/hermes-c1-results
-mkdir -p /tmp/hermes-c1-results
+# Each invocation owns its evidence directory. Never delete another worker's
+# xcresults or reuse global numbered log files.
+RESULTS_ROOT=$(mktemp -d /tmp/hermes-c1-results.XXXXXX) || die "cannot create evidence directory"
+echo "UI evidence: $RESULTS_ROOT"
+{
+  git rev-parse HEAD
+  git status --short
+  xcodebuild -version
+  printf 'destination=%s\nmode=%s\n' "$DEST" "$MODE"
+} > "$RESULTS_ROOT/provenance.log" 2>&1
+# Build once, retain per-suite process isolation, and reuse the compiled test
+# products. Missing/failed builds are fatal, never successful empty tests.
+if ! xcodebuild "${XC[@]}" build-for-testing > "$RESULTS_ROOT/build.log" 2>&1; then
+  tail -40 "$RESULTS_ROOT/build.log"
+  die "build-for-testing failed; no UI tests executed"
+fi
 UI_FAIL=0; UI_TOTAL=0; N=0
 for cls in "${SELECTED[@]}"; do
-  N=$((N+1)); out="/tmp/c1_xctest_ui_${N}.log"
+  if [ "$FAIL_FAST" -eq 1 ] && [ "$UI_FAIL" -gt 0 ]; then
+    echo "UI-MATRIX: stopping after a blocking failure; remaining tests are NOT passed."
+    break
+  fi
+  N=$((N+1)); out="$RESULTS_ROOT/xcodebuild_${N}_${cls}.log"
   full="HermesFleetAppUITests/${cls}UITests"
-  bundle="/tmp/hermes-c1-results/${cls}UITests.xcresult"
-  summary_file="/tmp/hermes-c1-results/${cls}.summary.json"
-  tests_file="/tmp/hermes-c1-results/${cls}.tests.json"
+  bundle="$RESULTS_ROOT/${cls}UITests.xcresult"
+  summary_file="$RESULTS_ROOT/${cls}.summary.json"
+  tests_file="$RESULTS_ROOT/${cls}.tests.json"
   rm -rf "$bundle"
   rm -f "$summary_file" "$tests_file"
   printf 'C1 UI (%s) [%02d/%02d] %s ...\n' "$MODE" "$N" "${#SELECTED[@]}" "$full"
-  if ! xcodebuild "${XC[@]}" -resultBundlePath "$bundle" "-only-testing:$full" build test >"$out" 2>&1; then
+  only_testing=()
+  expected_cases=()
+  if [ "$MODE" = tests ]; then
+    for selector in $TESTS; do
+      [ "${selector%%/*}" = "$cls" ] || continue
+      method="${selector#*/}"
+      only_testing+=("-only-testing:${full}/${method}")
+      expected_cases+=("$method()")
+    done
+    [ "${#only_testing[@]}" -gt 0 ] || die "no method selectors resolved for $cls"
+  else
+    only_testing+=("-only-testing:$full")
+  fi
+  if ! xcodebuild "${XC[@]}" "${RETRY[@]}" -resultBundlePath "$bundle" "${only_testing[@]}" test-without-building >"$out" 2>&1; then
     UI_FAIL=$((UI_FAIL+1)); printf 'FAIL  UI %s FAILED or incomplete\n' "$cls"
     grep -E 'error:|failed|Executed|Test Suite' "$out" | tail -20; continue
   fi
@@ -183,13 +249,20 @@ for cls in "${SELECTED[@]}"; do
     --tests "$tests_file"
     --requested "${cls}UITests"
   )
+  if [ "$MODE" = tests ]; then
+    for expected_case in "${expected_cases[@]}"; do
+      parser_args+=(--expect-case "$expected_case")
+    done
+  fi
   # The iPad orientation smoke is intentionally skipped by the iPhone CI
   # destination. Keep that exception explicit: any other skipped test still
   # fails closed in the parser.
   if [ "$cls" = "U3TabNavigation" ]; then
     parser_args+=(--allow-skipped "testIPadLandscapePreservesRootNavigation()")
   fi
-  parsed=$(python3 scripts/c1_xcresult_parse.py "${parser_args[@]}")
+  if ! parsed=$(python3 scripts/c1_xcresult_parse.py "${parser_args[@]}"); then
+    UI_FAIL=$((UI_FAIL+1)); echo "FAIL  UI $cls result parser failed"; continue
+  fi
   read -r count failures complete present recovered <<EOF
 $parsed
 EOF

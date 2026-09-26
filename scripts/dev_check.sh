@@ -1,12 +1,13 @@
 #!/bin/bash
-# Dev Loop v2 — fast local development validation.
+# Dev Loop v3 — fast local development validation.
 #
 #   static guards -> simulator build -> package tests -> focused UI suites
 #   (selected from the working diff vs the base ref; never the full matrix)
 #
-# The hosted pull-request preflight runs the same selection; the merge queue
-# runs the complete five-shard C1 matrix as the authoritative integration
-# gate. Use `make ci` for the broad local gate.
+# Hosted pull-request and merge-group preflight use the same selection. The
+# merge queue also runs the fixed critical smoke; the complete five-shard C1
+# matrix is available in the separate manual/nightly regression lane. Use
+# `make ci` for the broad local gate.
 #
 # Usage:
 #   bash scripts/dev_check.sh [--base <ref>] [--skip-ui]

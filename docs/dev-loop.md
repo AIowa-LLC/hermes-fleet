@@ -1,93 +1,136 @@
-# Local development loop (Dev Loop v2)
+# Dev Loop v3: fast protected integration
 
-The development loop is optimized for fast local feedback and a fast hosted
-pull-request preflight. The merge queue remains the only authoritative
-integration gate: the exact queued candidate is always validated end to end
-before it can enter `main`.
+## Contract
 
-## Fast local loop
+`CI Gate` remains the required GitHub Actions check. Pull requests, the merge
+queue, force-push/deletion protection, and exact-candidate validation remain in
+place. This workflow change does not grant a bypass or authorize a release.
 
-1. Iterate on a feature branch and run the fast local check:
+| Event | Required validation |
+| --- | --- |
+| Pull request | Static/security/project guards, package tests, hosted unit tests, and changed-area UI preflight. |
+| Merge group | The same checks on the exact combined candidate, plus critical UI smoke. |
+| Push to main | Static guards, package tests, and hosted units as post-merge confirmation. |
+| Nightly/manual deep run | Complete deterministic UI inventory in five shards, with an independent `Full UI Regression Gate`. |
 
-   ```bash
-   make dev-check
-   ```
+The full UI inventory is not an unconditional dependency of every merge.
+It is still mandatory when selected by a broad changed area and available for
+release/deep validation. A failure in a nonblocking workflow remains a failure.
 
-   This runs, in order: static guards (XcodeGen drift, module boundary, theme
-   call-site, privacy manifest, public-safety, gitleaks), a simulator build,
-   the host package tests, and the focused UI suites selected from the working
-   diff. It never runs the complete UI matrix.
+## Changed-area coverage
 
-   Useful flags:
+`scripts/c1_ui_preflight.sh` selects suites from the actual PR or merge-group
+base, not from a stale local branch or another build. CI partitions the selected
+suites over four jobs. All four must succeed; failure or cancellation cannot be
+converted into a successful aggregate.
 
-   ```bash
-   bash scripts/dev_check.sh --base main   # diff against an explicit ref
-   bash scripts/dev_check.sh --skip-ui     # static + build + packages only
-   ```
+The former 12-suite cap and fallback to two CORE journeys are removed. Every
+selected suite is assigned exactly once. `c1_ui_partition.py` balances by source
+test-method count, a deterministic heuristic, not a claim of measured duration.
 
-   The broad local gate is unchanged: `make ci` runs the full C1 validation
-   serially.
+Shared FleetCore, networking, persistence, security, dependency manifests/lock
+files, and composition-root changes select the complete deterministic inventory.
+Feature-specific UI changes retain their mapped suites. Unmapped product files
+retain CORE journeys and require review of whether a more specific mapping is
+needed. New deterministic suites must be registered in the canonical inventory.
+A broad reconciliation PR can therefore still be expensive; routine changes no
+longer inherit the entire suite automatically.
 
-2. Optional physical-device dogfood, using the existing deployment scripts:
+```sh
+bash scripts/c1_ui_preflight.sh --base origin/main --print
+bash scripts/c1_ui_preflight.sh --base origin/main --shard 1 --shards 4 --print
+bash scripts/c1_ui_preflight_test.sh
+```
 
-   ```bash
-   bash scripts/u4_device.sh
-   ```
+## Critical merge smoke
 
-   Device deployment is environmental validation; see the script's usage for
-   its current flags and environment inputs.
+The reviewed method-level set covers fresh-install onboarding, Bots navigation,
+a streamed conversation, and hosted-room open/send/render. Build 87 and later
+also require `testGroupConversationOpensAtLatestWithDeepHistory`.
 
-3. Push and open the pull request. Hosted CI runs the fast preflight (below).
-   When it is green, enter the merge queue.
+The Build 86 integration baseline predates that test. The policy explicitly
+allows that migration baseline but rejects a Build 87+ candidate that omits the
+known regression. The smoke is not proof that all other product behavior works.
 
-4. The merge queue runs the complete authoritative C1 validation on the exact
-   queued candidate and merges only on a green `CI Gate`.
+```sh
+bash scripts/c1_critical_smoke.sh --list-tests
+bash scripts/c1_critical_smoke.sh
+```
 
-## What each hosted topology runs
+## Execution and evidence
 
-| Event | Static guards | Packages | Hosted units | UI | Required gate |
-| --- | --- | --- | --- | --- | --- |
-| `pull_request` | yes | yes | yes | focused preflight subset | `CI Gate`, fail-closed |
-| `merge_group` | yes | yes | yes | complete 5-shard matrix | `CI Gate`, fail-closed |
-| `push` to `main` | yes | yes | yes | complete 5-shard matrix | informational |
+The runner performs one `xcodebuild build-for-testing` per invocation, followed
+by isolated per-suite `test-without-building` processes. Method-level selection
+must produce exactly the expected cases. Empty, missing, skipped without an
+explicit platform exception, malformed, or incomplete results fail closed.
 
-### Pull-request UI preflight
+Focused and critical runs stop after a conclusive suite failure. The nightly
+matrix continues collecting failures. Xcode may retry a failed test once;
+recovered failures are reported as `FLAKE_RECOVERED`, not hidden.
 
-The focused subset is computed by `scripts/c1_ui_preflight.sh` from the files
-changed against the pull request base:
+Each invocation creates a unique `/tmp/hermes-c1-results.*` directory containing
+build/test logs, xcresults, parsed summaries, and source/toolchain/destination
+metadata. Another worker's results are never deleted. CI retains evidence on
+success and failure, including successful retries.
 
-- test-suite class files map to their own suite;
-- product areas map to the deterministic suites that exercise them (the
-  ordered table lives in `scripts/c1_ui_preflight.sh`);
-- ambiguous or unmapped product changes fall back to a small conservative
-  core-journey set;
-- docs/tooling-only changes select no UI suites.
+Job ceilings are safety limits, not speed promises: static 15 minutes, packages
+25, units 40, focused partitions 75, critical smoke 45, deep shards 150. Measure
+actual runtimes before tightening these or changing shard balance. Hosted units
+and simulator startup can still dominate. Xcode/runner pinning requires separate
+validation; provenance records the selected environment.
 
-The selector is self-tested by `scripts/c1_ui_preflight_test.sh` in the static
-job, and every suite it can select is validated against the canonical
-inventory in `scripts/c1_ui_matrix.sh`. The preflight trades exhaustiveness
-for speed by design; it must never be treated as a substitute for the
-merge-group matrix. The merge-group gate is unchanged: static, package,
-hosted-unit, and all five UI shards run against every queued candidate.
+## Local tests of CI plumbing
 
-## Adding a UI suite
+These tests do not start a simulator and are not product acceptance evidence:
 
-1. Add the class to `HermesFleetAppUITests`.
-2. Classify it in `scripts/c1_ui_matrix.sh` (`UI_CLASSES` for deterministic
-   CI suites; `ENVIRONMENTAL_CLASSES` for live-gateway/local-only suites) —
-   the audit fails loudly until every class is classified exactly once.
-3. If the suite has a natural source-area trigger, add an ordered rule to
-   `scripts/c1_ui_preflight.sh`; otherwise the conservative core fallback
-   covers it.
+```sh
+bash scripts/ci_gate_policy_check.sh
+bash scripts/ci_gate_policy_contract_test.sh
+bash scripts/c1_ui_preflight_test.sh
+python3 scripts/c1_ui_runner_contract_test.py
+python3 scripts/c1_xcresult_parse_test.py
+bash scripts/c1_packages_contract_test.sh
+```
 
-## Safety properties
+Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
+method selection, missing evidence, and the known-regression requirement.
+Real GitHub-hosted validation remains required before merging the CI change.
 
-- The `CI Gate` check is fail-closed in both topologies: every expected
-  dependency must report `success`, and the job that must not run for an
-  event must report `skipped` (substituted validation fails the gate).
-- The workflow is intentionally not path-filtered — the required check never
-  disappears.
-- Merge-queue candidates are never cancelled by concurrency; the queue still
-  validates the exact integration candidate with the full matrix.
-- `scripts/ci_gate_policy_check.sh` (static job) fails if the topology above
-  is weakened.
+## Failure handling
+
+- Product regression: preserve the reproducer and fix it. Critical regressions
+  block release and remain represented in focused checks.
+- Infrastructure failure: retain diagnostics and rerun the affected job against
+  the same source. Do not label it a product pass.
+- Proven flaky harness: track a repair. Any temporary quarantine needs explicit
+  scope, evidence, an owner, and expiry; do not delete tests to obtain green.
+- Incomplete evidence: validation is incomplete, never implicitly successful.
+
+A previous successful job can only support the source/configuration it tested.
+A new commit or merge candidate needs its own required validation.
+
+## Integration is not distribution
+
+Follow [DEVELOPMENT.md](DEVELOPMENT.md) for branch ownership and
+[integration-safe-main.md](integration-safe-main.md) for reconciliation.
+A release record must connect exact source, dependencies and configuration,
+archive/IPA, TestFlight build number, and device acceptance. Preserve the original
+release source tag after squash integration; record the new main SHA separately.
+
+No upload, public promotion, existing release-tag movement, automatic feature
+implementation, or claim of upstream parity is implied by this CI policy.
+
+## Package-runner migration
+
+The historical main package runner discarded assertion details and ignored the
+actual `swift test` exit code. The safer runner from the preserved newer source
+is now included in this CI-only migration, with exact expected counts for this
+main baseline: FleetCore 415, FleetNetworking 418, FleetPersistence 31, and
+FleetSecurity 37. Those counts are source-specific, not permanent limits.
+
+When reconciling the newer product source, preserve its corresponding counts
+and update them deliberately with test additions. Do not transplant historical
+counts onto a newer test inventory. A command failure, missing summary, partial
+count, or failed assertion cannot become green. Full package logs are retained
+and uploaded for successful and failed jobs, and assertion lines are printed
+before the summary. Five mocked Swift contract cases verify these rules.
