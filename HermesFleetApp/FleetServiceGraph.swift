@@ -181,6 +181,9 @@ enum FleetServiceGraph {
         // The file-backed SwiftData cache doubles as the health-stats store
         // (H2): same non-secret persistence seam, one store file.
         let cache: any CacheStoring = cacheStore
+        // ADR-0012: the launch cache rides the SAME container (non-secret
+        // posture + file protection) with its own row models.
+        let launchCache: any FleetLaunchCaching = SwiftDataLaunchCacheStore(container: cacheStore.container)
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
@@ -195,6 +198,8 @@ enum FleetServiceGraph {
             conversationFactory: makeConversationFactory(credentialStore: credentialStore, pinStore: pinStore),
             kanbanWatcherFactory: makeKanbanWatcherFactory(credentialStore: credentialStore, pinStore: pinStore),
             managementSeamFactory: makeManagementSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
+            cronDashboardFactory: makeCronDashboardFactory(credentialStore: credentialStore, pinStore: pinStore),
+            artifactRetrievalFactory: makeArtifactRetrievalFactory(credentialStore: credentialStore, pinStore: pinStore),
             learningSeamFactory: makeLearningSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
             learningSnapshotStore: cacheStore,
             projectsSeamFactory: makeProjectsSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
@@ -226,7 +231,10 @@ enum FleetServiceGraph {
             },
             gatewaySessionInvalidatorAll: {
                 await FleetServiceGraph.sharedSessionStore.invalidateAll()
-            }
+            },
+            // ADR-0012: SwiftData-backed launch cache (same container as
+            // the cache store — non-secret posture, shared file protection).
+            launchCache: launchCache
         )
     }
 
@@ -272,34 +280,8 @@ enum FleetServiceGraph {
             }
             let urlSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
             let authenticator = makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore)
-            let strategy = gateway.authConfiguration.strategy
-            let httpCredential: @Sendable () async throws -> KanbanEventStreamClient.HTTPCredential = {
-                switch strategy {
-                case .none:
-                    return .none
-                case .loopbackToken, .sessionToken, .bearerToken:
-                    // The stored token authenticates HTTP plugin routes via
-                    // the X-Hermes-Session-Token header (loopback/legacy
-                    // token path; session/bearer deployments that gate HTTP
-                    // behind OAuth cookies surface as a 401 → the view's
-                    // error state, honestly).
-                    if let credential = try? await credentialStore.loadCredential(for: gateway.id) {
-                        return .sessionTokenHeader(credential.rawValue)
-                    }
-                    return .none
-                case .usernamePassword:
-                    // Fresh login per credential resolution (matches the
-                    // ticket-mint freshness discipline; snapshot fetches are
-                    // infrequent).
-                    guard let credential = try? await credentialStore.loadCredential(for: gateway.id),
-                          let username = credential.username else {
-                        throw KanbanBoardError.malformedResponse("no credential stored")
-                    }
-                    let cookie = try await PasswordLoginClient(baseURL: base, urlSession: urlSession).login(
-                        username: username, password: credential.rawValue)
-                    return .cookie(cookie)
-                }
-            }
+            let httpCredential = makeDashboardHTTPCredential(
+                gateway: gateway, credentialStore: credentialStore, pinStore: pinStore, urlSession: urlSession)
             return KanbanEventStreamClient(
                 gatewayID: gateway.id,
                 baseURL: base,
@@ -308,6 +290,88 @@ enum FleetServiceGraph {
                 urlSession: urlSession,
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore)
             )
+        }
+    }
+
+    /// The dashboard HTTP credential resolution shared by the kanban board
+    /// fetches and the Card B cron REST client (one seam per gateway, no
+    /// second credential path):
+    /// - loopback/session/bearer → the stored token as
+    ///   `X-Hermes-Session-Token`;
+    /// - username/password → a fresh `POST /auth/password-login` cookie per
+    ///   resolution (the ticket-mint freshness discipline).
+    nonisolated private static func makeDashboardHTTPCredential(
+        gateway: FleetGateway,
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring,
+        urlSession: URLSession
+    ) -> @Sendable () async throws -> KanbanEventStreamClient.HTTPCredential {
+        let strategy = gateway.authConfiguration.strategy
+        let base = gateway.endpoint
+        return {
+            switch strategy {
+            case .none:
+                return .none
+            case .loopbackToken, .sessionToken, .bearerToken:
+                // The stored token authenticates HTTP dashboard routes via
+                // the X-Hermes-Session-Token header (loopback/legacy token
+                // path; session/bearer deployments that gate HTTP behind
+                // OAuth cookies surface as a 401 → the view's error state,
+                // honestly).
+                if let credential = try? await credentialStore.loadCredential(for: gateway.id) {
+                    return .sessionTokenHeader(credential.rawValue)
+                }
+                return .none
+            case .usernamePassword:
+                guard let base,
+                      let credential = try? await credentialStore.loadCredential(for: gateway.id),
+                      let username = credential.username else {
+                    throw KanbanBoardError.malformedResponse("no credential stored")
+                }
+                let cookie = try await PasswordLoginClient(baseURL: base, urlSession: urlSession).login(
+                    username: username, password: credential.rawValue)
+                return .cookie(cookie)
+            }
+        }
+    }
+
+    /// Card B: real per-gateway dashboard cron seam — the `DashboardCronClient`
+    /// over the REST `/api/cron/jobs*` surface, using the SAME HTTP credential
+    /// resolution as the kanban REST fetches.
+    nonisolated private static func makeCronDashboardFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetCronDashboardFactory {
+        { gateway in
+            // F2: no compiled loopback default — see makeKanbanWatcherFactory.
+            guard let base = gateway.endpoint else {
+                return UnsupportedCronDashboard()
+            }
+            let urlSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
+            return DashboardCronClient(
+                gatewayID: gateway.id,
+                baseURL: base,
+                httpCredential: makeDashboardHTTPCredential(
+                    gateway: gateway, credentialStore: credentialStore, pinStore: pinStore, urlSession: urlSession),
+                urlSession: urlSession
+            )
+        }
+    }
+
+    /// Card D: real per-gateway artifact retriever — the authenticated
+    /// `GET /api/media` client (card C), using the SAME credential resolution
+    /// as the kanban/cron REST fetches. Inline generation media and the
+    /// Artifacts destination both go through this one seam.
+    nonisolated private static func makeArtifactRetrievalFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetArtifactRetrievalFactory {
+        { gateway in
+            // F2: no compiled loopback default — see makeKanbanWatcherFactory.
+            GatewayArtifactRetrieval.make(
+                gateway: gateway,
+                credentialStore: credentialStore,
+                pinStore: pinStore)
         }
     }
 

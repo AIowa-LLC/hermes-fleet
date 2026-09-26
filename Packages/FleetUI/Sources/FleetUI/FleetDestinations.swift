@@ -6,6 +6,12 @@ struct FleetChatEntry: Identifiable {
     let route: Route
     let session: SessionSummary
     var id: String { "\(route.id)/\(session.id)" }
+
+    /// The stable pin identity for this conversation (the same value the
+    /// drawer's pinned section and the pin store key on).
+    var pinIdentity: FleetConversationIdentity {
+        .individual(route: route, sessionID: session.id)
+    }
 }
 
 /// FOS-5 (SPEC §10) Compose: a source-qualified Bot chooser — every roster
@@ -67,12 +73,94 @@ struct ComposeBotPickerSheet: View {
     }
 }
 
+/// Device-level archive/hide store for the Chats list (Codex-style
+/// cleanup). The gateway seam has no archive RPC on this client yet —
+/// archive/delete are HONEST local hides: persisted, filter-aware, and
+/// never claimed as server deletions.
+enum FleetChatsArchiveStore {
+    private static let key = "fleet.chats.archived.v1"
+
+    static func hiddenIDs() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+    }
+
+    /// UI-test hygiene (HERMES_FLEET_NAV_RESET): archived rows must not leak
+    /// across suite runs.
+    static func resetForUITests() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    static func setHidden(_ entryID: String, hidden: Bool) {
+        var ids = hiddenIDs()
+        if hidden {
+            ids.insert(entryID)
+        } else {
+            ids.remove(entryID)
+        }
+        UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
+    }
+}
+
 struct FleetChatsView: View {
     @Environment(\.fleetTheme) private var theme
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
     @State private var showingCompose = false
+    @State private var pendingDeleteEntry: FleetChatEntry?
+    @State private var archivedNotice: String?
+
+    /// Codex-style cleanup: locally hidden conversations (archive). The
+    /// gateway has no archive RPC on this client's seam yet — archive is an
+    /// honest device-level hide, persisted; the hide rule itself is
+    /// `isLocallyHidden` below.
+    @State private var hiddenEntryIDs: Set<String> = []
+
+    /// The local archive hide rule — pure + static so tests pin it: a hidden
+    /// row stays hidden while the list is unfiltered, and comes back the
+    /// moment the user searches (every row in `entries` already matches the
+    /// query, so a search match is never hidden).
+    static func isLocallyHidden(entryID: String, hiddenEntryIDs: Set<String>, query: String) -> Bool {
+        query.isEmpty && hiddenEntryIDs.contains(entryID)
+    }
+
+    private func isLocallyHidden(_ entry: FleetChatEntry) -> Bool {
+        Self.isLocallyHidden(entryID: entry.id, hiddenEntryIDs: hiddenEntryIDs, query: query)
+    }
+
+    private var visibleEntries: [FleetChatEntry] {
+        entries.filter { !isLocallyHidden($0) }
+    }
+
+    private func togglePin(_ entry: FleetChatEntry) async {
+        if environment.isPinned(entry.pinIdentity) {
+            await environment.unpinConversation(entry.pinIdentity)
+        } else {
+            await environment.pinConversation(
+                identity: entry.pinIdentity,
+                title: entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title,
+                preview: SessionPreviewText.humanReadable(entry.session.preview),
+                authoritativeGatewayID: nil,
+                avatarKey: nil
+            )
+        }
+    }
+
+    /// Local hide (device-level). Honest copy: the conversation stays on the
+    /// gateway; it is hidden from THIS list until revealed.
+    private func archiveLocally(_ entry: FleetChatEntry) {
+        hiddenEntryIDs.insert(entry.id)
+        FleetChatsArchiveStore.setHidden(entry.id, hidden: true)
+        archivedNotice = "Archived on this device — \(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)"
+    }
+
+    private func deleteEntry(_ entry: FleetChatEntry) async {
+        // Delete mirrors archive's honest scope for now: a device-level hide
+        // with destructive styling (the gateway seam has no session.delete).
+        hiddenEntryIDs.insert(entry.id)
+        FleetChatsArchiveStore.setHidden(entry.id, hidden: true)
+        archivedNotice = "Removed from this device — \(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)"
+    }
 
     /// FOS-5 (SPEC §10): entries retained during a gateway outage even when
     /// the live roster no longer contains that Route — the ENTRY keeps its
@@ -109,12 +197,16 @@ struct FleetChatsView: View {
     /// Dogfood finding 1: cached/retained conversations this screen can still
     /// render — every non-canonical session on a route whose gateway is known
     /// (a session retained from a bot that dropped out of the live roster still
-    /// counts: FOS-5 outage retention must not regress).
+    /// counts: FOS-5 outage retention must not regress). Locally hidden rows
+    /// do NOT count: the screen cannot render them, so "usable sessions
+    /// remain" must not soften a refresh failure into the inline variant while
+    /// the list the user sees is empty.
     private var usableSessionCount: Int {
         environment.sessionsByRoute.reduce(0) { count, pair in
             guard environment.gateway(for: pair.key.gatewayID) != nil else { return count }
             return count + pair.value.filter {
                 !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
+                    && !isLocallyHidden(FleetChatEntry(route: pair.key, session: $0))
             }.count
         }
     }
@@ -148,12 +240,6 @@ struct FleetChatsView: View {
     var body: some View {
         List {
             Section {
-                Button {
-                    showingCompose = true
-                } label: {
-                    Label("Start a conversation", systemImage: "square.and.pencil")
-                        .foregroundStyle(theme.highlight)
-                }.accessibilityIdentifier("fleet.chats.new")
                 Picker("Gateway", selection: $gatewayID) {
                     Text("All gateways").tag(Optional<GatewayID>.none)
                     ForEach(environment.gateways) { gateway in
@@ -161,6 +247,23 @@ struct FleetChatsView: View {
                     }
                 }
                 .accessibilityIdentifier("fleet.chats.gateway-filter")
+            }
+            // ADR-0012 (W5): launch-stale pill — cached conversations are
+            // painted; the live refresh is running. Compact + inline.
+            if environment.isViewingCachedFleet && environment.isRefreshing {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text("Updating…")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.chats.launch-updating")
             }
             if !environment.loadingRoutes.isEmpty {
                 if entries.isEmpty && environment.sessionsByRoute.isEmpty {
@@ -196,30 +299,83 @@ struct FleetChatsView: View {
             // ranking until it is real). lastActive IS decoded+preserved on
             // SessionSummary for the future upgrade.
             Section("Newest sessions") {
-                ForEach(entries) { entry in
+                ForEach(visibleEntries) { entry in
                     NavigationLink(value: FleetScreen.conversation(entry.route, sessionID: entry.session.id)) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)
-                                .font(.headline).foregroundStyle(theme.textPrimary).lineLimit(2)
-                            let preview = SessionPreviewText.humanReadable(entry.session.preview)
-                            if !preview.isEmpty {
-                                Text(preview).font(.subheadline)
-                                    .foregroundStyle(theme.textSecondary).lineLimit(2)
+                        // Codex/ChatGPT-style row diet: single-line title +
+                        // one muted secondary line. No avatars, no previews,
+                        // no pin icons — pin/archive/delete live on swipes.
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(entry.session.title.isEmpty ? "Untitled conversation" : entry.session.title)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(theme.textPrimary)
+                                    .lineLimit(1)
+                                // Dogfood r4 (decision 7): plain dot, right
+                                // of the title — no count.
+                                if environment.isConversationUnread(route: entry.route, session: entry.session) {
+                                    Circle()
+                                        .fill(theme.highlight)
+                                        .frame(width: 8, height: 8)
+                                        .accessibilityLabel("Unread")
+                                        .accessibilityIdentifier("fleet.chats.unread.\(entry.id)")
+                                }
                             }
-                            Text("\(botDisplayName(entry.route)) · \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? entry.route.gatewayID.rawValue)")
-                                .font(.caption).foregroundStyle(theme.highlight)
-                            if isRetainedDuringOutage(entry) {
-                                Label("Last synced — bot offline from this phone", systemImage: "wifi.slash")
-                                    .font(.caption2).foregroundStyle(theme.textSecondary)
-                                    .accessibilityIdentifier("fleet.chats.retained.\(entry.id)")
+                            HStack(spacing: 4) {
+                                if isRetainedDuringOutage(entry) {
+                                    Image(systemName: "wifi.slash")
+                                        .font(.caption2)
+                                        .foregroundStyle(theme.textSecondary)
+                                        .accessibilityHidden(true)
+                                }
+                                Text("\(botDisplayName(entry.route)) · \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? entry.route.gatewayID.rawValue)")
+                                    .font(.caption)
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(1)
                             }
-                        }.padding(.vertical, 6)
-                    }.accessibilityIdentifier("fleet.chats.session.\(entry.id)")
+                            .accessibilityIdentifier("fleet.chats.retained.\(entry.id)")
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .accessibilityIdentifier("fleet.chats.session.\(entry.id)")
+                    // Swipe right (leading): pin / unpin — the existing pin
+                    // store, same identity as the drawer's pinned section.
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            Task { await togglePin(entry) }
+                        } label: {
+                            Label(
+                                environment.isPinned(entry.pinIdentity) ? "Unpin" : "Pin",
+                                systemImage: environment.isPinned(entry.pinIdentity) ? "pin.slash" : "pin"
+                            )
+                        }
+                        .tint(theme.highlight)
+                        .accessibilityIdentifier("fleet.chats.swipe.pin.\(entry.id)")
+                    }
+                    // Swipe left (trailing): archive + delete.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            pendingDeleteEntry = entry
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .accessibilityIdentifier("fleet.chats.swipe.delete.\(entry.id)")
+                        Button {
+                            archiveLocally(entry)
+                        } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
+                        .tint(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.chats.swipe.archive.\(entry.id)")
+                    }
                 }
-                if entries.isEmpty && environment.loadingRoutes.isEmpty && refreshFailure != .prominent {
+                if visibleEntries.isEmpty && environment.loadingRoutes.isEmpty && refreshFailure != .prominent {
                     // F4 (dogfood corrective pass): the empty state is
                     // filter-aware and never claims the user has no data when
                     // a filter merely hid usable conversations.
+                    // OCR re-review: the gate counts the rows the LIST renders
+                    // (`visibleEntries`) — with every row locally archived the
+                    // unfiltered `entries` check never fired, leaving a bare
+                    // "Newest sessions" header with no explanation.
                     let empty = FleetChatsPresentation.emptyState(
                         hasQuery: !query.isEmpty,
                         hasGatewayFilter: gatewayID != nil,
@@ -234,9 +390,60 @@ struct FleetChatsView: View {
                 }
             }
         }
+        // Surface id rides the List BEFORE overlays attach — a container id
+        // applied after .overlay wraps the overlays too and REPLACES every
+        // descendant identifier (QA-measured: the floating cluster surfaced
+        // as 'fleet.chats'). Order matters.
+        .accessibilityIdentifier("fleet.chats")
         .sheet(isPresented: $showingCompose) {
             ComposeBotPickerSheet(environment: environment)
         }
+        .alert(
+            "Delete conversation?",
+            isPresented: Binding(
+                get: { pendingDeleteEntry != nil },
+                set: { if !$0 { pendingDeleteEntry = nil } }
+            ),
+            presenting: pendingDeleteEntry
+        ) { entry in
+            Button("Delete", role: .destructive) {
+                Task { await deleteEntry(entry) }
+                pendingDeleteEntry = nil
+            }
+            .accessibilityIdentifier("fleet.chats.delete.confirm")
+            Button("Cancel", role: .cancel) { pendingDeleteEntry = nil }
+        } message: { _ in
+            Text("This removes the conversation from this device. It stays on the gateway.")
+        }
+        // Codex/ChatGPT-style floating action cluster: new chat (left) +
+        // settings (right), Liquid Glass, hovering OVER the list.
+        .overlay(alignment: .bottomTrailing) {
+            floatingActionCluster
+            .padding(.trailing, FleetTheme.spacingLg)
+            .padding(.bottom, FleetTheme.spacingMd)
+        }
+        // The archived/deleted notice floats bottom-leading, same layer.
+        .overlay(alignment: .bottomLeading) {
+            if let archivedNotice {
+                Text(archivedNotice)
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, FleetTheme.spacingMd)
+                    .padding(.vertical, FleetTheme.spacingSm)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.leading, FleetTheme.spacingLg)
+                    .padding(.bottom, FleetTheme.spacingMd)
+                    .task {
+                        try? await Task.sleep(for: .seconds(3))
+                        self.archivedNotice = nil
+                    }
+                    .accessibilityIdentifier("fleet.chats.archived.notice")
+            }
+        }
+        // No bar on scroll: the nav bar keeps NO background at the scroll
+        // edge (content scrolls under a permanently transparent edge).
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .onAppear { hiddenEntryIDs = FleetChatsArchiveStore.hiddenIDs() }
         .scrollContentBackground(.hidden).background(theme.background)
         // Dogfood finding 3: reserve bottom breathing room with a SwiftUI
         // safe-area API (design-token value) so the final card comes to rest
@@ -248,7 +455,42 @@ struct FleetChatsView: View {
         }
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")
         .refreshable { await refresh(force: true) }.task { await refresh() }
-        .accessibilityIdentifier("fleet.chats")
+    }
+
+    /// Floating Liquid Glass action cluster (Codex-inspired): new chat to
+    /// the LEFT of settings, bottom-trailing, hovering over the list.
+    /// ADR-0010: New Group lives on the Groups tab — the Chats FAB is a
+    /// direct New-conversation button (no menu wrapper needed).
+    private var floatingActionCluster: some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            Button {
+                showingCompose = true
+            } label: {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("New chat")
+            .accessibilityIdentifier("fleet.chats.new")
+
+            // Settings: navigates to the Settings tab.
+            Button {
+                environment.requestSettingsTab()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.fleetPressable)
+            .background(.ultraThinMaterial)
+            .accessibilityLabel("Settings")
+            .accessibilityIdentifier("fleet.chats.settings")
+        }
     }
 
     // MARK: - Refresh failure surfaces (dogfood finding 1)
@@ -327,6 +569,7 @@ struct FleetChatsView: View {
 
     private func refresh(force: Bool = false) async {
         if environment.rosterSnapshot == nil { await environment.refreshRoster() }
+        await environment.loadRooms()
         let routes = (environment.rosterSnapshot?.roster.allBots ?? []).map(\.route)
         guard !Task.isCancelled else { return }
         await environment.refreshSessions(routes: routes, force: force)
@@ -388,18 +631,18 @@ struct FleetCommandCenterResults {
             ))
         }
 
-        // Groups — room union (owner: Bots; room key is the identity).
-        for gateway in environment.gateways {
-            for room in environment.rooms(for: gateway.id) {
-                items.append(Item(
-                    kind: .group,
-                    title: room.name,
-                    subtitle: "Group · \(gateway.displayName)",
-                    keywords: "group room \(room.id.key) \(gateway.displayName)",
-                    id: "group:\(room.id.key)",
-                    screen: .room(room.id)
-                ))
-            }
+        // Groups — the verified unified room roster. Canonical identity, not
+        // display name, is the command-center key.
+        for room in environment.allRooms {
+            let host = environment.gateway(for: room.id.gatewayID)?.displayName ?? room.id.gatewayID.rawValue
+            items.append(Item(
+                kind: .group,
+                title: room.name,
+                subtitle: "Group · \(host)",
+                keywords: "group room \(room.id.key) \(host)",
+                id: "group:\(room.canonicalIdentity)",
+                screen: .room(room.id)
+            ))
         }
 
         // Gateways — direct object results (SPEC §13 addition).
@@ -451,9 +694,6 @@ struct FleetCommandCenter: View {
     let environment: AppEnvironment
     let navigate: (FleetScreen) -> Void
     let selectTab: (FleetTab) -> Void
-    /// FOS-3 (§12): Settings is reachable from Command Center as well as the
-    /// Fleet gear — the shell passes the sheet-presentation callback in.
-    var openSettings: (() -> Void)? = nil
     @State private var query = ""
     @Environment(\.dismiss) private var dismiss
     private func matches(_ text: String) -> Bool { query.isEmpty || text.localizedCaseInsensitiveContains(query) }
@@ -480,14 +720,19 @@ struct FleetCommandCenter: View {
                 Section("Go to") {
                     ForEach(FleetTab.allCases.filter { matches($0.label) }) { tab in
                         Button { dismiss(); selectTab(tab) } label: { Label(tab.label, systemImage: tab.systemImage) }
+                            .accessibilityIdentifier("fleet.command-center.goto.\(tab.rawValue)")
                     }
-                }
-                if let openSettings, matches("settings preferences appearance app lock") {
-                    Section {
-                        Button { dismiss(); openSettings() } label: {
-                            Label("Settings", systemImage: "gearshape")
+                    // Card D: Artifacts is a pushed Fleet-stack destination, not
+                    // a tab — the Command Center is the reachable entry on every
+                    // width (the compact drawer carries it too).
+                    if matches("Artifacts") {
+                        Button {
+                            dismiss()
+                            navigate(.artifacts)
+                        } label: {
+                            Label("Artifacts", systemImage: "photo.on.rectangle")
                         }
-                        .accessibilityIdentifier("fleet.command-center.settings")
+                        .accessibilityIdentifier("fleet.command-center.goto.artifacts")
                     }
                 }
                 resultSections(bots: results.filter { $0.kind == .bot },

@@ -28,6 +28,10 @@ public struct GatewayEvent: Sendable, Hashable {
         case backgroundComplete = "background.complete"
         case approvalRequest = "approval.request"
         case usageUpdate = "session.usage"
+        /// `session.title` — the gateway auto-titled (or renamed) the
+        /// session (`methods_session.py:1427`: `{session_id, title}`). Emitted
+        /// shortly after a new chat's first turn; the header adopts it live.
+        case sessionTitle = "session.title"
         case error = "error"
 
         /// Unknown event types are preserved for forward compatibility and
@@ -71,7 +75,12 @@ public struct GatewayEvent: Sendable, Hashable {
         self.rawType = raw
         self.type = EventType(rawValue: raw) ?? .unknown
         self.sessionID = params["session_id"]?.stringValue
-        self.seq = params["seq"]?.numberValue.map(Int.init)
+        // The 2^63 trap class: `Int(_:)` on an out-of-range Double kills the
+        // process, so every integer read of gateway JSON goes through
+        // `JSONValue.intValue` (bound owned by `JSONValue.boundedInt`). An
+        // unrepresentable `seq` reads as absent — the same shape as a missing
+        // key, never an invented sequence number.
+        self.seq = params["seq"]?.intValue
         self.payload = params["payload"]
     }
 

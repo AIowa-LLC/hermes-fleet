@@ -67,6 +67,7 @@ public struct SetupPromptSheet: View {
                         copyConfirmed ? "Copied — paste it in chat" : "Copy setup prompt",
                         systemImage: copyConfirmed ? "checkmark.circle.fill" : "doc.on.doc"
                     )
+                    .foregroundStyle(theme.onHighlight)
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)

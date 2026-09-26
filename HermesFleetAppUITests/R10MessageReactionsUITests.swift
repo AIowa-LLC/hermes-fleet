@@ -23,7 +23,12 @@ final class R10MessageReactionsUITests: XCTestCase {
     }
 
     private func tap(_ element: XCUIElement) {
-        XCTAssertTrue(element.isHittable || element.isEnabled, "element not hittable/enabled")
+        XCTAssertTrue(element.waitForExistence(timeout: 10), "element should exist before activation")
+        let deadline = Date().addingTimeInterval(10)
+        while !element.isHittable && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertTrue(element.isHittable, "element should be hittable before activation")
         element.tap()
     }
 

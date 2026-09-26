@@ -42,13 +42,18 @@ public struct HostedRoomRow: Hashable, Sendable {
         guard let data = membersJSON.data(using: .utf8),
               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
         return array.compactMap { o in
-            guard let name = o["name"] as? String ?? o["profile"] as? String else { return nil }
+            guard let name = o["display_name"] as? String
+                    ?? o["name"] as? String
+                    ?? o["profile"] as? String else { return nil }
+            let target = o["target"] as? [String: Any]
             return FleetRoomMember(
                 name: name,
-                handle: o["handle"] as? String,
-                connectionID: (o["target"] as? [String: Any])?["peer_id"] as? String ?? o["connection_id"] as? String,
+                handle: o["handle"] as? String ?? o["profile"] as? String,
+                connectionID: target?["installation_id"] as? String
+                    ?? target?["peer_id"] as? String
+                    ?? o["connection_id"] as? String,
                 connectionLabel: nil,
-                sourceScoped: (o["target"] as? [String: Any])?["kind"] as? String == "peer"
+                sourceScoped: target?["kind"] as? String == "peer"
             )
         }
     }
@@ -93,7 +98,11 @@ public struct HostedRoomEvent: Hashable, Sendable, Identifiable {
     public let kind: String
     public let actorKind: String
     public let actorID: String
+    public let actorDisplayName: String?
+    public let actorProfile: String?
+    public let actorConnectionID: String?
     public let text: String
+    public let reasonCode: String?
     public let createdAt: Double
 
     public var id: String { "\(roomID)#\(seq)" }
@@ -126,19 +135,33 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
 
     // MARK: - rooms
 
-    /// `groups.list` (single page).
-    public func listRooms(limit: Int = 200, includeDisbanded: Bool = false) async throws -> (rooms: [HostedRoomRow], nextOffset: Int?) {
+    /// `groups.list` page. The caller owns pagination because the gateway
+    /// returns an offset cursor rather than a token.
+    public func listRooms(
+        limit: Int = 200,
+        offset: Int = 0,
+        includeDisbanded: Bool = false
+    ) async throws -> (rooms: [HostedRoomRow], nextOffset: Int?) {
         let params: [String: JSONValue] = [
             "limit": .number(Double(limit)),
+            "offset": .number(Double(offset)),
             "include_disbanded": .bool(includeDisbanded),
         ]
         let result = try await request(method: "groups.list", params: .object(params))
         return try Self.decodeRoomList(result)
     }
 
-    /// `groups.create` — idempotent on (id, name, members).
-    public func createRoom(name: String, members: [JSONValue], profile: String?) async throws -> HostedRoomRow {
+    /// `groups.create` — idempotent on (id, name, members). The upstream
+    /// contract (contracts/groups_bot_relay.py GroupsCreateParams) REQUIRES
+    /// a client-supplied `room_id` — there is no server-side minting — so
+    /// every Fleet create path passes one explicitly: the legacy-continuation
+    /// flow reuses the projection's durable room id (identity
+    /// equality-by-construction), plain creates mint a Fleet id.
+    public func createRoom(
+        roomID: String, name: String, members: [JSONValue], profile: String?
+    ) async throws -> HostedRoomRow {
         var params: [String: JSONValue] = [
+            "room_id": .string(roomID),
             "name": .string(name),
             "members": .array(members),
         ]
@@ -167,13 +190,14 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         roomID: String,
         text: String,
         threadID: String? = nil,
-        profile: String? = nil
+        profile: String? = nil,
+        eventID: String? = nil
     ) async throws -> SentRoomEvent {
         var payload: [String: JSONValue] = ["text": .string(text)]
         if let threadID { payload["thread_id"] = .string(threadID) }
         var params: [String: JSONValue] = [
             "room_id": .string(roomID),
-            "event_id": .string(Self.mintEventID()),
+            "event_id": .string(eventID ?? Self.mintEventID()),
             "payload": .object(payload),
         ]
         if let profile { params["profile"] = .string(profile) }
@@ -181,7 +205,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         guard let event = result["event"]?.objectValue else {
             throw GroupsError.malformedPayload("groups.send missing 'event'")
         }
-        let seq = event["seq"]?.numberValue.map(Int.init) ?? 0
+        let seq = event["seq"]?.intValue ?? 0
         let eventID = event["event_id"]?.stringValue ?? ""
         return SentRoomEvent(roomID: roomID, seq: seq, eventID: eventID)
     }
@@ -225,7 +249,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         let result = try await request(method: "groups.stop", params: .object([
             "room_id": .string(roomID),
         ]))
-        return result["cancelled"]?.numberValue.map(Int.init) ?? 0
+        return result["cancelled"]?.intValue ?? 0
     }
 
     /// `groups.retry {room_id, task_id}`.
@@ -283,11 +307,18 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
     }
 
     // MARK: - decoding
+    //
+    // Every integer read below goes through `JSONValue.intValue`, whose bound
+    // (2^63-EXCLUSIVE, owned by `JSONValue.boundedInt`) keeps a buggy or
+    // hostile gateway from trapping the process through `Int(_:)`. An
+    // unrepresentable number reads exactly like a missing key at each site
+    // (`?? 0`, or an optional's nil) — never a clamped/invented seq, epoch or
+    // revision the caller would act on.
 
     static func decodeCapabilities(_ result: JSONValue) -> GroupsCapabilities {
         let roomLink = result["room_link"]?.objectValue
         return GroupsCapabilities(
-            protocolVersion: result["protocol_version"]?.numberValue.map(Int.init) ?? 0,
+            protocolVersion: result["protocol_version"]?.intValue ?? 0,
             driver: result["driver"]?.boolValue ?? false,
             persistentProcess: result["persistent_process"]?.boolValue ?? false,
             authorityGatewayID: result["authority_gateway_id"]?.stringValue ?? "",
@@ -295,7 +326,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
             roomLinkDisabledReason: roomLink?["reason"]?.stringValue,
             features: result["features"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             methods: result["methods"]?.arrayValue?.compactMap(\.stringValue) ?? [],
-            maxLogLimit: result["max_log_limit"]?.numberValue.map(Int.init) ?? 0
+            maxLogLimit: result["max_log_limit"]?.intValue ?? 0
         )
     }
 
@@ -303,7 +334,7 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         guard let rooms = result["rooms"]?.arrayValue else {
             throw GroupsError.malformedPayload("groups.list missing 'rooms'")
         }
-        let nextOffset = result["next_offset"]?.numberValue.map(Int.init)
+        let nextOffset = result["next_offset"]?.intValue
         let decoded = rooms.compactMap { try? Self.decodeRoom($0) }
         return (decoded, nextOffset)
     }
@@ -316,28 +347,38 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         return HostedRoomRow(
             roomID: roomID,
             name: o["name"]?.stringValue ?? "",
-            membersJSON: o["members"]?.stringValue ?? "[]",
+            membersJSON: Self.decodeMembersJSON(o["members"]),
             authorityGatewayID: o["authority_gateway_id"]?.stringValue ?? "",
-            authorityEpoch: o["authority_epoch"]?.numberValue.map(Int.init) ?? 0,
-            revision: o["revision"]?.numberValue.map(Int.init) ?? 0,
+            authorityEpoch: o["authority_epoch"]?.intValue ?? 0,
+            revision: o["revision"]?.intValue ?? 0,
             createdAt: o["created_at"]?.numberValue ?? 0,
             updatedAt: o["updated_at"]?.numberValue ?? 0,
             disbandedAt: o["disbanded_at"]?.numberValue,
-            latestSeq: o["latest_seq"]?.numberValue.map(Int.init)
+            latestSeq: o["latest_seq"]?.intValue
         )
+    }
+
+    /// Current gateways return members as a JSON array. Keep accepting the
+    /// older string-encoded shape so mixed gateway versions remain readable.
+    private static func decodeMembersJSON(_ value: JSONValue?) -> String {
+        if let string = value?.stringValue { return string }
+        guard let array = value?.arrayValue,
+              let data = try? JSONRPCCodec.encode(.array(array)),
+              let string = String(data: data, encoding: .utf8) else { return "[]" }
+        return string
     }
 
     static func decodeLogPage(_ result: JSONValue) throws -> RoomLogPage {
         guard let events = result["events"]?.arrayValue else {
             throw GroupsError.malformedPayload("groups.log missing 'events'")
         }
-        let cursor = result["cursor"]?.numberValue.map(Int.init) ?? 0
-        let latestSeq = result["latest_seq"]?.numberValue.map(Int.init) ?? 0
+        let cursor = result["cursor"]?.intValue ?? 0
+        let latestSeq = result["latest_seq"]?.intValue ?? 0
         let hasMore = result["has_more"]?.boolValue ?? false
         let authorityObj = result["authority"]?.objectValue
         let authority = RoomAuthority(
             gatewayID: authorityObj?["gateway_id"]?.stringValue ?? "",
-            epoch: authorityObj?["epoch"]?.numberValue.map(Int.init) ?? 0
+            epoch: authorityObj?["epoch"]?.intValue ?? 0
         )
         let decodedEvents: [HostedRoomEvent] = events.compactMap(Self.decodeEvent)
         return RoomLogPage(
@@ -356,12 +397,16 @@ public struct GatewayGroupsClient: GatewaySessionDisconnecting, Sendable {
         let actorObj = o["actor"]?.objectValue
         return HostedRoomEvent(
             roomID: o["room_id"]?.stringValue ?? "",
-            seq: o["seq"]?.numberValue.map(Int.init) ?? 0,
+            seq: o["seq"]?.intValue ?? 0,
             eventID: eventID,
             kind: kind,
             actorKind: actorObj?["kind"]?.stringValue ?? "",
             actorID: actorObj?["id"]?.stringValue ?? "",
+            actorDisplayName: actorObj?["display_name"]?.stringValue,
+            actorProfile: actorObj?["profile"]?.stringValue,
+            actorConnectionID: actorObj?["connection_id"]?.stringValue,
             text: o["payload"]?["text"]?.stringValue ?? "",
+            reasonCode: o["payload"]?["reason_code"]?.stringValue,
             createdAt: o["created_at"]?.numberValue ?? 0
         )
     }

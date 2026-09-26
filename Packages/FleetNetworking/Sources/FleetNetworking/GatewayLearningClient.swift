@@ -134,7 +134,9 @@ public struct GatewayLearningClient: GatewayLearningProviding, GatewaySessionDis
         var buckets: [LearningGraphBucket] = []
         for row in bucketRows {
             guard let o = row.objectValue else { continue }
-            let index = o["index"]?.numberValue.map(Int.init) ?? buckets.count
+            // `intValue` bounds the conversion (2^63-exclusive): an
+            // unrepresentable index degrades to the entry's position.
+            let index = o["index"]?.intValue ?? buckets.count
             let nodes = (o["nodes"]?.arrayValue ?? []).compactMap(Self.decodeNode)
             buckets.append(LearningGraphBucket(
                 index: index,
@@ -153,7 +155,7 @@ public struct GatewayLearningClient: GatewayLearningProviding, GatewaySessionDis
             lines: summaryLines,
             start: axis?["start"]?.stringValue ?? "oldest",
             end: axis?["end"]?.stringValue ?? "now",
-            totalCount: result["count"]?.numberValue.map(Int.init) ?? buckets.count)
+            totalCount: result["count"]?.intValue ?? buckets.count)
         return LearningGraph(buckets: buckets, summary: summary)
     }
 

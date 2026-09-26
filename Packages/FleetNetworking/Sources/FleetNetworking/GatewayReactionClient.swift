@@ -90,7 +90,10 @@ public struct GatewayReactionClient: ReactionProviding {
         guard let object = result.objectValue else {
             throw ReactionError.malformedResponse(detail: "message.react result was not an object")
         }
-        guard let rowNumber = object["row_id"]?.numberValue else {
+        // `intValue` bounds the conversion (2^63-exclusive): an unrepresentable
+        // row_id is not a usable id, so it fails exactly like a missing one —
+        // a typed malformedResponse, never `Int(_:)` on gateway JSON.
+        guard let rowID = object["row_id"]?.intValue else {
             throw ReactionError.malformedResponse(detail: "message.react result missing 'row_id'")
         }
         let reactions = (object["reactions"]?.arrayValue ?? []).compactMap { item -> MessageReaction? in
@@ -102,7 +105,7 @@ public struct GatewayReactionClient: ReactionProviding {
                 at: entry["at"]?.numberValue
             )
         }
-        return MessageReactionResult(rowID: String(Int(rowNumber)), reactions: reactions)
+        return MessageReactionResult(rowID: String(rowID), reactions: reactions)
     }
 
     /// Gateway error codes onto the typed vocabulary

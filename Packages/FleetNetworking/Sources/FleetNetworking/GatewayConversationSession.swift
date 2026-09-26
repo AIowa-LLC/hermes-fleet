@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -57,6 +57,11 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
     /// completion / dispatch RPCs; FleetUI sees only the FleetCore seam.
     public let slashCommands: any SlashCommandProviding
 
+    /// Dogfood r8 reasoning client bound to the shared transport
+    /// (config.get/config.set `reasoning`, session-scoped writes). Same
+    /// fail-closed-by-seam discipline as `approvals` / `tooling`.
+    public let reasoning: any ReasoningProviding
+
     public init(
         gatewayID: GatewayID,
         displayName: String,
@@ -78,6 +83,7 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         self.attachments = GatewayAttachmentClient(gatewayID: gatewayID, transport: transport)
         self.reactions = GatewayReactionClient(gatewayID: gatewayID, transport: transport)
         self.slashCommands = GatewaySlashCommandClient(gatewayID: gatewayID, transport: transport)
+        self.reasoning = GatewayReasoningClient(gatewayID: gatewayID, transport: transport)
         self.conversation = GatewayConversationClient(gatewayID: gatewayID, transport: transport)
         self.replay = GatewayReplayEngine(gatewayID: gatewayID, transport: transport, history: history)
     }

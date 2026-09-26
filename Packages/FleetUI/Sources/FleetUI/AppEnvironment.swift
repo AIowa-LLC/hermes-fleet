@@ -48,6 +48,26 @@ public typealias FleetManagementSeamFactory = @Sendable (
     _ gateway: FleetGateway
 ) -> any GatewayManagementProviding
 
+/// Card B — builds a per-gateway dashboard cron seam (`/api/cron/jobs*`).
+/// Same M0-guard construction as the management seam above: SwiftUI depends
+/// only on the FleetCore `CronDashboardProviding` seam — never on the
+/// transport module. Injected at the composition root: production builds a
+/// `DashboardCronClient` over the dashboard REST surface; DEBUG builds a
+/// scripted seam; tests inject doubles.
+public typealias FleetCronDashboardFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any CronDashboardProviding
+
+/// Card D — builds a per-gateway artifact retriever (`GET /api/media`).
+/// Same M0-guard construction as the seams above: SwiftUI depends only on
+/// the FleetCore `ArtifactRetrieving` seam — never on the transport module.
+/// Injected at the composition root: production builds
+/// `GatewayArtifactRetrieval.make`; DEBUG builds a scripted retriever; tests
+/// inject doubles.
+public typealias FleetArtifactRetrievalFactory = @Sendable (
+    _ gateway: FleetGateway
+) -> any ArtifactRetrieving
+
 /// Builds a per-gateway learning seam (R9-T7 — memory graph). Same M0-guard
 /// construction as the management seam above.
 public typealias FleetLearningSeamFactory = @Sendable (
@@ -167,6 +187,11 @@ public final class AppEnvironment {
     /// persisted.
     public let gatewayFormDraft = GatewayFormDraftStore()
 
+    /// P0-A "Report a Problem": the bounded in-memory fault ring the
+    /// diagnostics report renders. Details are redacted at record time and
+    /// again at render time; nothing here is persisted.
+    public let diagnosticsRecorder: DiagnosticsRecorder
+
     /// Per-gateway connection-test result, observable (§13 reachable /
     /// unreachable probe). Set only after `testConnection` completes; a
     /// gateway with no entry has never been tested this session.
@@ -175,6 +200,21 @@ public final class AppEnvironment {
 
     /// Gateways currently running a connection test (for a Testing… row).
     public private(set) var testingGatewayIDs: Set<GatewayID> = []
+
+    /// Dogfood r4: true when ANY loaded session is unread (menu-button
+    /// badge aggregate). Recomputed on every successful session-list read.
+    public private(set) var anyUnreadSessions = false
+
+    /// ADR-0012: TRUE from cache hydration at launch until the first
+    /// successful LIVE refresh settles — the temporal stale signal (launch
+    /// freshness). Distinct from FOS-5 outage markers: the fleet painted is
+    /// the last-known-good one, and a live refresh is in flight.
+    public private(set) var isViewingCachedFleet = false
+
+    /// Dogfood r4: OBSERVABLE last-read watermarks (key = entry id). Rows
+    /// read THIS dict — a raw UserDefaults read is untracked and would
+    /// never re-render a cleared dot. Persisted mirror: FleetUnreadStore.
+    public private(set) var readWatermarks: [String: Double] = FleetUnreadStore.watermarks()
 
     /// Sessions per bot route, fetched via the read-only `session.list` seam.
     /// Observable so Bot detail re-renders as a fetch resolves.
@@ -189,6 +229,8 @@ public final class AppEnvironment {
     public internal(set) var pendingBotChatNavigation: FleetScreen?
     /// FOS-5: one-shot screen push request (consumed by the shell).
     public internal(set) var pendingScreenNavigation: FleetScreen?
+    /// Codex-style floating gear request: the shell selects the Settings tab.
+    public var pendingSettingsTabRequest = false
 
     /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
     /// avatar/sections) over the per-gateway seam.
@@ -198,6 +240,10 @@ public final class AppEnvironment {
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
     /// 30-day retention, pruned when a gateway is removed. No secrets.
     public private(set) var continueIndex: FleetContinueIndexStore
+    /// Local conversation pins (drawer Pinned section). Local-only UserDefaults
+    /// store — no server pinning contract; loaded during `load()`.
+    public private(set) var pinnedConversations: [FleetConversationPin] = []
+    private let conversationPinStore: any ConversationPinStoring
 
     /// FOS-4 (SPEC §7 Needs You): attention items observed from OPENED
     /// rooms (driver pending approvals/retries/blocked) — keyed by gateway,
@@ -223,6 +269,12 @@ public final class AppEnvironment {
     /// when automatic authentication succeeds.
     @ObservationIgnored private var didHydrateEnvironment = false
 
+    /// Build-88 first-run invariant: "zero gateways" is authoritative only
+    /// after the durable record store has ANSWERED for this launch. Until
+    /// then the phase stays `.loading` — an unresolved registry must never
+    /// render the setup surface (the transient onboarding flash this guards).
+    @ObservationIgnored private var durableGatewayRestoreCompleted = false
+
     /// First-run gate (hydration model): the root shell distinguishes
     /// "registry not loaded yet" from "loaded and empty" so a brand-new user
     /// lands on setup BEFORE the normal tab UI, without a fragile
@@ -246,7 +298,13 @@ public final class AppEnvironment {
     /// the end of every `load()`/`reloadGateways()` settlement so the phase
     /// always reflects reality (add → configured; remove-the-last →
     /// unconfigured).
+    ///
+    /// Build-88 invariant: `.unconfigured` is settled ONLY once durable
+    /// gateway restoration has completed for this launch; while the durable
+    /// answer is unresolved the phase holds at `.loading` and the setup
+    /// surface cannot flash from an intermediate empty registry.
     private func settleHydrationPhase() {
+        guard durableGatewayRestoreCompleted else { return }
         hydrationPhase = gateways.isEmpty ? .unconfigured : .configured
     }
 
@@ -257,6 +315,41 @@ public final class AppEnvironment {
     /// Room rows per gateway (hosted + desktop legacy) from the room-source
     /// seam; empty until first load, honest absence otherwise.
     public private(set) var roomsByGateway: [GatewayID: [FleetRoom]] = [:]
+
+    /// Reconciled normal-list roster. Hosted rooms are the interactive
+    /// primary when a verified Desktop relationship exists; legacy-only
+    /// projections are intentionally excluded from this list.
+    public var allRooms: [FleetRoom] {
+        roomUnion.primaryRooms
+    }
+
+    /// Recoverable Desktop bounded-history projections. This is deliberately
+    /// separate from `allRooms` so historical records never masquerade as
+    /// interactive hosted rooms or create duplicate navigation rows.
+    public var legacyRoomArchive: [FleetRoom] {
+        roomUnion.legacyArchiveRooms
+    }
+
+    /// Source-preserving union for diagnostics and gateway health surfaces.
+    /// No caller should use this as the normal interactive room list.
+    public var sourceRoomRepresentations: [FleetRoom] {
+        roomUnion.allRooms
+    }
+
+    /// Device-local store for phone-bridged rooms (non-secret JSON).
+    private let bridgedStore: BridgedRooms.Store
+
+    private var roomUnion: FleetRoomUnion {
+        var union = FleetRoomUnion()
+        union.ingest(roomsByGateway.values.flatMap { $0 })
+        return union
+    }
+
+    /// Non-secret synchronization warnings keyed by canonical room identity.
+    /// A room can still be authoritative and interactive on its host while a
+    /// participant replica is temporarily behind; the warning prevents the
+    /// UI from implying that replication succeeded when it did not.
+    public private(set) var roomSyncWarnings: [String: String] = [:]
 
     /// F1: last-known GATEWAY-level `groups.create` capability (from the
     /// room source's `groups.capabilities` probe, persisted across
@@ -276,6 +369,23 @@ public final class AppEnvironment {
     /// shell observes this and opens the destination on the OWNING tab.
     public func requestScreen(_ screen: FleetScreen) {
         pendingScreenNavigation = screen
+    }
+
+    /// App Intents/deep links may arrive before the conversation view exists.
+    /// Validate the source-qualified identity here, then let the normal shell
+    /// open path resolve the live session and surface stale/deleted sessions
+    /// honestly rather than guessing another gateway or title.
+    public func openConversationFromShortcut(route: Route, sessionID: String, canonical: Bool) {
+        guard route.isRoutingSafe,
+              RoutingGuard.isValidSessionKey(sessionID) else { return }
+        pendingScreenNavigation = .conversation(
+            route, sessionID: sessionID, canonical: canonical)
+    }
+
+    /// Codex-style floating gear: request the Settings TAB from any surface
+    /// (the shell selects the tab; no screen push involved).
+    public func requestSettingsTab() {
+        pendingSettingsTabRequest = true
     }
 
     /// D03: whether (route, sessionID) is the canonical "Bot Chat" for the
@@ -314,6 +424,11 @@ public final class AppEnvironment {
     /// not need the UI re-pair surface and leave these nil.
     private let tlsPinStore: (any TLSPinStoring)?
     private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
+    /// ADR-0012: the launch cache (last-good roster + session lists).
+    /// Defaults to an in-memory store; the composition root injects the
+    /// SwiftData-backed concrete. Structurally non-secret.
+    private let launchCache: any FleetLaunchCaching
+
     private let connectionFactory: FleetConnectionFactory
     /// H2: connection-health accumulator (FleetCore seam; concrete
     /// `GatewayHealthStatsAccumulator` fed by the composition root's transport
@@ -337,6 +452,22 @@ public final class AppEnvironment {
     /// (the concrete `GatewayManagementClient` in production, scripted in
     /// DEBUG/tests).
     private let managementSeamFactory: FleetManagementSeamFactory?
+    /// Card B: the dashboard cron seam factory (nil in environments that
+    /// have no REST cron surface wired — the Cron destination fails closed).
+    private let cronDashboardFactory: FleetCronDashboardFactory?
+    /// Card D: per-gateway artifact retriever factory (nil in environments
+    /// with no artifact transport wired — inline generation media and the
+    /// Artifacts destination then report "unavailable", fail closed).
+    private let artifactRetrievalFactory: FleetArtifactRetrievalFactory?
+    /// Cached per-gateway artifact retrievers.
+    @ObservationIgnored private var artifactRetrievers: [GatewayID: any ArtifactRetrieving] = [:]
+    /// Card D: the shared retrieval store (per-reference dedupe + honest
+    /// expired/missing states). One per app: the same artifact rendered in a
+    /// transcript and in the Artifacts list shares one entry.
+    public let artifactImages = ArtifactImageStore()
+    /// Card D: the device-local observed-artifact library (Artifacts
+    /// destination content). Tests attach a hermetic temp-file store.
+    public private(set) var artifactLibrary: FleetArtifactLibrary
     /// True Bots Mode: per-gateway canonical-chat seam factory (the concrete
     /// `GatewayBotModeClient` in production, scripted in DEBUG/tests).
     private let botModeChatFactory: FleetBotModeChatFactory?
@@ -384,10 +515,24 @@ public final class AppEnvironment {
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
 
+    /// Dogfood r2 (2026-09-23): per-gateway auto-recovery. A watch loop per
+    /// gateway with recorded connection intent samples the transport state
+    /// and drives a bounded, policy-gated reconnect (spec §8.6) — a failed
+    /// connect or a post-open drop used to leave the row stuck ("Degraded"
+    /// that never heals). The watch is ALSO the only writer of a failure the
+    /// runtime did not itself record (a drop used to leave
+    /// `connectionStates` stale-`.connected`).
+    @ObservationIgnored private var connectionWatchTasks: [GatewayID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var reconnectRetryTasks: [GatewayID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var reconnectAttempts: [GatewayID: Int] = [:]
+
     /// Desired connection intent is deliberately distinct from live transport
     /// state. The store contains gateway IDs only; production backs it with
     /// UserDefaults and tests/simulator may keep it in-process.
     private let connectionIntent: ConnectionIntentStore
+    /// Bounded auto-recovery cadence (spec §8.6) — injectable so tests drive
+    /// the recovery loop at millisecond cadence.
+    private let recoveryTiming: ConnectionRecoveryTiming
     private let gatewaySessionInvalidator: FleetGatewaySessionInvalidator?
     private let gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll?
 
@@ -405,6 +550,10 @@ public final class AppEnvironment {
     /// gateway; created on first Cron/Skills pane use — the pane's
     /// transport survives view teardowns like a conversation session's).
     private var managementSeams: [GatewayID: any GatewayManagementProviding] = [:]
+
+    /// Card B: lazily-built dashboard cron seams per gateway (same lifetime
+    /// as the management seams; the Cron destination binds one on appear).
+    private var cronDashboards: [GatewayID: any CronDashboardProviding] = [:]
 
     /// R9-T7: lazily-built learning seams per gateway (same lifetime as
     /// the management seams).
@@ -437,6 +586,9 @@ public final class AppEnvironment {
         conversationFactory: FleetConversationFactory? = nil,
         kanbanWatcherFactory: FleetKanbanWatcherFactory? = nil,
         managementSeamFactory: FleetManagementSeamFactory? = nil,
+        cronDashboardFactory: FleetCronDashboardFactory? = nil,
+        artifactRetrievalFactory: FleetArtifactRetrievalFactory? = nil,
+        artifactLibrary: FleetArtifactLibrary? = nil,
         learningSeamFactory: FleetLearningSeamFactory? = nil,
         learningSnapshotStore: (any LearningGraphSnapshotStoring)? = nil,
         projectsSeamFactory: FleetProjectsSeamFactory? = nil,
@@ -450,10 +602,15 @@ public final class AppEnvironment {
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         seedRegistrations: [GatewayRegistration] = [],
+        bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
         connectionIntentDefaults: UserDefaults? = nil,
         gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
-        gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil
+        gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil,
+        conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
+        launchCache: (any FleetLaunchCaching)? = nil,
+        diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
+        recoveryTiming: ConnectionRecoveryTiming = .standard
     ) {
         self.registry = registry
         self.roster = roster
@@ -465,6 +622,9 @@ public final class AppEnvironment {
         self.conversationFactory = conversationFactory
         self.kanbanWatcherFactory = kanbanWatcherFactory
         self.managementSeamFactory = managementSeamFactory
+        self.cronDashboardFactory = cronDashboardFactory
+        self.artifactRetrievalFactory = artifactRetrievalFactory
+        self.artifactLibrary = artifactLibrary ?? FleetArtifactLibrary(url: FleetArtifactLibrary.defaultURL())
         self.learningSeamFactory = learningSeamFactory
         self.learningSnapshotStore_ = learningSnapshotStore
         self.projectsSeamFactory = projectsSeamFactory
@@ -473,10 +633,15 @@ public final class AppEnvironment {
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
+        self.bridgedStore = BridgedRooms.Store(url: bridgedStoreURL ?? BridgedRooms.Store.defaultURL())
         self.voiceEngineFactory = voiceEngineFactory
         self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
         self.gatewaySessionInvalidator = gatewaySessionInvalidator
         self.gatewaySessionInvalidatorAll = gatewaySessionInvalidatorAll
+        self.conversationPinStore = conversationPinStore
+        self.launchCache = launchCache ?? InMemoryLaunchCache()
+        self.diagnosticsRecorder = diagnosticsRecorder
+        self.recoveryTiming = recoveryTiming
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -494,23 +659,81 @@ public final class AppEnvironment {
         continueIndex = store
     }
 
+    /// Card D: swap the artifact library store (tests inject a hermetic one).
+    public func attachArtifactLibrary(_ library: FleetArtifactLibrary) {
+        artifactLibrary = library
+    }
+
+    // MARK: Card D — artifact retrieval (generation media)
+
+    /// Build the artifact retriever for a gateway. Nil when no factory is
+    /// wired (inline generation media and the Artifacts destination render
+    /// their unavailable state, fail closed).
+    public func makeArtifactRetriever(for gatewayID: GatewayID) -> (any ArtifactRetrieving)? {
+        if let existing = artifactRetrievers[gatewayID] { return existing }
+        guard let factory = artifactRetrievalFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let retriever = factory(gateway)
+        artifactRetrievers[gatewayID] = retriever
+        return retriever
+    }
+
+    /// Record an observed artifact citation (device-local library, upsert by
+    /// gateway+path). Called from the conversation transcript when a
+    /// generation result lands — including replayed frames (dedupe by
+    /// identity, never duplication).
+    public func recordObservedArtifact(
+        _ reference: ArtifactReference,
+        sourceTitle: String?,
+        sourceSubtitle: String?
+    ) {
+        artifactLibrary.record(
+            reference: reference,
+            sourceTitle: sourceTitle,
+            sourceSubtitle: sourceSubtitle)
+    }
+
     // MARK: Load / refresh
 
     /// Load gateways from the registry. On a truly empty registry, seeds the
     /// known gateways (DEBUG simulator walkthrough) — never overrides a
     /// user-managed fleet.
     public func load() async {
+        // UI-test hygiene ordering (HERMES_FLEET_NAV_RESET): pinned
+        // conversations hydrate EAGERLY below — before the shell's reset
+        // block runs — so the pin store clears at this hydration choke
+        // point. A pin written by an earlier suite on a shared simulator
+        // otherwise flips the next suite's swipe action to "Unpin".
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
+            UserDefaultsConversationPinStore.resetForUITests()
+            await bridgedStore.resetForUITests()
+            RoomDraftStore.resetForUITests()
+        }
+        #endif
         // P0-4: FIRST rebuild the registry from the durable record store so a
         // user-added gateway survives app close / relaunch (never-connected
         /// entries included, restored disconnected). Restore runs BEFORE the
         /// seeding check so a restored user fleet suppresses seeding.
         do {
             _ = try await registry.restorePersistedGateways()
+            durableGatewayRestoreCompleted = true
         } catch {
+            // Build-88: a failed durable read is NOT "zero gateways" — retry
+            // immediately (no delays) before letting the first-run gate treat
+            // the registry as authoritative; store-open / file-protection
+            // conditions clear between attempts on real devices. If every
+            // attempt fails the phase holds at `.loading` (settleHydrationPhase)
+            // instead of flashing the setup surface.
+            var restored = (try? await registry.restorePersistedGateways()) != nil
+            if !restored {
+                restored = (try? await registry.restorePersistedGateways()) != nil
+            }
+            durableGatewayRestoreCompleted = restored
             // A broken record store must not brick launch — log and continue
             // with the (possibly empty) in-memory registry.
             #if DEBUG
-            print("P0-4 gateway restore failed: \(error)")
+            print("P0-4 gateway restore failed: \(error) retried=2 restored=\(restored)")
             #endif
         }
         let existing = await registry.allGateways()
@@ -520,10 +743,87 @@ public final class AppEnvironment {
             }
         }
         await reloadGateways()
+        // ADR-0012 (W3): hydrate the observable fleet from the launch cache
+        // BEFORE any network work — cold launch paints the last fleet the
+        // user saw. Registry identity (restored above) owns the gateways;
+        // the cache supplies bots + session lists. Best-effort: a broken
+        // cache must never brick launch (fail-open to today's behavior).
+        await hydrateFromLaunchCache()
         cachedWatermarkCount = (try? await cache.loadWatermarks())?.count ?? 0
+        // Drawer Pinned section: local pins load best-effort (a broken store
+        // must not brick launch); rows render unavailable until routable.
+        pinnedConversations = (try? await conversationPinStore.loadPins()) ?? []
         // First-run gate: load() has settled — the registry's emptiness (or
         // not) is now authoritative, so the root shell may leave .loading.
         settleHydrationPhase()
+    }
+
+    // MARK: ADR-0012 — launch cache
+
+    /// W3: paint the fleet from the persisted launch cache. Gateways come
+    /// from the live registry (already restored); bots + session lists come
+    /// from cache; hydrated gateways are marked `.loaded` so their sections
+    /// render without outage chrome. Entries for gateways no longer
+    /// registered are ignored here AND pruned on disk — by
+    /// `removeLaunchCache(for:)` when a gateway is removed and by
+    /// `prune(keeping:)` on every settled roster write-through.
+    private func hydrateFromLaunchCache() async {
+        guard let rosters = try? await launchCache.loadRosterCache(),
+              let lists = try? await launchCache.loadSessionListCache() else { return }
+        let knownIDs = Set(gateways.map(\.id))
+        let usableRosters = rosters.filter { knownIDs.contains($0.gatewayID) }
+        guard !usableRosters.isEmpty || !lists.isEmpty else { return }
+
+        var botsByGateway: [GatewayID: [FleetBot]] = [:]
+        for entry in usableRosters {
+            botsByGateway[entry.gatewayID] = entry.bots.map(FleetLaunchCacheMapper.live(from:))
+        }
+        var roster = FleetRoster(gateways: gateways)
+        for (_, bots) in botsByGateway {
+            for bot in bots { roster.upsertBot(bot) }
+        }
+        // FOS-5 "never invent state": only gateways actually hydrated from
+        // cache are classified `.loaded` — including an answered zero-bot
+        // entry (empty-is-authoritative). A registered gateway with no cached
+        // entry stays UNCLASSIFIED (no outcome) until the live refresh
+        // settles: it must not be presented as reachable with zero bots.
+        let outcomes: [GatewayID: GatewayRosterOutcome] = botsByGateway.reduce(into: [:]) { acc, entry in
+            acc[entry.key] = .loaded(profileCount: entry.value.count)
+        }
+        rosterSnapshot = FleetRosterSnapshot(roster: roster, gatewayOutcomes: outcomes)
+        cachedBotsByGateway = botsByGateway
+        for list in lists where knownIDs.contains(list.route.gatewayID) {
+            sessionsByRoute[list.route] = list.sessions
+            baselineUnreadStateIfNeeded(route: list.route, sessions: list.sessions)
+        }
+        recomputeUnreadAggregate()
+        isViewingCachedFleet = true
+    }
+
+    /// W4: write-through after a settled refresh — one row per gateway that
+    /// ANSWERED (success replaces; failed gateways keep their last-good
+    /// entry: the persisted FOS-5 ghost).
+    private func writeRosterToLaunchCache(snapshot: FleetRosterSnapshot) async {
+        for gateway in snapshot.roster.allGateways {
+            guard case .loaded = snapshot.outcome(for: gateway.id) else { continue }
+            let bots = snapshot.bots(on: gateway.id)
+            let entry = CachedGatewayRoster(
+                gatewayID: gateway.id,
+                bots: bots.map(FleetLaunchCacheMapper.dto(from:)))
+            try? await launchCache.saveRosterCache(entry)
+        }
+        // ADR-0012 decision 2 — ORPHAN PRUNING ON WRITE: a settled write-through
+        // sweeps rows for gateways the registry no longer knows (removed while
+        // this refresh was in flight, or dropped by a registry edit). Rows for
+        // REGISTERED gateways are kept even when this refresh failed — that is
+        // the persisted FOS-5 ghost, not an orphan.
+        try? await launchCache.prune(keeping: Set(gateways.map(\.id)))
+    }
+
+    /// W7/W8b: clears the persisted launch cache + the stale flag.
+    public func resetLaunchCacheForUITests() async {
+        try? await launchCache.clearLaunchCache()
+        isViewingCachedFleet = false
     }
 
     /// Hydrate protected app content exactly once per runtime instance.
@@ -536,8 +836,12 @@ public final class AppEnvironment {
         guard !didHydrateEnvironment else { return }
         didHydrateEnvironment = true
         await load()
-        await refreshRoster()
-        await restoreIntendedConnections()
+        // ADR-0012 (W6): the two launch waves are INDEPENDENT (the registry
+        // gates both; neither gates the other) — run them concurrently so
+        // cold launch pays one round-trip window, not two serial ones.
+        async let rosterWave: Void = refreshRoster()
+        async let connectionWave: Void = restoreIntendedConnections()
+        _ = await (rosterWave, connectionWave)
     }
 
     private func reloadGateways() async {
@@ -587,6 +891,10 @@ public final class AppEnvironment {
         rosterSnapshot = snapshot
         rosterObservedAt = Date()
         isRefreshing = false
+        // ADR-0012 (W4): a settled LIVE refresh owns the truth — write the
+        // cache through and clear the launch-stale flag.
+        await writeRosterToLaunchCache(snapshot: snapshot)
+        isViewingCachedFleet = false
         // FOS-4 (SPEC §17): settle the per-gateway scheduler bookkeeping —
         // success resets the backoff ladder; a classified failure climbs it.
         for gateway in gateways {
@@ -594,8 +902,12 @@ public final class AppEnvironment {
             switch snapshot.outcome(for: gateway.id) {
             case .loaded:
                 summarySourceStates[gateway.id] = summaryScheduler.onSuccess(state)
-            case .failed:
+            case .failed(let status, let detail):
                 summarySourceStates[gateway.id] = summaryScheduler.onFailure(state)
+                // P0-A: a roster failure is a recorded fault.
+                recordFault(
+                    category: "Roster refresh", gateway: gateway,
+                    status: status, detail: detail)
             case nil:
                 // The refresh settled without classifying this gateway —
                 // an uncovered observation counts as a failure for backoff
@@ -761,6 +1073,7 @@ public final class AppEnvironment {
     /// Slice 2: rooms per gateway from the room-source seam (best-effort;
     /// failures leave previous state — honest absence, no fabricated rows).
     public func loadRooms() async {
+        await loadBridgedRooms()
         guard let roomSourceFactory else { return }
         for gateway in gateways {
             let source: any FleetRoomSourceProviding
@@ -770,8 +1083,28 @@ public final class AppEnvironment {
                 source = roomSourceFactory(gateway)
                 roomSources[gateway.id] = source
             }
-            let rooms = await source.rooms()
-            roomsByGateway[gateway.id] = rooms
+            let rooms = await annotateRoomMemberOwners(await source.rooms())
+            // A source has no throwing result channel, so an empty response
+            // is only authoritative when the roster refresh classified this
+            // gateway as loaded. During an outage retain the last-known room
+            // identity/history instead of turning a temporary failure into a
+            // disappearing group.
+            let sourceAnswered = rosterSnapshot?.outcome(for: gateway.id).map {
+                if case .loaded = $0 { return true }
+                return false
+            } ?? true
+            if !rooms.isEmpty || sourceAnswered || roomsByGateway[gateway.id] == nil {
+                roomsByGateway[gateway.id] = rooms
+            } else if var cached = roomsByGateway[gateway.id] {
+                // Keep the durable identity/history visible, but revoke
+                // client-side write affordances while the host's capability
+                // truth is unavailable. Reconnect replaces this row with a
+                // fresh groups.list result.
+                for index in cached.indices {
+                    cached[index].hosted?.driverAvailable = false
+                }
+                roomsByGateway[gateway.id] = cached
+            }
             // F1: persist the GATEWAY-level create capability — zero-room
             // capable gateways must keep the Create Room entry; `.unknown`
             // (probe failure) never flips the gate either way, and a
@@ -783,11 +1116,185 @@ public final class AppEnvironment {
             case .unknown: break
             }
         }
+        await synchronizeKnownHostedRooms()
     }
 
-    /// Rooms for one gateway (empty when unknown — honest absence).
+    /// A hosted room stores the target installation in each peer member
+    /// descriptor, not the registry's presentation label. Resolve that
+    /// durable identity through the live negotiated RoomLink catalog so a
+    /// refreshed/relaunched room still shows the participant's owning
+    /// gateway. Failed probes leave the member's verified identity intact and
+    /// do not substitute a guessed gateway based on its display name.
+    private func annotateRoomMemberOwners(_ rooms: [FleetRoom]) async -> [FleetRoom] {
+        let installationIDs = Set(
+            rooms.flatMap(\.members)
+                .filter { $0.sourceScoped }
+                .compactMap(\.connectionID)
+        )
+        guard !installationIDs.isEmpty else { return rooms }
+
+        var labels: [String: String] = [:]
+        for gateway in gateways {
+            guard let link = roomLinkSeam(for: gateway.id),
+                  let negotiation = try? await link.negotiate(),
+                  installationIDs.contains(negotiation.installationID) else { continue }
+            labels[negotiation.installationID] = gateway.displayName
+        }
+
+        guard !labels.isEmpty else { return rooms }
+        return rooms.map { room in
+            var annotated = room
+            annotated.members = room.members.map { member in
+                guard member.sourceScoped,
+                      member.connectionLabel == nil,
+                      let connectionID = member.connectionID,
+                      let label = labels[connectionID] else { return member }
+                var resolved = member
+                resolved.connectionLabel = label
+                return resolved
+            }
+            return annotated
+        }
+    }
+
+    /// Reconciled interactive rooms for one gateway. A legacy projection is
+    /// available through `legacyRoomArchive`, not as a normal group row.
     public func rooms(for gatewayID: GatewayID) -> [FleetRoom] {
-        roomsByGateway[gatewayID] ?? []
+        allRooms.filter { $0.id.gatewayID == gatewayID }
+    }
+
+    /// Resolves a navigation identity from the unified cache. The exact
+    /// source row wins; the canonical fallback covers a duplicate
+    /// advertisement whose preferred source changed during refresh.
+    public func room(for id: FleetRoomID) -> FleetRoom? {
+        if let exact = roomsByGateway.values.flatMap({ $0 }).first(where: { $0.id == id }) {
+            return exact
+        }
+        return allRooms.first {
+            $0.id.provenance == id.provenance && $0.id.key == id.key
+        }
+    }
+
+    /// Creates one fleet-wide hosted group. The initiating screen does not
+    /// supply a home gateway: a candidate host is selected from authoritative
+    /// capability/RoomLink probes and scored by how many selected members it
+    /// owns. Selected member routes are revalidated immediately before any
+    /// groups.create call.
+    public func createRoom(
+        name: String, members: [RoomMemberCandidate],
+        setupID: String = UUID().uuidString
+    ) async throws -> FleetRoom {
+        // A picker snapshot is only a starting point. Re-observe the fleet
+        // before freezing the member list so a Bot that went offline or was
+        // removed cannot be silently replaced by another route.
+        await refreshRoster()
+        try validateLiveRoomMembers(members)
+        let remoteExists = Set(members.map(\.route.gatewayID)).count > 1
+        let orderedHosts = gateways.sorted { lhs, rhs in
+            let leftCount = members.filter { $0.route.gatewayID == lhs.id }.count
+            let rightCount = members.filter { $0.route.gatewayID == rhs.id }.count
+            if leftCount != rightCount { return leftCount > rightCount }
+            if lhs.displayName != rhs.displayName { return lhs.displayName < rhs.displayName }
+            return lhs.id.rawValue < rhs.id.rawValue
+        }
+
+        var skipReasons: [String] = []
+        for host in orderedHosts {
+            let remoteMembers = members.filter { $0.route.gatewayID != host.id }
+            if remoteMembers.isEmpty {
+                // Cold start: the roster loop may not have a definitive
+                // capability answer yet (.unknown). Await ONE fresh probe so
+                // a ready gateway is never skipped for being unprobed — and
+                // record the definitive truth (F1 rule).
+                var hostCanCreate = canCreateRooms(on: host.id)
+                if !hostCanCreate, let source = roomSources[host.id],
+                   await source.createRoomCapability() == .supported {
+                    hostCanCreate = true
+                    canCreateRoomsByGateway[host.id] = true
+                }
+                guard hostCanCreate else {
+                    skipReasons.append("\(host.displayName): gateway not offering hosted Group creation")
+                    continue
+                }
+                return try await createRoom(
+                    gatewayID: host.id, name: name, members: members, setupID: setupID)
+            }
+            guard roomLinkSeam(for: host.id) as? any CrossGatewayRoomCommanding != nil else {
+                skipReasons.append("\(host.displayName): RoomLink not connected")
+                continue
+            }
+            guard (try? await validateLinkedRoomHost(gatewayID: host.id, members: members)) != nil else {
+                skipReasons.append("\(host.displayName): cross-gateway RoomLink not available (peer endpoints or profiles)")
+                continue
+            }
+            return try await createRoom(
+                gatewayID: host.id, name: name, members: members, setupID: setupID)
+        }
+
+        // Bridged fallback (GC2 follow-up): no gateway can host this
+        // selection, but every member has a working conversation connection
+        // on this device. Create a phone-bridged room instead of failing —
+        // mixed-gateway Groups must never require gateway-side RoomLink work.
+        let detail = skipReasons.isEmpty
+            ? (remoteExists
+                ? "Mixing gateways needs RoomLink (direct endpoints) enabled on the affected gateways."
+                : "No connected gateways host the selected Bots.")
+            : skipReasons.joined(separator: "; ")
+        return try await createBridgedRoom(
+            name: name, members: members,
+            reason: "No connected gateway can host this Group right now. \(detail)")
+    }
+
+    /// Create (or re-open) a phone-bridged room. Cannot fail on gateway
+    /// grounds — the record is device-local; relaying happens per send.
+    private func createBridgedRoom(
+        name: String, members: [RoomMemberCandidate], reason: String
+    ) async throws -> FleetRoom {
+        let timestamp = Date().timeIntervalSince1970
+        let memberRefs = members.map { member in
+            BridgedRooms.MemberRef(
+                gatewayID: member.route.gatewayID.rawValue,
+                profile: member.route.profileSlug.rawValue,
+                displayName: member.displayName,
+                routeID: member.route.id,
+                gatewayLabel: gateways.first(where: { $0.id == member.route.gatewayID })?.displayName)
+        }
+        var record = BridgedRooms.RoomRecord(
+            roomKey: "fleet-bridged-" + UUID().uuidString.lowercased(),
+            name: name,
+            members: memberRefs,
+            createdAt: timestamp)
+        // Note the honest reason in the transcript — the room works, but the
+        // user should know why it is bridged (system note, not an error).
+        let note = BridgedRooms.EventRecord(
+            seq: 1,
+            eventID: "fleet-bridged-\(record.roomKey)-note",
+            kind: "room.activity",
+            actorKind: "system",
+            actorID: "bridge",
+            actorDisplayName: nil,
+            actorProfile: nil,
+            payloadText: "Group runs on this iPhone — gateways couldn't host it (\(reason))",
+            reasonCode: nil,
+            createdAt: timestamp)
+        record.events = [note]
+        // Commit the complete creation atomically before publishing its row.
+        try await bridgedStore.upsert(record)
+        await loadBridgedRooms()
+        let room = BridgedRooms.fleetRoom(
+            for: await bridgedStore.record(roomKey: record.roomKey) ?? record)
+        retainRoomIfAbsent(room)
+        return room
+    }
+
+    /// Load bridged rooms into the roomsByGateway union under the bridged
+    /// scope so the Groups list and `room(for:)` resolve them.
+    private func loadBridgedRooms() async {
+        let snapshot = await bridgedStore.roomsSnapshot()
+        let rooms = snapshot
+            .filter { $0.disbandedAt == nil }
+            .map { BridgedRooms.fleetRoom(for: $0) }
+        roomsByGateway[BridgedRooms.gatewayScope] = rooms
     }
 
     // MARK: Slice 4 — room chat (D15/D16)
@@ -796,6 +1303,17 @@ public final class AppEnvironment {
     /// controls hidden/disabled-with-explanation).
     public func roomCommandSeam(for gatewayID: GatewayID) -> (any RoomChatCommanding)? {
         if let existing = roomCommands[gatewayID] { return existing }
+        // Phone-bridged rooms: one relay per room, resolved from the local
+        // store — no gateway involved.
+        if gatewayID == BridgedRooms.gatewayScope {
+            let relay = BridgedRoomRelay(
+                store: bridgedStore,
+                resolver: { [weak self] gatewayID in
+                    await self?.conversationSession(for: gatewayID)
+                })
+            roomCommands[gatewayID] = relay
+            return relay
+        }
         guard let factory = roomCommandFactory,
               let gateway = gateways.first(where: { $0.id == gatewayID }),
               let seam = factory(gateway) else { return nil }
@@ -818,7 +1336,8 @@ public final class AppEnvironment {
         RoomChatViewModel(
             room: room,
             commands: roomCommandSeam(for: room.id.gatewayID),
-            driverStatus: roomDriverStatusSeam(for: room.id.gatewayID))
+            driverStatus: roomDriverStatusSeam(for: room.id.gatewayID),
+            voice: voiceEngineFactory?())
     }
 
     // MARK: Slice 5 — RoomLink (D19)
@@ -880,6 +1399,7 @@ public final class AppEnvironment {
         gatewayID: GatewayID, name: String, members: [RoomMemberCandidate],
         setupID: String = UUID().uuidString
     ) async throws -> FleetRoom {
+        try validateLiveRoomMembersIfKnown(members)
         if let home = roomLinkSeam(for: gatewayID) as? any CrossGatewayRoomCommanding {
             return try await createLinkedRoom(home: home, gatewayID: gatewayID, name: name, members: members, setupID: setupID)
         }
@@ -890,7 +1410,10 @@ public final class AppEnvironment {
             throw RoomCommandFailure.notConnected
         }
         let wireMembers = HostedRoomMemberCodec.wireMembers(members, gatewayID: gatewayID)
-        let roomID = try await seam.createRoom(name: name, members: wireMembers)
+        // Plain creates mint a Fleet room id (upstream requires a
+        // client-supplied room_id; RoomLink setups already pass setupID).
+        let mintedRoomID = "fleet-" + UUID().uuidString.lowercased()
+        let roomID = try await seam.createRoom(roomID: mintedRoomID, name: name, members: wireMembers)
         // F1: a successful create is definitive gateway-level truth — the
         // entry must not regress if a later probe fails (.unknown).
         canCreateRoomsByGateway[gatewayID] = true
@@ -899,15 +1422,103 @@ public final class AppEnvironment {
             id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
             name: name,
             members: members.map {
-                FleetRoomMember(name: $0.displayName, handle: $0.route.profileSlug.rawValue)
+                FleetRoomMember(
+                    name: $0.displayName,
+                    handle: $0.route.profileSlug.rawValue,
+                    connectionID: $0.route.gatewayID.rawValue,
+                    connectionLabel: $0.route.gatewayID == gatewayID
+                        ? nil : gateway(for: $0.route.gatewayID)?.displayName,
+                    sourceScoped: $0.route.gatewayID != gatewayID)
             },
             hosted: HostedRoomState(
                 authorityGatewayID: gatewayID.rawValue,
                 authorityEpoch: 1,
                 advertisedMethods: nil,
                 driverAvailable: false))
-        Task { await loadRooms() }
+        await loadRooms()
+        retainRoomIfAbsent(room)
         return room
+    }
+
+    /// "Continue as Interactive Group" (diagnostic 2026-09-15, fix B).
+    ///
+    /// Continues a Desktop legacy-projection room into an authoritative
+    /// hosted room on its gateway by reusing the projection's durable room
+    /// id: `groups.create` with that exact id makes Desktop ↔ hosted
+    /// identity equality-by-construction. The legacy room itself is NEVER
+    /// mutated or deleted — it remains the read-only historical record.
+    ///
+    /// Fail-closed gates (all typed `RoomCommandFailure`s):
+    /// - name-keyed (pre-id) projection → no durable id, no continuation;
+    /// - projected members are verified against the LIVE roster by profile
+    ///   slug only (display names are not identity); unverified members
+    ///   abort with an explanation naming them;
+    /// - the hosted 2-member minimum must be met by verified locals.
+    public func continueLegacyRoomAsInteractive(_ room: FleetRoom) async throws -> FleetRoom {
+        let gatewayID = room.id.gatewayID
+        // Roster candidates for THIS gateway (durable per-gateway identity).
+        let roster = bots(on: gatewayID).map {
+            RoomMemberCandidate(route: $0.route, displayName: $0.displayName)
+        }
+        let plan = LegacyRoomContinuation.plan(for: room, roster: roster)
+        switch plan.status {
+        case .missingDurableID:
+            // Rich user copy rides rpcFailed (repo precedent: the RoomLink
+            // partial-setup message) — unsupportedMethod's explanation is
+            // generic gateway copy and would discard the specifics.
+            throw RoomCommandFailure.rpcFailed(
+                "This room has no durable identity bridge (older Desktop projection). "
+                    + "Create a new Group and pick its members instead.", 0)
+        case .insufficientMembers(let resolved, let minimum):
+            let missing = plan.unresolvedMembers.isEmpty
+                ? "fewer than \(minimum) projected members"
+                : "members not on this gateway: \(plan.unresolvedMembers.joined(separator: ", "))"
+            throw RoomCommandFailure.rpcFailed(
+                "Cannot verify \(resolved) of at least \(minimum) members (\(missing)). "
+                    + "Add the missing profiles to this gateway, then retry.", 0)
+        case .ready:
+            guard let roomID = plan.roomID else {
+                throw RoomCommandFailure.unsupportedMethod("No durable room id.")
+            }
+            guard let seam = roomCommandSeam(for: gatewayID) else {
+                throw RoomCommandFailure.notConnected
+            }
+            let wireMembers = HostedRoomMemberCodec.wireMembers(plan.candidates, gatewayID: gatewayID)
+            _ = try await seam.createRoom(roomID: roomID, name: room.name, members: wireMembers)
+            canCreateRoomsByGateway[gatewayID] = true
+            // Reveal from the authoritative reload when it knows the room;
+            // otherwise reveal from the create result itself (same shape the
+            // plain create flow returns) so the roster shows the hosted room
+            // immediately. The legacy projection row is retained untouched.
+            let revealed: FleetRoom
+            if let hosted = rooms(for: gatewayID).first(where: {
+                $0.id.provenance == .hosted && $0.id.key == roomID
+            }) {
+                revealed = hosted
+            } else {
+                revealed = FleetRoom(
+                    id: FleetRoomID(provenance: .hosted, gatewayID: gatewayID, key: roomID),
+                    name: room.name,
+                    members: plan.candidates.map {
+                        FleetRoomMember(name: $0.displayName, handle: $0.route.profileSlug.rawValue)
+                    },
+                    hosted: HostedRoomState(
+                        authorityGatewayID: gatewayID.rawValue,
+                        authorityEpoch: 1,
+                        advertisedMethods: nil,
+                        driverAvailable: false))
+                var updated = (roomsByGateway[gatewayID] ?? []).filter {
+                    !($0.id.provenance == .hosted && $0.id.key == roomID)
+                }
+                updated.append(revealed)
+                roomsByGateway[gatewayID] = updated
+            }
+            // No eager loadRooms here: a reload racing the synchronous
+            // reveal could erase the hosted row before the UI reads it.
+            // The room is authoritative on the gateway — the next roster
+            // refresh lists it via groups.list.
+            return revealed
+        }
     }
 
     public func compatibleRoomGateways(homeID: GatewayID) async -> Set<GatewayID> {
@@ -926,6 +1537,7 @@ public final class AppEnvironment {
 
     private func createLinkedRoom(home: any CrossGatewayRoomCommanding, gatewayID: GatewayID,
                                   name: String, members: [RoomMemberCandidate], setupID: String) async throws -> FleetRoom {
+        try validateLiveRoomMembersIfKnown(members)
         let remote = members.filter { $0.route.gatewayID != gatewayID }
         var targets: [Route: RoomLinkTargetSnapshot] = [:]
         if !remote.isEmpty {
@@ -962,8 +1574,154 @@ public final class AppEnvironment {
                 throw RoomCommandFailure.rpcFailed("Room \(room.id.key) exists, but a remote link was not confirmed. The gateways must reach each other directly with matching execution policies. Retry this unchanged form to resume setup; no message was sent.", 0)
             }
         }
+        var revealed = room
+        revealed.members = members.map {
+            FleetRoomMember(
+                name: $0.displayName,
+                handle: $0.route.profileSlug.rawValue,
+                connectionID: $0.route.gatewayID.rawValue,
+                connectionLabel: $0.route.gatewayID == gatewayID
+                    ? nil : gateway(for: $0.route.gatewayID)?.displayName,
+                sourceScoped: $0.route.gatewayID != gatewayID)
+        }
+        await replicate(
+            room: room,
+            authorityGatewayID: gatewayID,
+            targetGatewayIDs: Set(remote.map(\.route.gatewayID)))
         await loadRooms()
-        return room
+        retainRoomIfAbsent(revealed)
+        return revealed
+    }
+
+    private func validateLiveRoomMembers(_ members: [RoomMemberCandidate]) throws {
+        guard let snapshot = rosterSnapshot else {
+            throw RoomCommandFailure.rpcFailed(
+                "Refresh the fleet roster before creating a Group so participant availability can be verified.", 0)
+        }
+        let unavailable = members.filter {
+            snapshot.bot(for: $0.route) == nil || snapshot.botPresence(for: $0.route) != .reachable
+        }
+        guard unavailable.isEmpty else {
+            let labels = unavailable.map { "\($0.displayName) (\($0.route.gatewayID.rawValue))" }
+            throw RoomCommandFailure.rpcFailed(
+                "The fleet changed while this Group was being configured. Unavailable participants: \(labels.joined(separator: ", ")). Refresh and review the selection.", 0)
+        }
+    }
+
+    private func validateLiveRoomMembersIfKnown(_ members: [RoomMemberCandidate]) throws {
+        guard rosterSnapshot != nil else { return }
+        try validateLiveRoomMembers(members)
+    }
+
+    private func validateLinkedRoomHost(
+        gatewayID: GatewayID, members: [RoomMemberCandidate]
+    ) async throws -> (any CrossGatewayRoomCommanding, [Route: RoomLinkTargetSnapshot]) {
+        guard let home = roomLinkSeam(for: gatewayID) as? any CrossGatewayRoomCommanding else {
+            throw RoomCommandFailure.unsupportedMethod("Scoped RoomLink")
+        }
+        let homeSnapshot = try await home.roomLinkTarget(profile: "default")
+        guard homeSnapshot.supportsHome else {
+            throw RoomCommandFailure.unsupportedMethod("Compatible hosted Group authority")
+        }
+        var targets: [Route: RoomLinkTargetSnapshot] = [:]
+        for member in members where member.route.gatewayID != gatewayID {
+            guard let target = roomLinkSeam(for: member.route.gatewayID) as? any CrossGatewayRoomCommanding else {
+                throw RoomCommandFailure.unsupportedMethod("Scoped RoomLink")
+            }
+            let snapshot = try await target.roomLinkTarget(profile: member.route.profileSlug.rawValue)
+            guard snapshot.supportsTarget,
+                  snapshot.negotiation.profile == member.route.profileSlug.rawValue,
+                  snapshot.negotiation.installationID != homeSnapshot.negotiation.installationID else {
+                throw RoomCommandFailure.unsupportedMethod("Compatible profile-scoped RoomLink")
+            }
+            targets[member.route] = snapshot
+        }
+        return (home, targets)
+    }
+
+    private func retainRoomIfAbsent(_ room: FleetRoom) {
+        var rows = roomsByGateway[room.id.gatewayID] ?? []
+        if let index = rows.firstIndex(where: { $0.id == room.id }) {
+            // A create response is authoritative even when the immediate
+            // groups.list refresh is eventually consistent. Enrich an empty
+            // advertised row with the verified frozen roster, but never let a
+            // thinner response erase an existing transcript or membership.
+            if rows[index].members.count < room.members.count {
+                rows[index].members = room.members
+            }
+            if rows[index].hosted == nil, room.hosted != nil {
+                rows[index].hosted = room.hosted
+            }
+            roomsByGateway[room.id.gatewayID] = rows
+            return
+        }
+        rows.append(room)
+        roomsByGateway[room.id.gatewayID] = rows
+    }
+
+    /// Replays authoritative hosted-room pages into the participating
+    /// gateways that advertise the member's exact installation identity.
+    /// This uses the stock `groups.replica_state`/`groups.replicate` contract;
+    /// it never invents a transcript or promotes a host.
+    private func synchronizeKnownHostedRooms() async {
+        for room in allRooms where room.id.provenance == .hosted && room.hosted != nil {
+            guard room.members.contains(where: { $0.sourceScoped }) else { continue }
+            guard let authorityID = await authorityGatewayID(for: room) else { continue }
+            var targets: Set<GatewayID> = []
+            for gateway in gateways where gateway.id != authorityID {
+                guard let link = roomLinkSeam(for: gateway.id),
+                      let negotiation = try? await link.negotiate(),
+                      room.members.contains(where: {
+                          $0.sourceScoped && $0.connectionID == negotiation.installationID
+                      }) else { continue }
+                targets.insert(gateway.id)
+            }
+            await replicate(room: room, authorityGatewayID: authorityID, targetGatewayIDs: targets)
+        }
+    }
+
+    private func authorityGatewayID(for room: FleetRoom) async -> GatewayID? {
+        guard let authority = room.hosted?.authorityGatewayID, !authority.isEmpty else { return nil }
+        let candidates = [room.id.gatewayID] + gateways.map(\.id).filter { $0 != room.id.gatewayID }
+        for id in candidates {
+            guard let link = roomLinkSeam(for: id),
+                  let negotiation = try? await link.negotiate(),
+                  negotiation.installationID == authority else { continue }
+            return id
+        }
+        return nil
+    }
+
+    private func replicate(
+        room: FleetRoom, authorityGatewayID: GatewayID, targetGatewayIDs: Set<GatewayID>
+    ) async {
+        // Nothing to replicate (the room's only participant left the fleet) —
+        // a previously recorded "history sync pending" warning must clear
+        // with it, or the Groups row would claim a pending sync forever.
+        guard !targetGatewayIDs.isEmpty else {
+            roomSyncWarnings[room.canonicalIdentity] = nil
+            return
+        }
+        guard let authority = roomLinkSeam(for: authorityGatewayID),
+              let source = try? await authority.roomReplaySource(roomID: room.id.key) else { return }
+        var warning: String?
+        for targetID in targetGatewayIDs {
+            guard let target = roomLinkSeam(for: targetID),
+                  let sink = try? await target.replicateSink() else {
+                warning = "Participant replica unavailable; authoritative history remains on the host."
+                continue
+            }
+            do {
+                let replica = try await target.replicaState(roomID: room.id.key)
+                _ = try await RoomReplicator.replicate(
+                    roomID: room.id.key, replica: replica, source: source, sink: sink)
+            } catch {
+                // Keep error text out of the UI: the underlying RPC may carry
+                // endpoint or grant details. The recovery action is stable.
+                warning = "Participant replica is not caught up; reconnect the gateway and refresh."
+            }
+        }
+        roomSyncWarnings[room.canonicalIdentity] = warning
     }
 
     /// Section registries for every gateway (best-effort).
@@ -990,6 +1748,9 @@ public final class AppEnvironment {
         await gatewaySessionInvalidatorAll?()
         await disconnectAll()
         try await cache.clearCachedData()
+        // ADR-0012 (W7): the launch cache is local disposable data too.
+        try? await launchCache.clearLaunchCache()
+        isViewingCachedFleet = false
         activeConnections.removeAll()
         conversationSessions.removeAll()
         kanbanWatchers.removeAll()
@@ -1002,7 +1763,12 @@ public final class AppEnvironment {
         roomDriverStatuses.removeAll()
         roomLinks.removeAll()
         connectionStates.removeAll()
+        cancelAllConnectionRecovery()
         continueIndex.removeAll()
+        // Card D: local-data clear also drops observed artifacts + retrieved bytes.
+        artifactLibrary.removeAll()
+        artifactRetrievers.removeAll()
+        artifactImages.removeAll()
         gatewayFormDraft.clear()
         rosterSnapshot = nil
         cachedWatermarkCount = 0
@@ -1011,6 +1777,7 @@ public final class AppEnvironment {
         sessionsObservedAt = [:]
         sessionReadGenerations = [:]
         roomsByGateway = [:]
+        roomSyncWarnings = [:]
         canCreateRoomsByGateway = [:]
         observedRoomAttention = [:]
         rosterObservedAt = nil
@@ -1033,6 +1800,7 @@ public final class AppEnvironment {
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
         activeConnections[id] = connection
+        startConnectionWatchIfNeeded(for: id)
         do {
             try await connection.connect()
             connectionStates[id] = GatewayConnectionState(status: connection.status)
@@ -1042,6 +1810,11 @@ public final class AppEnvironment {
         } catch let error as GatewayConnectivityError {
             let status = GatewayStatus(connectivityError: error)
             connectionStates[id] = .failed(status)
+            // P0-A: a failed connect is a recorded fault (one short line —
+            // never a raw endpoint, never a secret).
+            recordFault(
+                category: "Gateway connection", gateway: gateway,
+                status: status, detail: error.errorDescription)
             switch status {
             case .authenticationRequired, .unsupported:
                 connectionIntent.clear(id)
@@ -1050,12 +1823,134 @@ public final class AppEnvironment {
             }
         } catch {
             connectionStates[id] = .failed(.offline)
+            // P0-A: an unclassified connect failure still gets one honest
+            // line (no error payload is echoed).
+            recordFault(
+                category: "Gateway connection", gateway: gateway,
+                status: .offline, detail: nil)
         }
+    }
+
+    /// P0-A: record ONE short, non-secret fault line for the diagnostics
+    /// report. The user-facing cause comes from `GatewayFailureCopy` (which
+    /// never echoes a raw endpoint), prefixed with the gateway's name; the
+    /// recorder redacts again on the way in.
+    private func recordFault(
+        category: String,
+        gateway: FleetGateway,
+        status: GatewayStatus,
+        detail: String?
+    ) {
+        diagnosticsRecorder.record(
+            category: category,
+            detail: "\(gateway.displayName): \(GatewayFailureCopy.detail(status: status, detail: detail, gatewayName: gateway.displayName))")
+    }
+
+    // MARK: Connection auto-recovery (dogfood r2 — sticky failed state)
+
+    /// Start (or keep) the per-gateway recovery watch. Idempotent: a live
+    /// task wins. The loop exits only on cancellation (manual disconnect,
+    /// gateway removal, environment reset) — a nil'd `activeConnections`
+    /// entry is a reconnect in progress, not a stop signal.
+    private func startConnectionWatchIfNeeded(for id: GatewayID) {
+        if let existing = connectionWatchTasks[id], !existing.isCancelled { return }
+        connectionWatchTasks[id] = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.observeConnectionState(for: id)
+                try? await Task.sleep(for: .seconds(self.recoveryTiming.watchInterval))
+            }
+        }
+    }
+
+    /// One watch tick: mirror a genuine failure into the observable lifecycle
+    /// and schedule a bounded, policy-gated retry. A CLEAN teardown reports
+    /// `.normalClosure` (policy: do not reconnect) — the runtime's own
+    /// `.disconnected` write stands and no retry is scheduled, so the
+    /// background/`disconnectAll` path is untouched.
+    private func observeConnectionState(for id: GatewayID) async {
+        guard let connection = activeConnections[id] else { return }
+        let live = connection.status
+        switch live {
+        case .online:
+            // A live connection clears the retry budget.
+            reconnectAttempts[id] = 0
+            cancelPendingRetry(for: id)
+        case .connecting:
+            break
+        case .offline, .degraded, .authenticationRequired, .unsupported:
+            let reason = await connection.lastDisconnectReason()
+            guard !Task.isCancelled else { return }
+            let retryable = reason.map {
+                ReconnectPolicy.decision(for: $0) == .reconnect
+            } ?? false
+            if retryable {
+                // Never leave the row stale-"Online" over a dead socket.
+                if connectionStates[id] != .failed(live) {
+                    connectionStates[id] = .failed(live)
+                }
+                scheduleAutoReconnect(for: id)
+            } else if live != .offline {
+                // A failed class the runtime may not have recorded (defense;
+                // connect() records offline/degraded itself).
+                if connectionStates[id] != .failed(live) {
+                    connectionStates[id] = .failed(live)
+                }
+            }
+        }
+    }
+
+    /// Bounded retry with exponential backoff, gated on connection intent and
+    /// the spec §8.6 policy (transient reasons only). After `maxAttempts` the
+    /// gateway stays failed until a foreground restore or a manual retry.
+    private func scheduleAutoReconnect(for id: GatewayID) {
+        guard connectionIntent.isIntended(id) else { return }
+        guard reconnectRetryTasks[id] == nil else { return }
+        let attempt = reconnectAttempts[id, default: 0] + 1
+        guard attempt <= recoveryTiming.maxAttempts else { return }
+        reconnectAttempts[id] = attempt
+        let delay = min(
+            recoveryTiming.maxDelay,
+            recoveryTiming.baseDelay * pow(2, Double(attempt - 1)))
+        reconnectRetryTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            self.reconnectRetryTasks[id] = nil
+            guard self.connectionIntent.isIntended(id) else { return }
+            await self.connect(to: id)
+        }
+    }
+
+    private func cancelPendingRetry(for id: GatewayID) {
+        reconnectRetryTasks[id]?.cancel()
+        reconnectRetryTasks[id] = nil
+    }
+
+    /// Stop all auto-recovery activity for a gateway (manual disconnect,
+    /// gateway removal). A later explicit connect() restarts the watch.
+    private func cancelConnectionRecovery(for id: GatewayID) {
+        connectionWatchTasks[id]?.cancel()
+        connectionWatchTasks[id] = nil
+        cancelPendingRetry(for: id)
+        reconnectAttempts[id] = nil
+    }
+
+    private func cancelAllConnectionRecovery() {
+        for id in connectionWatchTasks.keys {
+            connectionWatchTasks[id]?.cancel()
+        }
+        connectionWatchTasks.removeAll()
+        for id in reconnectRetryTasks.keys {
+            reconnectRetryTasks[id]?.cancel()
+        }
+        reconnectRetryTasks.removeAll()
+        reconnectAttempts.removeAll()
     }
 
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
         connectionIntent.clear(id)
+        cancelConnectionRecovery(for: id)
         // Manual Disconnect is transport control, not sign-out. Keep the
         // in-memory authenticated lease so an explicit later Connect mints a
         // fresh single-use ticket without another password-login burst.
@@ -1075,6 +1970,12 @@ public final class AppEnvironment {
     /// seam, so they are explicitly disconnected in addition to the base
     /// gateway connections.
     public func disconnectAll() async {
+        // A background/lock teardown hands recovery ownership to foreground
+        // restore. Cancel observers and retry timers before the first awaited
+        // disconnect so a racing watch cannot schedule another connection.
+        // Desired connection intent remains untouched.
+        cancelAllConnectionRecovery()
+
         let connections = Array(activeConnections.values)
         let conversations = Array(conversationSessions.values)
         let kanban = Array(kanbanWatchers.values)
@@ -1169,6 +2070,35 @@ public final class AppEnvironment {
         connectionIntent.isIntended(id)
     }
 
+    #if DEBUG
+    /// Test harness: runs the restore decision over an explicit session list
+    /// (the lazily-built `conversationSessions` dictionary is unreachable
+    /// without the full environment graph).
+    public static func restoreConversationSessionsTestHarness(
+        _ sessions: [any ConversationSessionProviding]
+    ) async {
+        for session in sessions {
+            let status = session.status
+            if status.isReachable { continue }
+            if status == .authenticationRequired { continue }
+            try? await session.connect()
+        }
+    }
+    #endif
+
+    /// Foreground heal for lazily-built conversation sessions: any session
+    /// whose transport is no longer reachable reconnects. Sessions in
+    /// `.authenticationRequired` are surfaced, NOT silently re-authenticated
+    /// (M11 — the conversation screen owns the re-auth UX).
+    public func restoreConversationSessions() async {
+        for (id, session) in conversationSessions {
+            let status = session.status
+            if status.isReachable { continue }
+            if status == .authenticationRequired { continue }
+            try? await session.connect()
+        }
+    }
+
     // MARK: Roster accessors (for the Bots / Sessions screens)
 
     /// Bots owned by a gateway from the latest roster snapshot (fail closed:
@@ -1205,6 +2135,45 @@ public final class AppEnvironment {
     /// offline-gray — never a fabricated online).
     public func botPresence(for route: Route) -> BotPresence {
         rosterSnapshot?.botPresence(for: route) ?? .unknown
+    }
+
+    /// Returns a non-secret explanation when a Bot cannot currently
+    /// participate in any supported hosted Group or phone-bridged Group.
+    /// This is a capability explanation for the picker only; selected routes
+    /// revalidated by `createRoom` immediately before creation.
+    public func roomEligibilityMessage(for route: Route) async -> String? {
+        switch botPresence(for: route) {
+        case .unreachable: return "Gateway offline."
+        case .unknown: return "Gateway availability is not confirmed."
+        case .reachable: break
+        }
+
+        // A local conversation seam is sufficient for the device-local
+        // bridge. Otherwise the selected route must either be a viable
+        // hosted authority or be reachable through a verified RoomLink target
+        // on another viable authority. The final selected set is checked
+        // again before create.
+        if conversationSession(for: route.gatewayID) != nil {
+            return nil
+        }
+        if canCreateRooms(on: route.gatewayID) {
+            return nil
+        }
+
+        for host in gateways where host.id != route.gatewayID {
+            guard let home = roomLinkSeam(for: host.id) as? any CrossGatewayRoomCommanding,
+                  let homeSnapshot = try? await home.roomLinkTarget(profile: "default"),
+                  homeSnapshot.supportsHome,
+                  let target = roomLinkSeam(for: route.gatewayID) as? any CrossGatewayRoomCommanding,
+                  let targetSnapshot = try? await target.roomLinkTarget(profile: route.profileSlug.rawValue),
+                  targetSnapshot.supportsTarget,
+                  targetSnapshot.negotiation.profile == route.profileSlug.rawValue,
+                  targetSnapshot.negotiation.installationID != homeSnapshot.negotiation.installationID else {
+                continue
+            }
+            return nil
+        }
+        return "Cross-gateway RoomLink is not configured on a connected host."
     }
 
     /// The registered gateway for an ID, or nil.
@@ -1256,6 +2225,7 @@ public final class AppEnvironment {
     public func removeGateway(_ id: GatewayID) async throws {
         try await registry.removeGateway(id)
         connectionIntent.clear(id)
+        cancelConnectionRecovery(for: id)
         await gatewaySessionInvalidator?(id)
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
@@ -1298,6 +2268,8 @@ public final class AppEnvironment {
         roomDriverStatuses[id] = nil
         roomLinks[id] = nil
         roomsByGateway[id] = nil
+        let liveRoomKeys = Set(allRooms.map(\.canonicalIdentity))
+        roomSyncWarnings = roomSyncWarnings.filter { liveRoomKeys.contains($0.key) }
         canCreateRoomsByGateway[id] = nil
         connectionStates[id] = nil
         testResults[id] = nil
@@ -1306,6 +2278,17 @@ public final class AppEnvironment {
         // entries must not resolve to another gateway — prune the Continue
         // index and the observed room attention for this gateway.
         continueIndex.prune(gatewayID: id)
+        // Card D: the removed gateway's observed artifacts and any retrieved
+        // bytes must not outlive it (a saved row must never resolve to
+        // another gateway).
+        artifactLibrary.prune(gatewayID: id)
+        artifactRetrievers[id] = nil
+        artifactImages.clear(gatewayID: id)
+        // ADR-0012 decision 2: the removed gateway's cached bot list and
+        // session summaries are orphans the moment it leaves the registry —
+        // no read path may serve them again (7-day TTL is not a bound on
+        // "removed": the store is pruned on removal, per the FOS-4 precedent).
+        try? await launchCache.removeLaunchCache(for: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
         let removedRoutes = sessionRoutes(on: id)
@@ -1335,6 +2318,89 @@ public final class AppEnvironment {
     /// Record an open of an exact room (called by RoomChatView).
     public func recordRoomOpen(room: FleetRoom, title: String, subtitle: String) {
         continueIndex.recordRoomOpen(room: room.id, title: title, subtitle: subtitle)
+    }
+
+    // MARK: Conversation organization — local pins (drawer Pinned section)
+
+    /// Pin an individual conversation by its exact route and session id.
+    /// Presentation metadata is updated on an existing pin without changing
+    /// its original order.
+    public func pinConversation(
+        route: Route,
+        sessionID: String,
+        title: String,
+        preview: String = ""
+    ) async {
+        await pinConversation(
+            identity: .individual(route: route, sessionID: sessionID),
+            title: title,
+            preview: preview,
+            authoritativeGatewayID: route.gatewayID,
+            avatarKey: route.profileSlug.rawValue
+        )
+    }
+
+    /// Pin a fleet-wide group using its verified canonical identity. The
+    /// display name is metadata only; duplicate advertisements with the same
+    /// canonical id collapse into one local pin.
+    public func pinGroupConversation(
+        canonicalID: String,
+        title: String,
+        preview: String = "",
+        authoritativeGatewayID: GatewayID? = nil,
+        avatarKey: String? = nil
+    ) async {
+        await pinConversation(
+            identity: .group(canonicalID: canonicalID),
+            title: title,
+            preview: preview,
+            authoritativeGatewayID: authoritativeGatewayID,
+            avatarKey: avatarKey
+        )
+    }
+
+    public func pinConversation(
+        identity: FleetConversationIdentity,
+        title: String,
+        preview: String = "",
+        authoritativeGatewayID: GatewayID? = nil,
+        avatarKey: String? = nil
+    ) async {
+        let existing = pinnedConversations.first { $0.identity == identity }
+        let pin = FleetConversationPin(
+            identity: identity,
+            title: title.isEmpty ? "Untitled conversation" : title,
+            preview: preview,
+            authoritativeGatewayID: authoritativeGatewayID,
+            avatarKey: avatarKey,
+            pinnedAt: existing?.pinnedAt ?? Date()
+        )
+        var updated = pinnedConversations.filter { $0.identity != identity }
+        updated.append(pin)
+        updated.sort { $0.pinnedAt > $1.pinnedAt }
+        await persistPins(updated)
+    }
+
+    public func unpinConversation(_ identity: FleetConversationIdentity) async {
+        let updated = pinnedConversations.filter { $0.identity != identity }
+        await persistPins(updated)
+    }
+
+    public func isPinned(_ identity: FleetConversationIdentity) -> Bool {
+        pinnedConversations.contains { $0.identity == identity }
+    }
+
+    /// Keep local pins when a gateway is removed. Rows become unavailable and
+    /// cannot be opened until the exact route/authoritative host is present
+    /// again. This policy preserves user intent and prevents unsafe rerouting.
+    private func persistPins(_ pins: [FleetConversationPin]) async {
+        let previous = pinnedConversations
+        pinnedConversations = pins
+        do {
+            try await conversationPinStore.savePins(pins)
+        } catch {
+            pinnedConversations = previous
+        }
     }
 
     // MARK: Auth config entry (M7 credential flow — Keychain-safe)
@@ -1407,7 +2473,16 @@ public final class AppEnvironment {
         testResultObservedAt[id] = Date()
         // Reflect the probe into the observable connection lifecycle so the
         // row shows the §13 state without a separate connect attempt.
-        connectionStates[id] = GatewayConnectionState(status: result.status)
+        let state = GatewayConnectionState(status: result.status)
+        connectionStates[id] = state
+        // P0-A: a probe that classified the gateway as failed is a recorded
+        // fault (the app's own evidence trail).
+        if case .failed(let status) = state,
+           let gateway = gateways.first(where: { $0.id == id }) {
+            recordFault(
+                category: "Gateway connection", gateway: gateway,
+                status: status, detail: nil)
+        }
     }
 
     // MARK: Session list (Bot detail — read-only `session.list` seam)
@@ -1425,8 +2500,18 @@ public final class AppEnvironment {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionsByRoute[route] = sessions
+            // Dogfood D3/W4: the FIRST observation of a route establishes the
+            // device-local baseline — live reads included, not just the launch
+            // cache (a fresh install, or any run whose cache is empty/expired,
+            // never hydrates; without this every historical session would
+            // resolve unread and the badge would light for all of them).
+            baselineUnreadStateIfNeeded(route: route, sessions: sessions)
+            recomputeUnreadAggregate()
             sessionReadErrors[route] = nil
             sessionsObservedAt[route] = Date()
+            // ADR-0012 (W4): write-through the successful read.
+            try? await launchCache.saveSessionListCache(
+                CachedSessionList(route: route, sessions: sessions))
         } catch let error as RosterError {
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
@@ -1434,6 +2519,60 @@ public final class AppEnvironment {
             guard sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         }
+    }
+
+    // MARK: Dogfood r4 — unread watermarks
+
+    /// First observation of a route establishes the device-local read baseline
+    /// for the sessions currently returned by that route. Later session IDs on
+    /// an already-baselined route remain unread until the user opens them.
+    ///
+    /// Two callers, one contract: launch-cache hydration (W5 — dots on first
+    /// paint) and the first LIVE session read (`loadSessions`). A route that
+    /// was never hydrated baselines on its first live observation.
+    private func baselineUnreadStateIfNeeded(route: Route, sessions: [SessionSummary]) {
+        #if DEBUG
+        // The unread UI suite deliberately starts with an unread fixture so it
+        // can exercise both indicators and the clear-on-open path. Production
+        // and ordinary tests always use the first-observation baseline.
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_UNREAD_FIXTURE"] == "1" {
+            return
+        }
+        #endif
+        guard !FleetUnreadStore.isRouteBaselined(route) else { return }
+        FleetUnreadStore.baseline(route: route, sessions: sessions)
+        readWatermarks = FleetUnreadStore.watermarks()
+    }
+
+    /// Decision 1: opening a conversation marks it read. `lastActive` is
+    /// the gateway's CURRENT stamp for the session (server clock — device
+    /// skew can neither fabricate nor mask unread state).
+    public func markConversationRead(route: Route, sessionID: String, lastActive: Double) {
+        guard lastActive > 0 else { return }
+        FleetUnreadStore.markRead(route: route, sessionID: sessionID, lastActive: lastActive)
+        readWatermarks["\(route.id)/\(sessionID)"] = lastActive
+        recomputeUnreadAggregate()
+    }
+
+    public func isConversationUnread(route: Route, session: SessionSummary) -> Bool {
+        guard session.lastActive > 0 else { return false }
+        let mark = readWatermarks["\(route.id)/\(session.id)"] ?? 0
+        return session.lastActive > mark
+    }
+
+    private func recomputeUnreadAggregate() {
+        anyUnreadSessions = sessionsByRoute.contains { route, sessions in
+            sessions.contains { isConversationUnread(route: route, session: $0) }
+        }
+    }
+
+    /// UI-test hygiene (HERMES_FLEET_NAV_RESET): clears BOTH the persisted
+    /// store and the observable mirror (the in-memory dict outlives the
+    /// store reset — a stale dict suppresses dots in later suites).
+    public func resetUnreadStateForUITests() {
+        FleetUnreadStore.resetForUITests()
+        readWatermarks = [:]
+        recomputeUnreadAggregate()
     }
 
     // MARK: Chats session freshness
@@ -1567,19 +2706,33 @@ public final class AppEnvironment {
             return BotConversationMentions.prepare(text: text, roster: self.mentionCandidates(), current: route,
                 gatewayLabel: { self.gateway(for: $0)?.displayName ?? $0.rawValue })
         }
+        // Card D: observed generated-image artifacts land in the device-local
+        // library (upsert by gateway+path — replayed frames never duplicate).
+        model.onArtifactObserved = { [weak self] reference, sourceTitle, sourceProfile in
+            self?.recordObservedArtifact(
+                reference,
+                sourceTitle: sourceTitle,
+                sourceSubtitle: sourceProfile)
+        }
         return model
     }
 
     // MARK: Kanban board (t_3b321b7b)
 
-    /// Build the read-only kanban board watcher for a gateway. Nil when no
-    /// factory is wired (the screen renders its unavailable state, fail
-    /// closed).
+    /// Build a kanban board watcher for a gateway. Nil when no factory is
+    /// wired (the screen renders its unavailable state, fail closed).
     public func makeKanbanWatcher(for gateway: FleetGateway) -> (any KanbanBoardWatching)? {
         if let existing = kanbanWatchers[gateway.id] { return existing }
         guard let watcher = kanbanWatcherFactory?(gateway) else { return nil }
         kanbanWatchers[gateway.id] = watcher
         return watcher
+    }
+
+    /// Build 41: the mutation-capable board operator for a gateway. Nil
+    /// when the watcher does not conform to `KanbanBoardOperating` (the
+    /// board renders read-only, fail closed).
+    public func makeKanbanOperator(for gateway: FleetGateway) -> (any KanbanBoardOperating)? {
+        makeKanbanWatcher(for: gateway) as? any KanbanBoardOperating
     }
 
     // MARK: Management panes (R9-T5/T6 — cron + skills)
@@ -1592,6 +2745,20 @@ public final class AppEnvironment {
               let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
         let seam = factory(gateway)
         managementSeams[gatewayID] = seam
+        return seam
+    }
+
+    // MARK: Cron destination (Card B — dashboard REST surface)
+
+    /// Build the dashboard cron seam for a gateway. Nil when no factory is
+    /// wired (the Cron destination renders its unavailable state, fail
+    /// closed).
+    public func makeCronDashboard(for gatewayID: GatewayID) -> (any CronDashboardProviding)? {
+        if let existing = cronDashboards[gatewayID] { return existing }
+        guard let factory = cronDashboardFactory,
+              let gateway = gateways.first(where: { $0.id == gatewayID }) else { return nil }
+        let seam = factory(gateway)
+        cronDashboards[gatewayID] = seam
         return seam
     }
 

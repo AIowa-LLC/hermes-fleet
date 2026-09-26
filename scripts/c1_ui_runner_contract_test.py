@@ -18,7 +18,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from c1_ui_partition import partition
+from c1_ui_partition import partition, runtime_weights
 from c1_xcresult_parse import parse
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -226,6 +226,39 @@ class ExactSelectionParserContract(unittest.TestCase):
         summary = {'result':'Passed', 'totalTestCount':1}
         nodes = [{'nodeType':'Test Case', 'nodeIdentifier':'ExampleUITests/testOne()', 'name':'testOne()', 'result':'Passed'}]
         self.assertEqual(parse(summary, nodes, 'ExampleUITests', expected_cases={'testOne()'})[2], 1)
+
+
+class RuntimeWeightContract(unittest.TestCase):
+    def read_fixture(self, names, values):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / 'matrix.sh'
+            p.write_text('UI_CLASSES=(\n' + names + '\n)\nUI_WEIGHT_TENTHS_OF_MINUTE=(\n' + values + '\n)\n')
+            return runtime_weights(p)
+
+    def test_literal_weights_convert_to_seconds(self):
+        self.assertEqual(self.read_fixture('A B # comment', '10 25'), {'A': 60, 'B': 150})
+
+    def test_missing_weight_fails(self):
+        with self.assertRaises(ValueError):
+            self.read_fixture('A B', '10')
+
+    def test_zero_negative_and_expression_fail(self):
+        for value in ('0', '-1', '$(command)'):
+            with self.assertRaises(ValueError):
+                self.read_fixture('A', value)
+
+    def test_duplicate_suite_fails(self):
+        with self.assertRaises(ValueError):
+            self.read_fixture('A A', '10 20')
+
+    def test_full_inventory_fits_historical_partition_budget(self):
+        weights = runtime_weights(ROOT / 'scripts/c1_ui_matrix.sh')
+        buckets = partition(list(weights), weights, 12)
+        self.assertEqual(set(n for b in buckets for n in b), set(weights))
+        self.assertEqual(sum(map(len, buckets)), len(weights))
+        # Historical work per partition must leave setup/variance margin
+        # inside the unchanged 75-minute job ceiling. This is not an ETA.
+        self.assertLessEqual(max(sum(weights[n] for n in b) for b in buckets), 55 * 60)
 
 
 if __name__ == '__main__':

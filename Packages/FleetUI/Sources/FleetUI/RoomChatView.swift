@@ -1,6 +1,13 @@
+import Foundation
 import SwiftUI
 import Observation
 import FleetCore
+
+public struct RoomWorkIndicator: Identifiable, Equatable {
+    public let id: String
+    public let text: String
+    public let showsSpinner: Bool
+}
 
 /// TRUE BOTS MODE slice 4 (D15/D16/D18) — observable state for one room's
 /// interactive chat screen.
@@ -39,6 +46,7 @@ public final class RoomChatViewModel {
     /// Room-level D16 attention state from driver status.
     public private(set) var driverWorking = false
     public private(set) var driverBlocked = false
+    public private(set) var activeBridgedMembers: [BridgedRoomActiveMember] = []
     public private(set) var pendingApprovals: [RoomPendingApproval] = []
     public private(set) var pendingRetries: [RoomPendingRetry] = []
     /// Room was disbanded through this screen (navigable-away tombstone).
@@ -61,18 +69,121 @@ public final class RoomChatViewModel {
     public let room: FleetRoom
     private let commands: (any RoomChatCommanding)?
     private let driverStatus: (any RoomDriverStatusProviding)?
+    /// Stage 1: the shared voice engine (fail-closed default when nil).
+    private let voice: any VoiceTranscribing
+    /// Fail-closed probe mirroring ConversationViewModel (footer visibility).
+    private let voiceCanSpeak: Bool
+    /// Entry id currently spoken by an explicit footer Read Aloud tap.
+    public private(set) var readAloudEntryID: String?
     private var cache = RoomTranscriptCache()
+    /// F2: live change tail for bridged rooms. `nonisolated(unsafe)` — the
+    /// established eventTask pattern: created/replaced on the main actor,
+    /// canceled in `deinit` (cancel is thread-safe).
+    nonisolated(unsafe) private var liveTail: Task<Void, Never>?
+    nonisolated(unsafe) private var activityTail: Task<Void, Never>?
+    nonisolated(unsafe) private var hostedStatusTail: Task<Void, Never>?
+    nonisolated(unsafe) private var readAloudCompletionTask: Task<Void, Never>?
+    private var hostedPendingUntil: Date?
+    /// Reused when a transport error leaves delivery indeterminate. The
+    /// gateway's event_id contract makes a user retry idempotent.
+    private var pendingSendID: String?
+    private var pendingSendText: String?
 
     public init(
         room: FleetRoom,
         commands: (any RoomChatCommanding)? = nil,
-        driverStatus: (any RoomDriverStatusProviding)? = nil
+        driverStatus: (any RoomDriverStatusProviding)? = nil,
+        voice: (any VoiceTranscribing)? = nil
     ) {
         self.room = room
         self.commands = commands
         self.driverStatus = driverStatus
         self.roomName = room.name
         self.isDisbanded = room.id.provenance == .hosted && room.hosted?.disbandedAt != nil
+        // Stage 1: same fail-closed voice default as ConversationViewModel —
+        // the footer's Read Aloud renders only where a real engine exists.
+        self.voice = voice ?? UnsupportedVoiceTranscriber()
+        self.voiceCanSpeak = !(self.voice is UnsupportedVoiceTranscriber)
+    }
+
+    deinit {
+        liveTail?.cancel()
+        activityTail?.cancel()
+        hostedStatusTail?.cancel()
+        readAloudCompletionTask?.cancel()
+    }
+
+    public var workIndicators: [RoomWorkIndicator] {
+        guard !isDisbanded && !isManagedByDesktop else { return [] }
+        if isSending {
+            return [.init(id: "sending", text: "Sending…", showsSpinner: true)]
+        }
+        if driverBlocked && !pendingApprovals.isEmpty {
+            return [.init(id: "approval", text: "Waiting for your answer…", showsSpinner: false)]
+        }
+        if commands is BridgedRoomRelay {
+            return activeBridgedMembers.map {
+                .init(id: $0.id, text: "\($0.displayName) is thinking…", showsSpinner: true)
+            }
+        }
+        if driverWorking || hostedPendingUntil != nil {
+            return [.init(id: "room", text: "The room is working…", showsSpinner: true)]
+        }
+        return []
+    }
+
+    // MARK: Stage 1 — assistant-reply footer (read aloud)
+
+    /// Stage 1 footer visibility probe (mirrors ConversationViewModel).
+    public var voiceCanSpeakFooter: Bool { voiceCanSpeak }
+
+    /// Speak one completed member reply through the shared engine
+    /// (same VoiceTranscribing path as conversation read-aloud). Re-tapping
+    /// the same entry stops it; tapping another cuts the old utterance.
+    @discardableResult
+    public func readReplyAloud(entryID: String, text: String) async -> Bool {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard voiceCanSpeak else { return false }
+        if readAloudEntryID == entryID {
+            await stopReadingReply()
+            return true
+        }
+        readAloudCompletionTask?.cancel()
+        await voice.stopSpeaking()
+        readAloudEntryID = entryID
+        try? await voice.speak(text: text)
+        startReadAloudCompletionMonitor(entryID: entryID)
+        return true
+    }
+
+    /// Stop the in-flight room Read Aloud utterance.
+    public func stopReadingReply() async {
+        readAloudCompletionTask?.cancel()
+        readAloudCompletionTask = nil
+        await voice.stopSpeaking()
+        readAloudEntryID = nil
+    }
+
+    private func startReadAloudCompletionMonitor(entryID: String) {
+        readAloudCompletionTask?.cancel()
+        let voice = self.voice
+        readAloudCompletionTask = Task { [weak self] in
+            var observedSpeaking = false
+            for tick in 0..<20 where !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                let speaking = voice.isSpeaking
+                observedSpeaking = observedSpeaking || speaking
+                if !speaking && (observedSpeaking || tick >= 3) {
+                    await MainActor.run {
+                        guard let self, self.readAloudEntryID == entryID else { return }
+                        self.readAloudEntryID = nil
+                        self.readAloudCompletionTask = nil
+                    }
+                    return
+                }
+            }
+        }
     }
 
     /// Capabilities for this room (hosted: advertised methods; legacy:
@@ -90,14 +201,86 @@ public final class RoomChatViewModel {
     // MARK: Lifecycle
 
     public func start() async {
+        // Subscribe BEFORE the initial pull so no store append can slip
+        // between the replay read and the live tail's registration; an
+        // overlap is harmless (the seq-keyed cache dedupes).
+        startLiveTail()
+        startActivityTail()
         await refresh()
+        guard !Task.isCancelled else { return }
+        startHostedStatusTail()
+    }
+
+    /// The screen owns these observation tasks; a later open subscribes again
+    /// and receives the bridge's current activity snapshot.
+    public func stopObserving() {
+        liveTail?.cancel()
+        liveTail = nil
+        activityTail?.cancel()
+        activityTail = nil
+        hostedStatusTail?.cancel()
+        hostedStatusTail = nil
+        activeBridgedMembers = []
+        hostedPendingUntil = nil
+    }
+
+    private func startActivityTail() {
+        guard let relay = commands as? BridgedRoomRelay else { return }
+        activityTail?.cancel()
+        let changes = relay.activeMemberChanges(roomID: room.id.key)
+        activityTail = Task { [weak self] in
+            for await members in changes {
+                guard !Task.isCancelled else { break }
+                self?.activeBridgedMembers = members
+            }
+        }
+    }
+
+    private func startHostedStatusTail() {
+        guard !(commands is BridgedRoomRelay), !isManagedByDesktop,
+              driverStatus != nil, capabilities.canSend else { return }
+        hostedStatusTail?.cancel()
+        hostedStatusTail = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                do {
+                    try await Task.sleep(for: .seconds(self.driverWorking || self.hostedPendingUntil != nil ? 2 : 5))
+                } catch { return }
+                guard !Task.isCancelled else { return }
+                let wasWorking = self.driverWorking
+                await self.refresh(clearError: false)
+                if wasWorking && !self.driverWorking {
+                    // The status read may publish the terminal reply after
+                    // the preceding log replay. Pick it up immediately.
+                    await self.refresh(clearError: false)
+                }
+            }
+        }
+    }
+
+    /// F2: live transcript for bridged rooms — the store notifies on every
+    /// append (user message, member reply, failure note); each notification
+    /// runs the same replay merge the pull path uses. Hosted rooms keep
+    /// their pull model (the gateway owns the log).
+    private func startLiveTail() {
+        guard room.id.gatewayID == BridgedRooms.gatewayScope,
+              let relay = commands as? BridgedRoomRelay else { return }
+        liveTail?.cancel()
+        let roomKey = room.id.key
+        liveTail = Task { [weak self] in
+            guard let changes = relay.transcriptChanges(roomID: roomKey) else { return }
+            for await _ in changes {
+                guard !Task.isCancelled else { break }
+                await self?.refresh()
+            }
+        }
     }
 
     /// Replay the durable log since the merged cursor + refresh driver
     /// status. The cache projection renders FIRST so re-entry shows the
     /// surviving transcript immediately.
-    public func refresh() async {
-        errorMessage = nil
+    public func refresh(clearError: Bool = true) async {
+        if clearError { errorMessage = nil }
         if !capabilities.canReplay {
             // Honest: no replay path (legacy projection already carries its
             // bounded window in room.recentLog — project it once).
@@ -116,10 +299,35 @@ public final class RoomChatViewModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            let page = try await commands.replay(
-                roomID: room.id.key, sinceSeq: cache.nextSinceSeq, limit: 100)
-            cache.merge(page)
-            applyProjection()
+            // Drain bounded gateway pages. The cursor is authoritative; the
+            // progress guard prevents a broken/replayed page from spinning.
+            var since = cache.nextSinceSeq
+            var page = try await commands.replay(
+                roomID: room.id.key, sinceSeq: since, limit: 100)
+            var pageCount = 0
+            while true {
+                // Gateway-authority fence (QA P1; mirrors RoomReplicator):
+                // a replay page is history only if the room's hosted
+                // authority produced it. A foreign gateway or a regressed
+                // epoch means authority moved — surface the typed reload
+                // prompt WITHOUT merging the page into the transcript.
+                if let hosted = room.hosted,
+                   page.authorityGatewayID != hosted.authorityGatewayID
+                    || page.authorityEpoch < hosted.authorityEpoch {
+                    errorMessage = RoomCommandFailure.foreignAuthority(
+                        page.authorityGatewayID).explanation
+                    break
+                }
+                cache.merge(page)
+                applyProjection()
+                guard page.hasMore, pageCount < 100 else { break }
+                let next = max(page.cursor, cache.nextSinceSeq)
+                guard next > since else { break }
+                since = next
+                page = try await commands.replay(
+                    roomID: room.id.key, sinceSeq: since, limit: 100)
+                pageCount += 1
+            }
         } catch {
             errorMessage = Self.explain(error)
         }
@@ -134,15 +342,29 @@ public final class RoomChatViewModel {
     }
 
     private func loadDriverStatus() async {
-        guard let driverStatus, capabilities.canStop || capabilities.canRetry || capabilities.canApprove else {
+        guard let driverStatus,
+              capabilities.canSend || capabilities.canStop || capabilities.canRetry || capabilities.canApprove else {
             return
         }
         if let status = try? await driverStatus.driverStatus(roomID: room.id.key) {
+            let wasWorking = driverWorking
             driverWorking = status.working
             driverBlocked = status.blocked
             pendingApprovals = status.pendingApprovals
             pendingRetries = status.pendingRetries
             lastDriverStatus = status
+            if status.working || wasWorking || (hostedPendingUntil.map { $0 <= Date() } ?? false) {
+                hostedPendingUntil = nil
+            }
+        } else {
+            // A stale positive status must not leave a spinner indefinitely.
+            // An accepted send still gets its bounded startup window when
+            // this gateway cannot return driver status.
+            driverWorking = false
+            driverBlocked = false
+            if hostedPendingUntil.map({ $0 <= Date() }) == true {
+                hostedPendingUntil = nil
+            }
         }
     }
 
@@ -163,6 +385,15 @@ public final class RoomChatViewModel {
             disabledExplanation = "No room connection is available on this gateway."
             return false
         }
+        // A second tap while the first request is in flight is not another
+        // logical message. A retry after an indeterminate failure reuses the
+        // same event id, which the gateway deduplicates.
+        guard !isSending else { return false }
+        if pendingSendText != text {
+            pendingSendText = text
+            pendingSendID = "fleet-" + UUID().uuidString.lowercased()
+        }
+        let eventID = pendingSendID
         isSending = true
         defer { isSending = false }
         attemptedWriteCount += 1
@@ -173,7 +404,13 @@ public final class RoomChatViewModel {
             // wire — the room's main thread id is stable per room.
             _ = try await commands.send(
                 roomID: room.id.key, text: text,
-                threadID: Self.mainThreadID(for: room.id.key))
+                threadID: Self.mainThreadID(for: room.id.key),
+                idempotencyKey: eventID)
+            if !(commands is BridgedRoomRelay), driverStatus != nil {
+                hostedPendingUntil = Date().addingTimeInterval(8)
+            }
+            pendingSendID = nil
+            pendingSendText = nil
             errorMessage = nil
             await refresh()
             return true
@@ -252,6 +489,8 @@ public final class RoomChatViewModel {
         attemptedWriteCount += 1
         do {
             let cancelled = try await commands.stop(roomID: room.id.key)
+            hostedPendingUntil = nil
+            driverWorking = false
             notice = cancelled > 0
                 ? "Stopped \(cancelled) running task\(cancelled == 1 ? "" : "s")."
                 : "No running tasks to stop."
@@ -355,7 +594,64 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
     }
 }
 
+enum RoomDraftStore {
+    private static let prefix = "fleet.room.draft.v1."
+
+    static func resetForUITests(defaults: UserDefaults = .standard) {
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    static func load(for id: FleetRoomID) -> String {
+        UserDefaults.standard.string(forKey: key(for: id)) ?? ""
+    }
+
+    static func save(_ draft: String, for id: FleetRoomID) {
+        let key = key(for: id)
+        if draft.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else {
+            UserDefaults.standard.set(draft, forKey: key)
+        }
+    }
+
+    static func clear(for id: FleetRoomID) {
+        UserDefaults.standard.removeObject(forKey: key(for: id))
+    }
+
+    private static func key(for id: FleetRoomID) -> String {
+        prefix + id.storageKey
+    }
+}
+
 // MARK: - Screen
+
+private struct RoomLatestScrollTargetFrame: Equatable {
+    let id: String
+    let frame: CGRect
+}
+
+private struct RoomLatestScrollTargetFramePreferenceKey: PreferenceKey {
+    static let defaultValue: RoomLatestScrollTargetFrame? = nil
+
+    static func reduce(
+        value: inout RoomLatestScrollTargetFrame?,
+        nextValue: () -> RoomLatestScrollTargetFrame?
+    ) {
+        if let next = nextValue() {
+            value = next
+        }
+    }
+}
+
+private struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
+    static let defaultValue = CGRect.null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
 
 /// One room, generation-agnostic: hosted rooms render interactive (per
 /// capabilities), legacy rooms render observational with the "Managed by
@@ -370,6 +666,14 @@ public struct RoomChatView: View {
     @State private var renameDraft = ""
     @State private var showingDisbandConfirm = false
     @State private var showingRoomLink = false
+    /// RC-84 P1: Group Info sheet presentation.
+    @State private var showingInfo = false
+    /// "Continue as Interactive Group": confirmation + in-flight state for
+    /// promoting a legacy projection room into a hosted room (fix B).
+    @State private var showingContinueConfirm = false
+    @State private var isContinuing = false
+    @State private var continueError: String?
+    @State private var continuedRoom: FleetRoom?
     // FOS-8 (SPEC §16 Focus / §9 Groups): no auto-scroll away from history
     // reading — new events only follow when the user is already at the
     // bottom; an explicit Latest control returns them there.
@@ -381,11 +685,19 @@ public struct RoomChatView: View {
     @State private var isUserInteractingWithScroll = false
     /// Suppresses unfollow while a programmatic follow-scroll settles.
     @State private var isProgrammaticFollow = false
+    /// t_363bc529: monotonic token for the open-at-latest convergence loop —
+    /// a newer projection arrival supersedes any in-flight loop.
+    @State private var followLatestToken = 0
+    /// LazyVStack's estimated content size can report "at bottom" before the
+    /// final row is materialized. Convergence uses the target's actual frame.
+    @State private var latestScrollTargetFrame: RoomLatestScrollTargetFrame?
+    @State private var scrollViewportFrame = CGRect.null
     @FocusState private var composing: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
         self.environment = environment
         _viewModel = State(initialValue: environment.makeRoomChatViewModel(room: room))
+        _draft = State(initialValue: RoomDraftStore.load(for: room.id))
     }
 
     public var body: some View {
@@ -402,6 +714,7 @@ public struct RoomChatView: View {
                     failureSurfaces
                     approvalSurfaces
                     transcriptRows
+                    workIndicatorRows
                     if viewModel.transcript.isEmpty && !viewModel.isLoading {
                         emptyTranscript
                     }
@@ -414,11 +727,23 @@ public struct RoomChatView: View {
                 // button lost its own id this way).
                 .accessibilityIdentifier("fleet.room.chat")
             }
+            .overlay {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: RoomScrollViewportFramePreferenceKey.self,
+                        value: geometry.frame(in: .global))
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
             .overlay(alignment: .bottom) { composer }
             .background(theme.background.ignoresSafeArea())
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarControls }
+            .onChange(of: draft) { _, value in
+                RoomDraftStore.save(value, for: viewModel.room.id)
+            }
             .task {
                 await viewModel.start()
                 // FOS-4 (SPEC §7/§17): the room's open resolved and its scoped
@@ -432,12 +757,16 @@ public struct RoomChatView: View {
                         ?? viewModel.room.id.gatewayID.rawValue)
                 environment.publishRoomAttention(room: viewModel.room, status: viewModel.lastDriverStatus)
             }
+            .onDisappear { viewModel.stopObserving() }
             .refreshable {
                 await viewModel.refresh()
                 // FOS-4: a manual room refresh re-publishes its observations.
                 environment.publishRoomAttention(room: viewModel.room, status: viewModel.lastDriverStatus)
             }
             .sheet(isPresented: $showingRename) { renameSheet }
+            .sheet(isPresented: $showingInfo) {
+                RoomInfoSheet(viewModel: viewModel, environment: environment)
+            }
             .sheet(isPresented: $showingRoomLink) {
                 NavigationStack {
                     RoomLinkView(room: viewModel.room, environment: environment)
@@ -451,21 +780,56 @@ public struct RoomChatView: View {
             } message: {
                 Text("The gateway tombstones the room permanently. This can't be undone.")
             }
+            .confirmationDialog(
+                "Continue this room as an interactive Group?",
+                isPresented: $showingContinueConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Continue as Interactive Group") {
+                    Task { await continueAsInteractive() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("A new hosted room reuses this room's durable identity — verified members continue on the gateway; this read-only history stays untouched.")
+            }
+            .navigationDestination(item: $continuedRoom) { room in
+                RoomChatView(room: room, environment: environment)
+                    .toolbar { FleetDrawerMenu(showsUnreadBadge: environment.anyUnreadSessions) }
+            }
             .onChange(of: viewModel.transcript.count) { _, _ in
                 // FOS-8 (SPEC §16 Focus): new events never steal the user's
                 // reading position — auto-follow only when already at the
                 // bottom (followingLatest).
                 guard followingLatest else { return }
-                if let last = viewModel.transcript.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                if let target = latestScrollTarget {
+                    // t_363bc529: ONE scrollTo is not enough when a large
+                    // durable history projects at once — the LazyVStack's
+                    // height estimates for rows it has not yet materialized
+                    // are wrong, so a single assertion can park the viewport
+                    // mid-transcript with nothing left to re-assert it (count
+                    // never changes again). Re-assert in a bounded loop until
+                    // the geometry observer confirms at-bottom; each pass
+                    // materializes more rows, so estimates converge.
+                    followLatestToken += 1
+                    convergeOnLatest(
+                        proxy: proxy, target: target,
+                        token: followLatestToken)
                 }
+            }
+            .onChange(of: viewModel.workIndicators) { _, _ in
+                guard followingLatest, let target = latestScrollTarget else { return }
+                followLatestToken += 1
+                convergeOnLatest(proxy: proxy, target: target, token: followLatestToken)
             }
             .onAppear {
                 // Open at the LATEST content (pre-FOS-8 behavior preserved:
                 // the room opens following the latest; only an explicit
                 // upward escape unfollows).
-                if let last = viewModel.transcript.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                if let target = latestScrollTarget {
+                    followLatestToken += 1
+                    convergeOnLatest(
+                        proxy: proxy, target: target,
+                        token: followLatestToken)
                 }
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -477,9 +841,10 @@ public struct RoomChatView: View {
                     - geometry.visibleRect.height <= 160
             } action: { _, atBottom in
                 isAtBottomLatest = atBottom
-                if atBottom {
+                if atBottom && isLatestScrollTargetAtEnd {
                     isProgrammaticFollow = false
-                } else if isUserInteractingWithScroll && !isProgrammaticFollow {
+                } else if isUserInteractingWithScroll && !isProgrammaticFollow
+                    && !isLatestScrollTargetAtEnd {
                     // The phase callback can run before geometry has updated
                     // isAtBottomLatest. Treat the first non-bottom geometry
                     // update during a real drag as the user's explicit
@@ -495,7 +860,8 @@ public struct RoomChatView: View {
                 // rows taller than the viewport all shift geometry while
                 // still "following latest".
                 isUserInteractingWithScroll = phase == .interacting
-                if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow {
+                if phase == .interacting && !isAtBottomLatest && !isProgrammaticFollow
+                    && !isLatestScrollTargetAtEnd {
                     followingLatest = false
                 }
             }
@@ -506,7 +872,7 @@ public struct RoomChatView: View {
                     HStack {
                         Spacer()
                         Button {
-                            if let last = viewModel.transcript.last {
+                            if let target = latestScrollTarget {
                                 // Mark the follow as programmatic before
                                 // changing visibility. Adaptive iPad scroll
                                 // containers can emit one more interaction
@@ -524,7 +890,7 @@ public struct RoomChatView: View {
                                 // Latest immediately.
                                 Task { @MainActor in
                                     await Task.yield()
-                                    proxy.scrollTo(last.id, anchor: .bottom)
+                                    proxy.scrollTo(target, anchor: .bottom)
                                     // Bounded settle window: if the geometry
                                     // observer never confirms (edge layouts),
                                     // stop suppressing after 1.5s (test load
@@ -545,6 +911,81 @@ public struct RoomChatView: View {
                     .padding(.horizontal, FleetTheme.spacingLg)
                     .frame(minHeight: 44)
                 }
+            }
+        }
+        .onPreferenceChange(RoomLatestScrollTargetFramePreferenceKey.self) { frame in
+            latestScrollTargetFrame = frame
+        }
+        .onPreferenceChange(RoomScrollViewportFramePreferenceKey.self) { frame in
+            scrollViewportFrame = frame
+        }
+    }
+
+    // MARK: Open-at-latest convergence (t_363bc529)
+
+    private var latestScrollTarget: String? {
+        !viewModel.workIndicators.isEmpty ? "fleet.room.work.anchor" : viewModel.transcript.last?.id
+    }
+
+    private var isLatestScrollTargetVisible: Bool {
+        guard let latestScrollTargetFrame,
+              latestScrollTargetFrame.id == latestScrollTarget,
+              !scrollViewportFrame.isNull else { return false }
+        return latestScrollTargetFrame.frame.intersects(scrollViewportFrame)
+    }
+
+    /// The target's bottom edge must reach the scroll viewport's end. Merely
+    /// intersecting the viewport can happen while a deep lazy stack is still
+    /// correcting its height estimates, before open-at-latest has converged.
+    private var isLatestScrollTargetAtEnd: Bool {
+        guard isLatestScrollTargetVisible,
+              let targetFrame = latestScrollTargetFrame?.frame else { return false }
+        return targetFrame.maxY <= scrollViewportFrame.maxY - 96
+    }
+
+    /// Re-assert scrollTo(latest) until the target reaches the visible end of
+    /// the viewport. Scroll geometry alone can report a false bottom while a
+    /// LazyVStack still uses short estimates for unmaterialized rows.
+    ///
+    /// A single scrollTo on a freshly-projected deep transcript lands on the
+    /// LazyVStack's unmaterialized height estimates and can park mid-transcript
+    /// (observed y=-742 of ~2340pt). Each re-assertion materializes more rows,
+    /// so the estimates converge to the true content height within a few
+    /// passes.
+    ///
+    /// Cancels itself when: the target reaches the visible end, the user starts
+    /// dragging (their scroll wins), or a newer projection supersedes the
+    /// token. If the bounded budget is exhausted without arrival, it leaves
+    /// the honest state — NOT following — so the Latest control renders and
+    /// the user has an explicit way back down.
+    private func convergeOnLatest(proxy: ScrollViewProxy, target: String, token: Int) {
+        isProgrammaticFollow = true
+        Task { @MainActor in
+            var attempts = 0
+            while attempts < 20 {
+                guard followLatestToken == token else { return } // superseded
+                guard !isUserInteractingWithScroll else {
+                    // The user grabbed the scroll: hand control back fully so
+                    // their drag can unfollow (otherwise Latest stays hidden
+                    // until they happen to touch bottom).
+                    followingLatest = isLatestScrollTargetAtEnd
+                    isProgrammaticFollow = false
+                    return
+                }
+                if isLatestScrollTargetAtEnd && attempts > 0 {
+                    followingLatest = true
+                    isProgrammaticFollow = false
+                    return
+                }
+                proxy.scrollTo(target, anchor: .bottom)
+                attempts += 1
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if followLatestToken == token {
+                isProgrammaticFollow = false
+                // Bounded budget exhausted without confirmed arrival: leave
+                // the honest state so the Latest control offers the way down.
+                if !isLatestScrollTargetAtEnd { followingLatest = false }
             }
         }
     }
@@ -570,7 +1011,7 @@ public struct RoomChatView: View {
             // cross-machine members never collapse.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: FleetTheme.spacingXs) {
-                    ForEach(viewModel.memberRows(gatewayLabel: label), id: \.member.name) { row in
+                    ForEach(Array(viewModel.memberRows(gatewayLabel: label).enumerated()), id: \.offset) { _, row in
                         HStack(spacing: 4) {
                             Text(row.member.name)
                                 .font(.caption.weight(.semibold))
@@ -586,17 +1027,58 @@ public struct RoomChatView: View {
                     }
                 }
             }
+            if hostIsUnavailable {
+                Text("Authoritative host unavailable. Cached identity is preserved; sending is disabled until it reconnects.")
+                    .font(.caption)
+                    .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("fleet.room.host-unavailable")
+            }
         }
         .padding(.bottom, FleetTheme.spacingXs)
     }
 
+    private var hostIsUnavailable: Bool {
+        guard viewModel.room.id.provenance == .hosted else { return false }
+        if case .failed = environment.rosterSnapshot?.outcome(for: viewModel.room.id.gatewayID) {
+            return true
+        }
+        guard let state = environment.connectionStates[viewModel.room.id.gatewayID] else { return false }
+        switch state {
+        case .failed(_), .disconnected: return true
+        case .idle, .connecting, .connected: return false
+        }
+    }
+
+    @ViewBuilder
     private var managedByDesktopBanner: some View {
-        // FOS-6: bounded banner (SPEC §18 legacy/tombstone banners).
-        FleetNoticeBar(
-            "Managed by Hermes Desktop — read only. Fields update when Desktop syncs.",
-            systemImage: "lock.fill",
-            id: "fleet.room.legacy.banner"
-        )
+        // FOS-6: bounded banner (SPEC §18 legacy/tombstone banners). The
+        // Continue action (diagnostic 2026-09-15 fix B) offers promotion
+        // into a hosted room; it disappears while the flow is in flight.
+        if isContinuing {
+            FleetNoticeBar(
+                "Continuing this room as an interactive Group…",
+                systemImage: "arrow.triangle.2.circlepath",
+                id: "fleet.room.legacy.banner"
+            )
+        } else {
+            FleetNoticeBar(
+                "Read only · Managed by Hermes Desktop. Recent history only — the full transcript stays on Desktop.",
+                systemImage: "lock.fill",
+                id: "fleet.room.legacy.banner",
+                actionTitle: "Continue as Interactive Group",
+                actionID: "fleet.room.legacy.continue",
+                action: { showingContinueConfirm = true }
+            )
+        }
+        if let continueError {
+            FleetNoticeBar(
+                continueError,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .warning,
+                id: "fleet.room.legacy.continue.error"
+            )
+        }
     }
 
     private var disbandedBanner: some View {
@@ -605,6 +1087,21 @@ public struct RoomChatView: View {
             systemImage: "trash",
             id: "fleet.room.disbanded.banner"
         )
+    }
+
+    /// Fix B flow: continue this legacy room into a hosted room on its
+    /// gateway (durable-id reuse). Typed failures render in the banner;
+    /// success navigates to the revealed hosted room.
+    private func continueAsInteractive() async {
+        isContinuing = true
+        continueError = nil
+        defer { isContinuing = false }
+        do {
+            continuedRoom = try await environment.continueLegacyRoomAsInteractive(
+                viewModel.room)
+        } catch {
+            continueError = RoomChatViewModel.explain(error)
+        }
     }
 
     // MARK: D16 failure / attention surfaces
@@ -754,6 +1251,44 @@ public struct RoomChatView: View {
     }
 
     @ViewBuilder
+    private var workIndicatorRows: some View {
+        if !viewModel.workIndicators.isEmpty {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+                ForEach(viewModel.workIndicators) { indicator in
+                    HStack(spacing: FleetTheme.spacingXs) {
+                        if indicator.showsSpinner {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(theme.textSecondary)
+                        }
+                        Text(indicator.text)
+                            .font(FleetTheme.monoCaptionFont)
+                            .italic()
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(indicator.text)
+                    .accessibilityIdentifier("fleet.room.work.\(indicator.id)")
+                }
+            }
+            .padding(.horizontal, FleetTheme.spacingSm)
+            .padding(.vertical, FleetTheme.spacingXs)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: RoomLatestScrollTargetFramePreferenceKey.self,
+                        value: latestScrollTarget == "fleet.room.work.anchor"
+                            ? RoomLatestScrollTargetFrame(
+                                id: "fleet.room.work.anchor",
+                                frame: geometry.frame(in: .global))
+                            : nil)
+                }
+            }
+            .id("fleet.room.work.anchor")
+        }
+    }
+
+    @ViewBuilder
     private func transcriptEntry(_ entry: RoomTranscriptEntry) -> some View {
         let rendersRichText = AssistantRichTextPresentation.shouldRenderRoom(entry.flavor)
         // FOS-6: transcript/tool block — no card per message (SPEC §18).
@@ -786,9 +1321,39 @@ public struct RoomChatView: View {
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.statusDestructive)
                 }
+                // Stage 1: footer on completed member (assistant) replies —
+                // copy/share/read-aloud. No thumbs here: the hosted-room
+                // durable log has no reaction wire kind (groups.* events
+                // carry no reactions), so thumbs would be inert buttons.
+                if AssistantReplyFooterPolicy.showsFooter(roomFlavor: entry.flavor, text: entry.text) {
+                    AssistantReplyFooter(
+                        text: entry.text ?? "",
+                        react: nil,
+                        ownReaction: nil,
+                        readAloud: viewModel.voiceCanSpeakFooter
+                            ? { Task { await viewModel.readReplyAloud(entryID: entry.id, text: entry.text ?? "") } }
+                            : nil,
+                        stopReading: viewModel.voiceCanSpeakFooter
+                            ? { Task { await viewModel.stopReadingReply() } }
+                            : nil,
+                        isReading: viewModel.readAloudEntryID == entry.id,
+                        idNamespace: "fleet.room.footer.\(entry.id)"
+                    )
+                }
             }
         }
         .id(entry.id)
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: RoomLatestScrollTargetFramePreferenceKey.self,
+                    value: latestScrollTarget == entry.id
+                        ? RoomLatestScrollTargetFrame(
+                            id: entry.id,
+                            frame: geometry.frame(in: .global))
+                        : nil)
+            }
+        }
         .modifier(RoomTranscriptAccessibilityModifier(
             rendersRichText: rendersRichText,
             speaker: entry.speaker))
@@ -862,10 +1427,10 @@ public struct RoomChatView: View {
     private func submit() async {
         let text = draft
         guard await viewModel.send(text) else { return }
+        RoomDraftStore.clear(for: viewModel.room.id)
         draft = ""
         composing = false
     }
-
     /// D22: map a typed recovery action to its behavior. Retry-class actions
     /// ride the room command seam; the others explain the honest next step
     /// (this client cannot re-authenticate a provider or edit gateway config
@@ -892,6 +1457,16 @@ public struct RoomChatView: View {
 
     @ToolbarContentBuilder
     private var toolbarControls: some ToolbarContent {
+        // RC-84 P1: Group Info — compact known state (participants, gateways,
+        // capabilities). Always offered: it never mutates anything.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showingInfo = true
+            } label: {
+                Label("Info", systemImage: "info.circle")
+            }
+            .accessibilityIdentifier("fleet.room.info")
+        }
         // Slice 5 (D19): RoomLink management for hosted rooms (negotiation,
         // grants, routes, replay, takeover) — legacy rooms never offer it.
         if viewModel.room.id.provenance == .hosted && !viewModel.isDisbanded {
@@ -938,6 +1513,7 @@ public struct RoomChatView: View {
                     Task { await viewModel.rename(renameDraft) }
                 } label: {
                     Text("Rename")
+                        .foregroundStyle(theme.onHighlight)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)

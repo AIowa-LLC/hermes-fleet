@@ -42,7 +42,13 @@ public struct GatewayRosterClient: RosterProviding {
         return try Self.decodeSessions(result)
     }
 
-    // MARK: decoding (wire → domain)
+    // MARK: - decoding
+    //
+    // Every integer read below goes through `JSONValue.intValue`, whose bound
+    // (2^63-EXCLUSIVE, owned by `JSONValue.boundedInt`) is what keeps a buggy
+    // or hostile gateway from trapping the process through `Int(_:)`. An
+    // unrepresentable number reads exactly like a missing key at each site
+    // (`?? 0`, or an optional's nil), never a clamped/invented value.
 
     /// `profiles.list` → `{"profiles": [ {...} ]}` (methods_profiles.py).
     static func decodeProfiles(_ result: JSONValue) throws -> [ProfileDescriptor] {
@@ -63,7 +69,7 @@ public struct GatewayRosterClient: RosterProviding {
             provider: object["provider"]?.stringValue,
             profileDescription: object["description"]?.stringValue,
             displayName: object["display_name"]?.stringValue,
-            skillCount: object["skill_count"]?.numberValue.map(Int.init) ?? 0,
+            skillCount: object["skill_count"]?.intValue ?? 0,
             hasAvatar: object["has_avatar"]?.boolValue ?? false,
             lastSession: object["last_session"].flatMap(Self.decodeSession),
             gatewayRunning: object["gateway_running"]?.boolValue ?? false
@@ -87,7 +93,7 @@ public struct GatewayRosterClient: RosterProviding {
             preview: object["preview"]?.stringValue ?? "",
             startedAt: object["started_at"]?.numberValue ?? 0,
             lastActive: object["last_active"]?.numberValue ?? 0,
-            messageCount: object["message_count"]?.numberValue.map(Int.init) ?? 0,
+            messageCount: object["message_count"]?.intValue ?? 0,
             source: object["source"]?.stringValue
         )
     }

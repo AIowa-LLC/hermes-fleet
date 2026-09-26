@@ -93,7 +93,6 @@ public struct GatewayOnboardingView: View {
                     header
                     copySection
                     stepsSection
-                    promptPreviewSection
                     docsSection
                 }
                 .padding(FleetTheme.spacingXl)
@@ -167,6 +166,12 @@ public struct GatewayOnboardingView: View {
                     } icon: {
                         Image(systemName: copyConfirmed ? "checkmark.circle.fill" : "doc.on.doc.fill")
                     }
+                    // Ink on the WHOLE label (title AND glyph): this exists
+                    // because borderedProminent's default ink is not legible
+                    // on every highlight, and the Image never inherits a
+                    // modifier applied to the Text alone. Same shape as
+                    // SetupPromptSheet's copy control.
+                    .foregroundStyle(theme.onHighlight)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(copyConfirmed)
@@ -193,6 +198,42 @@ public struct GatewayOnboardingView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(theme.highlight)
                 .accessibilityIdentifier("fleet.onboarding.toggle-prompt")
+
+                // Build-88 dogfood fix: the preview renders INLINE, directly
+                // under the toggle the user just tapped — it must be visible
+                // where the interaction happened, never below the fold.
+                // (The previous placement — a card inserted after the steps
+                // section with a `.move(edge: .top)` transition — swept the
+                // prompt down past the fold: the reported "flies across the
+                // screen, then you have to scroll to see it".)
+                if isShowingPrompt {
+                    promptPreviewCard
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    /// Paste-friendly prompt preview: rendered as selectable plain text so
+    /// the user can long-press-copy from here as well. Rendered inline in
+    /// `copySection` (right under the Review toggle) so opening it never
+    /// moves the user's context; opening/closing never dismisses onboarding.
+    private var promptPreviewCard: some View {
+        FleetCard {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                Text("The prompt you'll send")
+                    .font(FleetTheme.sectionHeaderFont)
+                    .foregroundStyle(theme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+                Text(OnboardingPrompt.text)
+                    .font(.callout.monospaced())
+                    .foregroundStyle(theme.textPrimary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("fleet.onboarding.prompt-text")
+                Text("v\(OnboardingPrompt.version) — no secrets inside; your Hermes fills in the real values.")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
     }
@@ -251,33 +292,6 @@ public struct GatewayOnboardingView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("fleet.onboarding.scan")
-            }
-        }
-    }
-
-    /// Paste-friendly prompt preview: rendered as selectable plain text so
-    /// the user can long-press-copy from here as well.
-    private var promptPreviewSection: some View {
-        Group {
-            if isShowingPrompt {
-                FleetCard {
-                    VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                        Text("The prompt you'll send")
-                            .font(FleetTheme.sectionHeaderFont)
-                            .foregroundStyle(theme.textPrimary)
-                            .accessibilityAddTraits(.isHeader)
-                        Text(OnboardingPrompt.text)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(theme.textPrimary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("fleet.onboarding.prompt-text")
-                        Text("v\(OnboardingPrompt.version) — no secrets inside; your Hermes fills in the real values.")
-                            .font(.caption)
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }

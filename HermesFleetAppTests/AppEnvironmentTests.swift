@@ -155,13 +155,19 @@ final class AppEnvironmentTests: XCTestCase {
     private func makeEnvironment(
         gateways: [GatewayRegistration],
         profiles: [ProfileDescriptor] = [],
-        sessionList: any SessionListProviding = TestSessionList()
+        sessionList: any SessionListProviding = TestSessionList(),
+        conversationPinStore: any ConversationPinStoring = InMemoryConversationPinStore(),
+        connectionResults: [GatewayID: Result<Void, GatewayConnectivityError>] = [:],
+        connectionIntentDefaults: UserDefaults? = nil,
+        launchCache: (any FleetLaunchCaching)? = nil
     ) async -> (AppEnvironment, GatewayRegistryService) {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { gateway, _ in
-                TestConnection(gatewayID: gateway.id, result: .success(()))
+                TestConnection(
+                    gatewayID: gateway.id,
+                    result: connectionResults[gateway.id] ?? .success(()))
             }
         )
         let roster = FleetRosterService(
@@ -178,10 +184,15 @@ final class AppEnvironmentTests: XCTestCase {
             cache: cache,
             sessionList: sessionList,
             connectionFactory: { gateway, _ in
-                TestConnection(gatewayID: gateway.id, result: .success(()))
+                TestConnection(
+                    gatewayID: gateway.id,
+                    result: connectionResults[gateway.id] ?? .success(()))
             },
             health: TestHealthAccumulator(),
-            seedRegistrations: gateways
+            seedRegistrations: gateways,
+            connectionIntentDefaults: connectionIntentDefaults,
+            conversationPinStore: conversationPinStore,
+            launchCache: launchCache
         )
         await environment.load()
         return (environment, registry)
@@ -242,6 +253,115 @@ final class AppEnvironmentTests: XCTestCase {
         await environment.load()
 
         XCTAssertEqual(environment.gateways.map(\.id.rawValue), ["existing"])
+    }
+
+    // MARK: ADR-0012 — launch-cache hydration honesty + orphan pruning
+
+    /// FOS-5 "never invent state": hydration classifies ONLY gateways with a
+    /// cached roster entry as `.loaded`. A registered gateway with no cached
+    /// entry stays unclassified until the live refresh settles — it must never
+    /// render as reachable with zero bots (the fabricated state the review
+    /// caught in `hydrateFromLaunchCache`).
+    func testHydrationClassifiesOnlyGatewaysPresentInTheCache() async throws {
+        let cache = InMemoryLaunchCache()
+        let hydrated = GatewayID(rawValue: "workstation")
+        let noCacheEntry = GatewayID(rawValue: "render-box")
+        try await cache.saveRosterCache(CachedGatewayRoster(
+            gatewayID: hydrated,
+            bots: [CachedFleetBot(
+                route: Route(gatewayID: hydrated, profileSlug: ProfileSlug(rawValue: "default")),
+                displayName: "Researcher")]))
+
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation"),
+                       registration("render-box", name: "Render Box")],
+            launchCache: cache)
+
+        let snapshot = try XCTUnwrap(environment.rosterSnapshot)
+        XCTAssertEqual(snapshot.outcome(for: hydrated), .loaded(profileCount: 1))
+        XCTAssertNil(snapshot.outcome(for: noCacheEntry),
+                     "a gateway with no cached entry must stay unclassified")
+        XCTAssertEqual(snapshot.botPresence(on: noCacheEntry), .unknown,
+                       "presence is never fabricated from a missing cache entry")
+        XCTAssertEqual(environment.cachedBotsByGateway[hydrated]?.count, 1)
+        XCTAssertNil(environment.cachedBotsByGateway[noCacheEntry])
+    }
+
+    /// ADR-0012 decision 2: removing a gateway prunes ITS launch-cache rows
+    /// (roster + session summaries) — a removed gateway's bot list and
+    /// conversation titles must not be served for the rest of the 7-day TTL
+    /// (the FOS-4 precedent, applied to the launch cache).
+    func testRemoveGatewayPrunesItsLaunchCacheRows() async throws {
+        let cache = InMemoryLaunchCache()
+        let removed = GatewayID(rawValue: "workstation")
+        let kept = GatewayID(rawValue: "render-box")
+        let removedRoute = Route(gatewayID: removed, profileSlug: ProfileSlug(rawValue: "default"))
+        let keptRoute = Route(gatewayID: kept, profileSlug: ProfileSlug(rawValue: "default"))
+        try await cache.saveRosterCache(CachedGatewayRoster(gatewayID: removed, bots: []))
+        try await cache.saveRosterCache(CachedGatewayRoster(gatewayID: kept, bots: []))
+        try await cache.saveSessionListCache(CachedSessionList(route: removedRoute, sessions: [
+            SessionSummary(id: "s1", title: "Removed gateway session", startedAt: 1, lastActive: 10, messageCount: 1)]))
+        try await cache.saveSessionListCache(CachedSessionList(route: keptRoute, sessions: []))
+
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation"),
+                       registration("render-box", name: "Render Box")],
+            launchCache: cache)
+
+        try await environment.removeGateway(removed)
+
+        let rosters = try await cache.loadRosterCache()
+        let lists = try await cache.loadSessionListCache()
+        XCTAssertEqual(rosters.map(\.gatewayID), [kept], "only the removed gateway's rows are pruned")
+        XCTAssertEqual(lists.map(\.route), [keptRoute])
+        XCTAssertEqual(environment.gateways.map(\.id), [kept])
+    }
+
+    /// D3/W4: the first LIVE session read establishes the unread baseline for
+    /// its route. On a fresh install (or any run whose launch cache is
+    /// empty/expired) nothing hydrates — without this the badge would light for
+    /// every historical session. Sessions that appear AFTER the baseline stay
+    /// unread until opened.
+    func testFirstLiveSessionObservationBaselinesUnreadState() async throws {
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        let historical = SessionSummary(
+            id: "stored-1", title: "Historical", startedAt: 1, lastActive: 100, messageCount: 2)
+        let sessionList = MutableSessionList(sessions: [historical])
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            sessionList: sessionList)
+        environment.resetUnreadStateForUITests()
+
+        await environment.loadSessions(for: route)
+
+        XCTAssertFalse(environment.isConversationUnread(route: route, session: historical),
+                       "the route's first observation baselines its existing sessions")
+        XCTAssertFalse(environment.anyUnreadSessions,
+                       "no historical session may light the badge on first observation")
+
+        let newer = SessionSummary(
+            id: "stored-2", title: "New", startedAt: 2, lastActive: 200, messageCount: 1)
+        sessionList.sessions = [historical, newer]
+        await environment.loadSessions(for: route)
+
+        XCTAssertTrue(environment.isConversationUnread(route: route, session: newer),
+                      "a session the baseline never saw remains unread until opened")
+        XCTAssertFalse(environment.isConversationUnread(route: route, session: historical))
+        XCTAssertTrue(environment.anyUnreadSessions)
+
+        environment.resetUnreadStateForUITests()
+    }
+
+    /// Mutable scripted `session.list` double: one route's list changes between
+    /// observations (baseline vs. later-arriving sessions).
+    private final class MutableSessionList: SessionListProviding, @unchecked Sendable {
+        nonisolated(unsafe) var sessions: [SessionSummary]
+
+        init(sessions: [SessionSummary]) { self.sessions = sessions }
+
+        func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { sessions }
     }
 
     // MARK: H2 — connection health wiring (observable publishing)
@@ -1039,4 +1159,300 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertTrue(environment.canCreateRooms(on: gatewayID),
                       "unprobed gateway with an advertising hosted room keeps the legacy path")
     }
+
+    // MARK: Fleet-wide create honesty (GC2 follow-up)
+
+    /// Scripted command seam: records creates, never hits a transport.
+    private final class ScriptedCreateCommands: RoomChatCommanding, @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock()
+        private var _created: [(roomID: String, name: String)] = []
+        var created: [(roomID: String, name: String)] { lock.withLock { _created } }
+
+        func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
+            RoomLogPageSlice(events: [], cursor: 0, latestSeq: 0, hasMore: false,
+                             authorityGatewayID: "fresh-gateway", authorityEpoch: 1)
+        }
+        func send(roomID: String, text: String, threadID: String?) async throws -> Int { 0 }
+        func rename(roomID: String, name: String) async throws {}
+        func disband(roomID: String) async throws {}
+        func stop(roomID: String) async throws -> Int { 0 }
+        func retry(roomID: String, taskID: String) async throws {}
+        func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws {}
+        func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
+            lock.withLock { _created.append((roomID, name)) }
+            return roomID
+        }
+    }
+
+    /// Create-path environment: one gateway, two reachable roster bots,
+    /// scripted capability source + command seam.
+    private func makeCreateEnvironment(
+        source: any FleetRoomSourceProviding,
+        commands: (any RoomChatCommanding)?,
+        bridgedStoreURL: URL? = nil
+    ) async -> (AppEnvironment, GatewayID) {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        let rosterProfiles: [ProfileDescriptor] = [
+            ProfileDescriptor(
+                name: "alpha", path: "~/.hermes/profiles/alpha", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Alpha"),
+            ProfileDescriptor(
+                name: "beta", path: "~/.hermes/profiles/beta", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Beta"),
+        ]
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: rosterProfiles)
+            }
+        )
+        let gateway = registration("fresh-gateway", name: "Fresh Gateway")
+        let commandFactory: FleetRoomCommandFactory?
+        if let commands {
+            commandFactory = { _ in commands }
+        } else {
+            commandFactory = nil
+        }
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            roomSourceFactory: { _ in source },
+            roomCommandFactory: commandFactory,
+            health: TestHealthAccumulator(),
+            seedRegistrations: [gateway],
+            bridgedStoreURL: bridgedStoreURL
+        )
+        await environment.load()
+        return (environment, gateway.id ?? GatewayID(rawValue: "fresh-gateway"))
+    }
+
+    /// Cold start (.unknown probe, empty cache): create must await ONE
+    /// definitive capability answer instead of skipping the host — the path
+    /// that produced the false "update the gateway" alert on device.
+    func testFleetWideCreateAwaitsDefinitiveCapabilityOnColdStart() async throws {
+        let source = FlippingProbeSource(.unknown)
+        let commands = ScriptedCreateCommands()
+        let (environment, gatewayID) = await makeCreateEnvironment(source: source, commands: commands)
+
+        // loadRooms with .unknown: the source registers but the cache stays empty.
+        await environment.loadRooms()
+        XCTAssertNil(environment.canCreateRoomsByGateway[gatewayID], "fixture: no definitive truth yet")
+
+        let members = [
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "alpha")), displayName: "Alpha"),
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "beta")), displayName: "Beta"),
+        ]
+
+        // The awaited probe now answers definitively.
+        source.setCapability(.supported)
+        let room = try await environment.createRoom(name: "Cold Start Crew", members: members)
+        XCTAssertEqual(room.id.provenance, .hosted, "cold-start create reaches the capable host")
+        let created = await MainActor.run { commands.created }
+        XCTAssertEqual(created.map(\.name), ["Cold Start Crew"], "create rode the command seam")
+    }
+
+    /// No host can serve the selection: the thrown copy carries the host
+    /// diagnostic and never the fixed update-gateway string.
+    func testFleetWideCreateFallthroughNamesHostsWithReasons() async throws {
+        let source = CapabilityProbeSource(capability: .unsupported)
+        let (environment, gatewayID) = await makeCreateEnvironment(
+            source: source, commands: nil,
+            bridgedStoreURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("bridged-fallthrough-\(UUID().uuidString).json"))
+        await environment.loadRooms()
+
+        let members = [
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "alpha")), displayName: "Alpha"),
+            RoomMemberCandidate(route: Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: "beta")), displayName: "Beta"),
+        ]
+
+        // Build 72 contract: no eligible host anywhere → the phone bridges
+        // the Group locally instead of dead-ending the user. Same-gateway
+        // capability gating is unchanged (host selection above the
+        // fallthrough); only the terminal outcome differs.
+        let room = try await environment.createRoom(name: "No Host Crew", members: members)
+        XCTAssertEqual(room.id.gatewayID, BridgedRooms.gatewayScope,
+                       "definitively-unsupported hosts fall back to a bridged room")
+        XCTAssertEqual(room.members.map(\.name), ["Alpha", "Beta"])
+        XCTAssertNotNil(environment.room(for: room.id), "bridged room renders in the union")
+    }
+
+    // MARK: Build 46 recovery — connection-restore isolation
+
+    /// One unreachable gateway must not abort restore for the others
+    /// (ported from the quarantined Codex b4e5712 lineage; behavior verified
+    /// present, coverage was missing here).
+    func testOneOfflineGatewayDoesNotBlockAnotherRestore() async {
+        let offline = GatewayID(rawValue: "offline")
+        let online = GatewayID(rawValue: "online")
+        let (environment, _) = await makeEnvironment(
+            gateways: [
+                registration("offline", name: "Offline"),
+                registration("online", name: "Online"),
+            ],
+            connectionResults: [offline: .failure(.unreachable)]
+        )
+
+        await environment.connect(to: offline)
+        await environment.connect(to: online)
+        XCTAssertTrue(environment.isConnectionIntended(offline))
+        XCTAssertTrue(environment.isConnectionIntended(online))
+        await environment.disconnectAll()
+
+        await environment.restoreIntendedConnections()
+        XCTAssertEqual(environment.connectionStates[offline], .failed(.offline))
+        XCTAssertEqual(environment.connectionStates[online], .connected)
+    }
+
+    // MARK: Build 46 recovery — conversation pins across lifecycle
+
+    func testConversationPinSurvivesEnvironmentReloadAndCanBeUnpinned() async throws {
+        let pinStore = InMemoryConversationPinStore()
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        let identity = FleetConversationIdentity.individual(
+            route: route, sessionID: "session-1")
+
+        await environment.pinConversation(
+            identity: identity,
+            title: "Design review",
+            preview: "Latest",
+            authoritativeGatewayID: route.gatewayID,
+            avatarKey: route.profileSlug.rawValue)
+        XCTAssertTrue(environment.isPinned(identity))
+
+        // A fresh environment over the SAME store reloads the pin.
+        let (reloaded, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        XCTAssertTrue(reloaded.isPinned(identity))
+        XCTAssertEqual(reloaded.pinnedConversations.first?.title, "Design review")
+
+        await reloaded.unpinConversation(identity)
+        XCTAssertFalse(reloaded.isPinned(identity))
+        let (finalPass, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        XCTAssertFalse(finalPass.isPinned(identity))
+    }
+
+    func testGatewayRemovalRetainsPinnedIdentityAsUnavailable() async throws {
+        let pinStore = InMemoryConversationPinStore()
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            conversationPinStore: pinStore
+        )
+        let route = Route(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            profileSlug: ProfileSlug(rawValue: "default"))
+        let identity = FleetConversationIdentity.individual(
+            route: route, sessionID: "session-1")
+        await environment.pinConversation(
+            identity: identity,
+            title: "Kept",
+            preview: "",
+            authoritativeGatewayID: route.gatewayID,
+            avatarKey: route.profileSlug.rawValue)
+
+        // Simulate gateway removal: a reload with an EMPTY registry keeps
+        // the pin (row renders unavailable; no unsafe rerouting).
+        let (afterRemoval, _) = await makeEnvironment(
+            gateways: [],
+            conversationPinStore: pinStore
+        )
+        XCTAssertTrue(afterRemoval.isPinned(identity))
+        XCTAssertEqual(afterRemoval.pinnedConversations.first?.authoritativeGatewayID,
+                       route.gatewayID)
+    }
+
+    /// GC2 bridged fallback: a mixed-gateway selection that no gateway can
+    /// host creates a phone-bridged room instead of failing — the room is
+    /// local, renders in the union, and never shows update-gateway copy.
+    func testCreateRoomMixedGatewaysFallsBackToBridged() async throws {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            }
+        )
+        let rosterProfiles: [ProfileDescriptor] = [
+            ProfileDescriptor(
+                name: "alpha", path: "~/.hermes/profiles/alpha", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Alpha"),
+            ProfileDescriptor(
+                name: "beta", path: "~/.hermes/profiles/beta", isDefault: false,
+                model: "hermes", provider: "nous", displayName: "Beta"),
+        ]
+        let roster = FleetRosterService(
+            registry: registry,
+            credentials: credentials,
+            sessionFactory: { gateway, _ in
+                TestRosterSession(gatewayID: gateway.id, profiles: rosterProfiles)
+            }
+        )
+        let macGateway = registration("mac-home", name: "Mac Hermes")
+        let archGateway = registration("arch-home", name: "Arch Hermes")
+        let source = FlippingProbeSource(.supported)
+        let bridgedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bridged-fallback-\(UUID().uuidString).json")
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: TestSessionList(),
+            connectionFactory: { gateway, _ in
+                TestConnection(gatewayID: gateway.id, result: .success(()))
+            },
+            roomSourceFactory: { _ in source },
+            roomCommandFactory: nil,
+            health: TestHealthAccumulator(),
+            seedRegistrations: [macGateway, archGateway],
+            bridgedStoreURL: bridgedURL
+        )
+        await environment.load()
+
+        // Mixed selection: one member per gateway. With no command seam and
+        // no RoomLink, every host fails eligibility → bridged fallback.
+        let memberA = RoomMemberCandidate(
+            route: Route(gatewayID: GatewayID(rawValue: "mac-home"), profileSlug: ProfileSlug(rawValue: "alpha")),
+            displayName: "Alpha")
+        let memberB = RoomMemberCandidate(
+            route: Route(gatewayID: GatewayID(rawValue: "arch-home"), profileSlug: ProfileSlug(rawValue: "beta")),
+            displayName: "Beta")
+
+        let room = try await environment.createRoom(
+            name: "Mixed Group", members: [memberA, memberB])
+
+        // The room is bridged: local scope, not a real gateway.
+        XCTAssertEqual(room.id.gatewayID, BridgedRooms.gatewayScope)
+        XCTAssertEqual(room.id.provenance, .hosted)
+        XCTAssertEqual(room.members.count, 2)
+        XCTAssertEqual(room.members.map(\.name), ["Alpha", "Beta"])
+        // It resolves through the union and renders.
+        XCTAssertNotNil(environment.room(for: room.id))
+        XCTAssertTrue(environment.allRooms.contains {
+            $0.id.gatewayID == BridgedRooms.gatewayScope
+        })
+    }
+
 }

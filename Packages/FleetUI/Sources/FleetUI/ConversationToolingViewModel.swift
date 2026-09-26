@@ -49,6 +49,10 @@ public final class ConversationToolingViewModel {
     // MARK: Injected seams
 
     private let tooling: any ConversationToolingProviding
+    /// Optional richer branch seam. Older scripted sessions retain the
+    /// existing whole-session branch operation but cannot safely branch at a
+    /// selected reply, so the footer disables that action for them.
+    private let messageBranching: (any ConversationMessageBranchingProviding)?
     /// Per-device sticky store key (gateway-scoped so each gateway's pick
     /// is independent — different gateways serve different providers).
     private let persistenceKey: String
@@ -59,6 +63,7 @@ public final class ConversationToolingViewModel {
         gatewayID: GatewayID
     ) {
         self.tooling = tooling
+        self.messageBranching = tooling as? any ConversationMessageBranchingProviding
         self.persistenceKey = "fleet.modelpick.\(gatewayID.rawValue)"
         // Restore the sticky pick (fail-soft: corrupt store → follow default).
         if let data = UserDefaults.standard.data(forKey: persistenceKey),
@@ -72,6 +77,12 @@ public final class ConversationToolingViewModel {
     /// Bind to the open runtime session (usage/context/steer calls ride it).
     public func bind(sessionID: String?) {
         boundSessionID = sessionID
+    }
+
+    /// True only when the concrete gateway exposes the count-aware branch
+    /// operation required by the reply toolbar.
+    public var supportsMessageBranching: Bool {
+        messageBranching != nil
     }
 
     // MARK: Model picker (sticky, per-device, never a config write)
@@ -101,6 +112,13 @@ public final class ConversationToolingViewModel {
         } else {
             UserDefaults.standard.removeObject(forKey: persistenceKey)
         }
+    }
+
+    /// Live `model.options` fetch (slash-parity /model typed-argument
+    /// resolution); public so ConversationViewModel can resolve an exact id
+    /// without touching the private seam.
+    public func liveModelChoices(sessionID: String) async throws -> [ModelChoice] {
+        try await tooling.modelChoices(sessionID: sessionID)
     }
 
     /// The params the conversation open should ride on `session.create`:
@@ -186,14 +204,50 @@ public final class ConversationToolingViewModel {
     /// Fork the session (`session.branch`). Returns the NEW conversation
     /// session for the caller to navigate to; nil on failure (forkError set
     /// — e.g. 4008 "nothing to branch — send a message first").
-    public func fork(name: String?) async -> ConversationSession? {
+    public func fork(name: String?, messageCount: Int? = nil) async -> ConversationSession? {
         guard let sid = boundSessionID else { return nil }
         do {
-            let branch = try await tooling.branchSession(sessionID: sid, name: name)
+            let branch: ConversationSession
+            if let messageCount {
+                guard messageCount > 0, let messageBranching else {
+                    forkError = "Branching from this reply is unavailable on the connected gateway."
+                    return nil
+                }
+                branch = try await messageBranching.branchSession(
+                    sessionID: sid, name: name, count: messageCount)
+            } else {
+                branch = try await tooling.branchSession(sessionID: sid, name: name)
+            }
             forkError = nil
             return branch
         } catch {
             forkError = ConversationViewModel.nonSecret(error)
+            return nil
+        }
+    }
+
+    // MARK: Working folder (r9 toolbelt)
+
+    /// Transient cwd-change surfaces (non-secret).
+    public private(set) var cwdError: String?
+    public private(set) var cwdNotice: String?
+
+    /// Change the session's working directory (`session.cwd.set`). Returns
+    /// the readback so the caller can refresh its header state; nil on
+    /// failure (cwdError set — e.g. 4009 busy, 4017 invalid path).
+    @discardableResult
+    public func changeWorkingFolder(to cwd: String) async -> SessionCWDInfo? {
+        guard let sid = boundSessionID else { return nil }
+        let trimmed = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        do {
+            let info = try await tooling.setCWD(sessionID: sid, cwd: trimmed)
+            cwdError = nil
+            cwdNotice = "Working folder set to \(info.cwd)"
+            return info
+        } catch {
+            cwdError = "Could not change folder: \(ConversationViewModel.nonSecret(error))"
+            cwdNotice = nil
             return nil
         }
     }

@@ -80,6 +80,27 @@ check "oversized product diff retains every affected suite" "HermesFleetHappyPat
   "HermesFleetAppUITests/U3TabNavigationUITests.swift" \
   "HermesFleetAppUITests/SecondGenerationUITests.swift"
 
+check "interactive Kanban retains both release suites" "KanbanBoard KanbanInteractive" \
+  "Packages/FleetUI/Sources/FleetUI/KanbanBoardView.swift"
+check "image generation maps to its release regression" "ImageGenerationAnimation" \
+  "Packages/FleetUI/Sources/FleetUI/ImageGenerationView.swift"
+check "artifact destination maps to its release regression" "ArtifactsDestination" \
+  "Packages/FleetUI/Sources/FleetUI/ArtifactsView.swift"
+check "cron retains management and tab coverage" "R9ManagementPanes CronManagement CronTab" \
+  "Packages/FleetUI/Sources/FleetUI/CronView.swift"
+check "slash parity keeps the upstream compatibility regression" "Issue4SlashSkill SlashCommandParity" \
+  "Packages/FleetUI/Sources/FleetUI/SlashCommandView.swift"
+check "cached launch maps to its release regression" "FleetLaunchCache" \
+  "Packages/FleetUI/Sources/FleetUI/LaunchCache.swift"
+check "unread state maps to its release regression" "FleetUnreadBadge" \
+  "Packages/FleetUI/Sources/FleetUI/UnreadState.swift"
+check "reasoning slider maps to its release regression" "ReasoningSlider" \
+  "Packages/FleetUI/Sources/FleetUI/ReasoningSlider.swift"
+check "about screen maps to its release regression" "FleetAbout" \
+  "Packages/FleetUI/Sources/FleetUI/FleetAboutView.swift"
+check "compact chrome maps to its release regression" "ConversationCompactChrome" \
+  "Packages/FleetUI/Sources/FleetUI/ConversationCompactChrome.swift"
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   echo "PASS: UI preflight selector self-test — all cases green."

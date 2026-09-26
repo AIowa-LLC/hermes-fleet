@@ -20,6 +20,11 @@ public struct SessionSteerControls: View {
     /// Called with the NEW conversation session after a successful fork —
     /// the host replaces the open conversation.
     let onFork: (ConversationSession) -> Void
+    /// Compaction round 2: timeline + jump-to-latest ride this menu.
+    var showsTimeline: Bool = false
+    var showsLatest: Bool = false
+    var onTimeline: () -> Void = {}
+    var onLatest: () -> Void = {}
 
     @State private var showingSteerSheet = false
     @State private var steerText = ""
@@ -32,16 +37,42 @@ public struct SessionSteerControls: View {
         model: ConversationToolingViewModel,
         isStreaming: Bool,
         sessionTitle: String?,
+        showsTimeline: Bool = false,
+        showsLatest: Bool = false,
+        onTimeline: @escaping () -> Void = {},
+        onLatest: @escaping () -> Void = {},
         onFork: @escaping (ConversationSession) -> Void
     ) {
         self.model = model
         self.isStreaming = isStreaming
         self.sessionTitle = sessionTitle
+        self.showsTimeline = showsTimeline
+        self.showsLatest = showsLatest
+        self.onTimeline = onTimeline
+        self.onLatest = onLatest
         self.onFork = onFork
     }
 
     public var body: some View {
         Menu {
+            // Compaction round 2: timeline + jump-to-latest ride the session
+            // actions menu (the toolbar row they used to occupy is gone).
+            if showsTimeline {
+                Button {
+                    onTimeline()
+                } label: {
+                    Label("Timeline", systemImage: "list.bullet.indent")
+                }
+                .accessibilityIdentifier("fleet.conversation.timeline.open")
+                if showsLatest {
+                    Button {
+                        onLatest()
+                    } label: {
+                        Label("Latest", systemImage: "arrow.down.to.line")
+                    }
+                    .accessibilityIdentifier("fleet.conversation.timeline.latest")
+                }
+            }
             Button {
                 steerText = ""
                 showingSteerSheet = true

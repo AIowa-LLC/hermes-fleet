@@ -133,6 +133,19 @@ public struct FleetRoom: Identifiable, Hashable, Sendable {
 
     public var roomID: FleetRoomID { id }
 
+    /// Verified identity used when several gateways advertise the same
+    /// hosted room. The backend room id is canonical only together with the
+    /// authority installation; a conflicting authority is retained as a
+    /// separate row so stale or ambiguous metadata cannot be merged.
+    public var canonicalIdentity: String {
+        guard id.provenance == .hosted,
+              let hosted,
+              !hosted.authorityGatewayID.isEmpty else {
+            return id.storageKey
+        }
+        return "hosted:\(hosted.authorityGatewayID):\(id.key)"
+    }
+
     public init(
         id: FleetRoomID,
         name: String,

@@ -35,7 +35,10 @@ struct BotAvatarEditor: View {
         // which silently dropped the Generate alert (proven by the R1 UI
         // journey: alert never presented). The preview is the section's
         // FIRST row and always materializes.
-        BotAvatarAppearancePreview(draft: draft, identityName: bot.route.profileSlug.rawValue)
+        BotAvatarAppearancePreview(
+            draft: draft,
+            identityName: bot.route.profileSlug.rawValue,
+            canonicalIdentity: bot.route.id)
             .task {
                 guard let seam = environment.botManagement.seam(for: bot.route.gatewayID) else { return }
                 supportsAssets = await seam.supportsAvatarUpload(bot.profileSlug.rawValue)

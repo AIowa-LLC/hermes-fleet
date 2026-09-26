@@ -42,7 +42,7 @@ public enum ModernProfilesDecoder {
             provider: object["provider"]?.stringValue,
             profileDescription: object["description"]?.stringValue,
             displayName: object["display_name"]?.stringValue,
-            skillCount: object["skill_count"]?.numberValue.map(Int.init) ?? 0,
+            skillCount: object["skill_count"]?.intValue ?? 0,
             hasAvatar: object["has_avatar"]?.boolValue ?? false,
             lastSession: object["last_session"].flatMap(decodeLegacySession),
             gatewayRunning: object["gateway_running"]?.boolValue ?? false,
@@ -66,7 +66,7 @@ public enum ModernProfilesDecoder {
             preview: o["preview"]?.stringValue ?? "",
             startedAt: o["started_at"]?.numberValue ?? 0,
             lastActive: o["last_active"]?.numberValue ?? 0,
-            messageCount: o["message_count"]?.numberValue.map(Int.init) ?? 0,
+            messageCount: o["message_count"]?.intValue ?? 0,
             source: nil
         )
     }
@@ -87,7 +87,7 @@ public enum ModernProfilesDecoder {
             preview: o["preview"]?.stringValue,
             startedAt: o["started_at"]?.numberValue,
             lastActive: o["last_active"]?.numberValue,
-            messageCount: o["message_count"]?.numberValue.map(Int.init)
+            messageCount: o["message_count"]?.intValue
         )
     }
 
@@ -107,8 +107,11 @@ public enum ModernProfilesDecoder {
         guard let o = json?.objectValue else { return nil }
         var revisions: [String: Int] = [:]
         for (key, value) in o {
-            if let n = value.numberValue, n >= 0 {
-                revisions[key] = Int(n)
+            // The non-negative filter stays on the Double (so -0.5 still
+            // reads as absent) and the conversion is bounded: a revision at
+            // or above 2^63 is dropped per key, never an unguarded `Int(_:)`.
+            if let n = value.numberValue, n >= 0, let revision = JSONValue.boundedInt(n) {
+                revisions[key] = revision
             }
         }
         return MetadataRevisions(revisions: revisions)

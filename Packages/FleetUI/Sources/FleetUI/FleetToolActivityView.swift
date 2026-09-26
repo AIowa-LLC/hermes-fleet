@@ -26,13 +26,14 @@ struct FleetToolActivityView: View {
                     .lineLimit(expanded ? nil : 2).frame(minHeight: 44, alignment: .leading)
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 6)
-        .background(theme.surface, in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .sheet(isPresented: $previewing) {
             NavigationStack {
                 ScrollView {
                     Text(detail ?? "").font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding()
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8).padding(.vertical, 6)
                 }
                 .navigationTitle("Tool output").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { previewing = false } } }

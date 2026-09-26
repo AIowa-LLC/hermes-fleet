@@ -1,4 +1,5 @@
 import XCTest
+import FleetCore
 import FleetNetworking
 
 final class CloseCodeMappingTests: XCTestCase {
@@ -56,6 +57,15 @@ final class CloseCodeMappingTests: XCTestCase {
     func testErrorMappingTLSSelfSigned() {
         let error = URLError(.serverCertificateUntrusted)
         XCTAssertEqual(CloseCodeMapping.reason(for: error), .tlsHandshakeFailure)
+    }
+
+    func testErrorMappingBadServerResponse() {
+        // Dogfood r2: -1011 (NSURLErrorBadServerResponse) is what URLSession
+        // surfaces when a WebSocket ends without a close handshake — the
+        // abnormal-teardown family. It must NEVER be read as the gateway's
+        // 1011 "server error" close code.
+        let error = URLError(.badServerResponse)
+        XCTAssertEqual(CloseCodeMapping.reason(for: error), .abnormalClosure)
     }
 
     func testErrorMappingUnknown() {

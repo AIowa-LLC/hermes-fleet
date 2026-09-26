@@ -477,7 +477,8 @@ final class GatewayConversationToolingClientTests: XCTestCase {
 
         let client = GatewayConversationToolingClient(
             gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
-        let branch = try await client.branchSession(sessionID: "abc12345", name: "side quest")
+        let branch = try await client.branchSession(
+            sessionID: "abc12345", name: "side quest", count: 2)
         XCTAssertEqual(branch.sessionID, "deadbeef")
         XCTAssertEqual(branch.storedSessionID, "s-branch-1")
         XCTAssertEqual(branch.messages.count, 2)
@@ -487,6 +488,8 @@ final class GatewayConversationToolingClientTests: XCTestCase {
         XCTAssertEqual(method, "session.branch")
         XCTAssertEqual(params["session_id"] as? String, "abc12345")
         XCTAssertEqual(params["name"] as? String, "side quest")
+        XCTAssertEqual(params["count"] as? Int, 2,
+                       "selected-message branches must send the visible prefix count")
     }
 
     // MARK: 6. error classification

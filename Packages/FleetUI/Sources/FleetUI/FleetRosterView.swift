@@ -29,6 +29,7 @@ public struct FleetRosterView: View {
 
     @State private var searchText = ""
     @State private var revealingHidden = false
+    @State private var hiddenBotsNoticeID: UUID?
     @State private var showingCreate = false
     @State private var sectionsGateway: FleetGateway?
     @State private var createRoomGateway: FleetGateway?
@@ -60,9 +61,10 @@ public struct FleetRosterView: View {
     /// FOS-5: filter controls render on the fleet root only.
     private var showsFilterBar: Bool { gatewayID == nil }
 
-    private var hiddenBotsActive: Bool {
-        visibleGateways.flatMap { environment.bots(on: $0.id) }
-            .contains { environment.botPresence(for: $0.route) != .unreachable && HiddenBotActivity.hasSignal($0) }
+    private var hasHiddenBots: Bool {
+        snapshotSections.contains { section in
+            section.bots.contains { $0.botModeMetadata?.hidden == true }
+        }
     }
 
     // MARK: Sections — per-gateway grouping with outage states
@@ -78,17 +80,37 @@ public struct FleetRosterView: View {
     /// FOS-5: healthy zero-bot gateways that still host Groups get a
     /// synthetic section so a Groups (or All) scope never hides them.
     /// (Outage gateways always have a section already; a `.loaded` zero-bot
-    /// gateway is the case this adds.)
-    private var collection: [RosterSection] {
+    /// gateway is the case this adds.) The condition counts the rows the
+    /// section RENDERS — hosted rooms AND recoverable Desktop archive
+    /// projections — so a gateway whose only groups are legacy projections
+    /// gets a section (previously it rendered nothing at all).
+    private func collection(hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]) -> [RosterSection] {
         var result = snapshotSections
         guard scope != .bots else { return result }
         let present = Set(result.map(\.gateway.id))
         for gateway in visibleGateways where !present.contains(gateway.id) {
-            if !environment.rooms(for: gateway.id).isEmpty {
+            if Self.roomsRenderable(
+                gatewayID: gateway.id, hostedRooms: hostedRooms, archiveRooms: archiveRooms
+            ) {
                 result.append(RosterSection(gateway: gateway, bots: [], outage: nil))
             }
         }
         return result
+    }
+
+    /// Unfiltered by search: whether a gateway's Groups section can render
+    /// anything at all (hosted rooms, or an archive projection that is not
+    /// already duplicated by a hosted row). Search filtering is the section's
+    /// own job. Static + pure: the synthetic-section scan, the empty-state
+    /// gate, and the tests all share this one rule.
+    static func roomsRenderable(
+        gatewayID: GatewayID, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> Bool {
+        if hostedRooms.contains(where: { $0.id.gatewayID == gatewayID }) { return true }
+        return archiveRooms.contains { room in
+            room.id.gatewayID == gatewayID
+                && shouldShowLegacyArchiveRoom(room, hostedRooms: hostedRooms)
+        }
     }
 
     private var renderedBotsExist: Bool {
@@ -96,27 +118,75 @@ public struct FleetRosterView: View {
         return snapshotSections.contains { !filteredRows(for: $0).isEmpty }
     }
 
-    private var renderedRoomsExist: Bool {
+    /// The empty-state gate counts exactly the rows the Groups section
+    /// renders: hosted rooms OR recoverable archive projections. Counting only
+    /// hosted rooms showed "No Bots" while the section had archive rows to
+    /// give (e.g. a search that matches only an archived group).
+    private func renderedRoomsExist(hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]) -> Bool {
         guard scope != .bots else { return false }
-        return visibleGateways.contains { !filteredRooms(for: $0).isEmpty }
+        return visibleGateways.contains { gateway in
+            !filteredRooms(for: gateway, hostedRooms: hostedRooms).isEmpty
+                || !filteredArchiveRooms(
+                    for: gateway, hostedRooms: hostedRooms, archiveRooms: archiveRooms).isEmpty
+        }
     }
 
     public var body: some View {
+        // Room-union reads re-ingest + reconcile the whole union on EVERY
+        // access; the gate, the synthetic-section scan and every Groups
+        // section need the same two lists — read them once per render pass
+        // and thread them down (never once per gateway section).
+        let hostedRooms = environment.allRooms
+        let archiveRooms = environment.legacyRoomArchive
         Group {
             if environment.rosterSnapshot == nil {
                 refreshing
             } else if environment.gateways.isEmpty {
                 emptyFleet
-            } else if !renderedBotsExist && !renderedRoomsExist {
+            } else if !renderedBotsExist
+                && !renderedRoomsExist(hostedRooms: hostedRooms, archiveRooms: archiveRooms) {
                 noBotsAnywhere
             } else {
-                rosterList
+                rosterList(hostedRooms: hostedRooms, archiveRooms: archiveRooms)
             }
         }
         .navigationTitle("Bots")
+        .accessibilityIdentifier("fleet.roster")
+        // ADR-0012 (W5): cached-fleet freshness — a compact inline pill
+        // while the live refresh runs over a cache-painted fleet. Never
+        // blocks; disappears the moment a live refresh settles.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if environment.isViewingCachedFleet && environment.isRefreshing {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text("Updating…")
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.roster.launch-updating")
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    Button {
+                        revealingHidden.toggle()
+                        hiddenBotsNoticeID = revealingHidden && !hasHiddenBots ? UUID() : nil
+                        if hiddenBotsNoticeID != nil {
+                            UIAccessibility.post(notification: .announcement, argument: "No hidden bots")
+                        }
+                    } label: {
+                        Label(revealingHidden ? "Hide hidden bots" : "Show hidden bots",
+                              systemImage: revealingHidden ? "eye.slash" : "eye")
+                    }
+                    .accessibilityIdentifier("fleet.roster.hidden-toggle")
+                    Divider()
                     Button {
                         showingCreate = true
                     } label: {
@@ -141,7 +211,8 @@ public struct FleetRosterView: View {
                         .accessibilityIdentifier("fleet.roster.sections.\(gateway.id.rawValue)")
                     }
                 } label: {
-                    Label("Manage", systemImage: "plus.circle")
+                    Label("Bots options", systemImage: "ellipsis")
+                        .foregroundStyle(Color.primary)
                 }
                 .accessibilityIdentifier("fleet.roster.manage")
             }
@@ -150,21 +221,31 @@ public struct FleetRosterView: View {
                     Task { await environment.refreshRoster() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
+                        .foregroundStyle(Color.primary)
                 }
                 .disabled(environment.isRefreshing)
                 .accessibilityIdentifier("fleet.roster.refresh")
             }
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    revealingHidden.toggle()
-                } label: {
-                    Label(
-                        revealingHidden ? "Hide Hidden Bots" : (hiddenBotsActive ? "Hidden Bots Active" : "Show Hidden Bots"),
-                        systemImage: revealingHidden ? "eye.slash" : (hiddenBotsActive ? "eye.trianglebadge.exclamationmark" : "eye")
-                    )
-                }
-                .accessibilityIdentifier("fleet.roster.hidden-toggle")
+
+        }
+        .overlay(alignment: .top) {
+            if hiddenBotsNoticeID != nil {
+                Text("No hidden bots")
+                    .font(.callout)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("fleet.roster.hidden-empty")
+                    .allowsHitTesting(false)
             }
+        }
+        .task(id: hiddenBotsNoticeID) {
+            guard hiddenBotsNoticeID != nil else { return }
+            do {
+                try await Task.sleep(for: .seconds(6))
+                hiddenBotsNoticeID = nil
+            } catch { /* A new notice or leaving the roster cancels this timer. */ }
         }
         .sheet(isPresented: $showingCreate) {
             CreateBotSheet(environment: environment) { _, _ in }
@@ -188,10 +269,9 @@ public struct FleetRosterView: View {
             }
         }
         .background(theme.background.ignoresSafeArea())
-        .accessibilityIdentifier("fleet.roster")
     }
 
-    private var rosterList: some View {
+    private func rosterList(hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: FleetTheme.spacingLg, pinnedViews: []) {
                 if showsFilterBar {
@@ -202,8 +282,8 @@ public struct FleetRosterView: View {
                 if scope != .groups {
                     fleetActiveNowPreview
                 }
-                ForEach(collection) { section in
-                    rosterSection(section)
+                ForEach(collection(hostedRooms: hostedRooms, archiveRooms: archiveRooms)) { section in
+                    rosterSection(section, hostedRooms: hostedRooms, archiveRooms: archiveRooms)
                 }
             }
             .padding(.horizontal, FleetTheme.spacingLg)
@@ -306,7 +386,9 @@ public struct FleetRosterView: View {
 
     // MARK: Per-gateway sections
 
-    private func rosterSection(_ section: RosterSection) -> some View {
+    private func rosterSection(
+        _ section: RosterSection, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             gatewayHeader(section)
 
@@ -342,7 +424,7 @@ public struct FleetRosterView: View {
                     botGroups(for: section)
                 }
                 if scope != .bots {
-                    roomsGroup(for: section.gateway)
+                    roomsGroup(for: section.gateway, hostedRooms: hostedRooms, archiveRooms: archiveRooms)
                 }
             }
         }
@@ -480,22 +562,20 @@ public struct FleetRosterView: View {
     }
 
     /// Groups (FOS-5 terminology; internal identity stays "room"): rows
-    /// from the room union (hosted + desktop legacy).
+    /// from the room union (hosted + desktop legacy). Both room lists are
+    /// passed in — read ONCE per render pass by `body` (each `allRooms` /
+    /// `legacyRoomArchive` access re-ingests and re-reconciles the union).
     @ViewBuilder
-    private func roomsGroup(for gateway: FleetGateway) -> some View {
-        let visible = filteredRooms(for: gateway)
-        if !visible.isEmpty {
+    private func roomsGroup(
+        for gateway: FleetGateway, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> some View {
+        let rows = filteredRooms(for: gateway, hostedRooms: hostedRooms)
+            + filteredArchiveRooms(for: gateway, hostedRooms: hostedRooms, archiveRooms: archiveRooms)
+        if !rows.isEmpty {
             SectionHeader(title: "Groups")
                 .accessibilityIdentifier("fleet.roster.rooms")
-            ForEach(visible) { room in
-                // An explicit destination keeps room opening reliable in
-                // iPad's adaptive NavigationStack. The value-link path is
-                // retained for the other roster destinations, but this
-                // custom room row was being exposed as a tappable control
-                // without activating its value destination.
-                NavigationLink {
-                    RoomChatView(room: room, environment: environment)
-                } label: {
+            ForEach(rows) { room in
+                NavigationLink(value: FleetScreen.room(room.id)) {
                     RoomRowView(room: room)
                 }
                 .buttonStyle(.fleetPressable)
@@ -505,10 +585,41 @@ public struct FleetRosterView: View {
         }
     }
 
-    private func filteredRooms(for gateway: FleetGateway) -> [FleetRoom] {
-        let rooms = environment.rooms(for: gateway.id)
+    private func filteredRooms(for gateway: FleetGateway, hostedRooms: [FleetRoom]) -> [FleetRoom] {
+        let rooms = hostedRooms.filter { $0.id.gatewayID == gateway.id }
         guard !searchText.isEmpty else { return rooms }
         return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private func filteredArchiveRooms(
+        for gateway: FleetGateway, hostedRooms: [FleetRoom], archiveRooms: [FleetRoom]
+    ) -> [FleetRoom] {
+        let rooms = archiveRooms.filter { room in
+            guard room.id.gatewayID == gateway.id else { return false }
+            // Linked projections remain recoverable in GroupsHomeView's
+            // explicit archive, but do not duplicate the hosted row here.
+            // The continuation anchor is gateway-scoped; a matching bare id
+            // on another gateway is an unrelated room and must remain visible.
+            return Self.shouldShowLegacyArchiveRoom(room, hostedRooms: hostedRooms)
+        }
+        guard !searchText.isEmpty else { return rooms }
+        return rooms.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    /// Suppress only a projection with a verified same-gateway hosted anchor.
+    /// Bare room IDs are not fleet-global identities.
+    static func shouldShowLegacyArchiveRoom(
+        _ room: FleetRoom,
+        hostedRooms: [FleetRoom]
+    ) -> Bool {
+        guard let durableID = LegacyRoomContinuation.durableHostedRoomID(for: room) else {
+            return true
+        }
+        return !hostedRooms.contains {
+            $0.id.provenance == .hosted
+                && $0.id.gatewayID == room.id.gatewayID
+                && $0.id.key == durableID
+        }
     }
 
     private func gatewayHeader(_ section: RosterSection) -> some View {
@@ -863,6 +974,12 @@ struct RoomRowView: View {
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
+                    if room.id.provenance == .hosted {
+                        Text(String(room.members.count) + " member" + (room.members.count == 1 ? "" : "s") + " · Hosted group")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
                     if room.isManagedByDesktop {
                         // FOS-5 (SPEC §9): legacy rows say exactly this.
                         Text("Managed by Hermes Desktop · Read only")
@@ -882,9 +999,9 @@ extension FleetRoom {
     /// The Group row's single VoiceOver read: name, member count, authority
     /// gateway (when observed), read-only marker, then member names.
     var voiceOverLabel: String {
-        var parts: [String] = ["\(name), \(members.count) member\(members.count == 1 ? "" : "s")"]
-        if let authority = hosted?.authorityGatewayID, !authority.isEmpty {
-            parts.append("Authority \(authority)")
+        var parts: [String] = [name + ", " + String(members.count) + " member" + (members.count == 1 ? "" : "s")]
+        if id.provenance == .hosted {
+            parts.append("Hosted group")
         }
         if isManagedByDesktop {
             parts.append("Managed by Hermes Desktop, read only")

@@ -22,14 +22,20 @@ final class RoomChatUITests: XCTestCase {
         app = nil
     }
 
-    private func launch(extraEnv: [String: String] = [:]) -> XCUIApplication {
+    private func launch(
+        extraEnv: [String: String] = [:],
+        autoNav: String = "roster",
+        resetNavigation: Bool = true
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         self.app = app
-        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "roster"
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = autoNav
         for (key, value) in extraEnv {
             app.launchEnvironment[key] = value
         }
-        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        if resetNavigation {
+            app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        }
         app.launch()
         return app
     }
@@ -79,6 +85,46 @@ final class RoomChatUITests: XCTestCase {
         return found()
     }
 
+    /// RC-84 P1: Group Info — the room toolbar's Info entry opens the
+    /// compact known-state sheet (participants / gateways / capabilities)
+    /// and it closes cleanly. Values come from the room's real fields; this
+    /// pins the surface + honest structure.
+    func testRoomInfoSheetShowsHonestGroupState() throws {
+        let app = launch()
+
+        let row = scrollToFind(app, identifier: "fleet.room.row.room-alpha")
+        row.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 10),
+                      "room chat must open")
+
+        let info = app.descendants(matching: .any)["fleet.room.info"]
+        XCTAssertTrue(info.waitForExistence(timeout: 10),
+                      "Group Info entry must render in the room toolbar")
+        info.tap()
+
+        let sheet = app.descendants(matching: .any)["fleet.room.info.sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10), "Group Info sheet must open")
+        XCTAssertTrue(app.staticTexts["Home gateway"].firstMatch.waitForExistence(timeout: 5),
+                      "Home gateway row must render")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.info.capability.send"].waitForExistence(timeout: 5),
+            "Send messages capability line must render")
+        // The sheet's List materializes rows lazily (repo lazy-list rule) —
+        // reveal the deep capability rows before asserting them.
+        let replay = app.descendants(matching: .any)["fleet.room.info.capability.replay"]
+        for _ in 0..<6 where !replay.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(replay.waitForExistence(timeout: 5),
+                      "every capability line must render (replay may be honest 'Not supported')")
+
+        app.buttons["Done"].firstMatch.tap()
+        let gone = NSPredicate(format: "exists == 0")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: gone, object: sheet)], timeout: 5) == .completed,
+            "Group Info sheet must dismiss")
+    }
+
     // MARK: - D15 open + transcript + send
 
     func testHostedRoomOpenSendAndTranscriptRender() throws {
@@ -109,6 +155,27 @@ final class RoomChatUITests: XCTestCase {
             app.descendants(matching: .any)["fleet.room.entry.3"]
                 .waitForExistence(timeout: 10),
             "sent message appears in transcript")
+    }
+
+    func testHostedRoomShowsWorkingUntilScriptedReply() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_ROOM_REPLY_DELAY_MS": "6000"])
+        scrollToFind(app, identifier: "fleet.room.row.room-alpha").tap()
+        let composer = app.textFields["fleet.room.composer.field"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Investigate this")
+        app.buttons["fleet.room.send"].tap()
+
+        let indicator = app.descendants(matching: .any)["fleet.room.work.room"]
+        XCTAssertTrue(indicator.waitForExistence(timeout: 5),
+                      "an accepted hosted send shows room work")
+        XCTAssertTrue(indicator.label.contains("The room is working"))
+        let gone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: indicator)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 20), .completed,
+                       "the indicator clears after the scripted reply")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.room.entry.4"]
+            .waitForExistence(timeout: 10), "the completed reply enters the transcript")
     }
 
     // MARK: - D15 rename
@@ -178,10 +245,34 @@ final class RoomChatUITests: XCTestCase {
         legacy.tap()
 
         // Observational banner + read-only composer placeholder.
+        let banner = app.descendants(matching: .any)["fleet.room.legacy.banner"]
         XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.legacy.banner"]
-                .waitForExistence(timeout: 10),
+            banner.waitForExistence(timeout: 10),
             "Managed by Hermes Desktop banner renders")
+        // Build-41 honesty contract (SPEC: legacy read-only state): the
+        // banner must state read-only + Desktop management + BOUNDED recent
+        // history — never imply the full transcript is available. The notice
+        // bar uses .contain (container label is empty — repo lesson), so the
+        // copy is asserted on the static text it renders.
+        func bannerCopy(_ phrase: String) -> XCUIElement {
+            app.staticTexts.matching(
+                NSPredicate(format: "label CONTAINS %@", phrase)
+            ).firstMatch
+        }
+        XCTAssertTrue(
+            bannerCopy("Read only").waitForExistence(timeout: 5),
+            "banner states read-only")
+        XCTAssertTrue(
+            bannerCopy("Managed by Hermes Desktop").exists,
+            "banner names Hermes Desktop as the managing authority")
+        XCTAssertTrue(
+            bannerCopy("Recent history only").exists,
+            "banner is honest about the bounded history window")
+        // The promotion affordance is prominent and fully named.
+        XCTAssertEqual(
+            app.buttons["fleet.room.legacy.continue"].label,
+            "Continue as Interactive Group",
+            "banner action is the full Continue-as-Interactive-Group label")
         // Composer disabled for legacy room (field itself is disabled).
         let composer = app.textFields["fleet.room.composer.field"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
@@ -191,6 +282,48 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertFalse(app.buttons["fleet.room.rename"].exists, "no rename on legacy room")
         XCTAssertFalse(app.buttons["fleet.room.disband"].exists, "no disband on legacy room")
         XCTAssertFalse(app.buttons["fleet.room.stop"].exists, "no stop on legacy room")
+    }
+
+    // MARK: - Continue as Interactive Group (diagnostic 2026-09-15, fix B)
+
+    func testLegacyRoomContinueActionExplainsWhenNoDurableBridge() throws {
+        let app = launch()
+
+        let legacy = scrollToFind(app, identifier: "fleet.room.row.name:Research Crew")
+        XCTAssertTrue(legacy.exists, "legacy room row renders")
+        legacy.tap()
+
+        // The banner carries the Continue action (fix B affordance).
+        let continueButton = app.buttons["fleet.room.legacy.continue"]
+        XCTAssertTrue(
+            continueButton.waitForExistence(timeout: 10),
+            "Continue action renders on the legacy banner")
+
+        // Confirmation copy is explicit about identity + history retention.
+        // Scope to the sheet: the banner action now carries the same full
+        // "Continue as Interactive Group" label, so an unscoped query
+        // matches BOTH the banner button and the dialog confirm.
+        continueButton.tap()
+        // The dialog confirm may surface as a sheet (compact confirmation
+        // dialog) or an alert-style action sheet; accept either surface but
+        // REQUIRE it to present (never silently tap the banner button again).
+        let confirm = app.sheets.buttons["Continue as Interactive Group"]
+        let alertConfirm = app.alerts.buttons["Continue as Interactive Group"]
+        XCTAssertTrue(
+            confirm.waitForExistence(timeout: 5) || alertConfirm.waitForExistence(timeout: 1),
+            "confirmation dialog renders")
+        (confirm.exists ? confirm : alertConfirm).tap()
+
+        // The simulator's legacy room is NAME-KEYED (older projection
+        // generation): the flow fails closed with the honest no-durable-
+        // bridge explanation — never a silent success.
+        let errorNotice = app.descendants(matching: .any)["fleet.room.legacy.continue.error"]
+        XCTAssertTrue(
+            errorNotice.waitForExistence(timeout: 10),
+            "typed fail-closed explanation renders")
+        XCTAssertTrue(
+            errorNotice.label.localizedCaseInsensitiveContains("durable"),
+            "explanation names the missing durable identity bridge")
     }
 
     // MARK: - D16 retryable failure
@@ -227,12 +360,16 @@ final class RoomChatUITests: XCTestCase {
 
         let approve = app.buttons["fleet.room.approve.once"]
         XCTAssertTrue(approve.waitForExistence(timeout: 10), "needs-you approval renders")
+        let waiting = app.descendants(matching: .any)["fleet.room.work.approval"]
+        XCTAssertTrue(waiting.waitForExistence(timeout: 5))
+        XCTAssertTrue(waiting.label.contains("Waiting for your answer"))
         approve.tap()
 
         // After approving, the approval card clears.
         XCTAssertFalse(
             app.buttons["fleet.room.approve.once"].waitForExistence(timeout: 5),
             "approval clears after approve-once")
+        XCTAssertFalse(waiting.exists, "waiting copy clears with the approval")
     }
 
     // MARK: - D15 create room
@@ -274,10 +411,92 @@ final class RoomChatUITests: XCTestCase {
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         submit.tap()
 
-        // The created room reveals in the roster rows.
+        // The created room reveals in the roster rows. The room id is a
+        // client-minted UUID (upstream groups.create requires a
+        // client-supplied room_id), so the row is found by its name.
+        let createdRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Fresh Crew"))
+            .firstMatch
         XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.row.room-1"]
-                .waitForExistence(timeout: 10),
+            createdRow.waitForExistence(timeout: 10),
             "created room appears in roster")
+    }
+
+    // Phone-bridged fallback: the opt-in simulator fixture disables hosted
+    // Group/RoomLink seams, forcing AppEnvironment.createRoom to persist a
+    // device-local room. The second launch deliberately omits NAV_RESET so
+    // the persisted bridged record is the thing being reopened.
+    func testPhoneBridgedGroupCreatesOpensSendsAndSurvivesRelaunch() throws {
+        let fixture = [
+            "HERMES_FLEET_BRIDGED_ROOM": "1",
+            "HERMES_FLEET_BRIDGED_REPLY_DELAY_MS": "8000",
+        ]
+        let app = launch(extraEnv: fixture, autoNav: "groups")
+
+        let newGroup = app.buttons["fleet.groups.new"]
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 10), "Groups create control renders")
+        newGroup.tap()
+
+        let name = app.textFields["fleet.room.create.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10), "Group create sheet renders")
+        name.tap()
+        name.typeText("Phone Crew")
+        app.buttons["fleet.room.create.candidate.workstation#researcher"].tap()
+        app.buttons["fleet.room.create.candidate.workstation#default"].tap()
+        app.buttons["fleet.room.create.submit"].tap()
+
+        let composer = app.textFields["fleet.room.composer.field"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "bridged room opens after creation")
+        XCTAssertFalse(
+            app.staticTexts["Gateway unavailable"].exists,
+            "device-local room must bypass the registered-gateway guard")
+        composer.tap()
+        composer.typeText("Bridge check-in")
+        app.buttons["fleet.room.send"].tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.entry.2"]
+                .waitForExistence(timeout: 10),
+            "bridged user message is persisted in the local transcript")
+
+        let thinking = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "is thinking…"))
+        XCTAssertTrue(thinking.element(boundBy: 1).waitForExistence(timeout: 5))
+        let thinkingLabels = thinking.allElementsBoundByIndex.map { $0.label }
+        XCTAssertEqual(Set(thinkingLabels).count, 2, "each working bot has its own named line")
+        XCTAssertTrue(thinkingLabels.contains { $0.contains("Researcher") })
+
+        for seq in [3, 4] {
+            let reply = app.descendants(matching: .any)["fleet.room.entry.\(seq)"]
+            XCTAssertTrue(reply.waitForExistence(timeout: 15), "each selected bot replies")
+            // Rich-text member replies carry the assistant-response AX
+            // contract (RoomTranscriptAccessibilityModifier overrides the
+            // label); failure notes and user rows COMBINE speaker + copy
+            // instead. The contract label is the discriminator that this row
+            // is a real member reply, not a timeout/failure note.
+            XCTAssertTrue(reply.label.contains("Assistant response from"),
+                          "a member reply must not be a timeout/failure note")
+        }
+        XCTAssertEqual(thinking.count, 0)
+
+        app.terminate()
+        self.app = nil
+        let relaunched = launch(
+            extraEnv: fixture, autoNav: "groups", resetNavigation: false)
+        let row = relaunched.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Phone Crew"))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "bridged room survives relaunch")
+        row.tap()
+        XCTAssertTrue(
+            relaunched.textFields["fleet.room.composer.field"]
+                .waitForExistence(timeout: 10),
+            "persisted bridged room opens after relaunch")
+        XCTAssertFalse(
+            relaunched.staticTexts["Gateway unavailable"].exists,
+            "reopened bridged room must not be treated as a missing gateway")
+        let restoredReply = relaunched.descendants(matching: .any)["fleet.room.entry.4"]
+        XCTAssertTrue(restoredReply.waitForExistence(timeout: 10))
+        XCTAssertTrue(restoredReply.label.contains("Assistant response from"),
+                      "member transcript survives relaunch")
     }
 }

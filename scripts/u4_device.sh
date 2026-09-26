@@ -1,9 +1,9 @@
 #!/bin/bash
-# U4 own-device dogfood — fresh free-team sideload on the connected iPhone.
+# U4 own-device dogfood — data-preserving sideload on the connected iPhone.
 #
 # Builds the app for iphoneos (Debug, free personal team 3JS22HX92T),
-# verifies codesigning metadata by reference (no key material), FRESH-installs
-# on the physical device (uninstall any prior copy), launches it, verifies the
+# verifies codesigning metadata by reference (no key material), installs
+# IN PLACE on the physical device, launches it, verifies the
 # process is running, and records checksums.
 #
 # Distribution-readiness stays honest: free team = own-device sideload only,
@@ -41,7 +41,9 @@ if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     build >/tmp/u4_device_build.log 2>&1; then
   ok "device BUILD SUCCEEDED"
 else
-  bad "device build FAILED"; tail -30 /tmp/u4_device_build.log
+  bad "device build FAILED — refusing to install an older artifact"
+  tail -30 /tmp/u4_device_build.log
+  exit 1
 fi
 
 # --- 2. Codesign verification (metadata only, no key material) ---------------
@@ -73,15 +75,47 @@ else
 fi
 echo "  application-identifier: $(echo "$ENT" | grep -A1 'application-identifier' | tail -1 | tr -d ' \t')"
 
-# --- 3. FRESH install (uninstall any prior copy first) -----------------------
-note "Fresh install (uninstall then install) on the device"
-xcrun devicectl device uninstall app --device "$DEVICE" com.aiowa.hermesfleet >/tmp/u4_device_uninstall.log 2>&1 && \
-  ok "prior install removed (fresh state)" || ok "no prior install to remove (fresh state)"
-sleep 2
+# --- 3. Preflight and IN-PLACE install ---------------------------------------
+note "Verify build and preserve existing device data"
+if [ "$FAIL" -gt 0 ]; then
+  bad "codesign/profile checks failed — refusing device install"
+  exit 1
+fi
+APP_QUERY="$(mktemp -t fleet_installed_apps)"
+trap 'rm -f "$APP_QUERY"' EXIT
+if ! xcrun devicectl device info apps --device "$DEVICE" \
+    --bundle-id com.aiowa.hermesfleet --json-output "$APP_QUERY" \
+    >/tmp/u4_device_apps.log 2>&1; then
+  bad "could not read installed app version — refusing device install"
+  exit 1
+fi
+if python3 scripts/device_install_preflight.py \
+    project.yml "$APP/Info.plist" "$APP_QUERY"; then
+  ok "built app matches project.yml and will not downgrade the phone"
+else
+  bad "device install preflight failed"
+  exit 1
+fi
+
+note "Install in place (preserve app container)"
 if xcrun devicectl device install app --device "$DEVICE" "$APP" >/tmp/u4_device_install.log 2>&1; then
   ok "app installed to device"
 else
   bad "device install FAILED"; tail -15 /tmp/u4_device_install.log
+  exit 1
+fi
+if ! xcrun devicectl device info apps --device "$DEVICE" \
+    --bundle-id com.aiowa.hermesfleet --json-output "$APP_QUERY" \
+    >/tmp/u4_device_apps_after.log 2>&1; then
+  bad "could not verify installed app version"
+  exit 1
+fi
+if python3 scripts/device_install_preflight.py \
+    project.yml "$APP/Info.plist" "$APP_QUERY" --require-installed-match; then
+  ok "phone reports the expected build after install"
+else
+  bad "installed build verification failed"
+  exit 1
 fi
 
 # --- 4. Launch + verify process ---------------------------------------------

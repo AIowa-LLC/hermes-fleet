@@ -271,30 +271,34 @@ final class FOS8AccessibilityUITests: XCTestCase {
     // MARK: 6. Group conversation scroll stability
 
     func testGroupConversationShowsLatestControlWhenReadingHistory() throws {
-        let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "roster"])
+        // D3: seed the overflow deterministically in the scripted fleet.
+        // Typed filler reflows width-dependent — on the iPad canvas the
+        // transcript fits the viewport entirely, so "reading history" (and
+        // therefore the Latest control) is legitimately unreachable and the
+        // drag just rubber-bands (proven by the failure-time AX dump: the
+        // whole transcript materialized inside one viewport). A seeded
+        // history overflows ANY canvas width.
+        let app = launch(extraEnv: [
+            "HERMES_FLEET_AUTO_NAV": "roster",
+            "HERMES_FLEET_ROOM_HISTORY_DEPTH": "30",
+        ])
         openHostedRoom(app)
 
-        // Send messages long enough to make the transcript overflow the
-        // viewport so upward scrolling is possible.
         let composer = app.textFields["fleet.room.composer.field"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        let filler = String(repeating: "history line for scroll stability testing ", count: 20)
-        for text in ["one \(filler)", "two \(filler)", "three \(filler)", "four \(filler)"] {
-            composer.tap()
-            composer.typeText(text)
-            app.buttons["fleet.room.send"].tap()
-            usleep(500_000)
-        }
 
-        // Do not start the gesture while the last durable-log projection is
-        // still being laid out. On iPad the adaptive navigation stack can
-        // otherwise accept the drag before the transcript has its final
-        // content height, which leaves the viewport at the bottom and makes
-        // this test exercise layout timing instead of scroll behavior.
-        XCTAssertTrue(
-            app.descendants(matching: .any)["fleet.room.entry.6"]
-                .waitForExistence(timeout: 10),
-            "final history entry renders before scrolling")
+        // The seeded transcript must be projected before we drag. Wait for
+        // ANY entry rather than the final one: with a 30-line history the
+        // final entry only materializes at the very bottom, and the room
+        // can legitimately take a moment to settle (observed parking
+        // mid-transcript on compact width — still readable, still
+        // overflowed). Overflow itself is a fixture property: 30 seeded
+        // lines measure ~2340pt on a 358pt column and ~1600pt on an iPad
+        // column, against ~600-1144pt viewports.
+        let anyEntry = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'fleet.room.entry.'")).firstMatch
+        XCTAssertTrue(anyEntry.waitForExistence(timeout: 10),
+                      "seeded history must project before scrolling")
 
         // Dismiss the keyboard by tapping a neutral transcript area (the
         // nav bar tap can disturb scroll state).
@@ -323,5 +327,52 @@ final class FOS8AccessibilityUITests: XCTestCase {
         latest.tap()
         let gone = NSPredicate(format: "exists == false")
         wait(for: [XCTNSPredicateExpectation(predicate: gone, object: latest)], timeout: 12)
+    }
+
+    func testGroupConversationOpensAtLatestWithDeepHistory() throws {
+        // t_363bc529: opening a room with a deep durable history must land
+        // AT THE LATEST entry — the screen's own documented contract ("the
+        // room opens following the latest"). The lazy-layout race parked
+        // the viewport mid-transcript (fleet.room.chat observed at y=-742
+        // of a ~2340pt transcript, final entry never materializing inside
+        // 10s), and because followingLatest stays true the Latest escape
+        // control stayed hidden too: the user was stranded mid-history.
+        let app = launch(extraEnv: [
+            "HERMES_FLEET_AUTO_NAV": "roster",
+            "HERMES_FLEET_ROOM_HISTORY_DEPTH": "30",
+        ])
+        openHostedRoom(app)
+
+        // 31 rendered entries (seq 2 "Draft is ready…" + seeded 3...32).
+        // The FINAL entry must materialize WITHOUT any test-driven
+        // scrolling: below-the-fold lazy rows never enter the AX tree, so
+        // its existence inside the window IS the open-at-bottom signal —
+        // exactly what never happened in the D3 evidence.
+        let finalEntry = app.descendants(matching: .any)["fleet.room.entry.32"]
+        XCTAssertTrue(
+            finalEntry.waitForExistence(timeout: 10),
+            "open lands at the latest entry without user scrolling")
+
+        // Materialized AND on-screen (not merely resident off-viewport).
+        let window = app.windows.firstMatch
+        var visible = false
+        for _ in 0..<20 {
+            let frame = finalEntry.frame
+            let bounds = window.frame
+            if frame.width > 0, frame.maxY > bounds.minY, frame.minY < bounds.maxY {
+                visible = true
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTAssertTrue(
+            visible,
+            "final entry is on-screen (frame \(finalEntry.frame), window \(window.frame))")
+
+        // While following latest after open there is no history escape to
+        // offer: the Latest control must NOT render.
+        XCTAssertFalse(
+            app.descendants(matching: .any)["fleet.room.timeline.latest"].exists,
+            "no Latest control while following latest after open")
     }
 }

@@ -3,10 +3,9 @@
 # TLS TOFU-pinning test suites and emit the Swift fixture file.
 #
 # Outputs Packages/FleetNetworking/Tests/FleetNetworkingTests/TLSFixtureIdentities.swift
-# containing base64 PKCS#12 blobs (no PEM markers, so the secrets scanner
-# stays quiet; these are throwaway test-only keys, never production
-# material). At test runtime SecPKCS12Import (in-memory keychain) builds the
-# SecIdentity — the one route that works on iOS too.
+# containing test-only certificate DER and X9.63 software private keys. These
+# throwaway keys stay out of production and avoid keychain-backed signing in
+# the in-process TLS server fixture.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DIR=$(mktemp -d /tmp/t3tls.XXXXXX)
@@ -19,11 +18,48 @@ gen_identity() { # $1=name $2=cn
     -days 7300 -subj "/CN=$cn" \
     -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" >/dev/null 2>&1
   openssl x509 -in "$DIR/$name.crt" -outform DER -out "$DIR/$name.cert.der"
-  # PKCS#12 for runtime SecPKCS12Import (identity route).
-  openssl pkcs12 -export -out "$DIR/$name.p12" \
-    -inkey "$DIR/$name.key" -in "$DIR/$name.crt" -passout pass:hermes-fixture -legacy 2>/dev/null \
-    || openssl pkcs12 -export -out "$DIR/$name.p12" \
-         -inkey "$DIR/$name.key" -in "$DIR/$name.crt" -passout pass:hermes-fixture
+  # Security.framework imports EC private keys in X9.63 form:
+  # 04 || X || Y || K. Parse OpenSSL's SEC1 DER without an ASN.1 dependency.
+  openssl ec -in "$DIR/$name.key" -outform DER -out "$DIR/$name.key.der" 2>/dev/null
+  python3 - "$DIR/$name.key.der" "$DIR/$name.private.x963" <<'PY'
+import sys
+
+source, destination = sys.argv[1:]
+data = open(source, "rb").read()
+
+def tlv(blob, offset):
+    tag = blob[offset]
+    offset += 1
+    first = blob[offset]
+    offset += 1
+    if first & 0x80:
+        size = first & 0x7f
+        length = int.from_bytes(blob[offset:offset + size], "big")
+        offset += size
+    else:
+        length = first
+    end = offset + length
+    return tag, blob[offset:end], end
+
+tag, sequence, _ = tlv(data, 0)
+assert tag == 0x30, "expected ECPrivateKey sequence"
+tag, _, offset = tlv(sequence, 0)
+assert tag == 0x02, "expected ECPrivateKey version"
+tag, scalar, offset = tlv(sequence, offset)
+assert tag == 0x04 and len(scalar) <= 32, "expected P-256 private scalar"
+scalar = scalar.rjust(32, bytes([0]))
+public_point = None
+while offset < len(sequence):
+    tag, value, offset = tlv(sequence, offset)
+    if tag == 0xa1:
+        bit_tag, bits, _ = tlv(value, 0)
+        assert bit_tag == 0x03 and bits[0] == 0, "expected unpadded EC public point"
+        public_point = bits[1:]
+        break
+assert public_point is not None and len(public_point) == 65 and public_point[0] == 4, \
+    "expected uncompressed P-256 public point"
+open(destination, "wb").write(public_point + scalar)
+PY
   # SPKI sha256 base64 (the pin value the app computes)
   openssl x509 -in "$DIR/$name.crt" -pubkey -noout \
     | openssl pkey -pubin -outform DER 2>/dev/null \
@@ -45,10 +81,10 @@ gen_identity mitm "mitm-attacker-fixture"
 gen_weak_identity unsupported "unsupported-key-fixture"
 
 CERT_GW=$(base64 -i "$DIR/gateway.cert.der" | tr -d '\n')
-P12_GW=$(base64 -i "$DIR/gateway.p12" | tr -d '\n')
+KEY_GW=$(base64 -i "$DIR/gateway.private.x963" | tr -d '\n')
 SPKI_GW=$(cat "$DIR/gateway.spki.b64")
 CERT_MITM=$(base64 -i "$DIR/mitm.cert.der" | tr -d '\n')
-P12_MITM=$(base64 -i "$DIR/mitm.p12" | tr -d '\n')
+KEY_MITM=$(base64 -i "$DIR/mitm.private.x963" | tr -d '\n')
 SPKI_MITM=$(cat "$DIR/mitm.spki.b64")
 CERT_WEAK=$(base64 -i "$DIR/unsupported.cert.der" | tr -d '\n')
 
@@ -60,16 +96,14 @@ import Foundation
 import Security
 
 enum TLSFixtureIdentities {
-    static let p12Passphrase = "hermes-fixture"
-
-    /// The legitimate gateway: self-signed identity (PKCS#12) + leaf DER.
-    static let gatewayP12 = Data(base64Encoded: "$P12_GW")!
+    /// The legitimate gateway's synthetic cert and matching P-256 test key.
+    static let gatewayPrivateKeyX963 = Data(base64Encoded: "$KEY_GW")!
     static let gatewayCertificateDER = Data(base64Encoded: "$CERT_GW")!
     /// SPKI SHA-256 base64 of the gateway cert (openssl-computed reference).
     static let gatewaySPKIBase64 = "$SPKI_GW"
 
     /// A different self-signed identity (the MITM / replaced-cert actor).
-    static let mitmP12 = Data(base64Encoded: "$P12_MITM")!
+    static let mitmPrivateKeyX963 = Data(base64Encoded: "$KEY_MITM")!
     static let mitmCertificateDER = Data(base64Encoded: "$CERT_MITM")!
     static let mitmSPKIBase64 = "$SPKI_MITM"
 
@@ -77,23 +111,30 @@ enum TLSFixtureIdentities {
     /// must fail closed on it.
     static let weakCertificateDER = Data(base64Encoded: "$CERT_WEAK")!
 
-    /// Import a PKCS#12 blob and return the SecIdentity (the server identity
-    /// a TLS fixture presents). No keychain needed — SecPKCS12Import without
-    /// a keychain option returns a usable ephemeral identity reference.
-    static func identity(p12: Data) throws -> SecIdentity {
-        var imported: CFArray?
-        let options: [String: Any] = [
-            kSecImportExportPassphrase as String: p12Passphrase,
-        ]
-        let status = SecPKCS12Import(p12 as CFData, options as CFDictionary, &imported)
-        guard status == errSecSuccess,
-              let items = imported as? [[String: Any]],
-              let first = items.first,
-              let ref = first[kSecImportItemIdentity as String] else {
+    /// Pair the synthetic certificate with an in-memory software key. This
+    /// keeps TLS signing out of SecurityServer/keychain-backed identities.
+    static func identity(certificateDER: Data, privateKeyX963: Data) throws -> SecIdentity {
+        guard let certificate = SecCertificateCreateWithData(nil, certificateDER as CFData) else {
             throw NSError(domain: "TLSFixture", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "p12 import failed (status \\(status))"])
+                          userInfo: [NSLocalizedDescriptionKey: "certificate fixture could not be created"])
         }
-        return ref as! SecIdentity
+        let attributes: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+            kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+            kSecAttrKeySizeInBits as String: 256,
+            kSecAttrIsPermanent as String: false,
+        ]
+        var keyError: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateWithData(privateKeyX963 as CFData, attributes as CFDictionary, &keyError) else {
+            throw keyError?.takeRetainedValue() ?? NSError(
+                domain: "TLSFixture", code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "private key fixture could not be created"])
+        }
+        guard let identity = SecIdentityCreate(nil, certificate, privateKey) else {
+            throw NSError(domain: "TLSFixture", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "certificate and private key do not match"])
+        }
+        return identity
     }
 }
 EOF

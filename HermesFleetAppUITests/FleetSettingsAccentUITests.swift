@@ -1,156 +1,207 @@
 import XCTest
 
-/// Issue #6 — deterministic coverage for the V1 custom theme editor.
+/// ChatGPT-style accent picker (dogfood: replaces the full theme editor).
 ///
-/// The class name remains in the existing FOS-7 inventory so the canonical UI
-/// matrix keeps running this settings lane. The old accent-picker assertions
-/// were retired because the product now exposes one applied three-color
-/// palette instead of the five-value accent enum.
+/// The class name stays in the FOS inventory so the canonical UI matrix
+/// keeps running this settings lane.
 final class FleetSettingsAccentUITests: XCTestCase {
 
-    func testThemeEditorIsReachableAndOffersNativeColorPickers() throws {
+    /// RC-84 P0-A: the diagnostics door — "Report a Problem" opens the
+    /// sanitized report sheet (identity header + Copy), built from this
+    /// process's real facts.
+    func testReportAProblemSheetRendersSanitizedReport() throws {
         let app = launchApp()
         UITabNavigation.openSettings(app)
-        openThemeEditor(app)
 
-        for identifier in [
-            "fleet.theme.highlight",
-            "fleet.theme.text",
-            "fleet.theme.background"
-        ] {
-            let picker = app.descendants(matching: .any)[identifier]
-            XCTAssertTrue(picker.waitForExistence(timeout: 5),
-                          "native ColorPicker (identifier) should render")
+        let row = app.descendants(matching: .any)["fleet.settings.report-problem"]
+        for _ in 0..<6 where !row.exists { app.swipeUp() }
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Report a Problem row must render")
+        row.tap()
+
+        let sheet = app.descendants(matching: .any)["fleet.diagnostics.sheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10), "diagnostics sheet must open")
+        let text = app.descendants(matching: .any)["fleet.diagnostics.text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "report text must render")
+
+        // The report carries its generated identity + honest sections.
+        let hasReportID = NSPredicate(format: "label CONTAINS %@", "Report ID: DF-")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: hasReportID, object: text)], timeout: 10) == .completed,
+            "report must carry its generated identity")
+        let hasContext = NSPredicate(format: "label CONTAINS %@", "Settings · Report a Problem")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: hasContext, object: text)], timeout: 5) == .completed,
+            "report must name its surface context")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.diagnostics.copy"].exists, "Copy must be offered")
+
+        app.buttons["Done"].firstMatch.tap()
+    }
+
+    func testAccentRowRendersAndMenuOffersAllCuratedAccents() throws {
+        let app = launchApp()
+        UITabNavigation.openSettings(app)
+
+        let row = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "accent row must render")
+        row.tap()
+
+        // All eight curated colors are offered (ChatGPT's set + the Fleet
+        // mono White, ADR-0009).
+        for name in ["Blue", "Green", "Yellow", "Pink", "Orange", "Purple", "Black", "White"] {
+            let option = app.buttons[name].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 5),
+                          "the \(name) option must be offered")
         }
-
-        XCTAssertTrue(app.descendants(matching: .any)["fleet.theme.preview"]
-            .waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["fleet.theme.contrast.text"]
-            .waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["fleet.theme.apply"]
-            .waitForExistence(timeout: 5))
-
-        // Reset and Apply are explicit, user-visible actions in the editor.
-        scrollToEditorAction(app, identifier: "fleet.theme.reset")
-        app.buttons["fleet.theme.reset"].tap()
-        app.buttons["fleet.theme.apply"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
     }
 
-    func testThemeEditorShowsLowContrastWarningAndCanReset() throws {
-        let app = launchApp(arguments: ["-issue6-low-contrast"])
+    func testSelectingPurpleAppliesLiveAndPersistsAfterRelaunch() throws {
+        let app = launchApp()
         UITabNavigation.openSettings(app)
-        openThemeEditor(app)
 
-        let warning = app.descendants(matching: .any)["fleet.theme.contrast.warning"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5),
-                      "the deterministic low-contrast fixture should warn")
+        let row = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let purple = app.buttons["Purple"].firstMatch
+        XCTAssertTrue(purple.waitForExistence(timeout: 5))
+        purple.tap()
 
-        scrollToEditorAction(app, identifier: "fleet.theme.reset")
-        app.buttons["fleet.theme.reset"].tap()
-        XCTAssertTrue(warning.waitForNonExistence(timeout: 5),
-                      "Reset should remove the low-contrast warning")
-        app.buttons["fleet.theme.apply"].tap()
+        // The row's accessibility value adopts the pick immediately.
+        let adopted = NSPredicate(format: "label CONTAINS %@", "Accent, Purple")
+        let exp = XCTNSPredicateExpectation(predicate: adopted, object: row)
+        XCTAssertTrue(XCTWaiter().wait(for: [exp], timeout: 5) == .completed,
+                      "the accent row must reflect Purple immediately (got \(row.label))")
+
+        // Persisted across relaunch.
+        app.terminate()
+        app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        UITabNavigation.openSettings(app)
+        let relaunched = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(relaunched.waitForExistence(timeout: 10))
+        XCTAssertTrue(relaunched.label.contains("Purple"),
+                      "Purple must survive relaunch (got \(relaunched.label))")
+
+        // Leave the simulator on the default for the next deterministic case.
+        relaunched.tap()
+        let def = app.buttons["Purple"].firstMatch
+        if def.waitForExistence(timeout: 3) { app.buttons["Black"].firstMatch.tap() }
     }
 
-    func testArbitraryPaletteAppliesAndPersistsAfterRelaunch() throws {
-        let app = launchApp(arguments: ["-issue6-arbitrary-theme"])
+    func testBlackAccentApplies() throws {
+        let app = launchApp()
         UITabNavigation.openSettings(app)
-        openThemeEditor(app)
 
-        let highlight = app.descendants(matching: .any)["fleet.theme.highlight"]
-        XCTAssertTrue(highlight.waitForExistence(timeout: 5))
-        XCTAssertEqual(highlight.value as? String, "#1F74C9")
-        app.buttons["fleet.theme.apply"].tap()
+        let row = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let black = app.buttons["Black"].firstMatch
+        XCTAssertTrue(black.waitForExistence(timeout: 5))
+        black.tap()
+
+        let adopted = NSPredicate(format: "label CONTAINS %@", "Accent, Black")
+        let exp = XCTNSPredicateExpectation(predicate: adopted, object: row)
+        XCTAssertTrue(XCTWaiter().wait(for: [exp], timeout: 5) == .completed,
+                      "Black applies immediately (got \(row.label))")
+
+        // Restore the default for the next case.
+        row.tap()
+        if app.buttons["Purple"].firstMatch.waitForExistence(timeout: 3) {
+            app.buttons["Purple"].firstMatch.tap()
+        }
+    }
+
+    /// ADR-0009: White is the mono accent — applies live, persists across
+    /// relaunch, and the Settings row reflects it.
+    func testSelectingWhiteAppliesMonoAndPersistsAfterRelaunch() throws {
+        let app = launchApp()
+        UITabNavigation.openSettings(app)
+
+        let row = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let white = app.buttons["White"].firstMatch
+        XCTAssertTrue(white.waitForExistence(timeout: 5), "the White option must be offered")
+        white.tap()
+
+        let adopted = NSPredicate(format: "label CONTAINS %@", "Accent, White")
+        let exp = XCTNSPredicateExpectation(predicate: adopted, object: row)
+        XCTAssertTrue(XCTWaiter().wait(for: [exp], timeout: 5) == .completed,
+                      "the accent row must reflect White immediately (got \(row.label))")
 
         app.terminate()
-        app.launchArguments = []
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openSettings(app)
-        openThemeEditor(app)
+        let relaunched = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(relaunched.waitForExistence(timeout: 10))
+        XCTAssertTrue(relaunched.label.contains("White"),
+                      "White must survive relaunch (got \(relaunched.label))")
 
-        let persistedHighlight = app.descendants(matching: .any)["fleet.theme.highlight"]
-        XCTAssertTrue(persistedHighlight.waitForExistence(timeout: 5))
-        XCTAssertEqual(persistedHighlight.value as? String, "#1F74C9",
-                       "Apply must persist the arbitrary highlight palette value")
-
-        // Leave the simulator preference clean for the next deterministic UI
-        // case after proving relaunch persistence.
-        scrollToEditorAction(app, identifier: "fleet.theme.reset")
-        app.buttons["fleet.theme.reset"].tap()
-        app.buttons["fleet.theme.apply"].tap()
-    }
-
-    func testDraftCancelLeavesAppThemeUntouchedAndApplyReachesRichMarkdownAndStatuses() throws {
-        let app = launchApp(arguments: ["-issue6-arbitrary-theme", "-issue6-theme-proof"])
-        let appliedHighlight = app.staticTexts["fleet.theme.proof.applied-highlight"]
-        XCTAssertTrue(appliedHighlight.waitForExistence(timeout: 10))
-        let before = appliedHighlight.label
-
-        UITabNavigation.openSettings(app)
-        openThemeEditor(app)
-        XCTAssertEqual(app.descendants(matching: .any)["fleet.theme.highlight"].value as? String, "#1F74C9")
-        XCTAssertEqual(appliedHighlight.label, before,
-                       "draft edits must not mutate the app-wide applied theme")
-
-        app.buttons["fleet.theme.cancel"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        XCTAssertEqual(appliedHighlight.label, before,
-                       "Cancel must leave applied theme and persistence untouched")
-
-        openThemeEditor(app)
-        app.buttons["fleet.theme.apply"].tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        app.buttons["fleet.settings.done"].tap()
-
-        XCTAssertTrue(appliedHighlight.waitForExistence(timeout: 10))
-        XCTAssertTrue(appliedHighlight.label.contains("#1F74C9"),
-                      "Apply must update the environment-backed app surface")
-        XCTAssertTrue(app.descendants(matching: .any)["fleet.theme.proof.rich-markdown"]
-            .waitForExistence(timeout: 10),
-                      "the applied palette must reach the rich Markdown renderer")
-        XCTAssertTrue(app.descendants(matching: .any)["fleet.theme.proof.semantic-statuses"]
-            .waitForExistence(timeout: 10))
-        for label in [
-            "Online", "Working", "Thinking", "Using tool", "Waiting", "Needs you",
-            "Sign in required", "Degraded", "Offline", "Unknown"
-        ] {
-            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", label)).firstMatch
-                .waitForExistence(timeout: 5), "semantic status remains visible: \(label)")
+        // Leave the simulator on the same post-class state as before
+        // (Black), matching the Purple test's cleanup contract.
+        relaunched.tap()
+        if app.buttons["White"].firstMatch.waitForExistence(timeout: 3) {
+            app.buttons["Black"].firstMatch.tap()
         }
-
-        UITabNavigation.openSettings(app)
-        openThemeEditor(app)
-        scrollToEditorAction(app, identifier: "fleet.theme.reset")
-        app.buttons["fleet.theme.reset"].tap()
-        app.buttons["fleet.theme.apply"].tap()
     }
 
-    private func launchApp(arguments: [String] = []) -> XCUIApplication {
+    /// ADR-0009 visual evidence: the drawer compose pill follows the active
+    /// theme highlight. Attaches screenshots of the drawer (pill region)
+    /// under the default palette, for the current appearance. Runs in the
+    /// existing accent lane so no new UI matrix row is required.
+    func testDrawerPillFollowsThemeEvidence() throws {
+        let app = launchApp()
+        _ = UITabNavigation.openDrawer(app)
+        XCTAssertTrue(
+            app.buttons["fleet.drawer.new-chat"].firstMatch.waitForExistence(timeout: 10),
+            "the drawer compose pill must render")
+        attachScreenshot(of: app, name: "drawer-pill-default-accent")
+
+        // Select Blue through Settings, reopen the drawer, capture again.
+        UITabNavigation.closeDrawer(app)
+        UITabNavigation.openSettings(app)
+        let row = app.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let blue = app.buttons["Blue"].firstMatch
+        XCTAssertTrue(blue.waitForExistence(timeout: 5))
+        blue.tap()
+
+        let app2 = app // same XCUIApplication handle; back out to the shell
+        _ = UITabNavigation.openDrawer(app2)
+        XCTAssertTrue(
+            app2.buttons["fleet.drawer.new-chat"].firstMatch.waitForExistence(timeout: 10))
+        attachScreenshot(of: app2, name: "drawer-pill-blue-accent")
+
+        // Restore the post-class state (Black), matching the other tests.
+        UITabNavigation.closeDrawer(app2)
+        UITabNavigation.openSettings(app2)
+        let restore = app2.descendants(matching: .any)["fleet.settings.accent"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 10))
+        restore.tap()
+        if app2.buttons["Blue"].firstMatch.waitForExistence(timeout: 3) {
+            app2.buttons["Black"].firstMatch.tap()
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func attachScreenshot(of app: XCUIApplication, name: String) {
+        let shot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: shot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func launchApp(extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = arguments
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        if !extraArguments.isEmpty { app.launchArguments += extraArguments }
         app.launch()
         return app
-    }
-
-    private func openThemeEditor(_ app: XCUIApplication) {
-        let entry = app.buttons["fleet.settings.theme"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 5),
-                      "Settings should expose the V1 theme editor")
-        entry.tap()
-        XCTAssertTrue(app.navigationBars["Theme"].waitForExistence(timeout: 5))
-    }
-
-    private func scrollToEditorAction(_ app: XCUIApplication, identifier: String) {
-        let action = app.buttons[identifier]
-        for _ in 0..<6 where !action.exists {
-            app.swipeUp(velocity: .fast)
-        }
-        XCTAssertTrue(action.waitForExistence(timeout: 5),
-                      "Theme editor action (identifier) should be reachable")
     }
 }

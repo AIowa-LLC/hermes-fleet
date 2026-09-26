@@ -21,10 +21,10 @@ final class Issue4SlashSkillUITests: XCTestCase {
         composer.tap()
         composer.typeText("/")
 
-        let palette = element(in: app, identifier: "fleet.conversation.skill.palette")
+        let palette = element(in: app, identifier: "fleet.conversation.command.palette")
         XCTAssertTrue(palette.waitForExistence(timeout: 10), "Skills palette should appear after typing /")
-        let review = element(in: app, identifier: "fleet.conversation.skill.hermes-change-review")
-        let plan = element(in: app, identifier: "fleet.conversation.skill.hermes-plan")
+        let review = element(in: app, identifier: "fleet.conversation.command.hermes-change-review")
+        let plan = element(in: app, identifier: "fleet.conversation.command.hermes-plan")
         XCTAssertTrue(review.waitForExistence(timeout: 10), "scripted review skill should appear")
         XCTAssertTrue(plan.waitForExistence(timeout: 10), "scripted plan skill should appear")
 
@@ -73,10 +73,10 @@ final class Issue4SlashSkillUITests: XCTestCase {
         let composer = composer(in: app)
         composer.tap()
         composer.typeText("/")
-        let palette = element(in: app, identifier: "fleet.conversation.skill.palette")
+        let palette = element(in: app, identifier: "fleet.conversation.command.palette")
         XCTAssertTrue(palette.waitForExistence(timeout: 10))
 
-        let review = element(in: app, identifier: "fleet.conversation.skill.hermes-change-review")
+        let review = element(in: app, identifier: "fleet.conversation.command.hermes-change-review")
         tap(review)
         XCTAssertTrue(waitForComposerValue(composer, equals: "/hermes-change-review "))
         composer.typeText("notes")
@@ -99,12 +99,12 @@ final class Issue4SlashSkillUITests: XCTestCase {
         composer.tap()
         composer.typeText("/")
 
-        let palette = element(in: app, identifier: "fleet.conversation.skill.palette")
+        let palette = element(in: app, identifier: "fleet.conversation.command.palette")
         XCTAssertTrue(palette.waitForExistence(timeout: 10), "empty catalog should still render the Skills palette")
-        let empty = element(in: app, identifier: "fleet.conversation.skill.empty")
+        let empty = element(in: app, identifier: "fleet.conversation.command.empty")
         XCTAssertTrue(empty.waitForExistence(timeout: 10), "empty catalog should explain that no skills are available")
-        XCTAssertTrue(empty.label.contains("No skills available"), "empty state should be understandable: \(empty.label)")
-        XCTAssertFalse(element(in: app, identifier: "fleet.conversation.skill.hermes-change-review").exists)
+        XCTAssertTrue(empty.label.contains("No commands available"), "empty state should be understandable: \(empty.label)")
+        XCTAssertFalse(element(in: app, identifier: "fleet.conversation.command.hermes-change-review").exists)
     }
 
     func testDiscoveryFailureShowsInlineErrorAndOrdinaryChatStillWorks() throws {
@@ -115,7 +115,7 @@ final class Issue4SlashSkillUITests: XCTestCase {
         composer.tap()
         composer.typeText("/")
 
-        let error = element(in: app, identifier: "fleet.conversation.skill.error")
+        let error = element(in: app, identifier: "fleet.conversation.command.error")
         XCTAssertTrue(error.waitForExistence(timeout: 10), "discovery failure should be shown inline")
         XCTAssertTrue(error.label.lowercased().contains("failed"), "discovery failure should be understandable: \(error.label)")
         XCTAssertEqual(composerValue(composer), "/", "discovery failure must not destroy composer text")
@@ -134,7 +134,7 @@ final class Issue4SlashSkillUITests: XCTestCase {
 
     func testStaleSkillDispatchFailsClosedKeepsTextAndAllowsOrdinaryChat() throws {
         let app = launch()
-        openConversation(app, gateway: "render-box", profile: "default", sessionID: "workstation.default.s1")
+        openConversation(app, gateway: "render-box", profile: "default", sessionID: "render-box.default.s1")
 
         let composer = composer(in: app)
         composer.tap()
@@ -142,9 +142,9 @@ final class Issue4SlashSkillUITests: XCTestCase {
         let invocation = composerValue(composer)
         tap(element(in: app, identifier: "fleet.conversation.send"))
 
-        let error = element(in: app, identifier: "fleet.conversation.skill.error")
+        let error = element(in: app, identifier: "fleet.conversation.command.error")
         XCTAssertTrue(error.waitForExistence(timeout: 10), "stale dispatch should show an inline error")
-        XCTAssertTrue(error.label.contains("no longer an available skill"), "stale error should be actionable: \(error.label)")
+        XCTAssertTrue(error.label.contains("no longer available"), "stale error should be actionable: \(error.label)")
         XCTAssertEqual(composerValue(composer), invocation, "failed dispatch should leave slash text editable")
         XCTAssertFalse(
             conversationRow(in: app, containing: "stale invocation", timeout: 2) != nil,

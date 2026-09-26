@@ -251,6 +251,7 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
 
     private struct TestRosterSession: GatewayRosterSession {
         let gatewayID: GatewayID
+        let profiles: [ProfileDescriptor]
         var status: GatewayStatus = .online
         func adoptedReady() async -> GatewayReadyAdoption? { nil }
         func connect() async throws {}
@@ -258,7 +259,7 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
         func currentGateway() async -> FleetGateway {
             FleetGateway(id: gatewayID, displayName: gatewayID.rawValue, endpoint: nil)
         }
-        func fetchProfiles() async throws -> [ProfileDescriptor] { [] }
+        func fetchProfiles() async throws -> [ProfileDescriptor] { profiles }
         func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { [] }
     }
 
@@ -288,8 +289,13 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
 
     private func makeLinkedEnvironment(
         home: ScriptedCrossGatewaySeam,
-        remote: ScriptedCrossGatewaySeam
+        remote: ScriptedCrossGatewaySeam,
+        profilesByGateway: [String: [ProfileDescriptor]] = [:]
     ) async -> AppEnvironment {
+        // Fixture hygiene: isolate from the container's persistent bridged-
+        // rooms store (earlier UI-test rooms otherwise leak into the union).
+        let bridgedStoreURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crossgw-fixture-\(UUID().uuidString).json")
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
@@ -298,7 +304,11 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
         let roster = FleetRosterService(
             registry: registry,
             credentials: credentials,
-            sessionFactory: { gateway, _ in TestRosterSession(gatewayID: gateway.id) }
+            sessionFactory: { gateway, _ in
+                TestRosterSession(
+                    gatewayID: gateway.id,
+                    profiles: profilesByGateway[gateway.id.rawValue] ?? [])
+            }
         )
         let environment = AppEnvironment(
             registry: registry,
@@ -316,7 +326,8 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
                                     endpoint: URL(string: "http://127.0.0.1:1")!),
                 GatewayRegistration(id: GatewayID(rawValue: "remotegw"), displayName: "Remote",
                                     endpoint: URL(string: "http://127.0.0.1:2")!),
-            ]
+            ],
+            bridgedStoreURL: bridgedStoreURL
         )
         await environment.load()
         return environment
@@ -352,6 +363,32 @@ final class CrossGatewayRoomSetupTests: XCTestCase {
         XCTAssertTrue(calls.contains("register:room-test:\(CrossGatewayRoomSetup.memberID(remoteResearcher.route))"),
                       "route registered on the HOME gateway")
         XCTAssertFalse(calls.contains("revoke:"), "happy path never revokes")
+    }
+
+    func testFleetWideCreateSelectsHostWithoutGatewayFirstUIContext() async throws {
+        let home = ScriptedCrossGatewaySeam(
+            homeSnapshot: snapshot(installationID: "home-install", profile: "default"))
+        let remoteSeam = ScriptedCrossGatewaySeam(
+            homeSnapshot: snapshot(installationID: "remote-install", profile: "researcher"))
+        let environment = await makeLinkedEnvironment(
+            home: home,
+            remote: remoteSeam,
+            profilesByGateway: [
+                "homegw": [ProfileDescriptor(name: "researcher", path: "/home/researcher")],
+                "remotegw": [ProfileDescriptor(name: "researcher", path: "/remote/researcher")]
+            ])
+        await environment.refreshRoster()
+
+        let room = try await environment.createRoom(
+            name: "Fleet Crew", members: [localResearcher, remoteResearcher], setupID: "room-fleet")
+
+        XCTAssertEqual(room.id.key, "room-fleet")
+        XCTAssertTrue(home.calls.contains("create:room-fleet:2"))
+        XCTAssertTrue(remoteSeam.calls.contains("invite:researcher:\(CrossGatewayRoomSetup.memberID(remoteResearcher.route))"))
+        XCTAssertEqual(environment.allRooms.count, 1)
+        XCTAssertTrue(environment.allRooms[0].members.contains {
+            $0.connectionLabel == "Remote" && $0.sourceScoped
+        })
     }
 
     /// Peer-registration failure → grant revoked, typed honest error, room

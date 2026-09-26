@@ -63,3 +63,5 @@ Live gateway, physical-device, signing, and deployment checks are environmental 
 ## Documentation
 
 Current public documentation starts at `docs/README.md`. Historical milestone files are retained only as stable references and must not be treated as current product or release status.
+
+---

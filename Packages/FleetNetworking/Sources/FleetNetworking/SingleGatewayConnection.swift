@@ -59,6 +59,12 @@ public actor SingleGatewayConnection: GatewayConnectivityProviding {
         transport.liveness
     }
 
+    /// Dogfood r2: the classified reason of the last teardown, straight off
+    /// the transport — the runtime's auto-recovery policy gate.
+    public func lastDisconnectReason() async -> DisconnectReason? {
+        await transport.lastDisconnectReason
+    }
+
     public func connect() async throws {
         do {
             try await transport.connect()

@@ -279,6 +279,42 @@ final class BotModeNetworkingTests: XCTestCase {
         }
     }
 
+    /// The same wire path with a HOSTILE revision value: `ui_meta_revisions`
+    /// at exactly 2^63 used to reach `Int(_:)` in the receipt decoder and kill
+    /// the process (the response frame's id is decoded on the way in too, so
+    /// the whole codec → client → receipt path is exercised). The receipt must
+    /// drop the unreadable revision and keep the readable one.
+    func testMetadataWriteSurvivesAHostileRevisionValueAtTheBoundary() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "profiles.configure" {
+                    return [Self.responseFrame(id: id, resultObject: #"""
+                    {"ok":true,"applied":{"ui_meta":true,"ui_meta_revisions":{"hermes-bots":9223372036854775808,"hermes-bots-chat":9}}}
+                    """#)]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayBotModeClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let receipt = try await client.writeBotMetadata(
+            profile: "researcher", metadata: BotModeMetadata(),
+            expectedRevision: 3, previousRaw: nil)
+        XCTAssertTrue(receipt.applied)
+        XCTAssertEqual(receipt.newRevisions, ["hermes-bots-chat": 9],
+                       "the unreadable revision is dropped; the readable one survives")
+    }
+
     // MARK: - hosted groups client
 
     static let capabilitiesResult = #"""
@@ -286,8 +322,96 @@ final class BotModeNetworkingTests: XCTestCase {
     """#
 
     static let roomRow = #"""
-    {"room_id":"room-1","name":"Research Crew","members":"[{\"name\":\"researcher\"},{\"name\":\"writer\"}]","authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
+    {"room_id":"room-1","name":"Research Crew","members":"[{\"display_name\":\"Researcher\",\"profile\":\"researcher\",\"handle\":\"fleet-r\",\"target\":{\"kind\":\"peer\",\"peer_id\":\"install:arch\",\"installation_id\":\"install:arch\"}},{\"name\":\"writer\"}]","authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
     """#
+
+    /// Current gateway shape: members is an array, not a JSON-encoded string.
+    static let currentRoomRow = #"""
+    {"room_id":"room-current","name":"Current Shape","members":[{"display_name":"Researcher","profile":"researcher","handle":"fleet-r","target":{"kind":"peer","peer_id":"install:arch","installation_id":"install:arch"}},{"name":"writer"}],"authority_gateway_id":"install:abc","authority_epoch":1,"revision":2,"created_at":1700000000.0,"updated_at":1700000500.0,"latest_seq":12}
+    """#
+
+    // MARK: - groups.create wire contract (legacy continuation + create)
+
+    /// The create wire path must carry a client-supplied room_id (upstream
+    /// contract GroupsCreateParams.room_id is REQUIRED — no server-side
+    /// minting; Pydantic rejects an omitted key). Pins both the Continue
+    /// flow's identity reuse and the plain create path.
+    func testCreateRoomSendsClientRoomID() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "groups.create" {
+                    return [Self.responseFrame(id: id, resultObject: "{\"room\":\(Self.roomRow)}")]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayGroupsClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let members: [JSONValue] = [
+            .object(["member_id": .string("fleet-ws-default"), "profile": .string("default"), "handle": .string("default")]),
+            .object(["member_id": .string("fleet-ws-apple"), "profile": .string("apple"), "handle": .string("apple")]),
+        ]
+        let row = try await client.createRoom(
+            roomID: "rmtxtyapg-nsd4n", name: "iOS App Brainstorming Crew",
+            members: members, profile: nil)
+
+        let params = log.params(of: "groups.create").first
+        XCTAssertEqual(params?["room_id"] as? String, "rmtxtyapg-nsd4n")
+        XCTAssertEqual(params?["name"] as? String, "iOS App Brainstorming Crew")
+        XCTAssertEqual(row.roomID, "room-1")
+    }
+
+    /// A conflicting pre-existing hosted row (4110 RoomConflictError) must
+    /// surface as the typed rpcFailed error carrying the code — the
+    /// Continue flow renders it as an explanation, never a silent retry.
+    func testCreateRoomConflictMapsToTypedError() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                if method == "groups.create" {
+                    return [Self.errorFrame(id: id, code: 4110, message: "room_id already exists with different state")]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayGroupsClient(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let members: [JSONValue] = [
+            .object(["profile": .string("default")]),
+            .object(["profile": .string("apple")]),
+        ]
+        do {
+            _ = try await client.createRoom(
+                roomID: "r1", name: "Crew", members: members, profile: nil)
+            XCTFail("expected a thrown error")
+        } catch let error as GroupsError {
+            guard case .rpcFailed(let message) = error else {
+                return XCTFail("expected rpcFailed, got \(error)")
+            }
+            XCTAssertTrue(message.contains("different state"))
+        }
+    }
 
     func testGroupsCapabilitiesDecode() throws {
         let json = try JSONDecoder().decode(JSONValue.self,
@@ -311,19 +435,71 @@ final class BotModeNetworkingTests: XCTestCase {
         XCTAssertEqual(room.roomID, "room-1")
         XCTAssertEqual(room.name, "Research Crew")
         XCTAssertEqual(room.members.count, 2)
+        XCTAssertEqual(room.members[0].name, "Researcher")
+        XCTAssertEqual(room.members[0].handle, "fleet-r")
+        XCTAssertEqual(room.members[0].connectionID, "install:arch")
+        XCTAssertTrue(room.members[0].sourceScoped)
         XCTAssertEqual(room.authorityEpoch, 1)
         XCTAssertEqual(room.latestSeq, 12)
     }
 
+    func testGroupsListDecodesCurrentArrayMembersShape() throws {
+        let json = try JSONDecoder().decode(JSONValue.self,
+                                            from: Data(#"{"rooms":[\#(Self.currentRoomRow)],"next_offset":null}"#.utf8))
+        let (rooms, next) = try GatewayGroupsClient.decodeRoomList(json)
+        let room = try XCTUnwrap(rooms.first)
+        XCTAssertNil(next)
+        XCTAssertEqual(room.members.count, 2)
+        XCTAssertEqual(room.members[0].connectionID, "install:arch")
+        XCTAssertTrue(room.members[0].sourceScoped)
+        XCTAssertEqual(room.members[1].name, "writer")
+    }
+
+    func testGroupsListPageCarriesOffsetAndNextOffset() async throws {
+        let log = RequestLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                log.record(frame)
+                guard let (id, method) = Self.extractRequest(frame), method == "groups.list" else { return [] }
+                let params = (try? JSONSerialization.jsonObject(with: Data(frame.utf8)) as? [String: Any])?["params"] as? [String: Any]
+                let offset = params?["offset"] as? NSNumber
+                if offset?.intValue == 200 {
+                    return [Self.responseFrame(id: id, resultObject: #"{"rooms":[],"next_offset":null}"#)]
+                }
+                return [Self.responseFrame(id: id, resultObject: #"{"rooms":[],"next_offset":200}"#)]
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+        let client = GatewayGroupsClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        let first = try await client.listRooms(offset: 0)
+        XCTAssertEqual(first.nextOffset, 200)
+        let second = try await client.listRooms(offset: first.nextOffset ?? -1)
+        XCTAssertNil(second.nextOffset)
+        let offsets = log.params(of: "groups.list").compactMap { ($0["offset"] as? NSNumber)?.intValue }
+        XCTAssertEqual(offsets, [0, 200])
+    }
+
     func testGroupsLogDecode() throws {
         let logJSON = #"""
-        {"events":[{"room_id":"room-1","seq":3,"event_id":"e-3","kind":"message.user","actor":{"kind":"user","id":"desktop"},"payload":{"text":"hello crew"},"created_at":1700000400.0},{"room_id":"room-1","seq":4,"event_id":"e-4","kind":"turn.failed","actor":{"kind":"gateway","id":"install:abc"},"payload":{"error":"boom","reason_code":"provider_auth_or_access"},"created_at":1700000500.0}],"cursor":4,"latest_seq":12,"has_more":true,"authority":{"gateway_id":"install:abc","epoch":1}}
+        {"events":[{"room_id":"room-1","seq":3,"event_id":"e-3","kind":"message.user","actor":{"kind":"user","id":"desktop"},"payload":{"text":"hello crew"},"created_at":1700000400.0},{"room_id":"room-1","seq":4,"event_id":"e-4","kind":"message.member","actor":{"kind":"member","id":"fleet-r","profile":"researcher","display_name":"Researcher","connection_id":"install:arch"},"payload":{"text":"hello back"},"created_at":1700000401.0},{"room_id":"room-1","seq":5,"event_id":"e-5","kind":"turn.failed","actor":{"kind":"gateway","id":"install:abc"},"payload":{"error":"boom","reason_code":"provider_auth_or_access"},"created_at":1700000500.0}],"cursor":5,"latest_seq":12,"has_more":true,"authority":{"gateway_id":"install:abc","epoch":1}}
         """#
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(logJSON.utf8))
         let page = try GatewayGroupsClient.decodeLogPage(json)
-        XCTAssertEqual(page.events.count, 2)
+        XCTAssertEqual(page.events.count, 3)
         XCTAssertEqual(page.events[0].text, "hello crew")
         XCTAssertEqual(page.events[0].seq, 3)
+        XCTAssertEqual(page.events[1].actorDisplayName, "Researcher")
+        XCTAssertEqual(page.events[1].actorProfile, "researcher")
+        XCTAssertEqual(page.events[1].actorConnectionID, "install:arch")
+        XCTAssertEqual(page.events[2].reasonCode, "provider_auth_or_access")
         XCTAssertTrue(page.hasMore)
         XCTAssertEqual(page.authority.epoch, 1)
         XCTAssertEqual(page.latestSeq, 12)

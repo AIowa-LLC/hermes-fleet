@@ -72,6 +72,7 @@ public struct AppLockView: View {
             } label: {
                 Label("Unlock", systemImage: "faceid")
                     .font(.headline)
+                    .foregroundStyle(theme.onHighlight)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -99,6 +100,7 @@ public struct AppLockView: View {
             } label: {
                 Label("Use Passcode", systemImage: "key.horizontal")
                     .font(.headline)
+                    .foregroundStyle(theme.onHighlight)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

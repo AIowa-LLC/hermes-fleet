@@ -176,6 +176,44 @@ final class BotModeDomainTests: XCTestCase {
         XCTAssertNotEqual(a, b)
     }
 
+    func testVerifiedHostedAdvertisementsCollapseToOneCanonicalRoom() {
+        let authority = "install:macbook"
+        let firstID = FleetRoomID(provenance: .hosted, gatewayID: GatewayID(rawValue: "macbook"), key: "room-1")
+        let replicaID = FleetRoomID(provenance: .hosted, gatewayID: GatewayID(rawValue: "arch"), key: "room-1")
+        let first = FleetRoom(
+            id: firstID, name: "Fleet Crew", revision: 2,
+            hosted: HostedRoomState(authorityGatewayID: authority, authorityEpoch: 1, latestSeq: 4))
+        let replica = FleetRoom(
+            id: replicaID, name: "Fleet Crew",
+            recentLog: [FleetRoomMessage(
+                id: "e-4",
+                from: .init(kind: .member, name: "Researcher"),
+                text: "ready", at: 1)],
+            revision: 2,
+            hosted: HostedRoomState(authorityGatewayID: authority, authorityEpoch: 1, latestSeq: 4))
+
+        var union = FleetRoomUnion()
+        union.ingest([first, replica])
+        XCTAssertEqual(union.allRooms.count, 1)
+        XCTAssertEqual(union.allRooms.first?.canonicalIdentity, "hosted:\(authority):room-1")
+        XCTAssertEqual(union.allRooms.first?.recentLog.count, 1, "the richer verified advertisement wins")
+    }
+
+    func testConflictingHostedAuthoritiesNeverCollapse() {
+        let a = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: GatewayID(rawValue: "a"), key: "room-1"),
+            name: "Same Name",
+            hosted: HostedRoomState(authorityGatewayID: "install:a", authorityEpoch: 1))
+        let b = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: GatewayID(rawValue: "b"), key: "room-1"),
+            name: "Same Name",
+            hosted: HostedRoomState(authorityGatewayID: "install:b", authorityEpoch: 1))
+
+        var union = FleetRoomUnion()
+        union.ingest([a, b])
+        XCTAssertEqual(union.allRooms.count, 2, "a room id under conflicting authority provenance is ambiguous")
+    }
+
     func testLegacyRoomsAreObservational() {
         let room = FleetRoom(
             id: FleetRoomID(provenance: .desktopLegacy, gatewayID: GatewayID(rawValue: "gw"), key: "id:r-1"),

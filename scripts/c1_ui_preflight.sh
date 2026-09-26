@@ -70,11 +70,21 @@ CORE="HermesFleetHappyPath P0_7SessionStateMachine"
 # Each line: ERE pattern => space-separated suites.
 RULES_FILE=$(mktemp /tmp/c1_ui_preflight_rules.XXXXXX) || die "mktemp failed"
 cat > "$RULES_FILE" <<'RULES'
+# Newer release surfaces must map to their registered regression suites.
+ImageGeneration|ImageGen => ImageGenerationAnimation
+Artifact => ArtifactsDestination
+ReasoningSlider => ReasoningSlider
+ConversationCompactChrome => ConversationCompactChrome
+SlashCommand => SlashCommandParity Issue4SlashSkill
+LaunchCache => FleetLaunchCache
+Unread|ReadState => FleetUnreadBadge
+FleetAbout|AboutView => FleetAbout
+Cron => CronManagement CronTab R9ManagementPanes
 BotAvatar|BotPet => BotAvatarAppearance BotPetAvatar
 Bot => U5BotDetail BotRoutines FOS5BotsGroupsChats
 Room => RoomChat RoomLinkMentions
 Conversation|AssistantRichText|Mention|ContextMeter|SessionSteer|Slash|Skill => U6ConversationSkin R9ConversationTooling Issue5StreamingRichText Issue4SlashSkill RoomLinkMentions
-Kanban => KanbanBoard
+Kanban => KanbanBoard KanbanInteractive
 Approval => R9ApprovalBanner
 MemoryGraph => R9MemoryGraph R10MemoryGraphEdit
 Attachment => R10AttachmentTray

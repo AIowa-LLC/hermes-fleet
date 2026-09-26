@@ -22,6 +22,20 @@ public protocol RoomChatCommanding: Sendable {
     func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice
     /// `groups.send` with a client-minted event id.
     func send(roomID: String, text: String, threadID: String?) async throws -> Int
+    /// Idempotent send variant used when a request may have reached the
+    /// gateway before transport failure: `idempotencyKey` is the caller's
+    /// event id for ONE logical message and must be stable across retries of
+    /// that message (the gateway folds `event_id` into its own event
+    /// identity, so a re-send of the same key is at-most-once). Conformers
+    /// MUST honor the key when non-nil — a seam that drops it silently loses
+    /// the at-most-once guarantee the caller is relying on.
+    ///
+    /// The compatibility default below keeps older test seams compiling, so
+    /// it is the ONE place the key can be lost: any conformer that does not
+    /// implement this overload (e.g. the phone-bridged relay, which mints its
+    /// own local event ids) does not dedupe retries. New conformers should
+    /// implement it rather than inherit the default.
+    func send(roomID: String, text: String, threadID: String?, idempotencyKey: String?) async throws -> Int
     /// `groups.rename`.
     func rename(roomID: String, name: String) async throws
     /// `groups.disband` (tombstone — final).
@@ -32,8 +46,23 @@ public protocol RoomChatCommanding: Sendable {
     func retry(roomID: String, taskID: String) async throws
     /// `groups.approve` (choice "once" | "deny").
     func approve(roomID: String, action: RoomPendingApproval, choice: String) async throws
-    /// `groups.create` (idempotent on id+name+members) → room_id.
-    func createRoom(name: String, members: [[String: String]]) async throws -> String
+    /// `groups.create` (idempotent on id+name+members) → room_id. The
+    /// upstream contract REQUIRES a client-supplied room_id (no
+    /// server-side minting): plain creates pass a Fleet-minted id; the
+    /// legacy-continuation flow passes the projection's durable id so
+    /// Desktop ↔ hosted identity is equality-by-construction.
+    func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String
+}
+
+public extension RoomChatCommanding {
+    /// Compatibility bridge for seams that predate the key-bearing overload.
+    /// It DISCARDS `idempotencyKey`: inherited implementations therefore
+    /// cannot dedupe a retry. Kept so existing seams (and their tests) keep
+    /// compiling — see the requirement's contract above.
+    func send(roomID: String, text: String, threadID: String?, idempotencyKey: String?) async throws -> Int {
+        _ = idempotencyKey
+        return try await send(roomID: roomID, text: text, threadID: threadID)
+    }
 }
 
 /// Client-facing copy of the `groups.log` page (FleetNetworking decodes the
@@ -205,7 +234,13 @@ public enum RoomCommandFailure: Error, Equatable, Sendable {
     /// Plain-language explanation shown to the user (non-secret).
     public var explanation: String {
         switch self {
-        case .unsupportedMethod:
+        case .unsupportedMethod(let reason):
+            // The payload is honest guidance whenever it is OUR app-side
+            // selection copy (host selection / RoomLink eligibility); only a
+            // bare method name from a -32601 keeps the update-gateway copy.
+            if reason.hasPrefix("No connected gateway") {
+                return reason
+            }
             return "This gateway doesn't support that yet — update the gateway to use it."
         case .foreignAuthority:
             return "Another gateway now owns this room. Reload to see its new authority."
@@ -307,16 +342,25 @@ public struct RoomTranscriptProjection: Sendable {
     public static func project(_ events: [HostedRoomEventValue]) -> RoomTranscriptProjection {
         var entries: [RoomTranscriptEntry] = []
         var latestFailure: TypedBotFailure?
+        var latestFailureActorID: String?
         var indeterminate: String?
         var stopRequested = false
 
         for event in events {
             if messageKinds.contains(event.kind) {
+                if event.kind == "message.member" && event.actorID == latestFailureActorID {
+                    latestFailure = nil
+                    latestFailureActorID = nil
+                }
                 entries.append(RoomTranscriptEntry(
                     id: event.id,
                     seq: event.seq,
                     flavor: .message(isUser: event.kind == "message.user"),
-                    speaker: event.actorDisplayName ?? event.actorProfile ?? event.actorID,
+                    // The room's human renders as "You" — `actorID` is
+                    // plumbing (`local-user`), never a display name.
+                    speaker: event.kind == "message.user"
+                        ? "You"
+                        : (event.actorDisplayName ?? event.actorProfile ?? event.actorID),
                     text: event.payloadText,
                     failure: nil,
                     createdAt: event.createdAt
@@ -326,6 +370,7 @@ public struct RoomTranscriptProjection: Sendable {
                     wireReason: event.reasonCode ?? "unknown",
                     message: event.payloadText)
                 latestFailure = failure
+                latestFailureActorID = event.actorID
                 entries.append(RoomTranscriptEntry(
                     id: event.id,
                     seq: event.seq,
@@ -360,6 +405,7 @@ public struct RoomTranscriptProjection: Sendable {
 /// through provider replay (D17 support; gateway remains authoritative).
 public struct RoomTranscriptCache: Sendable {
     public private(set) var eventsBySeq: [Int: HostedRoomEventValue] = [:]
+    private var eventIDs = Set<String>()
     public private(set) var cursor = 0
     public private(set) var latestSeq = 0
 
@@ -369,7 +415,11 @@ public struct RoomTranscriptCache: Sendable {
     @discardableResult
     public mutating func merge(_ page: RoomLogPageSlice) -> Bool {
         var added = false
-        for event in page.events where eventsBySeq[event.seq] == nil {
+        for event in page.events {
+            let identity = event.eventID.isEmpty
+                ? "seq:" + String(event.seq)
+                : event.eventID
+            guard eventIDs.insert(identity).inserted else { continue }
             eventsBySeq[event.seq] = event
             added = true
         }
@@ -503,6 +553,13 @@ public enum RoomMemberDisplay {
     public static func sourceQualifier(
         for member: FleetRoomMember, gatewayLabel: String
     ) -> String {
+        // New hosted rows carry the owning gateway label and an explicit
+        // source-scoped marker. Older linked projections only carried an
+        // opaque connection label, so preserve their established "linked"
+        // affordance instead of treating that opaque value as a gateway name.
+        if member.sourceScoped {
+            return member.connectionLabel ?? gatewayLabel
+        }
         if member.connectionLabel != nil {
             return "\(gatewayLabel) · linked"
         }

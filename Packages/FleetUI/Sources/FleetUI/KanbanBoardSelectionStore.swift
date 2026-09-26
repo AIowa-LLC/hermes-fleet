@@ -35,4 +35,14 @@ public final class KanbanBoardSelectionStore: @unchecked Sendable {
             defaults.removeObject(forKey: storageKey)
         }
     }
+
+    /// UI-test hygiene (NAV_RESET): clear every gateway's persisted board
+    /// selection on the standard defaults (the v2 key domain).
+    public static func clearAllPersistedSelections() {
+        let standard = UserDefaults.standard
+        for key in standard.dictionaryRepresentation().keys
+        where key.hasPrefix("fleet.kanban.v2.") || key == "fleet.kanban.selectedBoard" {
+            standard.removeObject(forKey: key)
+        }
+    }
 }

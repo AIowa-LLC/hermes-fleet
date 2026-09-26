@@ -25,6 +25,14 @@ public protocol GatewayConnectivityProviding: Sendable {
     /// The default keeps protocol conformers without a transport compiling.
     var liveness: ConnectionLivenessSnapshot? { get }
 
+    /// The classified reason the most recent connect attempt / teardown
+    /// ended with (typed, non-secret — never credential material). Nil for
+    /// providers without a live transport or before any observed failure.
+    /// The runtime's bounded auto-recovery reads this after a failed state to
+    /// apply the spec §8.6 reconnect policy; the default keeps protocol
+    /// conformers without a transport compiling.
+    func lastDisconnectReason() async -> DisconnectReason?
+
     /// The `gateway.ready` metadata adopted on the last successful connect.
     func adoptedReady() async -> GatewayReadyAdoption?
 
@@ -45,6 +53,9 @@ public protocol GatewayConnectivityProviding: Sendable {
 extension GatewayConnectivityProviding {
     /// No freshness signal by default (no live transport backing).
     public var liveness: ConnectionLivenessSnapshot? { nil }
+
+    /// No classified reason by default (no live transport backing).
+    public func lastDisconnectReason() async -> DisconnectReason? { nil }
 }
 
 /// Errors a single-gateway connection surfaces, classified for the UI.

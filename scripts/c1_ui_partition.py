@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Partition all requested UI suites deterministically, without dropping any.
 
-Test-method counts are a balancing heuristic, not measured runtime estimates.
+Use the canonical historical runtime weights, not test-method counts.
+Historical weights guide partitioning; they do not predict completion times.
 Each suite remains isolated and each selected suite belongs to exactly one job.
 """
 from __future__ import annotations
@@ -30,6 +31,30 @@ def partition(classes: list[str], weights: dict[str, int], shards: int) -> list[
     return buckets
 
 
+def runtime_weights(path: Path) -> dict[str, int]:
+    """Read the two literal canonical arrays as data, without executing shell.
+
+    Missing, duplicate, nonpositive, or incomplete weights fail closed. New
+    suites must register a weight rather than silently receiving a cheap one.
+    Returned units are seconds; canonical weights use tenths of a minute.
+    """
+    text = path.read_text()
+    def tokens(name: str) -> list[str]:
+        matches = re.findall(r"^" + re.escape(name) + r"=\((.*?)^\)", text, re.M | re.S)
+        if len(matches) != 1:
+            raise ValueError(f"expected exactly one literal {name} array")
+        return " ".join(line.split("#", 1)[0] for line in matches[0].splitlines()).split()
+    names = tokens("UI_CLASSES")
+    values = tokens("UI_WEIGHT_TENTHS_OF_MINUTE")
+    if not names or len(names) != len(set(names)) or len(names) != len(values):
+        raise ValueError("runtime weights must cover every unique canonical suite")
+    if any(not re.fullmatch(r"[A-Za-z0-9_]+", name) for name in names):
+        raise ValueError("invalid canonical suite name")
+    if any(not value.isdigit() or int(value) <= 0 for value in values):
+        raise ValueError("runtime weights must be positive integers")
+    return {name: int(value) * 6 for name, value in zip(names, values)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--classes", required=True)
@@ -45,8 +70,13 @@ def main() -> int:
         for name in classes:
             if not re.fullmatch(r"[A-Za-z0-9_]+", name):
                 raise ValueError(f"invalid suite name: {name!r}")
-            text = (source / f"{name}UITests.swift").read_text()
-            weights[name] = max(1, len(re.findall(r"^\s*func\s+test\w*\s*\(", text, re.M)))
+            if not (source / f"{name}UITests.swift").is_file():
+                raise ValueError(f"missing suite source: {name}")
+        canonical = runtime_weights(source.parent / "scripts/c1_ui_matrix.sh")
+        for name in classes:
+            if name not in canonical:
+                raise ValueError(f"suite has no historical runtime weight: {name}")
+            weights[name] = canonical[name]
         print(" ".join(partition(classes, weights, args.shards)[args.shard - 1]))
     except (OSError, ValueError) as error:
         print(f"UI partition failed: {error}", file=sys.stderr)

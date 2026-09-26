@@ -98,6 +98,40 @@ extension JSONValue {
         if case .object(let o) = self { return o[key] }
         return nil
     }
+
+    /// The one bounded `Double → Int` conversion for gateway-supplied JSON
+    /// numbers: `nil` when the value is not finite or not representable in
+    /// `Int`, never a trap.
+    ///
+    /// `Int(_:)` / `Int.init` on a `Double` TRAPS outside `Int`'s range, and
+    /// the top of that range is a trap door: `Double(Int.max)` rounds UP to
+    /// exactly 2^63, so an inclusive `n <= Double(Int.max)` upper bound ADMITS
+    /// 2^63 and `Int(9_223_372_036_854_775_808.0)` dies with "Double value
+    /// cannot be converted to Int because the result would be greater than
+    /// Int.max" (Trace/BPT, exit 133 — reproduced on this toolchain). The
+    /// bound here is therefore 2^63-EXCLUSIVE, so no representable JSON number
+    /// can kill the process through an integer read.
+    ///
+    /// In-range values keep `Int(_:)` semantics exactly: a fractional value
+    /// truncates toward zero. Out-of-range values are the CALLER's decision —
+    /// `intValue` callers degrade to their own missing-value default
+    /// (`?? 0`, an optional, or a dropped map entry); they must not clamp to
+    /// an invented revision/seq number a caller would then act on.
+    public static func boundedInt(_ n: Double) -> Int? {
+        guard n.isFinite,
+              n >= -9_223_372_036_854_775_808.0, // -2^63 (exactly representable)
+              n < 9_223_372_036_854_775_808.0 // 2^63-EXCLUSIVE
+        else { return nil }
+        return Int(n)
+    }
+
+    /// The receiver as an `Int`, or `nil` when it is not a JSON number or the
+    /// number is not representable in `Int` (see `boundedInt`). Every integer
+    /// read of gateway JSON goes through here instead of `Int(_:)`.
+    public var intValue: Int? {
+        guard case .number(let n) = self else { return nil }
+        return Self.boundedInt(n)
+    }
 }
 
 // MARK: - JSON-RPC 2.0 message types
@@ -111,7 +145,12 @@ public enum JSONRPCID: Sendable, Hashable, Codable {
         let container = try decoder.singleValueContainer()
         if let s = try? container.decode(String.self) { self = .string(s); return }
         if let n = try? container.decode(Int.self) { self = .number(n); return }
-        if let d = try? container.decode(Double.self) { self = .number(Int(d)); return }
+        // A number too large for `Int` (e.g. 2^63) arrives as a `Double`: it
+        // must fail this decode like any other junk id, never reach an
+        // unguarded `Int(_:)` and trap the process.
+        if let d = try? container.decode(Double.self), let n = JSONValue.boundedInt(d) {
+            self = .number(n); return
+        }
         throw DecodingError.dataCorruptedError(
             in: container, debugDescription: "JSON-RPC id must be a string or number")
     }
@@ -320,7 +359,11 @@ public enum JSONRPCCodec {
 
     private static func decodeID(from value: JSONValue) throws -> JSONRPCID {
         if let s = value["id"]?.stringValue { return .string(s) }
-        if let n = value["id"]?.numberValue { return .number(Int(n)) }
+        // An id outside `Int`'s range (2^63 boundary included) is not
+        // representable: reject the frame with the same typed error as any
+        // other junk id. The bound is 2^63-exclusive — `Int(_:)` on such a
+        // number would trap the process (verified).
+        if let n = value["id"]?.intValue { return .number(n) }
         throw JSONRPCError.invalidRequest
     }
 

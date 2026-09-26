@@ -52,7 +52,9 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         ])
         do {
             let result = try await transport.request(method: "approval.respond", params: params)
-            let resolved = result["resolved"]?.numberValue.map(Int.init) ?? 0
+            // An unrepresentable `resolved` degrades to this site's existing
+            // missing-value default (0), never `Int(_:)` on gateway JSON.
+            let resolved = result["resolved"]?.intValue ?? 0
             Self.log.info(
                 "approval.respond choice=\(choice.rawValue, privacy: .public) resolved=\(resolved, privacy: .public)")
             return resolved

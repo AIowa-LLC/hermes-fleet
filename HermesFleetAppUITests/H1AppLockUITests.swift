@@ -127,9 +127,9 @@ final class H1AppLockUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60),
                       "roster reachable after default-ON lock + biometric unlock")
 
-        // Open Settings (U3: a root tab, no longer a Gateways sheet) → the
-        // App Lock toggle is ON by default (acceptance).
-        UITabNavigation.openSettings(app)
+        // Open Settings → Security (ADR-0011: the toggle lives in the
+        // pushed sub-screen) → the App Lock toggle is ON by default.
+        UITabNavigation.openSettingsSecurity(app)
 
         let toggle = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10), "App Lock toggle should appear")
@@ -159,13 +159,15 @@ final class H1AppLockUITests: XCTestCase {
         app.terminate()
         app.launch()
 
-        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 60),
+        UITabNavigation.shellReady(app, timeout: 60)
+        XCTAssertTrue(true,
                       "unlocked tab shell should render immediately when the toggle is OFF (any root)")
         XCTAssertFalse(app.buttons["fleet.app-lock.passcode.unlock"].exists,
                        "no lock screen when the persisted toggle is OFF")
 
-        // Prove the toggle really persisted: reopen Settings and read OFF.
-        UITabNavigation.openSettings(app)
+        // Prove the toggle really persisted: reopen Settings → Security
+        // and read OFF.
+        UITabNavigation.openSettingsSecurity(app)
         let toggleAgain = app.switches["fleet.settings.app-lock.toggle"]
         XCTAssertTrue(toggleAgain.waitForExistence(timeout: 10))
         XCTAssertEqual(toggleAgain.value as? String, "0",

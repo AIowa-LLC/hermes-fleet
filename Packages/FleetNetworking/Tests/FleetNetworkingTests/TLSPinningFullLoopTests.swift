@@ -43,7 +43,9 @@ final class TLSPinningFullLoopTests: XCTestCase {
         let pinStore = InMemoryPinStore()
         let server = try InProcessTLSServer(
             scripts: [.init(onOpen: [readyFrame()])],
-            identity: try TLSFixtureIdentities.identity(p12: TLSFixtureIdentities.gatewayP12))
+            identity: try TLSFixtureIdentities.identity(
+                certificateDER: TLSFixtureIdentities.gatewayCertificateDER,
+                privateKeyX963: TLSFixtureIdentities.gatewayPrivateKeyX963))
         try await server.start()
         defer { server.stop() }
 
@@ -57,6 +59,7 @@ final class TLSPinningFullLoopTests: XCTestCase {
         XCTAssertEqual(stored?.base64String, TLSFixtureIdentities.gatewaySPKIBase64,
                        "TOFU first use must pin the gateway's SPKI")
         XCTAssertEqual(server.connectionCount, 1)
+        XCTAssertNil(server.failureDescription)
     }
 
     /// Reconnect with the SAME identity: pin matches, connects again.
@@ -67,7 +70,9 @@ final class TLSPinningFullLoopTests: XCTestCase {
             for: gatewayID)
         let server = try InProcessTLSServer(
             scripts: [.init(onOpen: [readyFrame()])],
-            identity: try TLSFixtureIdentities.identity(p12: TLSFixtureIdentities.gatewayP12))
+            identity: try TLSFixtureIdentities.identity(
+                certificateDER: TLSFixtureIdentities.gatewayCertificateDER,
+                privateKeyX963: TLSFixtureIdentities.gatewayPrivateKeyX963))
         try await server.start()
         defer { server.stop() }
 
@@ -77,6 +82,7 @@ final class TLSPinningFullLoopTests: XCTestCase {
         try await transport.connect()
         await transport.disconnect()
         XCTAssertEqual(server.connectionCount, 1)
+        XCTAssertNil(server.failureDescription)
     }
 
     /// MITM: the pinned gateway is expected, but a DIFFERENT key answers —
@@ -90,7 +96,9 @@ final class TLSPinningFullLoopTests: XCTestCase {
         // The attacker presents the MITM identity.
         let server = try InProcessTLSServer(
             scripts: [.init(onOpen: [readyFrame()])],
-            identity: try TLSFixtureIdentities.identity(p12: TLSFixtureIdentities.mitmP12))
+            identity: try TLSFixtureIdentities.identity(
+                certificateDER: TLSFixtureIdentities.mitmCertificateDER,
+                privateKeyX963: TLSFixtureIdentities.mitmPrivateKeyX963))
         try await server.start()
         defer { server.stop() }
 

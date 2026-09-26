@@ -142,6 +142,151 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
             "legacy row carries the read-only label (got: \(legacy.label))")
     }
 
+    func testOfflineGhostDisablesNewSession() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_ROSTER_BLIP": "1"])
+
+        // Own the scripted workstation connection, then disconnect it so the
+        // next roster refresh produces the cached ghost path.
+        UITabNavigation.selectTab(app, label: "Fleet")
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10))
+        let manage = app.descendants(matching: .any)["fleet.dashboard.gateways.manage"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 10))
+        manage.tap()
+        let gateway = app.descendants(matching: .any)["fleet.gateways.row.workstation"]
+        XCTAssertTrue(gateway.waitForExistence(timeout: 10))
+        gateway.tap()
+        let connect = app.descendants(matching: .any)["fleet.gateway-detail.connect.workstation"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 10))
+        connect.tap()
+        sleep(2)
+        app.navigationBars.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Gateways"].waitForExistence(timeout: 10))
+        let rowMenu = app.descendants(matching: .any)["fleet.gateways.row.workstation.menu"]
+        XCTAssertTrue(rowMenu.waitForExistence(timeout: 10))
+        rowMenu.tap()
+        XCTAssertTrue(app.buttons["Disconnect"].waitForExistence(timeout: 5))
+        app.buttons["Disconnect"].tap()
+
+        UITabNavigation.selectTab(app, label: "Bots")
+        let refresh = app.buttons["fleet.roster.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 10))
+        refresh.tap()
+        let outage = app.descendants(matching: .any)["fleet.roster.outage.workstation"]
+        XCTAssertTrue(outage.waitForExistence(timeout: 15))
+        let ghost = app.descendants(matching: .any)["fleet.roster.row.workstation#default"]
+        XCTAssertTrue(ghost.waitForExistence(timeout: 10))
+        ghost.tap()
+
+        let newSession = app.descendants(matching: .any)["fleet.bot-detail.sessions.new"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 10),
+                      "ghost detail keeps New Session discoverable")
+        XCTAssertFalse(newSession.isEnabled,
+                       "ghost detail must disable the session-create write")
+        XCTAssertTrue(newSession.label.localizedCaseInsensitiveContains("New Session"))
+    }
+
+    // MARK: 4a. Codex-style chat menu cleanup (dogfood)
+
+    /// The floating cluster: new-chat (menu: direct + group) and settings
+    /// gear, Liquid Glass, bottom-trailing. Rows scroll under it.
+    func testChatsFloatingClusterNewChatAndSettings() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+
+        // ADR-0010: New Group moved to the Groups tab — the Chats FAB is a
+        // direct New-conversation button (no menu wrapper). The glass
+        // cluster surfaces to AX by LABEL; label is stable and localized.
+        let newChat = firstMatch(in: app, identifier: "fleet.chats.new")
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10), "floating new-chat control must render")
+        newChat.tap()
+        let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
+        XCTAssertTrue(candidate.waitForExistence(timeout: 10), "direct opens the bot picker")
+
+        // Dismiss the sheet via its own Cancel BEFORE touching the gear (the
+        // cluster sits under presented sheets — a tap there computes no hit).
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.waitForExistence(timeout: 3) { cancel.tap() }
+        _ = candidate.waitForNonExistence(timeout: 5)
+
+        // Settings gear routes to the Settings tab.
+        let settings = firstMatch(in: app, identifier: "fleet.chats.settings")
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "floating settings gear must render")
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
+                      "gear selects the Settings tab")
+    }
+
+    /// Swipe right (leading) on a conversation row exposes Pin; the row
+    /// pins via the shared pin store (same identity as the drawer).
+    func testChatsSwipeRightPinsConversation() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+
+        let row = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "seeded session row must render")
+        // The LAST row can sit under the floating cluster — scroll until the
+        // row's frame clears it (cluster ≈ y 700-760), then swipe.
+        for _ in 0..<4 where row.isHittable && row.frame.maxY > 690 {
+            app.swipeUp(velocity: .slow)
+        }
+
+        row.swipeRight()
+        let pin = firstMatch(in: app, identifier: "fleet.chats.swipe.pin.workstation#default/workstation.default.s1")
+        XCTAssertTrue(pin.waitForExistence(timeout: 5), "swipe right exposes the pin action")
+        pin.tap()
+        // Give the pin store a beat to persist, then verify via the drawer's
+        // pinned section (scroll it into the tree if needed).
+        sleep(1)
+        let drawer = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 5), "drawer affordance")
+        drawer.tap()
+        let pinnedRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "fleet.drawer.pinned.individual:workstation")).firstMatch
+        var found = pinnedRow.waitForExistence(timeout: 8)
+        for _ in 0..<3 where !found {
+            app.swipeUp(velocity: .slow)
+            found = pinnedRow.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(found, "pinning from the Chats swipe feeds the drawer's pinned section")
+    }
+
+    /// Swipe left (trailing) exposes Archive + Delete; archive hides locally
+    /// with the honest device-level notice; delete confirms first.
+    func testChatsSwipeLeftArchiveAndDelete() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+
+        let row0 = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s2")
+        if !row0.waitForExistence(timeout: 5) || !row0.isHittable {
+            app.swipeUp(velocity: .slow)
+        }
+        let row = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s2")
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "second seeded session row must render")
+
+        row.swipeLeft()
+        let archive = firstMatch(in: app, identifier: "fleet.chats.swipe.archive.workstation#default/workstation.default.s2")
+        XCTAssertTrue(archive.waitForExistence(timeout: 5), "swipe left exposes archive")
+        let del = firstMatch(in: app, identifier: "fleet.chats.swipe.delete.workstation#default/workstation.default.s2")
+        XCTAssertTrue(del.exists, "swipe left exposes delete")
+        archive.tap()
+
+        let noticePredicate = NSPredicate(format: "label CONTAINS %@", "Archived on this device")
+        let notice = app.descendants(matching: .any).matching(noticePredicate).firstMatch
+        XCTAssertTrue(notice.waitForExistence(timeout: 5), "archive surfaces the honest device-level notice")
+    }
+
     // MARK: 4. Chats Compose + heading
 
     func testChatsComposeOpensSourceQualifiedBotPicker() throws {
@@ -151,13 +296,11 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // Heading stays honest (SPEC §10: do not rename to Recent).
-        XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.chats.new").waitForExistence(timeout: 10))
-
-        // Compose opens the bot picker: source-qualified rows (slug +
-        // gateway name), never a silent first gateway.
-        firstMatch(in: app, identifier: "fleet.chats.new").tap()
+        // ADR-0010: the FAB opens the source-qualified bot picker DIRECTLY
+        // (the New conversation / New Group menu is retired).
+        let newChat2 = firstMatch(in: app, identifier: "fleet.chats.new")
+        XCTAssertTrue(newChat2.waitForExistence(timeout: 10))
+        newChat2.tap()
         let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
         XCTAssertTrue(
             candidate.waitForExistence(timeout: 10),
@@ -165,6 +308,77 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         XCTAssertTrue(
             candidate.label.localizedCaseInsensitiveContains("workstation"),
             "compose row carries gateway provenance (got: \(candidate.label))")
+    }
+
+    /// Fleet-wide group journey: the creation sheet is entered from Chats,
+    /// presents Bots from two distinct gateway routes, and opens the resulting
+    /// hosted conversation after the scripted peer setup completes.
+    func testChatsNewGroupCreatesAndOpensCrossGatewayRoom() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "groups"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+
+        // ADR-0010: New Group lives on the Groups tab now (moved from the
+        // Chats new-chat menu). The Groups FAB opens CreateRoomSheet.
+        let groupsSurface = firstMatch(in: app, identifier: "fleet.groups")
+        XCTAssertTrue(groupsSurface.waitForExistence(timeout: 10), "Groups tab root renders")
+        let newGroup = firstMatch(in: app, identifier: "fleet.groups.new")
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 10), "Groups exposes New Group")
+        newGroup.tap()
+
+        let name = app.textFields["fleet.room.create.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10), "group name field renders")
+        name.tap()
+        name.typeText("Fleet Cross-Machine")
+
+        let workstation = app.descendants(matching: .any)["fleet.room.create.candidate.workstation#researcher"]
+        let renderBox = app.descendants(matching: .any)["fleet.room.create.candidate.render-box#default"]
+        XCTAssertTrue(workstation.waitForExistence(timeout: 10), "workstation Bot is listed")
+        XCTAssertTrue(renderBox.waitForExistence(timeout: 10), "render-box Bot is listed in the same picker")
+        XCTAssertTrue(workstation.label.localizedCaseInsensitiveContains("Workstation"))
+        XCTAssertTrue(renderBox.label.localizedCaseInsensitiveContains("Render Box"))
+
+        workstation.tap()
+        renderBox.tap()
+        let submit = app.buttons["fleet.room.create.submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertTrue(submit.isEnabled, "two reachable Bots satisfy the frozen roster minimum")
+
+        let pickerShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        pickerShot.name = "build44-fleet-wide-group-picker"
+        pickerShot.lifetime = .keepAlways
+        add(pickerShot)
+
+        submit.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.chat"].waitForExistence(timeout: 15),
+            "successful cross-gateway creation opens the interactive hosted room")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.member.Researcher"].waitForExistence(timeout: 5),
+            "host member remains attributed")
+        XCTAssertTrue(
+            app.descendants(matching: .any)["fleet.room.member.Default"].waitForExistence(timeout: 5),
+            "remote member remains attributed")
+        let composer = app.textFields["fleet.room.composer.field"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5), "hosted room exposes its composer")
+        XCTAssertTrue(composer.isEnabled, "a successfully linked hosted room remains interactive")
+        XCTAssertEqual(composer.placeholderValue, "Message the room (@ to mention)")
+        composer.tap()
+        composer.typeText("Coordinate this")
+        let send = app.buttons["fleet.room.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5), "interactive room exposes send")
+        send.tap()
+        XCTAssertTrue(
+            app.staticTexts["Coordinate this"].waitForExistence(timeout: 5),
+            "the user message is rendered in the authoritative room transcript")
+
+        let roomShot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        roomShot.name = "build44-cross-gateway-group-chat"
+        roomShot.lifetime = .keepAlways
+        add(roomShot)
     }
 
     // MARK: 5. Chats refresh-failure surface (dogfood corrective pass F2/F3)

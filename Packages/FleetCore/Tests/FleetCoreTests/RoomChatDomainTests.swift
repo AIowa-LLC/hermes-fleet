@@ -140,6 +140,22 @@ final class RoomChatDomainTests: XCTestCase {
         XCTAssertEqual(cache.latestSeq, 3)
     }
 
+    func testReplayCacheDeduplicatesByDurableEventID() {
+        var cache = RoomTranscriptCache()
+        let first = HostedRoomEventValue(
+            roomID: "room-alpha", seq: 10, eventID: "event-reused",
+            kind: "message.member", actorKind: "member", actorID: "researcher",
+            payloadText: "same", createdAt: 1)
+        let replayed = HostedRoomEventValue(
+            roomID: "room-alpha", seq: 11, eventID: "event-reused",
+            kind: "message.member", actorKind: "member", actorID: "researcher",
+            payloadText: "same", createdAt: 1)
+
+        XCTAssertTrue(cache.merge(page([first], cursor: 10, latest: 10)))
+        XCTAssertFalse(cache.merge(page([replayed], cursor: 11, latest: 11)))
+        XCTAssertEqual(cache.orderedEvents.map(\.eventID), ["event-reused"])
+    }
+
     func testReplayCacheSurvivesNavigationBySeqOrder() {
         var cache = RoomTranscriptCache()
         cache.merge(page([event(2, kind: "message.member", text: "b")], cursor: 2, latest: 2))

@@ -1,24 +1,57 @@
 import XCTest
 
-/// U3 (Gold Fleet) shared tab-navigation helpers for the UI suites.
-///
-/// The root shell is a four-tab `TabView` (Fleet / Chats / Bots / Gateways);
-/// cold launch lands on Fleet. Suites that drive the registry cockpit open
-/// the Gateways tab first; suites that opened the roster toolbar link open
-/// the Bots tab instead.
-///
-/// The lock gate complicates the first interaction: the app launches LOCKED
-/// (H1 default-ON) and swaps `AppLockView` for the tab shell when the
-/// (scripted) biometric succeeds — a few seconds after launch, around the
-/// same time early taps land. A tap synthesized into that hierarchy swap can
-/// be silently dropped, leaving Fleet selected. The helpers therefore VERIFY
-/// the switch took effect and retry the tap once before failing.
+/// Shared navigation for compact drawers and regular-width system tabs/sidebars.
+/// Keep the historical helper names for existing suites; cold launch is Bots.
+/// The shell (sidebarAdaptable) is width-adaptive: compact width renders the
+/// custom drawer (no UITabBar at all), while regular width renders the
+/// adaptive TOP CONTROL whose five destinations surface as plain labeled
+/// Buttons (SF-symbol identifiers) with no UITabBar element and no drawer.
 enum UITabNavigation {
 
-    /// SwiftUI's sidebarAdaptable style is a tab bar on iPhone, but may
-    /// render the same four destinations as an adaptive segmented control on
-    /// iPad. Keep the semantic lookup shared so tests assert the navigation
-    /// contract instead of a device-specific UIKit container.
+    static func shellReady(_ app: XCUIApplication, timeout: TimeInterval = 15) {
+        // Three valid shell shapes, probed in order:
+        //  1. a system tab bar (expanded iPad sidebar / future compact bar),
+        //  2. the compact drawer's universal Menu button,
+        //  3. the regular-width iPad adaptive top control. Probe the
+        //     DESTINATION CONTROLS (labels Bots…Settings): they float above
+        //     whatever stack is mounted. `fleet.tab.bots` is NOT a valid
+        //     probe — the shell only mounts the selected/visited stacks, so
+        //     it is absent whenever AUTO_NAV or a relaunch has already
+        //     selected another destination (iPad B43/Artifacts failures).
+        let tabBar = app.tabBars.firstMatch
+        if tabBar.exists || tabBar.waitForExistence(timeout: 2) { return }
+        let menu = app.buttons["fleet.drawer.open"]
+        if menu.exists || menu.waitForExistence(timeout: 2) { return }
+        let adaptiveBots = app.buttons["Bots"]
+        let adaptiveSettings = app.buttons["Settings"]
+        XCTAssertTrue(
+            adaptiveBots.waitForExistence(timeout: timeout) && adaptiveSettings.exists,
+            "navigation shell must expose the tab bar, Menu, or the adaptive top control")
+    }
+
+    static func assertSelected(_ app: XCUIApplication, label: String,
+                               navigationTitle: String? = nil,
+                               timeout: TimeInterval = 10) {
+        if app.tabBars.firstMatch.exists {
+            XCTAssertTrue(app.tabBars.buttons[label].isSelected,
+                          "\(label) destination must be selected")
+        } else {
+            let tabRaw = Self.drawerDestinationRaw(label)
+            let stack = app.descendants(matching: .any)["fleet.tab.\(tabRaw)"]
+            // A successful `waitForExistence` already proves `exists`, so the
+            // wait IS the visibility verdict; the nav-bar fallback (a
+            // destination whose stack element is not mounted) remains the
+            // failure path.
+            if !stack.waitForExistence(timeout: 2) {
+                let title = navigationTitle ?? label
+                XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: timeout),
+                              "\(label) destination must be visible")
+            }
+        }
+    }
+
+    /// SwiftUI's sidebarAdaptable style exposes a visible tab bar on regular
+    /// iPad and a drawer on compact iPhone.
     static func tabControl(_ app: XCUIApplication, label: String) -> XCUIElement {
         let tabBar = app.tabBars.firstMatch
         if tabBar.exists || tabBar.waitForExistence(timeout: 2) {
@@ -37,10 +70,140 @@ enum UITabNavigation {
         return app.cells[label].firstMatch
     }
 
-    /// Open a tab by label and verify the switch took effect, retrying the
-    /// tap ONCE only when the tab is still not selected (a first tap can be
-    /// swallowed by the lock-unlock hierarchy swap). Never re-taps a selected
-    /// tab — that pops its stack to root (standard iOS tab behavior).
+    /// Drawer destination identifier slug for a destination label.
+    ///
+    /// `About` deliberately has NO entry: the drawer has no such row
+    /// (`FleetNavigationDrawer` renders `fleet.drawer.destination.<tab>`,
+    /// `.artifacts`, `.settings` only, and `FleetAboutUITests` asserts
+    /// `fleet.drawer.destination.about` must NOT exist — ADR-0011/dogfood r2
+    /// reaches About through the Settings root's `fleet.settings.about` row).
+    /// A table entry for it would mislead callers into expecting a drawer row
+    /// that the product removed.
+    private static func drawerDestinationRaw(_ label: String) -> String {
+        ["Bots": "bots", "Chats": "chats", "Scheduled": "cron", "Kanban": "kanban",
+         "Fleet": "fleet", "Settings": "settings"][label] ?? label.lowercased()
+    }
+
+    /// Select a destination through the current device's navigation shell.
+    ///
+    /// Build 43 retention contract: a selected tab KEEPS its pushed stack,
+    /// so the tab's ROOT bar (`navigationBars[label]`) is NOT a valid switch
+    /// confirmation — a tab holding a pushed screen legitimately shows that
+    /// screen's bar instead (U3 asserts exactly that retention). The landing
+    /// signal is the DRAWER DISMISSING: every destination row closes it. The
+    /// single retry is gated on the drawer still being OPEN (a presenting
+    /// drawer can swallow the synthesized tap). NEVER re-tap a destination
+    /// whose drawer already closed: re-selecting the current destination is
+    /// the shell's deliberate pop-to-root affordance and destroys the
+    /// retained stack under test.
+    @discardableResult
+    static func selectTab(_ app: XCUIApplication, label: String,
+                          timeout: TimeInterval = 15) -> XCUIElement {
+        let tabBar = app.tabBars.firstMatch
+        if tabBar.exists || tabBar.waitForExistence(timeout: 1) {
+            let tab = tabBar.buttons[label].firstMatch
+            XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) tab should exist")
+            tab.tap()
+            return tab
+        }
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        if !(menu.exists || menu.waitForExistence(timeout: 2)) {
+            let tab = tabControl(app, label: label)
+            XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) sidebar destination should exist")
+            tab.tap()
+            return tab
+        }
+        menu.tap()
+        let raw = Self.drawerDestinationRaw(label)
+        let destination = app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
+        XCTAssertTrue(destination.waitForExistence(timeout: timeout), "drawer must expose \(label)")
+        let drawer = app.descendants(matching: .any)["fleet.drawer"]
+        for _ in 0..<4 {
+            destination.tap()
+            // Dismissal = the tap landed. Poll briefly (the 0.24s dismiss
+            // animation keeps the element in the tree for a moment).
+            var dismissed = false
+            for _ in 0..<6 where !dismissed {
+                if !drawer.exists { dismissed = true } else { usleep(500_000) }
+            }
+            if dismissed { break }
+            // Drawer still open = the tap was dropped while presenting.
+            // Re-tap the destination row directly (the drawer never closed,
+            // so this cannot be mistaken for a pop-to-root reselect).
+            if !destination.waitForExistence(timeout: 3) { break }
+        }
+        // The landing signal is the drawer DISMISSING (see above). Falling out
+        // of the loop without it means every tap was dropped — a presenting
+        // drawer swallows synthesized taps — so fail HERE, naming the true
+        // cause, instead of returning as success and surfacing later as an
+        // unrelated assertion in the caller.
+        XCTAssertFalse(drawer.exists,
+                       "\(label) destination never dismissed the drawer (tap dropped on every attempt)")
+        return destination
+    }
+
+    /// Dogfood r4: search/Command Center is DRAWER-ONLY — the toolbar
+    /// button (fleet.command-center.open) is retired. This is the suite
+    /// entry: open the drawer, tap its search circle.
+    static func openCommandCenter(_ app: XCUIApplication, timeout: TimeInterval = 15) {
+        _ = openDrawer(app, timeout: timeout)
+        let search = app.buttons["fleet.drawer.search"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: timeout),
+                      "the drawer must expose the search circle")
+        search.tap()
+        XCTAssertTrue(app.navigationBars["Command Center"].waitForExistence(timeout: timeout),
+                      "the drawer search circle must present Command Center")
+    }
+
+    @discardableResult
+    static func openDrawer(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: timeout), "the universal Menu button must exist")
+        menu.tap()
+        let drawer = app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: timeout), "navigation drawer should open")
+        return drawer
+    }
+
+    /// ADR-0008: the ✕ close control is retired. The deterministic suite
+    /// dismissal is the scrim (a real button in the AX tree); swipe and
+    /// destination-select dismissals are exercised by U3's dedicated test.
+    @discardableResult
+    static func closeDrawer(_ app: XCUIApplication, timeout: TimeInterval = 10) -> Bool {
+        let scrim = app.buttons["fleet.drawer.scrim"].firstMatch
+        XCTAssertTrue(scrim.waitForExistence(timeout: timeout), "the drawer scrim must be present")
+        // The drawer covers the scrim's center on every device — tap the
+        // visible strip at the trailing screen edge instead.
+        scrim.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let drawer = app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer").firstMatch
+        var dismissed = false
+        for _ in 0..<20 where !dismissed {
+            if !drawer.exists { dismissed = true } else { usleep(250_000) }
+        }
+        XCTAssertTrue(dismissed, "the drawer must dismiss after a scrim tap")
+        return dismissed
+    }
+
+    /// Open a tab and verify its ROOT screen is showing.
+    ///
+    /// Build 43 retention contract: tabs keep their pushed stacks across
+    /// switches, so "the destination is selected" and "the destination shows
+    /// its root" are different states. This helper asserts the ROOT
+    /// contract: when the compact destination holds a retained stack, it
+    /// first pops back through the shell's own affordance (re-selecting the
+    /// current destination in the drawer pops to root). Callers that only
+    /// need the destination SELECTED — RETAINING its pushed stack — must
+    /// call `selectTab` instead (the U3 retention journeys do).
+    ///
+    /// Non-compact (tab bar / iPad sidebar): retrying a tap is safe — a
+    /// system tab control never re-fires on an already-selected tab — and the
+    /// SAME reselect gesture is the shell's pop-to-root recovery when the
+    /// destination holds a retained pushed stack. On iPad the adaptive
+    /// control does not expose UITabBar's selected-state contract, so the
+    /// retry loop falls back to bounded re-taps.
     @discardableResult
     private static func openTab(
         _ app: XCUIApplication,
@@ -48,28 +211,92 @@ enum UITabNavigation {
         expectedBar: String,
         timeout: TimeInterval
     ) -> XCUIElement {
-        let tab = tabControl(app, label: label)
-        XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) destination control should exist")
+        let tabBar = app.tabBars.firstMatch
+        let compact = !(tabBar.exists || tabBar.waitForExistence(timeout: 1))
         let bar = app.navigationBars[expectedBar]
-        // Under heavy simulator load (long CI gates) the first tap can land
-        // during the lock-unlock hierarchy swap and be dropped. Retry up to
-        // three times. On iPad the adaptive control does not expose the
-        // selected-state contract that UITabBar provides on iPhone.
-        for _ in 0..<3 {
-            if bar.waitForExistence(timeout: 6) { break }
-            if tab.elementType == .button && tab.isSelected { continue }
-            tab.tap()
+        if compact {
+            selectTab(app, label: label, timeout: timeout)
+            // A retained stack legitimately hides the root bar — pop to the
+            // root through the shell's own affordance, then let the final
+            // assertion below own the verdict.
+            if !bar.waitForExistence(timeout: 2) {
+                popToRootViaDrawer(app, label: label, timeout: timeout)
+            }
+        } else {
+            let tab = tabControl(app, label: label)
+            XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) destination control should exist")
+            // Under heavy simulator load (long CI gates) the first tap can
+            // land during the lock-unlock hierarchy swap or the splash
+            // cross-fade and be dropped. Retry up to five times.
+            for _ in 0..<5 {
+                if bar.waitForExistence(timeout: 6) { break }
+                // Build 43 retention contract: a destination that KEEPS its
+                // pushed stack shows that screen's bar, never the root bar.
+                // Re-tapping the destination is the shell's pop-to-root
+                // affordance (the compact drawer implements it explicitly in
+                // `onSelectTab`; system tab/sidebar controls pop on the same
+                // gesture), so a selected destination gets the reselect
+                // attempt instead of being skipped — skipping made the ROOT
+                // contract unreachable on any retaining shell.
+                tab.tap()
+            }
         }
         XCTAssertTrue(bar.waitForExistence(timeout: timeout),
                       "the \(label) tab must host its screen (\(expectedBar))")
         return bar
     }
 
-    /// Open the Gateways tab and wait for the registry cockpit's nav bar.
-    /// FOS-3 (SPEC §6): the tab title is "Gateways" (was "Hermes Fleet").
+    /// Pop a compact destination to its root through the shell's reselect
+    /// affordance: open the drawer and tap the ALREADY-SELECTED destination
+    /// row (the product contract: re-selecting the current destination pops
+    /// its stack to root). No-ops when the drawer cannot be reached.
+    private static func popToRootViaDrawer(
+        _ app: XCUIApplication,
+        label: String,
+        timeout: TimeInterval
+    ) {
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        guard menu.waitForExistence(timeout: 3) else { return }
+        menu.tap()
+        let raw = Self.drawerDestinationRaw(label)
+        let destination = app.descendants(matching: .any)
+            .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
+        guard destination.waitForExistence(timeout: timeout) else { return }
+        destination.tap()
+        // The dismissal itself is unobservable from here without re-querying
+        // the (already-asserted) root bar; give the pop a moment to settle.
+        usleep(500_000)
+    }
+
+    /// Open the Gateways registry cockpit. Build 43: Gateways is no longer
+    /// a tab — the entry is Fleet → "Manage Gateways" (the dashboard's
+    /// gateways section), pushing the registry on the Fleet stack.
     @discardableResult
     static func openGatewaysTab(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
-        openTab(app, label: "Gateways", expectedBar: "Gateways", timeout: timeout)
+        // Wait for the tab shell first — a tap synthesized before the tab
+        // bar exists is silently dropped (the same lock-gate lesson the
+        // other helpers encode).
+        selectTab(app, label: "Fleet", timeout: timeout)
+        // Build 43: the Fleet tab may have the registry cockpit ALREADY
+        // pushed (restored navigation from an earlier session — suites that
+        // launch without NAV_RESET restore the saved Fleet stack). Either
+        // landing is acceptable; only push when the root is showing.
+        let bar = app.navigationBars["Gateways"]
+        if bar.waitForExistence(timeout: 5) { return bar }
+        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: timeout),
+                      "the Fleet tab must host its screen")
+        let manage = app.descendants(matching: .any)
+            .matching(identifier: "fleet.dashboard.gateways.manage").firstMatch
+        if !manage.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !manage.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(manage.waitForExistence(timeout: timeout),
+                      "Fleet must expose the Manage Gateways entry")
+        scrollToHittable(manage, in: app)
+        manage.tap()
+        XCTAssertTrue(bar.waitForExistence(timeout: timeout),
+                      "Manage Gateways must push the registry cockpit")
+        return bar
     }
 
     /// Open the Bots tab (the fleet roster, previously a toolbar link).
@@ -78,10 +305,55 @@ enum UITabNavigation {
     static func openBotsTab(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
         openTab(app, label: "Bots", expectedBar: "Bots", timeout: timeout)
     }
+
+    /// Select the Fleet tab and wait for its dashboard (shared by suites
+    /// that assert Fleet content; Build 41+ cold launch lands on Bots).
+    static func openTabToFleet(_ app: XCUIApplication, timeout: TimeInterval = 15) {
+        openTab(app, label: "Fleet", expectedBar: "Fleet", timeout: timeout)
+    }
+
+    /// Build 43: Settings is a first-class tab (was the Fleet gear sheet).
+    /// ADR-0011: the App Lock toggle moved into the Security sub-screen —
+    /// the root contract is the Theme section, not the toggle.
     static func openSettings(_ app: XCUIApplication) {
-        _ = openTab(app, label: "Fleet", expectedBar: "Fleet", timeout: 15)
-        app.buttons["fleet.settings.open"].tap()
-        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
+        _ = openTab(app, label: "Settings", expectedBar: "Settings", timeout: 15)
+        XCTAssertTrue(
+            app.descendants(matching: .any).matching(identifier: "fleet.settings.accent")
+                .firstMatch.waitForExistence(timeout: 10),
+            "the Settings root must render the Theme section (accent row)")
+    }
+
+    /// ADR-0011 W3: open Settings and push into the Security sub-screen
+    /// (the App Lock toggle lives there now).
+    static func openSettingsSecurity(_ app: XCUIApplication) {
+        openSettings(app)
+        let row = app.descendants(matching: .any)
+            .matching(identifier: "fleet.settings.security").firstMatch
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 10),
+                      "Settings must expose the Security row")
+        if !row.isHittable { app.swipeUp() }
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Security"].waitForExistence(timeout: 10),
+                      "the Security row must push its sub-screen")
+    }
+
+    /// ADR-0011 + dogfood round 2: open the About tab via the Settings
+    /// root's About row (the drawer circle is retired).
+    static func openAbout(_ app: XCUIApplication) {
+        openSettings(app)
+        let row = app.buttons["fleet.settings.about"].firstMatch
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 10),
+                      "Settings must expose the About row")
+        if !row.isHittable { app.swipeUp() }
+        row.tap()
+        XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10),
+                      "the Settings About row must select the About tab")
     }
     static func openActivity(_ app: XCUIApplication) {
         // FOS-3: Control's cross-fleet diagnostics links are owned by the
@@ -128,6 +400,13 @@ enum UITabNavigation {
             app.swipeUp(velocity: .fast)
         }
         return element
+    }
+
+    /// Same lazy-AX scroll contract as `scrollTo`, shared by the
+    /// Fleet-dashboard navigation helpers (Build 43).
+    @discardableResult
+    private static func scrollToHittable(_ element: XCUIElement, in app: XCUIApplication) -> XCUIElement {
+        scrollTo(element, in: app)
     }
 
     /// Scroll the cockpit until a resource row exists (lazy AX), then tap it.

@@ -7,7 +7,8 @@
 #
 # Discovery is machine-readable (devicectl --json-output is the ONLY
 # script-supported interface per Apple): we parse the JSON directly for
-# hardwareProperties.deviceType == "iPhone", platform iOS, paired, AND
+# hardwareProperties.deviceType == "iPhone", platform iOS, physical ECID,
+# paired, AND
 # currently available. Columnar `devicectl list` output is never parsed —
 # device names may contain spaces, so the first whitespace field is not a
 # reliable identifier.
@@ -15,10 +16,10 @@
 # AVAILABILITY (Xcode 26.6 CoreDevice JSON, observed empirically): there is
 # no literal "available" field. The machine-readable availability state is
 # derived from connectionProperties:
-#   - available device:  transportType present ("localNetwork" or "wired" —
-#     both are valid development connections; no specific transport is
-#     assumed) and tunnelState != "unavailable" (e.g. "disconnected");
-#   - unavailable device: tunnelState == "unavailable" and NO transportType.
+#   - available physical device: ECID present, transportType "localNetwork"
+#     or "wired", and tunnelState == "connected". Simulators also appear
+#     as paired iPhones but use transportType "sameMachine".
+#   - unavailable device: any other tunnelState, including "disconnected".
 # Pairing alone is NOT availability — a paired-but-unreachable iPhone must
 # never be selected and must never create a false MULTIPLE against a valid
 # available iPhone.
@@ -50,9 +51,8 @@ resolve_fleet_device() {
 
   # Python one-shot parse: eligible = physical iPhone + iOS platform +
   # paired + CURRENTLY AVAILABLE. Availability is derived from the
-  # CoreDevice connection state (see header): tunnelState != "unavailable"
-  # AND a transportType present (wired or localNetwork both count — no
-  # specific transport is assumed).
+  # CoreDevice connection state (see header): tunnelState == "connected"
+  # AND transportType wired or localNetwork (never sameMachine simulators).
   local result
   result=$(python3 - "$json_file" <<'PYEOF'
 import json, sys
@@ -71,9 +71,10 @@ for d in devs:
     tunnel = cp.get("tunnelState")
     if (hp.get("deviceType") == "iPhone"
             and hp.get("platform") == "iOS"
+            and hp.get("ecid") is not None
             and cp.get("pairingState") == "paired"
-            and tunnel is not None and tunnel != "unavailable"
-            and transport):
+            and tunnel == "connected"
+            and transport in ("localNetwork", "wired")):
         eligible.append(d.get("identifier", ""))
 if len(eligible) == 1:
     print(eligible[0])

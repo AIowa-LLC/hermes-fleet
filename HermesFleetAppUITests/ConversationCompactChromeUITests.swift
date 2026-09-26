@@ -1,0 +1,439 @@
+import XCTest
+
+/// Dogfood top-space fix — inline nav title + compact chrome UI coverage.
+///
+/// Proves the conversation screen's transcript begins dramatically higher:
+/// inline navigation (no large title), one compact header row, no permanent
+/// timeline inset, and the timeline affordance reachable from the toolbar.
+/// Also runs the header at an accessibility Dynamic Type size to prove the
+/// bot name survives and secondary metadata degrades gracefully.
+final class ConversationCompactChromeUITests: XCTestCase {
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    private func launch() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        return app
+    }
+
+    private func openConversation(_ app: XCUIApplication) {
+        UITabNavigation.openGatewaysTab(app)
+        // iOS 26 materializes list rows on scroll — at accessibility sizes
+        // the workstation row may sit below the fold, so scroll into view
+        // BEFORE querying (the repo's lazy-list rule).
+        let gatewayRow = firstMatch(in: app, identifier: "fleet.gateways.row.workstation")
+        for _ in 0..<6 where !gatewayRow.exists {
+            app.swipeUp()
+        }
+        tap(gatewayRow)
+        UITabNavigation.openGatewayBots(app)
+        tap(firstMatch(in: app, identifier: "fleet.roster.row.workstation#default"))
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "bot detail should render before drilling into the conversation"
+        )
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
+        XCTAssertTrue(
+            app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
+            "conversation canvas should open with a composer"
+        )
+    }
+
+    /// The nav bar must be INLINE (compact) — a large-title bar measures
+    /// taller than this bound on iPhone. The bound is generous vs the ~96pt
+    /// large-title bar but tight vs the old stacked chrome.
+    /// session.title (methods_session.py:1427): the gateway auto-titles a new
+    /// chat after the first turn — the header adopts it live and NO "Unknown
+    /// event" row renders in the transcript (the build-49 bug).
+    func testSessionAutoTitleAdoptsHeaderWithoutUnknownEventRow() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_TITLE_FIXTURE"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        composer.tap()
+        composer.typeText("good morning")
+        app.descendants(matching: .any).matching(identifier: "fleet.conversation.send").firstMatch.tap()
+
+        // The header's secondary line adopts the scripted auto-title.
+        let headerTitle = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.header.title").firstMatch
+        XCTAssertTrue(headerTitle.waitForExistence(timeout: 15))
+        let titled = NSPredicate(format: "label CONTAINS %@", "Scripted auto title")
+        let titledExp = XCTNSPredicateExpectation(predicate: titled, object: headerTitle)
+        XCTAssertTrue(XCTWaiter().wait(for: [titledExp], timeout: 10) == .completed,
+                      "header must adopt the auto title (got: \(headerTitle.label))")
+
+        // The transcript stays clean — no raw event-name rows.
+        let unknownRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Unknown event")).firstMatch
+        XCTAssertFalse(unknownRow.exists, "session.title must not surface as Unknown event")
+    }
+
+    /// Top chip bar (Hermex-inspired, docked at the top): after a turn the
+    /// scroll zone carries model · folder · profile · context. Off-screen
+    /// chips are reachable by swiping the zone (overflow scrolls, never
+    /// truncates).
+    func testHeaderChipBarScrollsAndCarriesSessionFacts() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_INFO_FIXTURE"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("chip bar probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        // The model chip is always in the zone.
+        let chip = firstMatch(in: app, identifier: "model.chip")
+        XCTAssertTrue(chip.waitForExistence(timeout: 15), "model chip must render in the scroll zone")
+
+        // Folder + profile chips arrive with the session.info fixture; if
+        // off-screen, swipe the zone left to reveal them (bounded).
+        let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
+        XCTAssertTrue(zone.waitForExistence(timeout: 5), "chip scroll zone must render")
+        func reveal(_ id: String) -> XCUIElement {
+            let e = app.descendants(matching: .any)[id]
+            for _ in 0..<4 where !(e.exists && e.isHittable) {
+                zone.swipeLeft(velocity: .slow)
+            }
+            return e
+        }
+        let folder = reveal("fleet.conversation.header.folder")
+        XCTAssertTrue(folder.waitForExistence(timeout: 10), "folder chip must render")
+        let folderValue = folder.value as? String ?? ""
+        XCTAssertTrue(folderValue.contains("hermes-fleet"),
+                      "folder chip carries the cwd as its accessibility value (got \(folderValue))")
+        let profile = reveal("fleet.conversation.header.profile")
+        XCTAssertTrue(profile.waitForExistence(timeout: 5), "profile chip must render")
+
+        // Switcher sheet on folder tap (r9 toolbelt — the chip now changes
+        // the working folder; copy-path lives on long-press).
+        if folder.isHittable {
+            folder.tap()
+            let field = firstMatch(in: app, identifier: "fleet.conversation.folder.field")
+            XCTAssertTrue(field.waitForExistence(timeout: 5),
+                          "folder sheet must render the path field")
+            // Dismiss by swiping the sheet down (no system Close on a
+            // detent sheet without an explicit dismiss button).
+            field.swipeDown()
+        }
+    }
+
+    /// Hermes-parity working state: while a turn is in flight the
+    /// "Working for Ns" indicator renders above the composer AND the stop
+    /// control is present (red styling evidenced by screenshot; AX is
+    /// colorblind). Uses the card-E demo hold to pin the streaming window.
+    func testWorkingIndicatorAndStopRenderDuringTurn() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO_ORDER"] = "streaming"
+        app.launchEnvironment["HERMES_FLEET_IMAGE_DEMO_HOLD_MS"] = "6000"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("working state probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let working = firstMatch(in: app, identifier: "fleet.conversation.working")
+        XCTAssertTrue(working.waitForExistence(timeout: 10),
+                      "the working indicator must render during a turn")
+        XCTAssertTrue(working.label.contains("Working for"),
+                      "indicator announces elapsed time (got \(working.label))")
+        let stop = firstMatch(in: app, identifier: "fleet.conversation.stop")
+        XCTAssertTrue(stop.waitForExistence(timeout: 5),
+                      "the stop control must render while streaming")
+    }
+
+    func testConversationUsesSingleRowHeader() throws {
+        let app = launch()
+        openConversation(app)
+
+        // Compaction round 2: the system navigation bar is HIDDEN on the
+        // conversation — all chrome lives in ONE 44-56pt custom row.
+        let header = firstMatch(in: app, identifier: "fleet.conversation.header")
+        XCTAssertTrue(header.waitForExistence(timeout: 10), "compact header must render")
+
+        // The custom chrome is a full-width row. A content-sized HStack leaves
+        // a narrow floating bar centered on the screen during conversation
+        // entry, which makes the back/menu controls look like a collapsed top
+        // bar even though the row's controls remain tappable.
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), "app window must render")
+        let horizontalTolerance: CGFloat = 2
+        XCTAssertEqual(
+            header.frame.minX,
+            window.frame.minX,
+            accuracy: horizontalTolerance,
+            "compact header must start at the window edge (header: \(header.frame), window: \(window.frame))"
+        )
+        XCTAssertEqual(
+            header.frame.maxX,
+            window.frame.maxX,
+            accuracy: horizontalTolerance,
+            "compact header must span the window width (header: \(header.frame), window: \(window.frame))"
+        )
+
+        // The header's AX frame includes the status-bar region (custom chrome
+        // owns the full top inset), so measure the ROW itself: back-button
+        // top to transcript top = the single chrome row.
+        let back = firstMatch(in: app, identifier: "fleet.conversation.back")
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "custom back button must render")
+        let transcript0 = firstMatch(in: app, identifier: "fleet.conversation.transcript")
+        XCTAssertTrue(transcript0.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(
+            transcript0.frame.minY - back.frame.minY, 48,
+            "the merged header must stay a single compact row (got \(transcript0.frame.minY - back.frame.minY)pt)"
+        )
+
+        // The system nav bar must not render for the conversation's stack.
+        // (Scope to the owning Chats stack — mounted hidden stacks' bars can
+        // still surface in the AX snapshot.)
+        let stackBar = app.descendants(matching: .any)["fleet.tab.chats"]
+            .descendants(matching: .navigationBar).firstMatch
+        let barVisible = stackBar.exists && stackBar.isHittable
+        XCTAssertFalse(barVisible,
+                       "the conversation must not show the system navigation bar")
+
+        // Identity + title leaves, back + drawer buttons, one row.
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.header.name").waitForExistence(timeout: 5))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.header.title").exists)
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer.open").waitForExistence(timeout: 5),
+                      "drawer toggle must render in the row")
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.header.identity").exists,
+                      "identity element (spoken status carrier) must render")
+
+        // The transcript must begin at/below the single header row — the old
+        // two-row chrome is gone (pre-fix transcript minY included the bar).
+        let transcript = firstMatch(in: app, identifier: "fleet.conversation.transcript")
+        XCTAssertTrue(transcript.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(
+            transcript.frame.minY, header.frame.maxY + 8,
+            "transcript must start right after the single header row (header maxY \(header.frame.maxY), transcript minY \(transcript.frame.minY))"
+        )
+    }
+
+    /// The model chip still opens the picker from the compact row, and the
+    /// timeline sheet opens from the toolbar button.
+    func testModelChipAndTimelineRemainReachable() throws {
+        let app = launch()
+        openConversation(app)
+
+        let chip = firstMatch(in: app, identifier: "model.chip")
+        XCTAssertTrue(chip.waitForExistence(timeout: 10), "model chip must render in the compact header")
+        chip.tap()
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "model.picker.row.nous/hermes").waitForExistence(timeout: 10),
+            "model picker must open from the compact chip"
+        )
+        tap(firstMatch(in: app, identifier: "model.picker.row.nous/hermes"))
+        _ = waitUntilGone(firstMatch(in: app, identifier: "model.picker.row.nous/hermes"))
+
+        // Send a turn so user turns exist, then open the timeline from the
+        // ⋯ session-actions menu (compaction round 2: the toolbar row is
+        // gone; timeline rides the menu).
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("compact chrome probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let menu = firstMatch(in: app, identifier: "session.actions.menu")
+        XCTAssertTrue(menu.waitForExistence(timeout: 15), "session actions menu must render")
+        menu.tap()
+        let timeline = app.buttons["fleet.conversation.timeline.open"]
+        XCTAssertTrue(
+            timeline.waitForExistence(timeout: 10),
+            "timeline affordance must be reachable from the session-actions menu"
+        )
+        timeline.tap()
+        XCTAssertTrue(app.navigationBars["Timeline"].waitForExistence(timeout: 5))
+        tap(app.buttons["Done"])
+    }
+
+    /// At accessibility Dynamic Type sizes the header must not break: bot
+    /// name visible, secondary metadata hidden, controls still present.
+    /// Every drill-down list is scrolled into the AX tree before tapping
+    /// (iOS 26 materializes rows on scroll; at AX sizes everything sits
+    /// lower). Raw identifiers + bounded swipes — no shared helper
+    /// pre-asserts.
+    func testHeaderSurvivesAccessibilityTypeSize() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName",
+                                "UICTContentSizeCategoryAccessibilityXL"]
+        app.launch()
+        UITabNavigation.openGatewaysTab(app)
+
+        func reveal(_ identifier: String) -> XCUIElement {
+            let element = app.descendants(matching: .any)[identifier]
+            for _ in 0..<8 where !element.exists {
+                app.swipeUp()
+            }
+            return element
+        }
+
+        tap(reveal("fleet.gateways.row.workstation"))
+        tap(reveal("fleet.gateway-detail.workstation.bots"))
+        tap(reveal("fleet.roster.row.workstation#default"))
+        tap(reveal("fleet.bot-detail.sessions.row.workstation.default.s1"))
+        XCTAssertTrue(
+            app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
+            "conversation canvas should open with a composer at AX size"
+        )
+
+        let header = firstMatch(in: app, identifier: "fleet.conversation.header")
+        XCTAssertTrue(header.waitForExistence(timeout: 10), "compact header must render at AX sizes")
+        let name = firstMatch(in: app, identifier: "fleet.conversation.header.name")
+        XCTAssertTrue(name.waitForExistence(timeout: 5), "bot name leaf must render at AX size")
+        XCTAssertTrue(name.label.contains("Default"), "bot name must survive at AX size: \(name.label)")
+        // Secondary metadata degrades away instead of squeezing the name.
+        XCTAssertFalse(firstMatch(in: app, identifier: "model.chip").exists,
+                       "secondary metadata must hide at accessibility sizes")
+        // Steer controls remain present.
+        XCTAssertTrue(firstMatch(in: app, identifier: "session.actions.menu").waitForExistence(timeout: 10),
+                      "session actions must remain reachable at AX sizes")
+    }
+
+    /// Completed assistant replies expose the compact action toolbar in the
+    /// required order and More contains every advanced action, including
+    /// honest disabled entries when a simulator seam lacks a capability.
+    func testCompletedAssistantReplyFooterAndMoreActions() throws {
+        let app = launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("reply action toolbar probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let footer = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier ENDSWITH %@", ".footer")
+        ).firstMatch
+        XCTAssertTrue(footer.waitForExistence(timeout: 15),
+                      "a completed assistant reply must render its action footer")
+
+        for suffix in [".copy", ".share", ".more"] {
+            let action = app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier CONTAINS %@", suffix)
+            ).firstMatch
+            XCTAssertTrue(action.waitForExistence(timeout: 5),
+                          "footer action \(suffix) must be discoverable")
+        }
+
+        let more = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier CONTAINS %@", ".more")
+        ).firstMatch
+        XCTAssertTrue(more.isHittable, "More must be hittable")
+        more.tap()
+        for label in ["Branch in New Chat", "Read Aloud", "Retry", "Search the Web"] {
+            XCTAssertTrue(app.buttons[label].waitForExistence(timeout: 5),
+                          "More must contain \(label)")
+        }
+    }
+
+    /// P0-B (RC-84): Find in Conversation — opens from the header, lands on
+    /// the first match with an "n of m" count, advances, wraps, shows the
+    /// honest no-results state, and closes cleanly. The count is
+    /// deterministic: the scripted turn echo makes BOTH the user row and the
+    /// reply carry "findprobe" (tool/status chrome is not searchable).
+    func testFindInConversationMatchesNavigatesEmptyStateAndDismisses() throws {
+        let app = launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("findprobe alpha")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        // The turn completes when the reply footer lands.
+        let footer = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier ENDSWITH %@", ".footer")
+        ).firstMatch
+        XCTAssertTrue(footer.waitForExistence(timeout: 15), "turn must complete before searching")
+
+        // Open Find from the header and type the query.
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find"))
+        let field = firstMatch(in: app, identifier: "fleet.conversation.find.field")
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "find bar must open with a field")
+        field.tap()
+        field.typeText("findprobe")
+
+        // Two matches: the user row + the scripted echo reply.
+        let count = firstMatch(in: app, identifier: "fleet.conversation.find.count")
+        XCTAssertTrue(
+            waitForFindCount(count, equals: "1 of 2", timeout: 6),
+            "find must land on the first match (got: \(count.label))"
+        )
+
+        // Next advances, then wraps.
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find.next"))
+        XCTAssertTrue(waitForFindCount(count, equals: "2 of 2", timeout: 5),
+                      "next must advance to the second match (got: \(count.label))")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find.next"))
+        XCTAssertTrue(waitForFindCount(count, equals: "1 of 2", timeout: 5),
+                      "next must wrap to the first match (got: \(count.label))")
+
+        // No-results state for a query that cannot match.
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 9))
+        field.typeText("zzzznope")
+        XCTAssertTrue(waitForFindCount(count, equals: "No matches", timeout: 6),
+                      "empty state must be honest (got: \(count.label))")
+
+        // Close restores the steady-state chrome.
+        tap(firstMatch(in: app, identifier: "fleet.conversation.find.close"))
+        XCTAssertTrue(
+            waitUntilGone(firstMatch(in: app, identifier: "fleet.conversation.find.bar")),
+            "find bar must dismiss cleanly"
+        )
+    }
+
+    /// Waits for the find count element's label to equal `text`.
+    private func waitForFindCount(_ element: XCUIElement, equals text: String, timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "label == %@", text)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+            && element.label == text
+    }
+
+    // MARK: - Helpers (same shapes as the U6 suite)
+
+    private func tap(_ element: XCUIElement) {
+        XCTAssertTrue(element.waitForExistence(timeout: 10), "element \(element) should appear")
+        element.tap()
+    }
+
+    private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
+        app.descendants(matching: .any)[identifier]
+    }
+
+    private func waitUntilEnabled(_ element: XCUIElement, timeout: TimeInterval) {
+        let enabled = NSPredicate(format: "isEnabled == true")
+        let expectation = XCTNSPredicateExpectation(predicate: enabled, object: element)
+        wait(for: [expectation], timeout: timeout)
+    }
+
+    @discardableResult
+    private func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
+        let gone = NSPredicate(format: "exists == 0")
+        let expectation = XCTNSPredicateExpectation(predicate: gone, object: element)
+        wait(for: [expectation], timeout: timeout)
+        return !element.exists
+    }
+}

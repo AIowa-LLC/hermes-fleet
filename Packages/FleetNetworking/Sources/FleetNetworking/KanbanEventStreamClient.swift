@@ -29,12 +29,14 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     public let gatewayID: GatewayID
 
     /// HTTP base of the dashboard server (`http(s)://host:port`).
-    private let baseURL: URL
+    /// Build 41: internal — the mutation extension (KanbanTaskMutations.swift)
+    /// shares this actor's request plumbing.
+    let baseURL: URL
     /// WS auth seam — same provider the conversation transport uses.
     private let authenticator: any AuthenticationProviding
     /// HTTP credential resolution for the board fetch, per auth strategy.
-    private let httpCredential: @Sendable () async throws -> HTTPCredential
-    private let urlSession: URLSession
+    let httpCredential: @Sendable () async throws -> HTTPCredential
+    let urlSession: URLSession
     /// WebSocket session factory — the SAME pinning-aware seam the transport
     /// uses (`URLSessionWebSocketSessionFactory(trustHandler:)` in
     /// production), so kanban sockets enforce the gateway's TOFU pin too.
@@ -44,6 +46,8 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
 
     private static let log = Logger(
         subsystem: "com.aiowa.hermesfleet", category: "kanban-stream")
+    /// Build 41: shared with the mutation extension (KanbanTaskMutations).
+    internal static let mutationLog = log
 
     /// The HTTP credential for one board fetch. Never printed (spec §29).
     public enum HTTPCredential: Sendable {
@@ -54,11 +58,11 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
 
     // MARK: State (actor-isolated)
 
-    private var lastCursor: Int = 0
+    internal var lastCursor: Int = 0
     private var stopped = false
     /// Pinned board slug (t_624b81cd — client-side selection). nil = the
     /// gateway operator's ACTIVE board (no `?board=` param rides any URL).
-    private var pinnedBoard: String?
+    internal var pinnedBoard: String?
     /// Active change-event subscribers (fan-out: every subscriber sees every
     /// batch; the socket loop is owned internally, one pump at a time).
     private var subscribers: [UUID: AsyncStream<KanbanEventBatch>.Continuation] = [:]
@@ -156,7 +160,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     /// snapshot + boards fetches). Credential-resolution failures propagate
     /// (a failed password login is an error state, not a silent anonymous
     /// request).
-    private func applyHTTPCredential(to request: inout URLRequest) async throws {
+    internal func applyHTTPCredential(to request: inout URLRequest) async throws {
         switch try await httpCredential() {
         case .none:
             break

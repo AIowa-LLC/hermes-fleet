@@ -21,7 +21,7 @@ final class FleetThemeTests: XCTestCase {
     override func setUp() {
         super.setUp()
         savedAccentRaw = UserDefaults.standard.string(forKey: FleetAccentController.persistKey)
-        FleetAccentController.shared.selection = .gold
+        FleetAccentController.shared.selection = .orange
     }
 
     override func tearDown() {
@@ -197,6 +197,147 @@ final class FleetThemeTests: XCTestCase {
         XCTAssertEqual(FleetTheme.spacingXxl, 32)
     }
 
+
+    // MARK: - Compose pill theme coupling (ADR-0009)
+
+    /// White is the mono accent: stored #1C1C1E in light (16.16:1 on the
+    /// light canvas), resolved #FFFFFF in dark over the Fleet-default dark
+    /// text/background (18.75:1).
+    func testWhiteAccentResolvesPerAppearance() {
+        XCTAssertEqual(FleetAccent.white.highlight, FleetStoredColor(hex: 0x1C1C1E))
+        XCTAssertEqual(
+            FleetAccent.white.palette.palette(forDarkAppearance: false).highlight,
+            FleetStoredColor(hex: 0x1C1C1E),
+            "White keeps its stored light representation in light mode")
+        XCTAssertEqual(
+            FleetAccent.white.palette.palette(forDarkAppearance: true).highlight,
+            FleetStoredColor(hex: 0xFFFFFF),
+            "White resolves to pure white in dark mode")
+        XCTAssertEqual(
+            FleetAccent.white.palette.palette(forDarkAppearance: true).background,
+            FleetThemePalette.fleetDefaultDark.background,
+            "mono dark adopts the Fleet-default dark background")
+    }
+
+    /// The invisible-pair guard accepts the mono palette in BOTH resolutions
+    /// (light 16.16:1, dark 18.75:1 on their canvases).
+    func testWhiteAccentPaletteIsNotAnInvisiblePair() {
+        XCTAssertFalse(FleetAccent.white.palette.hasInvisiblePair)
+    }
+
+    /// matching() round-trips White from its stored triple (no collision
+    /// with Black's #2C2C2E).
+    func testWhiteAccentMatchingRoundTrip() {
+        XCTAssertEqual(FleetAccent.matching(active: FleetAccent.white.palette), .white)
+    }
+
+    /// OCR re-review: Black is the SECOND mono accent. Its stored #2C2C2E
+    /// highlight over the #101216 dark canvas is 1.35:1 — above the
+    /// invisible-pair rejection threshold, so `apply` accepted a palette whose
+    /// tint, unread dots, and badge were effectively invisible in dark mode.
+    /// Black must resolve white in dark, exactly like White.
+    func testBlackAccentResolvesMonoInDarkAppearance() {
+        XCTAssertEqual(FleetAccent.black.highlight, FleetStoredColor(hex: 0x2C2C2E))
+        XCTAssertEqual(
+            FleetAccent.black.palette.palette(forDarkAppearance: false).highlight,
+            FleetStoredColor(hex: 0x2C2C2E),
+            "Black keeps its stored light representation in light mode")
+        XCTAssertEqual(
+            FleetAccent.black.palette.palette(forDarkAppearance: true).highlight,
+            FleetStoredColor(hex: 0xFFFFFF),
+            "Black is mono: it resolves to white in dark mode")
+        XCTAssertEqual(
+            FleetAccent.black.palette.palette(forDarkAppearance: true).background,
+            FleetThemePalette.fleetDefaultDark.background,
+            "mono dark adopts the Fleet-default dark background")
+        XCTAssertFalse(FleetAccent.black.palette.hasInvisiblePair)
+        XCTAssertEqual(FleetAccent.matching(active: FleetAccent.black.palette), .black,
+                       "matching() still round-trips Black from its stored triple")
+        // The dark resolution is legible, not merely non-invisible.
+        let dark = FleetAccent.black.palette.palette(forDarkAppearance: true)
+        XCTAssertGreaterThanOrEqual(
+            FleetThemeContrast.ratio(dark.highlight, dark.background),
+            FleetThemeContrast.highlightMinimum)
+    }
+
+    /// A migrated legacy Black pick resolves mono too — the controller's
+    /// migration builds the accent's own palette, so the fix reaches installs
+    /// that never touched the Settings picker.
+    func testLegacyBlackAccentMigrationResolvesMonoInDarkAppearance() {
+        let defaults = UserDefaults(suiteName: "testFleetThemeBlackMigration")!
+        defaults.removePersistentDomain(forName: "testFleetThemeBlackMigration")
+        defaults.set(FleetAccent.black.rawValue, forKey: FleetAccentController.persistKey)
+
+        let controller = FleetThemeController(defaults: defaults)
+
+        XCTAssertEqual(controller.activePalette.appearance, .adaptiveMono)
+        XCTAssertEqual(
+            controller.resolvedTheme(isDarkAppearance: false, isIncreasedContrast: false)
+                .resolvedPalette.highlight,
+            FleetStoredColor(hex: 0x2C2C2E))
+        XCTAssertEqual(
+            controller.resolvedTheme(isDarkAppearance: true, isIncreasedContrast: false)
+                .resolvedPalette.highlight,
+            FleetStoredColor(hex: 0xFFFFFF),
+            "a migrated Black install must not keep an invisible dark highlight")
+        XCTAssertNil(defaults.data(forKey: FleetThemeController.persistKey),
+                     "migration stays in memory — the V1 schema is written only by Apply")
+    }
+
+    // MARK: - Floating-surface shadow token (issue #6 call-site audit)
+
+    /// The composer pill's shadow is a THEME token, not a hard-coded platform
+    /// black: palette-derived ink (near-black in both appearances — a shadow
+    /// darkens) at the appearance's own strength.
+    func testShadowTokenIsPaletteDerivedWithPerAppearanceStrength() {
+        let lightShadow = resolvedChannels(FleetThemeValues.default.shadow, traits: light)
+        XCTAssertEqual(lightShadow.a, 0.08, accuracy: 0.001, "light shadow strength")
+        XCTAssertEqual(lightShadow.r, 0.972549 * 0.08, accuracy: 0.001, "light ink red")
+        XCTAssertEqual(lightShadow.g, 0.976471 * 0.08, accuracy: 0.001, "light ink green")
+        XCTAssertEqual(lightShadow.b, 0.988235 * 0.08, accuracy: 0.001, "light ink blue")
+
+        let darkTheme = FleetThemeValues(
+            palette: .fleetDefault, isDarkAppearance: true, isIncreasedContrast: false)
+        let darkShadow = resolvedChannels(darkTheme.shadow, traits: dark)
+        XCTAssertEqual(darkShadow.a, 0.20, accuracy: 0.001, "dark shadow strength")
+        XCTAssertEqual(darkShadow.r, 0.062745 * 0.08, accuracy: 0.001, "dark ink red")
+        XCTAssertEqual(darkShadow.g, 0.070588 * 0.08, accuracy: 0.001, "dark ink green")
+        XCTAssertEqual(darkShadow.b, 0.086275 * 0.08, accuracy: 0.001, "dark ink blue")
+
+        // Palette-derived, not canvas-inverted: a CUSTOM light canvas in dark
+        // appearance still darkens (a glow would read as a highlight, not a
+        // floating surface).
+        let lightCanvasInDark = FleetThemeValues(
+            palette: FleetThemePalette(
+                highlight: FleetStoredColor(hex: 0x5B35D5),
+                text: FleetStoredColor(hex: 0x1C1C1E),
+                background: FleetStoredColor(hex: 0xFFFFFF)),
+            isDarkAppearance: true,
+            isIncreasedContrast: false)
+        let customShadow = resolvedChannels(lightCanvasInDark.shadow, traits: dark)
+        XCTAssertEqual(customShadow.r, 1.0 * 0.08, accuracy: 0.001)
+        XCTAssertEqual(customShadow.a, 0.20, accuracy: 0.001)
+    }
+
+    private func resolvedChannels(
+        _ color: Color, traits: UITraitCollection
+    ) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(color).resolvedColor(with: traits).getRed(&r, green: &g, blue: &b, alpha: &a)
+        return (r, g, b, a)
+    }
+
+    /// neutralFill keeps the selection visible on the canvas in BOTH modes
+    /// (round-3 QA catch: tertiarySystemBackground vanished on #F8F9FC).
+    func testNeutralFillResolvesPerAppearance() {
+        assertResolvedHex(FleetTheme.neutralFill, hex: 0xE4E4E9,
+                          traits: UITraitCollection(userInterfaceStyle: .light),
+                          name: "neutralFill light")
+        assertResolvedHex(FleetTheme.neutralFill, hex: 0x2C2C2E,
+                          traits: UITraitCollection(userInterfaceStyle: .dark),
+                          name: "neutralFill dark")
+    }
+
     // MARK: - Typography (SPEC §14: SF default design, Dynamic Type styles)
 
     func testTypographyScale() {
@@ -286,9 +427,9 @@ final class FleetThemeTests: XCTestCase {
         suite.removePersistentDomain(forName: "testFOS7AccentRollback")
         let controller = FleetAccentController(defaults: suite)
         XCTAssertEqual(controller.selection, .blue, "fresh install default")
-        controller.selection = .gold
-        XCTAssertEqual(suite.string(forKey: FleetAccentController.persistKey), "gold")
-        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .gold, "stored rollback value survives")
+        controller.selection = .orange
+        XCTAssertEqual(suite.string(forKey: FleetAccentController.persistKey), "orange")
+        XCTAssertEqual(FleetAccentController(defaults: suite).selection, .orange, "stored rollback value survives")
         suite.set("teal-not-a-real-accent", forKey: FleetAccentController.persistKey)
         XCTAssertEqual(FleetAccentController(defaults: suite).selection, .blue, "stale raw falls back")
     }
@@ -415,16 +556,16 @@ final class FleetThemeTests: XCTestCase {
     func testLegacyAccentMigrationKeepsDefaultTextAndBackgroundAdaptive() {
         let defaults = UserDefaults(suiteName: "testFleetThemeMigrationAppearance")!
         defaults.removePersistentDomain(forName: "testFleetThemeMigrationAppearance")
-        defaults.set(FleetAccent.gold.rawValue, forKey: FleetAccentController.persistKey)
+        defaults.set(FleetAccent.orange.rawValue, forKey: FleetAccentController.persistKey)
 
         let controller = FleetThemeController(defaults: defaults)
         let light = controller.resolvedTheme(isDarkAppearance: false, isIncreasedContrast: false)
         let dark = controller.resolvedTheme(isDarkAppearance: true, isIncreasedContrast: false)
 
-        XCTAssertEqual(light.resolvedPalette.highlight, FleetAccent.gold.legacyHighlight)
+        XCTAssertEqual(light.resolvedPalette.highlight, FleetAccent.orange.legacyHighlight)
         XCTAssertEqual(light.resolvedPalette.text, FleetThemePalette.fleetDefault.text)
         XCTAssertEqual(light.resolvedPalette.background, FleetThemePalette.fleetDefault.background)
-        XCTAssertEqual(dark.resolvedPalette.highlight, FleetAccent.gold.legacyHighlight)
+        XCTAssertEqual(dark.resolvedPalette.highlight, FleetAccent.orange.legacyHighlight)
         XCTAssertEqual(dark.resolvedPalette.text, FleetThemePalette.fleetDefaultDark.text)
         XCTAssertEqual(dark.resolvedPalette.background, FleetThemePalette.fleetDefaultDark.background)
     }

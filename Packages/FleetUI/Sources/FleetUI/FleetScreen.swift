@@ -24,14 +24,40 @@ public enum FleetScreen: Hashable, Sendable, Codable {
     case skills(GatewayID, profile: ProfileSlug? = nil)
     case memoryGraph(GatewayID, profile: ProfileSlug? = nil)
     case projects(GatewayID, profile: ProfileSlug? = nil, focusPath: String? = nil)
+    /// Card D: the device-local Artifacts destination (observed generated
+    /// media with source conversation + gateway). Lives on the Fleet stack;
+    /// reached from the navigation drawer.
+    case artifacts
+    /// ADR-0011 W3: Settings → Security sub-screen (App Lock).
+    case settingsSecurity
+    /// ADR-0011 W4: Settings → Data & Storage sub-screen (cache clear).
+    case settingsData
 
     public var owner: FleetTab {
         switch self {
-        case .roster, .bots, .botDetail, .botRoutines, .room, .gatewayGroups: .bots
+        case .roster, .bots, .botDetail, .botRoutines, .gatewayGroups: .bots
+        case .room: .groups
         case .conversation(_, _, let canonical): canonical ? .bots : .chats
         case .activity: .fleet
-        default: .gateways
+        // Build 41: Kanban owns the Kanban experience (from Gateway Detail
+        // too — routing into the tab with the gateway context selected).
+        case .kanban, .gatewayKanban: .kanban
+        // Build 43: Gateways is no longer a tab — every gateway-management
+        // and gateway-resource surface is owned by Fleet and PUSHED on the
+        // Fleet stack (the dashboard's Gateways section is the entry).
+        case .gateways, .gatewayDetail, .gatewayConnection, .gatewayHealth,
+             .health, .cron, .skills, .memoryGraph, .projects, .artifacts:
+            .fleet
+        // ADR-0011: the Settings sub-screens own to the Settings tab.
+        case .settingsSecurity, .settingsData:
+            .settings
         }
+    }
+
+    /// ADR-0010: room destinations own to the Groups tab.
+    public var isRoom: Bool {
+        if case .room = self { return true }
+        return false
     }
 
     public var gatewayID: GatewayID? {
@@ -42,6 +68,15 @@ public enum FleetScreen: Hashable, Sendable, Codable {
         case .room(let id): id.gatewayID
         default: nil
         }
+    }
+
+    /// Device-local bridged rooms use a synthetic gateway scope and remain
+    /// navigable without a registered gateway connection.
+    public var isDeviceLocalRoom: Bool {
+        if case .room(let id) = self {
+            return id.gatewayID == BridgedRooms.gatewayScope
+        }
+        return false
     }
 
     /// Focused-path intent for Projects routes (transcript file references).
@@ -57,13 +92,17 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
     /// Identifier for the UserDefaults-backed navigation-state store — not a secret.
     public static let storageKey = "fleet.navigation.v1" // gitleaks:allow
     public private(set) var version = 1
-    public var selection: FleetTab = .fleet
+    /// Build 41: Bots is the normal launch tab.
+    public var selection: FleetTab = .bots
     public var paths: [FleetTab: [FleetScreen]] = [:]
     public init() {}
 
     public mutating func open(_ screen: FleetScreen) {
         selection = screen.owner
-        if screen == .roster || screen == .gateways {
+        // `.roster` is the Bots tab's own ROOT (pop to it). `.gateways` is
+        // NOT Fleet's root — the dashboard is — so it must PUSH on the
+        // Fleet stack (Build 43: Gateways lives under Fleet).
+        if screen == .roster {
             paths[selection] = []
         } else if let index = paths[selection]?.firstIndex(of: screen) {
             paths[selection] = Array(paths[selection]!.prefix(through: index))
@@ -78,12 +117,95 @@ public struct FleetNavigationState: Codable, Equatable, Sendable {
         return decoded
     }
 
+    // Build 43 legacy restore: FleetTab.gateways was REMOVED from the enum.
+    // A persisted state saved by Build ≤42 can carry selection="gateways"
+    // and/or a "gateways" path entry. Decoding must not fail (a failure would
+    // discard the user's ENTIRE navigation preference set via `restore`'s
+    // Self() fallback) — the legacy tab maps to Fleet and its stack is
+    // restored ON the Fleet stack, preserving every unrelated tab's path.
+    //
+    // Wire format note: Swift's synthesized Codable encodes
+    // [FleetTab: [FleetScreen]] as an UNKEYED array of alternating
+    // key/value pairs (dictionary keys that are not String/Int). The custom
+    // decoder below decodes exactly that shape, remapping the retired
+    // "gateways" key onto Fleet. Encoding stays synthesized (unchanged), so
+    // current round-trips remain byte-stable.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        let rawSelection = try container.decodeIfPresent(String.self, forKey: .selection)
+        if let rawSelection {
+            selection = FleetTab(rawValue: rawSelection)
+                ?? Self.legacyRestoredSelection(rawSelection)
+                ?? .bots
+        } else {
+            selection = .bots
+        }
+        var merged: [FleetTab: [FleetScreen]] = [:]
+        if container.contains(.paths) {
+            var rawPaths = try container.nestedUnkeyedContainer(forKey: .paths)
+            while !rawPaths.isAtEnd {
+                let key = try rawPaths.decode(String.self)
+                let screens = try rawPaths.decode([FleetScreen].self)
+                if let tab = FleetTab(rawValue: key) {
+                    merged[tab, default: []].append(contentsOf: screens)
+                } else if key == Self.legacyGatewaysRawValue, !screens.isEmpty {
+                    // The retired Gateways tab's stack is appended to
+                    // Fleet's (Fleet owns those destinations now). When both
+                    // existed, Fleet's own path stays first; the gateway
+                    // screens restore deeper, so no saved destination is
+                    // lost.
+                    merged[.fleet, default: []].append(contentsOf: screens)
+                }
+            }
+        }
+        // ADR-0010: `.room` screens own to the Groups tab now. Persisted paths
+        // from pre-Groups installs carried room destinations on the Chats
+        // stack AND — for every install that ran Build ≤42, where `.room` was
+        // still owned by `.bots` — on the BOTS stack (the roster's
+        // `fleet.room.row.*` rows and the old Chats Groups section both filed
+        // through `open()`, which uses `screen.owner`). Migrate rooms out of
+        // BOTH legacy owners onto the Groups path (order preserved, other tabs
+        // untouched) so a restored stack never pushes a room on a stack that no
+        // longer owns it (and `open(.room)`'s same-screen dedupe stays
+        // coherent).
+        var migratedRooms: [FleetScreen] = []
+        for legacyOwner in [FleetTab.chats, .bots] {
+            guard let path = merged[legacyOwner], path.contains(where: \.isRoom) else { continue }
+            merged[legacyOwner] = path.filter { !$0.isRoom }
+            migratedRooms.append(contentsOf: path.filter { $0.isRoom })
+        }
+        if !migratedRooms.isEmpty {
+            merged[.groups, default: []].insert(contentsOf: migratedRooms, at: 0)
+        }
+        paths = merged
+    }
+
+    /// Raw value of the retired Build ≤42 Gateways tab case.
+    private static let legacyGatewaysRawValue = "gateways"
+
+    /// Legacy persisted selections that no longer have a live case map to
+    /// their owning surface; unknown values fall back to the launch tab.
+    private static func legacyRestoredSelection(_ raw: String) -> FleetTab? {
+        switch raw.lowercased() {
+        case legacyGatewaysRawValue: return .fleet
+        default: return nil
+        }
+    }
+
     public static func legacyTab(_ name: String) -> FleetTab? {
         switch name.lowercased() {
         case "home", "command", "fleet": .fleet
         case "chats": .chats
+        case "groups": .groups
         case "bots", "roster": .bots
-        case "control", "gateways", "workspace", "projects", "kanban": .gateways
+        case "kanban", "board": .kanban
+        case "settings": .settings
+        case "about": .about
+        // Build 43: the Gateways tab is retired; every legacy gateway
+        // destination (control / gateways / workspace / projects) lands on
+        // Fleet, which now owns the gateway-management experience.
+        case "control", "gateways", "workspace", "projects": .fleet
         default: nil
         }
     }

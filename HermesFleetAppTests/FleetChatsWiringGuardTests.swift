@@ -25,6 +25,34 @@ final class FleetChatsWiringGuardTests: XCTestCase {
     }
 
     private var chatsPath: String { "Packages/FleetUI/Sources/FleetUI/FleetDestinations.swift" }
+    private var groupsHomePath: String { "Packages/FleetUI/Sources/FleetUI/GroupsHomeView.swift" }
+
+    // MARK: - ADR-0010: Groups separated from Chats
+
+    /// The Chats screen must not render or create groups: the section, the
+    /// New Group menu entry, and the CreateRoomSheet wiring are retired.
+    func testChatsSourceRetainsNoGroupSurfaces() throws {
+        let source = try source(chatsPath)
+        XCTAssertFalse(source.contains("Section(\"Groups\")"),
+                       "Chats must not render a Groups section (ADR-0010)")
+        XCTAssertFalse(source.contains("CreateRoomSheet"),
+                       "New Group creation moved to the Groups tab")
+        XCTAssertFalse(source.contains("showingGroupCompose"),
+                       "the group-compose state is retired from Chats")
+        XCTAssertFalse(source.contains("fleet.chats.groups.empty"),
+                       "the chats groups empty-state id is retired")
+    }
+
+    /// The Groups home owns the create + list surfaces.
+    func testGroupsHomeOwnsGroupSurfaces() throws {
+        let source = try source(groupsHomePath)
+        XCTAssertTrue(source.contains("CreateRoomSheet"),
+                      "Groups home hosts group creation")
+        XCTAssertTrue(source.contains("RoomRowView(room:"),
+                      "Groups rows reuse the shared room row")
+        XCTAssertTrue(source.contains("FleetScreen.room(room.id)"),
+                      "rows deep-link by room destination value")
+    }
     private var botDetailPath: String { "Packages/FleetUI/Sources/FleetUI/BotDetailView.swift" }
     private var projectsPath: String { "Packages/FleetUI/Sources/FleetUI/ProjectsView.swift" }
 

@@ -22,6 +22,9 @@ final class U4DashboardUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
+        // Build 41+: cold launch lands on BOTS — this suite asserts FLEET
+        // dashboard content, so select Fleet first (verified switch).
+        UITabNavigation.openTabToFleet(app)
         return app
     }
 
@@ -112,7 +115,7 @@ final class U4DashboardUITests: XCTestCase {
             "the Gateways See all must push the registry list"
         )
         // Back returns to the dashboard: the Fleet tab owns the Home stack.
-        app.tabBars.firstMatch.buttons["Fleet"].tap()
+        UITabNavigation.selectTab(app, label: "Fleet")
         XCTAssertTrue(
             firstMatch(in: app, identifier: "fleet.dashboard.glance.connected").waitForExistence(timeout: 10),
             "the Fleet tab must return to the dashboard"

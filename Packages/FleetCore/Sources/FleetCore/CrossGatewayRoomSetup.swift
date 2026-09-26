@@ -18,7 +18,13 @@ public struct RoomLinkTargetSnapshot: Sendable {
             && n.endpoint?.available == true && n.endpoint?.url != nil
     }
     public var supportsHome: Bool {
-        driver && supportsDirect && ["groups.create", "groups.state", "groups.peer.register"].allSatisfy(negotiation.methods.contains)
+        // The authority gateway is the receiver of groups.create. It does
+        // not need to be registered as its own RoomLink peer, so requiring a
+        // default-profile direct-link endpoint here incorrectly excluded
+        // otherwise valid homes. Remote participants still use the stricter
+        // supportsTarget gate below.
+        negotiation.enabled && driver && !negotiation.authorityGatewayID.isEmpty
+            && ["groups.create", "groups.state", "groups.peer.register"].allSatisfy(negotiation.methods.contains)
     }
     public var supportsTarget: Bool {
         supportsDirect && ["groups.peer.invite", "groups.peer.revoke"].allSatisfy(negotiation.methods.contains)

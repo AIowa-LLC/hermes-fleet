@@ -255,7 +255,68 @@ final class FOS5BotsGroupsChatsTests: XCTestCase {
         XCTAssertEqual(key1, "gw1|sec-1")
     }
 
+    func testLegacyArchiveSuppressionIsGatewayScoped() {
+        let hosted = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: ws, key: "room-collision"),
+            name: "Planning",
+            hosted: HostedRoomState(authorityGatewayID: "install:workstation", authorityEpoch: 1))
+        let foreignProjection = FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: lab, key: "id:room-collision"),
+            name: "Planning")
+        let sameGatewayProjection = FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: ws, key: "id:room-collision"),
+            name: "Planning")
+
+        XCTAssertTrue(FleetRosterView.shouldShowLegacyArchiveRoom(
+            foreignProjection, hostedRooms: [hosted]),
+            "a bare room id on another gateway is an unrelated archive record")
+        XCTAssertFalse(FleetRosterView.shouldShowLegacyArchiveRoom(
+            sameGatewayProjection, hostedRooms: [hosted]),
+            "only the verified same-gateway continuation is suppressed")
+    }
+
     // MARK: 5/6. SessionSummary.lastActive + Chats semantics unchanged
+
+    /// OCR re-review (medium): the Groups section renders
+    /// `filteredRooms + filteredArchiveRooms`, so the roster's empty-state gate
+    /// must count the SAME rows. A gateway whose only groups are legacy
+    /// projections — or a search matching only an archived group — must not
+    /// land on `noBotsAnywhere`.
+    func testRoomsRenderableCountsArchiveRowsForTheGate() {
+        let hosted = FleetRoom(
+            id: FleetRoomID(provenance: .hosted, gatewayID: ws, key: "room-1"),
+            name: "Planning")
+        let archiveOnly = FleetRoom(
+            id: FleetRoomID(provenance: .desktopLegacy, gatewayID: lab, key: "id:room-9"),
+            name: "Archived")
+
+        XCTAssertTrue(FleetRosterView.roomsRenderable(
+            gatewayID: ws, hostedRooms: [hosted], archiveRooms: []),
+            "a hosted group renders")
+        XCTAssertTrue(FleetRosterView.roomsRenderable(
+            gatewayID: lab, hostedRooms: [hosted], archiveRooms: [archiveOnly]),
+            "an archive-only gateway still renders a Groups section")
+        XCTAssertFalse(FleetRosterView.roomsRenderable(
+            gatewayID: GatewayID(rawValue: "bare"), hostedRooms: [hosted], archiveRooms: [archiveOnly]),
+            "a gateway with neither hosted nor archive rows has nothing to render")
+    }
+
+    /// OCR finding (low): the local archive hide is FILTER-AWARE — hidden rows
+    /// come back while the user searches (every row in `entries` already
+    /// matches the query, so a search match is never hidden). Without this the
+    /// only affordance that reveals an archived conversation would be gone.
+    func testLocalArchiveHideIsFilterAware() {
+        let hidden: Set<String> = ["ws/default/s1"]
+        XCTAssertTrue(FleetChatsView.isLocallyHidden(
+            entryID: "ws/default/s1", hiddenEntryIDs: hidden, query: ""),
+            "an archived conversation stays hidden while the list is unfiltered")
+        XCTAssertFalse(FleetChatsView.isLocallyHidden(
+            entryID: "ws/default/s1", hiddenEntryIDs: hidden, query: "archived"),
+            "searching reveals the archived conversation (never hides a search match)")
+        XCTAssertFalse(FleetChatsView.isLocallyHidden(
+            entryID: "ws/default/s2", hiddenEntryIDs: hidden, query: ""),
+            "rows that were never hidden are unaffected")
+    }
 
     func testSessionSummaryCarriesLastActiveWithoutChangingSort() {
         let older = SessionSummary(id: "a", title: "A", startedAt: 100, lastActive: 999, messageCount: 1)
@@ -269,5 +330,81 @@ final class FOS5BotsGroupsChatsTests: XCTestCase {
             return $0.startedAt > $1.startedAt
         }
         XCTAssertEqual(sorted.map(\.id), ["b", "a"], "startedAt ordering unchanged by lastActive")
+    }
+
+    // MARK: 7. Fleet-wide create sheet — eligibility probing
+
+    /// One probe per DISTINCT route, run concurrently. The serial loop this
+    /// replaced awaited `roomEligibilityMessage` once per candidate — each
+    /// call can issue RoomLink probes against every other gateway — so the
+    /// sheet's "Checking connected gateways…" state cost N sequential probe
+    /// rounds and repeated identical work for Bots sharing a route.
+    func testRoomEligibilityProbesProbeEachDistinctRouteOnceWithOverlap() async {
+        let researcher = Route(
+            gatewayID: GatewayID(rawValue: "ws"), profileSlug: ProfileSlug(rawValue: "researcher"))
+        let writerA = Route(
+            gatewayID: GatewayID(rawValue: "ws"), profileSlug: ProfileSlug(rawValue: "writer"))
+        let writerB = Route(
+            gatewayID: GatewayID(rawValue: "lab"), profileSlug: ProfileSlug(rawValue: "writer"))
+
+        var routes: [Route] = []
+        for index in 0..<12 {
+            routes.append(Route(
+                gatewayID: GatewayID(rawValue: "gw\(index)"),
+                profileSlug: ProfileSlug(rawValue: "bot\(index)")))
+        }
+        // Same-route candidates: a fleet-wide picker can present the same
+        // route more than once across refreshes.
+        routes.append(contentsOf: [researcher, writerA, researcher, writerB, writerA])
+
+        let recorder = ProbeRecorder()
+        let reasons = await RoomEligibilityProbes.evaluate(routes: routes) { route in
+            await recorder.begin(route)
+            try? await Task.sleep(for: .milliseconds(30))
+            await recorder.end()
+            return route == researcher ? "No connected gateway can host this Group right now." : nil
+        }
+
+        let probed = await recorder.probed
+        let maxInFlight = await recorder.maxInFlight
+        XCTAssertEqual(probed.count, 15, "each distinct route is probed exactly once")
+        XCTAssertEqual(Set(probed).count, 15, "no route is probed twice")
+        XCTAssertTrue(Set(probed).contains(researcher))
+        XCTAssertTrue(Set(probed).contains(writerA))
+        XCTAssertTrue(Set(probed).contains(writerB))
+        XCTAssertEqual(reasons, [researcher: "No connected gateway can host this Group right now."],
+                       "only routes with a reason are reported, keyed by route")
+        XCTAssertGreaterThan(maxInFlight, 1, "probes overlap instead of running serially")
+        XCTAssertLessThanOrEqual(maxInFlight, RoomEligibilityProbes.maxConcurrent,
+                                 "the in-flight bound is respected")
+    }
+
+    func testRoomEligibilityProbesWithNoCandidatesSkipsProbing() async {
+        let recorder = ProbeRecorder()
+        let reasons = await RoomEligibilityProbes.evaluate(routes: []) { route in
+            await recorder.begin(route)
+            return "unreachable"
+        }
+        XCTAssertTrue(reasons.isEmpty)
+        let probed = await recorder.probed
+        XCTAssertTrue(probed.isEmpty, "no candidates means no probes")
+    }
+}
+
+/// Concurrency recorder for `RoomEligibilityProbes` — counts distinct probes
+/// and observes how many ran at the same time.
+private actor ProbeRecorder {
+    private(set) var probed: [Route] = []
+    private var inFlight = 0
+    private(set) var maxInFlight = 0
+
+    func begin(_ route: Route) {
+        probed.append(route)
+        inFlight += 1
+        maxInFlight = max(maxInFlight, inFlight)
+    }
+
+    func end() {
+        inFlight -= 1
     }
 }

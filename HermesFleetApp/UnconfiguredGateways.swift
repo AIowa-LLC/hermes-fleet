@@ -90,7 +90,7 @@ private struct UnconfiguredConversation: ConversationProviding {
     ) async throws -> ConversationSession {
         throw ConversationError.notConnected
     }
-    func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession {
+    func resumeSession(sessionID: String, lastEventID: Int?, profile: String? = nil) async throws -> ConversationSession {
         throw ConversationError.notConnected
     }
     func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission {

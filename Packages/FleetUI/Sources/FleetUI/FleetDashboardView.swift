@@ -517,6 +517,19 @@ public struct FleetDashboardView: View {
                     gatewayRow(gateway)
                 }
             }
+            // Build 43: the Gateways tab is retired — Fleet owns gateway
+            // management. This is the obvious first-class entry to the FULL
+            // registry cockpit (add / edit / pair / connect / remove), not
+            // buried behind the section header's "See all" affordance.
+            NavigationLink(value: FleetScreen.gateways) {
+                Label("Manage Gateways", systemImage: "server.rack")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, FleetTheme.spacingSm)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("fleet.dashboard.gateways.manage")
         }
     }
 

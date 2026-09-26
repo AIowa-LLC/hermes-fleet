@@ -37,6 +37,50 @@ public enum BotAvatarIdentity {
         return defaultShapes[Int(hash % UInt32(defaultShapes.count))]
     }
 
+    // MARK: - Identity-derived fallback color
+
+    /// Curated, accessible avatar identity palette. These are BOT IDENTITY
+    /// colors, not interface chrome: they are deliberately independent of
+    /// `FleetTheme` and of any user highlight choice, so changing the theme
+    /// can never recolor a Bot that has no explicit color metadata.
+    ///
+    /// Curated bands (pinned by `BotAvatarIdentityColorTests`): every entry
+    /// keeps the renderer's near-black eye ink at ≥ 3:1, stays visible on
+    /// both the dark and light elevated avatar surfaces, and lands in the
+    /// 0.18–0.60 relative-luminance band so the face reads in either
+    /// appearance without a per-color foreground override.
+    public static let fallbackColors: [UInt32] = [
+        0x0A84FF, 0x40C8E0, 0x30B561, 0xFF9F0A,
+        0xFF6482, 0xBF7AF6, 0xFF453A, 0x6E7BFF,
+    ]
+
+    /// FNV-1a 32 over UTF-8 — deterministic across processes, launches,
+    /// devices, and OS versions. Never Swift's `Hasher` (per-process random
+    /// seed), which would recolor the same Bot on every relaunch.
+    public static func stableHash(_ identity: String) -> UInt32 {
+        var hash: UInt32 = 0x811C9DC5
+        for byte in identity.utf8 {
+            hash = (hash ^ UInt32(byte)) &* 0x01000193
+        }
+        return hash
+    }
+
+    /// Stable fallback avatar color for an identity string. The identity is
+    /// the CANONICAL route id (`gateway#slug`), never the display name — a
+    /// rename must not recolor a Bot. The value is derived, not persisted:
+    /// no new storage exists for colors that can be computed deterministically.
+    public static func fallbackColorHex(identity: String) -> UInt32 {
+        let key = identity.isEmpty ? "fleet" : identity
+        return fallbackColors[Int(stableHash(key) % UInt32(fallbackColors.count))]
+    }
+
+    /// Canonical-route convenience (preferred entry point when a `Route` is
+    /// available): same gateway, same slug → same color, forever; same slug
+    /// on a different gateway is a distinct Bot and derives independently.
+    public static func fallbackColorHex(route: Route) -> UInt32 {
+        fallbackColorHex(identity: route.id)
+    }
+
     /// Whether a shape string is the deterministic blobatar family
     /// (`blobatar`, `blobatar:<seed>`, `blobatar:<seed>:<kind>`).
     public static func isBlobShape(_ shape: String) -> Bool {

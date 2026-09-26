@@ -23,14 +23,22 @@ final class RoomChatViewModelTests: XCTestCase {
 
         func seed(_ events: [HostedRoomEventValue]) { self.events = events }
 
+        var replayAuthorityGatewayID = "workstation"
+        var replayAuthorityEpoch = 1
+
+        func setReplayAuthority(gatewayID: String, epoch: Int) {
+            replayAuthorityGatewayID = gatewayID
+            replayAuthorityEpoch = epoch
+        }
+
         func replay(roomID: String, sinceSeq: Int, limit: Int) async throws -> RoomLogPageSlice {
             RoomLogPageSlice(
                 events: events.filter { $0.seq > sinceSeq },
                 cursor: events.map(\.seq).max() ?? 0,
                 latestSeq: events.map(\.seq).max() ?? 0,
                 hasMore: false,
-                authorityGatewayID: "workstation",
-                authorityEpoch: 1)
+                authorityGatewayID: replayAuthorityGatewayID,
+                authorityEpoch: replayAuthorityEpoch)
         }
 
         func send(roomID: String, text: String, threadID: String?) async throws -> Int {
@@ -58,13 +66,20 @@ final class RoomChatViewModelTests: XCTestCase {
             approveChoices.append(choice)
         }
 
-        func createRoom(name: String, members: [[String: String]]) async throws -> String {
+        func createRoom(roomID: String, name: String, members: [[String: String]]) async throws -> String {
             "room-new"
         }
     }
 
     private struct StubDriverStatus: RoomDriverStatusProviding {
         var status: RoomDriverStatus?
+        func driverStatus(roomID: String) async throws -> RoomDriverStatus? { status }
+    }
+
+    private actor MutableDriverStatus: RoomDriverStatusProviding {
+        var status: RoomDriverStatus?
+        init(_ status: RoomDriverStatus?) { self.status = status }
+        func set(_ status: RoomDriverStatus?) { self.status = status }
         func driverStatus(roomID: String) async throws -> RoomDriverStatus? { status }
     }
 
@@ -198,6 +213,62 @@ final class RoomChatViewModelTests: XCTestCase {
             "sent message lands in the transcript after replay refresh")
     }
 
+    func testHostedWorkIndicatorTracksStatusAndApproval() async throws {
+        let commands = makeCommands()
+        let status = MutableDriverStatus(RoomDriverStatus(
+            working: false, blocked: false, counts: [:],
+            pendingRetries: [], pendingApprovals: []))
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: status)
+        await vm.start()
+        defer { vm.stopObserving() }
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+
+        let sent = await vm.send("Please investigate")
+        XCTAssertTrue(sent)
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["The room is working…"],
+                       "accepted send stays visible while the hosted driver starts")
+
+        await status.set(RoomDriverStatus(
+            working: true, blocked: false, counts: [:],
+            pendingRetries: [], pendingApprovals: []))
+        await vm.refresh()
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["The room is working…"])
+
+        let approval = RoomPendingApproval(
+            memberID: "researcher", taskID: "task-1", executionGeneration: 1,
+            requestID: "req-1", approval: ["prompt": .string("Continue?")])
+        await status.set(RoomDriverStatus(
+            working: true, blocked: true, counts: [:],
+            pendingRetries: [], pendingApprovals: [approval]))
+        await vm.refresh()
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["Waiting for your answer…"])
+        XCTAssertEqual(vm.workIndicators.map(\.showsSpinner), [false])
+
+        await status.set(RoomDriverStatus(
+            working: false, blocked: false, counts: [:],
+            pendingRetries: [], pendingApprovals: []))
+        await vm.refresh()
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+    }
+
+    func testReadOnlyRoomNeverShowsWorkIndicator() async throws {
+        let vm = RoomChatViewModel(room: legacyRoom(), commands: nil)
+        await vm.start()
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+    }
+
+    func testAcceptedHostedSendGetsBoundedIndicatorWithoutDriverStatus() async throws {
+        let vm = RoomChatViewModel(
+            room: hostedRoom(methods: ["groups.send", "groups.log"]),
+            commands: makeCommands(), driverStatus: StubDriverStatus(status: nil))
+        await vm.start()
+        let sent = await vm.send("Hello")
+        XCTAssertTrue(sent)
+        XCTAssertEqual(vm.workIndicators.map(\.text), ["The room is working…"])
+        vm.stopObserving()
+        XCTAssertTrue(vm.workIndicators.isEmpty)
+    }
+
     // MARK: D16 controls
 
     func testStopRetryApproveRideCommandSeam() async throws {
@@ -283,5 +354,64 @@ final class RoomChatViewModelTests: XCTestCase {
         _ = await vm.send("hello")
         XCTAssertEqual(vm.attemptedWriteCount, 0)
         XCTAssertNotNil(vm.disabledExplanation)
+    }
+
+    // MARK: Gateway-authority fence on replay (QA P1)
+
+    func testReplayRejectsForeignAuthorityPage() async throws {
+        let commands = makeCommands()
+        await commands.seed([
+            HostedRoomEventValue(
+                roomID: "room-alpha", seq: 1, eventID: "e-1", kind: "message.member",
+                actorKind: "member", actorID: "researcher", payloadText: "foreign text",
+                createdAt: 1_757_000_000)
+        ])
+        await commands.setReplayAuthority(gatewayID: "rogue-gateway", epoch: 1)
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: nil)
+        await vm.start()
+
+        XCTAssertTrue(
+            vm.transcript.isEmpty,
+            "a foreign-authority replay page must never render as authoritative history")
+        XCTAssertEqual(
+            vm.errorMessage,
+            RoomCommandFailure.foreignAuthority("rogue-gateway").explanation,
+            "typed authority-drift reload prompt surfaces")
+    }
+
+    func testReplayRejectsEpochRegression() async throws {
+        let commands = makeCommands()
+        await commands.seed([
+            HostedRoomEventValue(
+                roomID: "room-alpha", seq: 1, eventID: "e-1", kind: "message.member",
+                actorKind: "member", actorID: "researcher", payloadText: "stale page",
+                createdAt: 1_757_000_000)
+        ])
+        await commands.setReplayAuthority(gatewayID: "workstation", epoch: 0)
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: nil)
+        await vm.start()
+
+        XCTAssertTrue(
+            vm.transcript.isEmpty,
+            "an epoch-regressed page must never render as authoritative history")
+        XCTAssertNotNil(vm.errorMessage, "authority-drift copy surfaces on epoch regression")
+    }
+
+    func testReplayAcceptsMatchingAndAdvancedAuthority() async throws {
+        let commands = makeCommands()
+        await commands.seed([
+            HostedRoomEventValue(
+                roomID: "room-alpha", seq: 1, eventID: "e-1", kind: "message.member",
+                actorKind: "member", actorID: "researcher", payloadText: "current",
+                createdAt: 1_757_000_000)
+        ])
+        // Same gateway, advanced epoch (legitimate authority advance) merges.
+        await commands.setReplayAuthority(gatewayID: "workstation", epoch: 5)
+        let vm = RoomChatViewModel(room: hostedRoom(), commands: commands, driverStatus: nil)
+        await vm.start()
+
+        XCTAssertEqual(vm.transcript.count, 1, "matching-authority page still merges")
+        XCTAssertEqual(vm.transcript.first?.text, "current")
+        XCTAssertNil(vm.errorMessage)
     }
 }

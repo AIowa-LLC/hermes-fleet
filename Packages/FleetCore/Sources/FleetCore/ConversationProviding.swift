@@ -23,7 +23,9 @@ public protocol ConversationProviding: Sendable {
     ) async throws -> ConversationSession
 
     /// Resume an existing conversation via `session.resume`.
-    /// - Parameter sessionID: the runtime session id to reattach.
+    /// - Parameter sessionID: the stored/list session id to reattach.
+    /// - Parameter profile: the owning gateway profile used to select the
+    ///   profile-scoped session store.
     /// - Parameter lastEventID: t_8401d3c3 — when non-nil, the client's last
     ///   APPLIED event seq for this session is included as `last_seen` in the
     ///   resume params, so the (re)subscribe itself declares the resume point.
@@ -31,7 +33,7 @@ public protocol ConversationProviding: Sendable {
     ///   `session_id`/`cols`/`profile`/...), so this is wire-safe today and
     ///   becomes the last-event-id subscribe contract when the server adopts
     ///   it. Send it on EVERY subscribe/reconnect, not just after drops.
-    func resumeSession(sessionID: String, lastEventID: Int?) async throws -> ConversationSession
+    func resumeSession(sessionID: String, lastEventID: Int?, profile: String?) async throws -> ConversationSession
 
     /// Submit a prompt via `prompt.submit` (returns `{"status": "streaming"}`
     /// immediately; the turn's events arrive on `events`).
