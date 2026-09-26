@@ -29,6 +29,24 @@ public struct ConversationView: View {
     /// the transcript scrolls to the live bottom on change (the toolbar
     /// cannot reach the ScrollViewReader proxy directly).
     @State private var scrollPulse = 0
+    /// B87 round 2 (ported from `RoomChatView`'s FOS-8 follow pattern,
+    /// simplified — no lazy-history frame convergence loop; this transcript
+    /// scrolls a single known row via `ScrollViewProxy` directly).
+    /// True once the transcript's own scroll geometry reports the live
+    /// bottom is on-screen (tolerance-based). This only CONFIRMS arrival —
+    /// it never itself unfollows; see `isUserInteractingWithScroll` below.
+    @State private var isAtBottomLatest = true
+    /// True only while a REAL finger drag is in progress
+    /// (`onScrollPhaseChange` reports `.interacting`). Combined with
+    /// `isAtBottomLatest`, this is the ONLY thing allowed to flip
+    /// `followingLatest` to false — a brand-new row, a growing streamed
+    /// reply/reasoning block, or this view's own `scrollToLive` calls must
+    /// never unfollow the user.
+    @State private var isUserInteractingWithScroll = false
+    /// Set for the duration of every scroll this view issues itself
+    /// (`scrollToLive`) so the geometry/phase observers below never mistake
+    /// a programmatic scroll for the user's own drag.
+    @State private var isProgrammaticFollow = false
     private let environment: AppEnvironment
     private let route: Route
     private let sessionID: String?
@@ -997,6 +1015,33 @@ enum ConversationHeaderChips {
         )
     }
 
+    /// B87 round 2 — ported from `RoomChatView`'s FOS-8 follow pattern,
+    /// simplified for this transcript: a single known row is scrolled
+    /// directly via `ScrollViewProxy`, so no lazy-history frame-convergence
+    /// loop is needed here (that machinery exists there to cope with a
+    /// LazyVStack's height estimates for rows it has not yet materialized
+    /// over a large durable room history).
+    ///
+    /// Marks the scroll as programmatic (`isProgrammaticFollow`) so the
+    /// `onScrollGeometryChange`/`onScrollPhaseChange` observers in
+    /// `transcriptList` never mistake it for the user's own drag — which is
+    /// the only thing allowed to unfollow. `animate` is false for in-place
+    /// growth (a token, or a streaming Reasoning block, growing the SAME
+    /// last row) so a spring animation never replays on every delta; true
+    /// only for a brand-new row arriving or an explicit "Latest" jump.
+    private func scrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
+        isProgrammaticFollow = true
+        if animate && !reduceMotion {
+            withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+        } else {
+            proxy.scrollTo(id, anchor: .bottom)
+        }
+        Task { @MainActor in
+            await Task.yield()
+            isProgrammaticFollow = false
+        }
+    }
+
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -1052,6 +1097,44 @@ enum ConversationHeaderChips {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.transcript.last?.id)
             }
             .accessibilityIdentifier("fleet.conversation.transcript")
+            // B87 round 2 (ported from RoomChatView's FOS-8 follow pattern):
+            // at-bottom detection with tolerance (covers lazy height
+            // estimation for a row that just streamed in; tighter than the
+            // room's 160pt because this composer is a sibling, not an
+            // overlay — a small upward drag must be enough to stop following). This observer
+            // only CONFIRMS arrival; it is `isUserInteractingWithScroll`
+            // below — the user's own drag — that is allowed to unfollow.
+            // Coming back to the bottom under a real drag re-follows (the
+            // floating "Latest" chevron hides again).
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height
+                    - geometry.contentOffset.y
+                    - geometry.visibleRect.height <= 64
+            } action: { _, atBottom in
+                isAtBottomLatest = atBottom
+                guard isUserInteractingWithScroll, !isProgrammaticFollow else { return }
+                // A drag usually STARTS at the live bottom, so the phase
+                // callback alone never sees "away from bottom"; the first
+                // non-bottom geometry update during a user-driven scroll is
+                // the explicit history escape (same rule as RoomChatView).
+                // Arriving back at the bottom under the user's own scroll
+                // re-follows and hides the floating Latest chevron.
+                followingLatest = atBottom
+            }
+            // B87 round 2: the user's own drag away from the bottom is the
+            // ONLY thing that unfollows — a brand-new row, in-place
+            // streaming growth, and this view's own `scrollToLive` calls
+            // all shift geometry while still "following latest" and must
+            // never be mistaken for it (guarded by `isProgrammaticFollow`).
+            .onScrollPhaseChange { _, phase in
+                // User-driven = finger down OR the fling it released
+                // (`.decelerating`); programmatic `scrollTo` animations
+                // report `.animating` and never count.
+                isUserInteractingWithScroll = phase == .interacting || phase == .decelerating
+                if phase == .interacting, !isAtBottomLatest, !isProgrammaticFollow {
+                    followingLatest = false
+                }
+            }
             // Dogfood top-space fix: the permanent 44pt "Conversation
             // timeline / Latest" top inset is GONE — the actions moved into
             // the navigation toolbar (`timelineToolbarContents`). The
@@ -1082,20 +1165,40 @@ enum ConversationHeaderChips {
             }
             // P2-8: key auto-scroll off the last row's identity, not the count —
             // the display window is capped, so count stops changing once full
-            // while new rows keep arriving at the bottom.
+            // while new rows keep arriving at the bottom. A brand-new row is
+            // the one case worth an animated scroll.
             .onChange(of: model.transcript.last?.id) {
-                if followingLatest, let last = model.transcript.last {
-                    if reduceMotion { proxy.scrollTo(last.id, anchor: .bottom) }
-                    else { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
-                }
+                guard followingLatest, let last = model.transcript.last else { return }
+                scrollToLive(last.id, proxy: proxy, animate: true)
+            }
+            // B87 fix: the row-identity rescroll above only fires when a
+            // NEW row appears. A streaming turn instead grows the SAME last
+            // row in place — its reply text, and its Reasoning block, which
+            // is force-expanded for the duration of the stream and then
+            // auto-collapses when the turn ends (`ReasoningExpansionState`).
+            // Neither edge changed `id`, so the transcript never re-followed
+            // the live bottom for them: the block would grow past the
+            // viewport unfollowed while streaming, then its collapse would
+            // leave a gap between the transcript and the composer — read by
+            // testers as the thinking block making the chat "scroll a
+            // strange way" / the chat not filling the screen. Re-anchor to
+            // the bottom on every change to this signature (text/detail
+            // length or streaming state of the last row), not just its id —
+            // WITHOUT animation: this can fire on every streamed token, and
+            // a spring animation replaying per-token would itself jank.
+            .onChange(of: model.transcript.last.map {
+                "\($0.id)#\($0.text.count)#\($0.detail?.count ?? 0)#\($0.isStreaming)"
+            }) { _, _ in
+                guard followingLatest, let last = model.transcript.last else { return }
+                scrollToLive(last.id, proxy: proxy, animate: false)
             }
             // Dogfood top-space fix: the toolbar/menu "Latest" action bumps
             // `scrollPulse` (the toolbar cannot reach this proxy); scrolling
-            // to the live bottom happens here.
+            // to the live bottom happens here. An explicit jump is worth
+            // animating.
             .onChange(of: scrollPulse) { _, _ in
                 guard followingLatest, let last = model.transcript.last else { return }
-                if reduceMotion { proxy.scrollTo(last.id, anchor: .bottom) }
-                else { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                scrollToLive(last.id, proxy: proxy, animate: true)
             }
             // P0-B: jumps to the active find match (the find bar sits above
             // this ScrollView and cannot reach the proxy).
@@ -2083,7 +2186,17 @@ private struct ConversationBubbleView: View {
                     )
                 }
             }
-            if row.kind != .user { Spacer(minLength: 60) }
+            // B87 fix round 2: the design intent (r7 decision 2, above) is
+            // that assistant output spans the FULL content width, like
+            // ChatGPT/Hermex — it should never share the row with a
+            // trailing spacer at all. Tool/status/system/error rows keep
+            // their existing trailing spacer (unchanged card-width look);
+            // only `.assistant` drops it. `.layoutPriority(1)` stays as a
+            // defensive backstop for those remaining kinds, where the
+            // message column can still be exactly as flexible
+            // (`.frame(maxWidth: .infinity)`) as their trailing spacer.
+            .layoutPriority(1)
+            if row.kind != .user && row.kind != .assistant { Spacer(minLength: 60) }
         }
         .transition(row.kind == .user ? entrance : .identity)
         // R10-T2: long-press Tapback menu — small palette + Clear. Only
