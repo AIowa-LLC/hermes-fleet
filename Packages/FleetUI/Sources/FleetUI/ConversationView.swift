@@ -74,10 +74,6 @@ public struct ConversationView: View {
         let detailCount: Int
         let isStreaming: Bool
     }
-    private struct PendingFollow {
-        let id: String
-        let animate: Bool
-    }
     @Environment(\.fleetTheme) private var theme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openFleetDrawer) private var openDrawer
@@ -108,8 +104,6 @@ public struct ConversationView: View {
     /// (`scrollToLive`) so the geometry/phase observers below never mistake
     /// a programmatic scroll for the user's own drag.
     @State private var isProgrammaticFollow = false
-    @State private var pendingFollow: PendingFollow?
-    @State private var pendingFollowTask: Task<Void, Never>?
     private let environment: AppEnvironment
     private let route: Route
     private let sessionID: String?
@@ -1173,20 +1167,20 @@ enum ConversationHeaderChips {
         performScrollToLive(id, proxy: proxy, animate: animate)
     }
 
-    /// Transcript events and artifact decoding can change several rows in
-    /// one short handoff. Issue one follow after those updates settle instead
-    /// of re-entering ScrollView layout for each intermediate row.
-    private func scheduleFollow(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
-        let shouldAnimate = animate || (pendingFollow?.id == id && pendingFollow?.animate == true)
-        pendingFollow = PendingFollow(id: id, animate: shouldAnimate)
-        pendingFollowTask?.cancel()
-        pendingFollowTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled, let request = pendingFollow, request.id == id else { return }
-            pendingFollow = nil
-            guard followingLatest, !isUserInteractingWithScroll else { return }
-            scrollToLive(request.id, proxy: proxy, animate: request.animate)
+    /// iOS 26.5 repeatedly enters ScrollView layout when a programmatic
+    /// follow overlaps a newly cited image. The tool row was followed when
+    /// generation started; let its image grow without another automatic
+    /// scroll during the immediate tool/assistant handoff. Explicit Latest
+    /// remains available, and ordinary later rows resume automatic follow.
+    private func shouldAutoFollow(_ model: ConversationViewModel) -> Bool {
+        let hasRecentImage = model.transcript.suffix(3).contains {
+            !($0.artifacts ?? []).isEmpty
         }
+        if hasRecentImage,
+           ProcessInfo.processInfo.environment["HERMES_FLEET_INLINE_TRACE"] == "1" {
+            NSLog("HFInline skip automatic follow near image")
+        }
+        return !hasRecentImage
     }
 
     private func performScrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
@@ -1347,8 +1341,9 @@ enum ConversationHeaderChips {
             // while new rows keep arriving at the bottom. A brand-new row is
             // the one case worth an animated scroll.
             .onChange(of: model.transcript.last?.id) {
-                guard followingLatest, let last = model.transcript.last else { return }
-                scheduleFollow(last.id, proxy: proxy, animate: true)
+                guard followingLatest, shouldAutoFollow(model),
+                      let last = model.transcript.last else { return }
+                scrollToLive(last.id, proxy: proxy, animate: true)
             }
             // B87 fix: the row-identity rescroll above only fires when a
             // NEW row appears. A streaming turn instead grows the SAME last
@@ -1373,8 +1368,9 @@ enum ConversationHeaderChips {
                 // Calling scrollTo twice in this same update re-enters the
                 // image row's layout pass on iOS 26.5.
                 guard old?.id == new?.id else { return }
-                guard followingLatest, let last = model.transcript.last else { return }
-                scheduleFollow(last.id, proxy: proxy, animate: false)
+                guard followingLatest, shouldAutoFollow(model),
+                      let last = model.transcript.last else { return }
+                scrollToLive(last.id, proxy: proxy, animate: false)
             }
             // Dogfood top-space fix: the toolbar/menu "Latest" action bumps
             // `scrollPulse` (the toolbar cannot reach this proxy); scrolling
@@ -1382,8 +1378,6 @@ enum ConversationHeaderChips {
             // animating.
             .onChange(of: scrollPulse) { _, _ in
                 guard followingLatest, let last = model.transcript.last else { return }
-                pendingFollowTask?.cancel()
-                pendingFollow = nil
                 scrollToLive(last.id, proxy: proxy, animate: true)
             }
             // P0-B: jumps to the active find match (the find bar sits above
