@@ -1,0 +1,54 @@
+name: Build 90 UI failure diagnosis
+
+on:
+  push:
+    branches: [diagnose/build90-ui-failure-20260926]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build90-ui-diagnose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reproduce:
+    name: Diagnose ${{ matrix.case }}
+    runs-on: macos-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - case: inline-image
+            selector: ArtifactsDestination/testGeneratedImageRendersInlineInTheCitingToolRow
+          - case: image-handoff
+            selector: ImageGenerationAnimation/testVerifiedGenerationAnimatesThenHandsOffToTheDeliveredImage
+          - case: gateway-navigation
+            selector: HermesFleetHappyPath/testReturnToFleetSwitchMachine
+          - case: deep-room-latest
+            selector: FOS8Accessibility/testGroupConversationOpensAtLatestWithDeepHistory
+    steps:
+      - name: Checkout exact failed candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 5f565ff29d34a85f49b1fe53342b2eecee2a389a
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify source and run one existing regression
+        env:
+          TEST_SELECTOR: ${{ matrix.selector }}
+        run: |
+          test "$(git rev-parse HEAD)" = 5f565ff29d34a85f49b1fe53342b2eecee2a389a
+          test -z "$(git status --porcelain)"
+          bash scripts/c1_ui_matrix.sh --tests "$TEST_SELECTOR" --fail-fast
+      - name: Preserve source, simulator, and assertion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build90-diagnose-${{ matrix.case }}
+          path: /tmp/hermes-c1-results*/
+          retention-days: 7
+          if-no-files-found: warn
