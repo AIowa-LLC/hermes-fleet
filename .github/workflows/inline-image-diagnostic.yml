@@ -45,52 +45,40 @@ jobs:
             exit 1
           fi
           echo 'BUILD: succeeded'
-      - name: Run one case and sample the target app
+      - name: Run one case, then two fresh-launch checks after a pass
         shell: bash
         run: |
           set +e
           set -uo pipefail
           evidence="$RUNNER_TEMP/inline-diagnostic"
-          echo 'TEST: launching once, no repetition or retry flags'
-          xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR" -derivedDataPath "$evidence/DerivedData" -skipMacroValidation test-without-building -resultBundlePath "$evidence/InlineDiagnostic.xcresult" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test.log" 2>&1 &
-          test_pid=$!
-          for ((i=0; i<150; i++)); do
-            if grep -q 'Waiting 20.0s for.*fleet.conversation.row.row-2' "$evidence/test.log"; then
-              echo 'PROFILE: citing-row query reached'
-              targets=$(ps -axo pid=,command= | awk -v sim="$SIMULATOR" 'index($0,sim)>0 && index($0,"/HermesFleetApp.app/HermesFleetApp")>0 {print $1}')
-              count=$(printf '%s\n' "$targets" | awk 'NF {n++} END {print n+0}')
-              printf 'target_count=%s\n' "$count" > "$evidence/sample-target.txt"
-              if [[ "$count" -eq 1 ]]; then
-                printf 'pid=%s\n' "$targets" >> "$evidence/sample-target.txt"
-                /usr/bin/sample "$targets" 25 -file "$evidence/app.sample.txt" > "$evidence/sample.log" 2>&1 || true
-              fi
-              break
+          for attempt in 1 2 3; do
+            echo "TEST: attempt $attempt, fresh app launch, no repetition or retry flags"
+            bundle="$evidence/InlineAttempt-$attempt.xcresult"
+            xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR" -derivedDataPath "$evidence/DerivedData" -skipMacroValidation test-without-building -resultBundlePath "$bundle" -only-testing:HermesFleetAppUITests/ArtifactsDestinationUITests/testGeneratedImageRendersInlineInTheCitingToolRow > "$evidence/test-$attempt.log" 2>&1
+            status=$?
+            printf '%s\n' "$status" > "$evidence/test-$attempt-exit.txt"
+            echo "TEST: attempt $attempt process exit $status"
+            tail -18 "$evidence/test-$attempt.log"
+            if [[ -d "$bundle" ]]; then
+              xcrun xcresulttool get test-results summary --path "$bundle" --compact > "$evidence/summary-$attempt.json" || true
+              xcrun xcresulttool get test-results tests --path "$bundle" --compact > "$evidence/tests-$attempt.json" || true
+              xcrun xcresulttool export attachments --path "$bundle" --output-path "$evidence/attachments-$attempt" > "$evidence/attachment-export-$attempt.log" 2>&1 || true
             fi
-            kill -0 "$test_pid" 2>/dev/null || break
-            sleep 1
+            if [[ ! -f "$evidence/summary-$attempt.json" || ! -f "$evidence/tests-$attempt.json" ]]; then
+              echo "RESULT: attempt $attempt missing complete result evidence"
+              exit 1
+            fi
+            python3 scripts/c1_xcresult_parse.py --summary "$evidence/summary-$attempt.json" --tests "$evidence/tests-$attempt.json" --requested ArtifactsDestinationUITests --expect-case 'testGeneratedImageRendersInlineInTheCitingToolRow()' > "$evidence/parsed-$attempt.txt"
+            parse_status=$?
+            read -r count failures complete present recovered < "$evidence/parsed-$attempt.txt"
+            echo "RESULT: attempt=$attempt exit=$status cases=$count failures=$failures complete=$complete present=$present recovered=$recovered parse_exit=$parse_status"
+            xcrun simctl spawn "$SIMULATOR" log show --style compact --last 5m --predicate 'process == "HermesFleetApp" AND (eventMessage CONTAINS "HFInline" OR eventMessage CONTAINS "OnScrollGeometryChange Modifier")' > "$evidence/app-events-$attempt.log" 2>&1 || true
+            if [[ "$status" -ne 0 || "$parse_status" -ne 0 || "$count" -ne 1 || "$failures" -ne 0 || "$complete" -ne 1 || "$present" -ne 1 || "$recovered" -ne 0 ]]; then
+              exit 1
+            fi
+            xcrun simctl terminate "$SIMULATOR" com.aiowa.hermesfleet >/dev/null 2>&1 || true
           done
-          status=0
-          wait "$test_pid" || status=$?
-          printf '%s\n' "$status" > "$evidence/test-exit.txt"
-          echo "TEST: process exit $status"
-          tail -45 "$evidence/test.log"
-          echo 'EXPORT: collecting app event markers and result summary'
-          xcrun simctl spawn "$SIMULATOR" log show --style compact --last 12m --predicate 'process == "HermesFleetApp" AND eventMessage CONTAINS "HFInline"' > "$evidence/app-events.log" 2>&1 || true
-          if [[ -d "$evidence/InlineDiagnostic.xcresult" ]]; then
-            xcrun xcresulttool get test-results summary --path "$evidence/InlineDiagnostic.xcresult" --compact > "$evidence/summary.json" || true
-            xcrun xcresulttool get test-results tests --path "$evidence/InlineDiagnostic.xcresult" --compact > "$evidence/tests.json" || true
-            xcrun xcresulttool export attachments --path "$evidence/InlineDiagnostic.xcresult" --output-path "$evidence/attachments" > "$evidence/attachment-export.log" 2>&1 || true
-          fi
-          if [[ -f "$evidence/summary.json" && -f "$evidence/tests.json" ]]; then
-            python3 scripts/c1_xcresult_parse.py --summary "$evidence/summary.json" --tests "$evidence/tests.json" --requested ArtifactsDestinationUITests --expect-case 'testGeneratedImageRendersInlineInTheCitingToolRow()' > "$evidence/parsed-result.txt" || true
-          fi
-          if [[ -f "$evidence/parsed-result.txt" ]]; then
-            read -r count failures complete present recovered < "$evidence/parsed-result.txt"
-            echo "RESULT: cases=$count failures=$failures complete=$complete present=$present recovered=$recovered"
-            [[ "$status" -eq 0 && "$count" -eq 1 && "$failures" -eq 0 && "$complete" -eq 1 && "$present" -eq 1 && "$recovered" -eq 0 ]]
-          else
-            exit 1
-          fi
+          echo 'TEST: all three fresh-launch executions passed'
       - name: Preserve private diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -100,7 +88,7 @@ jobs:
             ${{ runner.temp }}/inline-diagnostic/*.txt
             ${{ runner.temp }}/inline-diagnostic/*.log
             ${{ runner.temp }}/inline-diagnostic/*.json
-            ${{ runner.temp }}/inline-diagnostic/InlineDiagnostic.xcresult/
-            ${{ runner.temp }}/inline-diagnostic/attachments/
+            ${{ runner.temp }}/inline-diagnostic/InlineAttempt-*.xcresult/
+            ${{ runner.temp }}/inline-diagnostic/attachments-*/
           retention-days: 7
           if-no-files-found: warn
