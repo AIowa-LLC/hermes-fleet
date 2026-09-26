@@ -1,0 +1,74 @@
+name: Hosted unit failure evidence
+
+on:
+  push:
+    branches: [codex/inline-image-recovery]
+
+permissions:
+  contents: read
+
+jobs:
+  units:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify toolchain and create dedicated simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/unit-evidence"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source-sha.txt"
+          xcodebuild -version > "$evidence/xcode-version.txt"
+          xcrun simctl list runtimes > "$evidence/runtimes.txt"
+          grep -q 'Xcode 26.6' "$evidence/xcode-version.txt"
+          grep -q 'iOS 26.5' "$evidence/runtimes.txt"
+          simulator=$(xcrun simctl create HermesUnitEvidence com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-5)
+          xcrun simctl boot "$simulator"
+          xcrun simctl bootstatus "$simulator" -b > "$evidence/simulator-boot.log" 2>&1
+          printf 'SIMULATOR=%s\n' "$simulator" >> "$GITHUB_ENV"
+      - name: Execute complete unit bundle once and retain verdict
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          evidence="$RUNNER_TEMP/unit-evidence"
+          bundle="$evidence/HostedUnits.xcresult"
+          xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR" -derivedDataPath "$evidence/DerivedData" -skipMacroValidation -only-testing:HermesFleetAppTests -resultBundlePath "$bundle" build test > "$evidence/xcodebuild.log" 2>&1
+          status=$?
+          printf '%s\n' "$status" > "$evidence/process-exit.txt"
+          echo "UNIT: xcodebuild exit=$status"
+          grep -E 'error:|Test Case .* failed|Executed [0-9]+ tests' "$evidence/xcodebuild.log" | tail -20 || true
+          if [[ -d "$bundle" ]]; then
+            xcrun xcresulttool get test-results summary --path "$bundle" --compact > "$evidence/summary.json"
+            summary_status=$?
+            xcrun xcresulttool get test-results tests --path "$bundle" --compact > "$evidence/tests.json"
+            tests_status=$?
+          else
+            summary_status=1
+            tests_status=1
+          fi
+          if [[ "$status" -ne 0 || "$summary_status" -ne 0 || "$tests_status" -ne 0 ]]; then
+            exit 1
+          fi
+          python3 - "$evidence/summary.json" <<'PY'
+          import json, sys
+          result = json.load(open(sys.argv[1]))
+          print('UNIT:', result.get('totalTestCount'), 'cases,', result.get('failedTests'), 'failures, result=', result.get('result'))
+          sys.exit(0 if result.get('result') == 'Passed' and result.get('failedTests') == 0 else 1)
+          PY
+      - name: Preserve private unit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-unit-evidence
+          path: |
+            ${{ runner.temp }}/unit-evidence/*.txt
+            ${{ runner.temp }}/unit-evidence/*.json
+            ${{ runner.temp }}/unit-evidence/*.log
+            ${{ runner.temp }}/unit-evidence/HostedUnits.xcresult/
+          retention-days: 7
+          if-no-files-found: warn
