@@ -70,6 +70,28 @@ expect_fail "unsupported event fails closed" \
   env "${base[@]}" CI_GATE_EVENT_NAME=workflow_dispatch \
     CI_GATE_UI_PREFLIGHT_RESULT=skipped CI_GATE_CRITICAL_SMOKE_RESULT=skipped
 
+# Negative coverage for each dependency: missing/cancelled/failed jobs must
+# never become green through aggregation or matrix cancellation.
+for event in pull_request merge_group push; do
+  preflight=success; smoke=skipped
+  [ "$event" != merge_group ] || smoke=success
+  [ "$event" != push ] || preflight=skipped
+  for field in STATIC PACKAGES UNITS UI_PREFLIGHT CRITICAL_SMOKE; do
+    expected=success
+    [ "$field" != UI_PREFLIGHT ] || expected="$preflight"
+    [ "$field" != CRITICAL_SMOKE ] || expected="$smoke"
+    for actual in success failure cancelled skipped unknown missing; do
+      [ "$actual" != "$expected" ] || continue
+      value="$actual"
+      [ "$actual" != missing ] || value=""
+      expect_fail "$event rejects $field=$actual" \
+        env "${base[@]}" CI_GATE_EVENT_NAME="$event" \
+          CI_GATE_UI_PREFLIGHT_RESULT="$preflight" CI_GATE_CRITICAL_SMOKE_RESULT="$smoke" \
+          "CI_GATE_${field}_RESULT=$value"
+    done
+  done
+done
+
 if [ "$FAIL" -eq 0 ]; then
   echo "PASS: CI Gate executable contract tests"
   exit 0

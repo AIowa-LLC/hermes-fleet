@@ -1,5 +1,8 @@
 name: Full UI Regression
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   schedule:
@@ -15,8 +18,8 @@ jobs:
   ui-shard:
     name: Full UI matrix shard ${{ matrix.shard }}/${{ matrix.shards }}
     runs-on: macos-latest
-    # Build 87 has 59 deterministic suites. Weighted shard estimates peak
-    # near 105 minutes; 150 leaves room for setup, retries, and runner variance.
+    # Deep validation retains a generous independent ceiling. Measure its
+    # actual runtime separately from the focused merge path.
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -36,8 +39,7 @@ jobs:
         with:
           name: xcresults-full-ui-shard-${{ matrix.shard }}
           path: |
-            /tmp/hermes-c1-results/
-            /tmp/c1_xctest_ui_*.log
+            /tmp/hermes-c1-results*/
           retention-days: 14
           if-no-files-found: ignore
 

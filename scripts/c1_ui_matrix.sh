@@ -11,7 +11,7 @@
 #
 # DESIGN NOTES (carried from c1_ci_validate.sh):
 #  - Each suite runs as its OWN xcodebuild test invocation with a class-level
-#    -only-testing selector (P1-7 fix: never mix a bare-bundle selector with
+#    -only-testing selector, after one build-for-testing (P1-7 fix: never mix a bare-bundle selector with
 #    class-level selectors in one invocation — xcodebuild silently drops the
 #    bare bundle).
 #  - The ENVIRONMENTAL live-gateway suites (real `hermes serve` / LAN /
@@ -85,7 +85,7 @@ audit() {
 shard_for_index() { echo $(( $1 % SHARDS + 1 )); }
 
 # --- argument parsing --------------------------------------------------------
-MODE=all; SHARD=1; SHARDS=5; CLASSES=""; TESTS=""
+MODE=all; SHARD=1; SHARDS=5; CLASSES=""; TESTS=""; FAIL_FAST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --all) MODE=all ;;
@@ -95,6 +95,7 @@ while [ $# -gt 0 ]; do
     --classes) MODE=classes; CLASSES="${2:?--classes needs a value}"; shift ;;
     --tests) MODE=tests; TESTS="${2:?--tests needs a value}"; shift ;;
     --list-classes) MODE=listclasses ;;
+    --fail-fast) FAIL_FAST=1 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -186,20 +187,38 @@ DD="$REPO/build/C1Ui"
 # explicitly bypass fingerprint validation; this does not bypass macro
 # execution or package resolution.
 XC=(-project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation \
-    -retry-tests-on-failure -test-iterations 2 \
+    -destination "$DEST" -derivedDataPath "$DD" -skipMacroValidation)
+RETRY=(-retry-tests-on-failure -test-iterations 2 \
     -test-repetition-relaunch-enabled YES)
 
 # --- run -----------------------------------------------------------------------
-rm -rf /tmp/hermes-c1-results
-mkdir -p /tmp/hermes-c1-results
+# Each invocation owns its evidence directory. Never delete another worker's
+# xcresults or reuse global numbered log files.
+RESULTS_ROOT=$(mktemp -d /tmp/hermes-c1-results.XXXXXX) || die "cannot create evidence directory"
+echo "UI evidence: $RESULTS_ROOT"
+{
+  git rev-parse HEAD
+  git status --short
+  xcodebuild -version
+  printf 'destination=%s\nmode=%s\n' "$DEST" "$MODE"
+} > "$RESULTS_ROOT/provenance.log" 2>&1
+# Build once, retain per-suite process isolation, and reuse the compiled test
+# products. Missing/failed builds are fatal, never successful empty tests.
+if ! xcodebuild "${XC[@]}" build-for-testing > "$RESULTS_ROOT/build.log" 2>&1; then
+  tail -40 "$RESULTS_ROOT/build.log"
+  die "build-for-testing failed; no UI tests executed"
+fi
 UI_FAIL=0; UI_TOTAL=0; N=0
 for cls in "${SELECTED[@]}"; do
-  N=$((N+1)); out="/tmp/c1_xctest_ui_${N}.log"
+  if [ "$FAIL_FAST" -eq 1 ] && [ "$UI_FAIL" -gt 0 ]; then
+    echo "UI-MATRIX: stopping after a blocking failure; remaining tests are NOT passed."
+    break
+  fi
+  N=$((N+1)); out="$RESULTS_ROOT/xcodebuild_${N}_${cls}.log"
   full="HermesFleetAppUITests/${cls}UITests"
-  bundle="/tmp/hermes-c1-results/${cls}UITests.xcresult"
-  summary_file="/tmp/hermes-c1-results/${cls}.summary.json"
-  tests_file="/tmp/hermes-c1-results/${cls}.tests.json"
+  bundle="$RESULTS_ROOT/${cls}UITests.xcresult"
+  summary_file="$RESULTS_ROOT/${cls}.summary.json"
+  tests_file="$RESULTS_ROOT/${cls}.tests.json"
   rm -rf "$bundle"
   rm -f "$summary_file" "$tests_file"
   printf 'C1 UI (%s) [%02d/%02d] %s ...\n' "$MODE" "$N" "${#SELECTED[@]}" "$full"
@@ -216,7 +235,7 @@ for cls in "${SELECTED[@]}"; do
   else
     only_testing+=("-only-testing:$full")
   fi
-  if ! xcodebuild "${XC[@]}" -resultBundlePath "$bundle" "${only_testing[@]}" build test >"$out" 2>&1; then
+  if ! xcodebuild "${XC[@]}" "${RETRY[@]}" -resultBundlePath "$bundle" "${only_testing[@]}" test-without-building >"$out" 2>&1; then
     UI_FAIL=$((UI_FAIL+1)); printf 'FAIL  UI %s FAILED or incomplete\n' "$cls"
     grep -E 'error:|failed|Executed|Test Suite' "$out" | tail -20; continue
   fi
@@ -241,7 +260,9 @@ for cls in "${SELECTED[@]}"; do
   if [ "$cls" = "U3TabNavigation" ]; then
     parser_args+=(--allow-skipped "testIPadLandscapePreservesRootNavigation()")
   fi
-  parsed=$(python3 scripts/c1_xcresult_parse.py "${parser_args[@]}")
+  if ! parsed=$(python3 scripts/c1_xcresult_parse.py "${parser_args[@]}"); then
+    UI_FAIL=$((UI_FAIL+1)); echo "FAIL  UI $cls result parser failed"; continue
+  fi
   read -r count failures complete present recovered <<EOF
 $parsed
 EOF

@@ -30,6 +30,7 @@ check() { # <name> <expected classes> <file...>
 }
 
 CORE="HermesFleetHappyPath P0_7SessionStateMachine"
+ALL="$(bash scripts/c1_ui_matrix.sh --list-classes)"
 
 check "docs/tooling-only changes select no UI suites" "" \
   "docs/README.md" "docs/adr/0001-per-gateway-session-ownership.md" ".github/workflows/ci.yml" "Makefile" "README.md" \
@@ -54,17 +55,17 @@ check "gateway form area maps to the gateway suites" \
   "S3CleartextWarning RT2RemovalAndEndpointSanitization RT4FormSaveFailure P2GatewayFormDraft U7GatewayQrLockSettings" \
   "Packages/FleetUI/Sources/FleetUI/GatewayFormSheet.swift"
 
-check "shared package change is conservative (CORE)" "$CORE" \
+check "shared package changes retain full deterministic coverage" "$ALL" \
   "Packages/FleetCore/Sources/FleetCore/Session.swift"
 
-check "unmapped app file is conservative (CORE)" "$CORE" \
+check "composition-root changes retain full deterministic coverage" "$ALL" \
   "HermesFleetApp/FleetServiceGraph.swift"
 
 check "union across files, canonical order" "Splash RoomChat RoomLinkMentions" \
   "HermesFleetAppUITests/SplashUITests.swift" \
   "Packages/FleetUI/Sources/FleetUI/RoomChatView.swift"
 
-check "oversized product diff uses bounded CORE subset" "$CORE" \
+check "oversized product diff retains every affected suite" "HermesFleetHappyPath HermesFleetReconnect P0_7SessionStateMachine S3CleartextWarning RT2RemovalAndEndpointSanitization RT4RosterEmptyState RT4FormSaveFailure RT4VoiceOver Splash P2GatewayFormDraft F2QRPairing U3TabNavigation SecondGeneration" \
   "HermesFleetAppUITests/HermesFleetHappyPathUITests.swift" \
   "HermesFleetAppUITests/HermesFleetReconnectUITests.swift" \
   "HermesFleetAppUITests/P0_7SessionStateMachineUITests.swift" \

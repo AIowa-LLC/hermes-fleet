@@ -52,12 +52,19 @@ fi
 # run only on the merge-group candidate, alongside changed-area selection.
 require_in "$CI_WORKFLOW" "  ui-preflight:" "a changed-area UI preflight must remain present"
 require_in "$CI_WORKFLOW" "    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'" "preflight must run on PR and merge-group events"
-require_in "$CI_WORKFLOW" 'run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"' "preflight must diff against the event's base commit"
+require_in "$CI_WORKFLOW" 'run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" --shard "${{ matrix.shard }}" --shards 4' "preflight must diff against the event's base commit"
 require_in "$CI_WORKFLOW" "  critical-smoke:" "a critical UI smoke job must remain present"
 require_in "$CI_WORKFLOW" "    if: github.event_name == 'merge_group'" "critical smoke must run against merge-group candidates"
 require_in "$CI_WORKFLOW" "run: bash scripts/c1_critical_smoke.sh" "critical smoke must use the deterministic suite selector"
 require_in "$CI_WORKFLOW" "if: always()" "critical smoke diagnostics must be retained on success and failure"
 
+require_in "$CI_WORKFLOW" '        shard: [1, 2, 3, 4]' "focused coverage must be partitioned across all four jobs"
+require_in "$CI_WORKFLOW" '      fail-fast: true' "focused matrix must fail fast"
+require_in "$CI_WORKFLOW" 'python3 scripts/c1_ui_runner_contract_test.py' "CI must exercise the runner and partition contracts"
+require_in "$CI_WORKFLOW" 'python3 scripts/c1_xcresult_parse_test.py' "CI must exercise the fail-closed result parser"
+if grep -Fq 'MAX_FOCUSED_CLASSES' scripts/c1_ui_preflight.sh; then
+  echo "FAIL: oversized changed-area coverage must not be dropped" >&2; exit 1
+fi
 SMOKE_TESTS="$(bash scripts/c1_critical_smoke.sh --list-tests)"
 EXPECTED_SMOKE_TESTS="F3Onboarding/testFreshInstallLandsOnOnboardingAsRootSurface U3TabNavigation/testBotsTabOpensFleetRoster HermesFleetHappyPath/testHappyPathGatewaysToConversationStreamedAnswer RoomChat/testHostedRoomOpenSendAndTranscriptRender"
 LATEST_ROOM_TEST="FOS8Accessibility/testGroupConversationOpensAtLatestWithDeepHistory"

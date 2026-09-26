@@ -1,151 +1,120 @@
-# Local development loop (Dev Loop v3)
+# Dev Loop v3: fast protected integration
 
-Dev Loop v3 keeps high-signal, bounded checks on the merge path and retains
-the complete deterministic UI inventory in a separate deep-validation lane.
-Merge confidence and release confidence are related evidence, but they answer
-different questions.
+## Contract
 
-## Fast local loop
+`CI Gate` remains the required GitHub Actions check. Pull requests, the merge
+queue, force-push/deletion protection, and exact-candidate validation remain in
+place. This workflow change does not grant a bypass or authorize a release.
 
-1. Iterate on a feature branch and run the local check:
+| Event | Required validation |
+| --- | --- |
+| Pull request | Static/security/project guards, package tests, hosted unit tests, and changed-area UI preflight. |
+| Merge group | The same checks on the exact combined candidate, plus critical UI smoke. |
+| Push to main | Static guards, package tests, and hosted units as post-merge confirmation. |
+| Nightly/manual deep run | Complete deterministic UI inventory in five shards, with an independent `Full UI Regression Gate`. |
 
-   ```bash
-   make dev-check
-   ```
+The full UI inventory is not an unconditional dependency of every merge.
+It is still mandatory when selected by a broad changed area and available for
+release/deep validation. A failure in a nonblocking workflow remains a failure.
 
-   This runs static guards, a simulator build, package tests, and focused UI
-   suites selected from the working diff. It never runs the complete UI
-   matrix.
+## Changed-area coverage
 
-   Useful flags:
+`scripts/c1_ui_preflight.sh` selects suites from the actual PR or merge-group
+base, not from a stale local branch or another build. CI partitions the selected
+suites over four jobs. All four must succeed; failure or cancellation cannot be
+converted into a successful aggregate.
 
-   ```bash
-   bash scripts/dev_check.sh --base main   # diff against an explicit ref
-   bash scripts/dev_check.sh --skip-ui     # static + build + packages only
-   ```
+The former 12-suite cap and fallback to two CORE journeys are removed. Every
+selected suite is assigned exactly once. `c1_ui_partition.py` balances by source
+test-method count, a deterministic heuristic, not a claim of measured duration.
 
-   The broad local gate remains available: `make ci` runs the full C1
-   validation serially.
+Shared FleetCore, networking, persistence, security, dependency manifests/lock
+files, and composition-root changes select the complete deterministic inventory.
+Feature-specific UI changes retain their mapped suites. Unmapped product files
+retain CORE journeys and require review of whether a more specific mapping is
+needed. New deterministic suites must be registered in the canonical inventory.
+A broad reconciliation PR can therefore still be expensive; routine changes no
+longer inherit the entire suite automatically.
 
-2. Optional physical-device dogfood uses the existing deployment scripts:
+```sh
+bash scripts/c1_ui_preflight.sh --base origin/main --print
+bash scripts/c1_ui_preflight.sh --base origin/main --shard 1 --shards 4 --print
+bash scripts/c1_ui_preflight_test.sh
+```
 
-   ```bash
-   bash scripts/u4_device.sh
-   ```
+## Critical merge smoke
 
-   Device deployment is environmental validation; see the script's usage for
-   its current flags and environment inputs.
+The reviewed method-level set covers fresh-install onboarding, Bots navigation,
+a streamed conversation, and hosted-room open/send/render. Build 87 and later
+also require `testGroupConversationOpensAtLatestWithDeepHistory`.
 
-3. Push and open a pull request. Hosted CI runs the required pull-request
-   checks below.
+The Build 86 integration baseline predates that test. The policy explicitly
+allows that migration baseline but rejects a Build 87+ candidate that omits the
+known regression. The smoke is not proof that all other product behavior works.
 
-4. After the pull request is green and current with `main`, the merge queue
-   validates the exact candidate with the same high-signal checks plus the
-   critical UI smoke set.
+```sh
+bash scripts/c1_critical_smoke.sh --list-tests
+bash scripts/c1_critical_smoke.sh
+```
 
-## Required merge checks
+## Execution and evidence
 
-| Event | Static/privacy/security | Packages | Hosted units | Changed-area UI | Critical UI smoke | Full matrix | Required gate |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `pull_request` | yes | yes | yes | yes | skipped | separate lane | `CI Gate`, fail-closed |
-| `merge_group` | yes | yes | yes | yes | 4 core methods, plus deep-history room opening when present in the candidate | separate lane | `CI Gate`, fail-closed |
-| `push` to `main` | yes | yes | yes | skipped | skipped | separate lane | `CI Gate`, informational |
-| manual or nightly deep run | not part of this workflow | not part of this workflow | not part of this workflow | not part of this workflow | not part of this workflow | all 59 suites, five shards | `Full UI Regression Gate`, informational |
+The runner performs one `xcodebuild build-for-testing` per invocation, followed
+by isolated per-suite `test-without-building` processes. Method-level selection
+must produce exactly the expected cases. Empty, missing, skipped without an
+explicit platform exception, malformed, or incomplete results fail closed.
 
-The static phase includes XcodeGen drift, module boundaries, privacy and
-required-reason audits, public safety, and gitleaks. Package checks retain
-their exact-count guards, and the complete hosted unit suite remains required.
+Focused and critical runs stop after a conclusive suite failure. The nightly
+matrix continues collecting failures. Xcode may retry a failed test once;
+recovered failures are reported as `FLAKE_RECOVERED`, not hidden.
 
-### Changed-area UI preflight
+Each invocation creates a unique `/tmp/hermes-c1-results.*` directory containing
+build/test logs, xcresults, parsed summaries, and source/toolchain/destination
+metadata. Another worker's results are never deleted. CI retains evidence on
+success and failure, including successful retries.
 
-`scripts/c1_ui_preflight.sh` selects deterministic suites from the changed
-files against the pull request or merge-group base:
+Job ceilings are safety limits, not speed promises: static 15 minutes, packages
+25, units 40, focused partitions 75, critical smoke 45, deep shards 150. Measure
+actual runtimes before tightening these or changing shard balance. Hosted units
+and simulator startup can still dominate. Xcode/runner pinning requires separate
+validation; provenance records the selected environment.
 
-- UI test class files map to their own suite when the class is in the
-  deterministic inventory;
-- product areas map to their focused suites through the ordered rules in the
-  script;
-- ambiguous or broad product changes fall back to a bounded core set;
-- docs and tooling changes can select no UI suites, while the preflight job
-  still succeeds as a required dependency.
+## Local tests of CI plumbing
 
-The selector is self-tested by `scripts/c1_ui_preflight_test.sh`, and every
-suite it selects is validated against `scripts/c1_ui_matrix.sh`. This is
-focused coverage for the changed area, not a replacement for deep regression
-validation.
+These tests do not start a simulator and are not product acceptance evidence:
 
-### Critical merge smoke
+```sh
+bash scripts/ci_gate_policy_check.sh
+bash scripts/ci_gate_policy_contract_test.sh
+bash scripts/c1_ui_preflight_test.sh
+python3 scripts/c1_ui_runner_contract_test.py
+python3 scripts/c1_xcresult_parse_test.py
+```
 
-Every merge-group candidate runs four exact core test methods:
+Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
+method selection, missing evidence, and the known-regression requirement.
+Real GitHub-hosted validation remains required before merging the CI change.
 
-- `F3Onboarding/testFreshInstallLandsOnOnboardingAsRootSurface`: fresh-install
-  launch and the onboarding root;
-- `U3TabNavigation/testBotsTabOpensFleetRoster`: root navigation into the Bots
-  roster;
-- `HermesFleetHappyPath/testHappyPathGatewaysToConversationStreamedAnswer`:
-  gateway navigation, message send, and streamed reply;
-- `RoomChat/testHostedRoomOpenSendAndTranscriptRender`: hosted group-room open
-  and basic send.
+## Failure handling
 
-When the candidate includes the Build 87 deep-history test, the smoke also
-runs `FOS8Accessibility/testGroupConversationOpensAtLatestWithDeepHistory`.
-That method guards group-room opening at the latest transcript entry and
-keeps the known Build 87 defect from passing the v3 merge gate.
+- Product regression: preserve the reproducer and fix it. Critical regressions
+  block release and remain represented in focused checks.
+- Infrastructure failure: retain diagnostics and rerun the affected job against
+  the same source. Do not label it a product pass.
+- Proven flaky harness: track a repair. Any temporary quarantine needs explicit
+  scope, evidence, an owner, and expiry; do not delete tests to obtain green.
+- Incomplete evidence: validation is incomplete, never implicitly successful.
 
-Method-level selectors keep unrelated, flaky cases in those suites out of the
-merge lock while preserving the full suite inventory in deep regression. The
-selection is checked against the canonical suite inventory and the exact test
-method names. Historical full-suite timings put the three original smoke
-suites at about 30 minutes combined; the selected methods and optional fifth
-method should take less, but their combined hosted duration has not yet been
-measured. The smoke job has a 45-minute ceiling. Changed-area preflight and
-the full regression lane provide the additional area-specific coverage.
+A previous successful job can only support the source/configuration it tested.
+A new commit or merge candidate needs its own required validation.
 
-### Full UI regression and release confidence
+## Integration is not distribution
 
-The complete Build 87 deterministic inventory of 59 suites remains intact in
-`scripts/c1_ui_matrix.sh` and runs across five non-cancelling macOS shards from
-`.github/workflows/ui-regression.yml`. It runs nightly and can be started
-manually against a selected ref, including an exact release-candidate ref.
-The runtime-weighted shard estimates peak near 105 minutes; each shard has a
-150-minute timeout for setup, retries, and hosted-runner variance. Each shard
-uploads xcresult bundles and xcodebuild logs after success or failure. `Full
-UI Regression Gate` reports the aggregate result, but it is not a required
-branch-protection check.
+Follow [DEVELOPMENT.md](DEVELOPMENT.md) for branch ownership and
+[integration-safe-main.md](integration-safe-main.md) for reconciliation.
+A release record must connect exact source, dependencies and configuration,
+archive/IPA, TestFlight build number, and device acceptance. Preserve the original
+release source tag after squash integration; record the new main SHA separately.
 
-A full-matrix failure still needs investigation using its test results and
-artifacts. A confirmed product defect blocks release. A test-harness or runner
-failure should be classified and repaired or rerun in its own lane; it should
-not cause a product change unless there is evidence of a real application
-defect.
-
-Release confidence follows the exact source SHA through local validation,
-archive, Internal TestFlight, physical-device verification, and public
-promotion. CI supports that chain; a passing simulator run does not replace
-verification of the delivered TestFlight binary.
-
-## Adding a UI suite
-
-1. Add the class to `HermesFleetAppUITests`.
-2. Classify it in `scripts/c1_ui_matrix.sh` (`UI_CLASSES` for deterministic CI
-   suites; `ENVIRONMENTAL_CLASSES` for live-gateway/local-only suites). The
-   inventory audit fails until every class is classified exactly once.
-3. If it has a natural source-area trigger, add an ordered rule to
-   `scripts/c1_ui_preflight.sh`; otherwise the bounded core fallback covers
-   it.
-4. Add a test method to `scripts/c1_critical_smoke.sh` only when failure means
-   the application should not merge, and update its topology contract guard.
-
-## Safety properties
-
-- `CI Gate` fails closed: every check expected for the event must succeed, and
-  event-specific jobs must be skipped only where the contract says they are
-  inapplicable.
-- The required CI workflow is not path-filtered, so its check cannot vanish
-  for docs-only or otherwise unmatched changes.
-- Merge-group checks are never cancelled by a later CI event.
-- The full matrix remains five-way, complete, and available in a separate
-  scheduled/manual lane; it is not a dependency of `CI Gate`.
-- `scripts/ci_gate_policy_check.sh` and
-  `scripts/ci_gate_policy_contract_test.sh` guard the workflow topology and
-  event-specific fail-closed behavior.
+No upload, public promotion, existing release-tag movement, automatic feature
+implementation, or claim of upstream parity is implied by this CI policy.

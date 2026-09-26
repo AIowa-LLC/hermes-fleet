@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -35,6 +38,10 @@ jobs:
         run: bash scripts/ci_gate_policy_contract_test.sh
       - name: UI preflight selector self-test
         run: bash scripts/c1_ui_preflight_test.sh
+      - name: Runner and partition contract tests (mocked Xcode)
+        run: python3 scripts/c1_ui_runner_contract_test.py
+      - name: xcresult parser contract tests
+        run: python3 scripts/c1_xcresult_parse_test.py
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)
@@ -81,18 +88,21 @@ jobs:
         with:
           name: xcresults-critical-smoke
           path: |
-            /tmp/hermes-c1-results/
-            /tmp/c1_xctest_ui_*.log
+            /tmp/hermes-c1-results*/
           retention-days: 7
           if-no-files-found: ignore
 
   ui-preflight:
-    name: UI preflight (focused, changed area)
+    name: UI preflight ${{ matrix.shard }}/4 (changed area)
     # PRs get an early changed-area check; merge candidates repeat it against
     # the merge-group base alongside the fixed critical smoke set.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: macos-latest
     timeout-minutes: 75
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,15 +111,14 @@ jobs:
           # needed for both pull requests and merge-group candidates.
           fetch-depth: 0
       - name: Run focused UI preflight (changed-area selection)
-        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
-      - name: Upload xcresults (failure diagnostics)
-        if: failure()
+        run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" --shard "${{ matrix.shard }}" --shards 4
+      - name: Upload focused UI evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcresults-ui-preflight
+          name: xcresults-ui-preflight-${{ matrix.shard }}
           path: |
-            /tmp/hermes-c1-results/
-            /tmp/c1_xctest_ui_*.log
+            /tmp/hermes-c1-results*/
           retention-days: 7
           if-no-files-found: ignore
 

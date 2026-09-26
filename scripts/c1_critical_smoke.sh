@@ -22,6 +22,13 @@ if [ -f "$LATEST_ROOM_SOURCE" ] && rg -q '^[[:space:]]*func[[:space:]]+testGroup
   CRITICAL_SMOKE_TESTS+=("$LATEST_ROOM_TEST")
 fi
 
+BUILD_NUMBER=$(awk '/CURRENT_PROJECT_VERSION:/ { print $2; exit }' project.yml)
+case "$BUILD_NUMBER" in ''|*[!0-9]*) echo "Invalid build number for smoke policy" >&2; exit 1 ;; esac
+if [ "$BUILD_NUMBER" -ge 87 ] && ! printf '%s\n' "${CRITICAL_SMOKE_TESTS[*]}" | grep -Fq "$LATEST_ROOM_TEST"; then
+  echo "Build 87+ requires the deep-history latest-room regression test; it may not be omitted." >&2
+  exit 1
+fi
+
 if [ "${1:-}" = "--list-tests" ]; then
   printf '%s\n' "${CRITICAL_SMOKE_TESTS[*]}"
   exit 0
@@ -30,4 +37,4 @@ fi
 
 echo "Critical merge smoke journeys: ${CRITICAL_SMOKE_TESTS[*]}"
 echo "  Fresh-install root, Bots roster, streamed conversation, hosted-room open/send, and latest-history room open when available."
-bash scripts/c1_ui_matrix.sh --tests "${CRITICAL_SMOKE_TESTS[*]}"
+bash scripts/c1_ui_matrix.sh --tests "${CRITICAL_SMOKE_TESTS[*]}" --fail-fast
