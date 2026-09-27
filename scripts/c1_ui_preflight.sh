@@ -71,6 +71,10 @@ CORE="HermesFleetHappyPath P0_7SessionStateMachine"
 RULES_FILE=$(mktemp /tmp/c1_ui_preflight_rules.XXXXXX) || die "mktemp failed"
 cat > "$RULES_FILE" <<'RULES'
 # Newer release surfaces must map to their registered regression suites.
+# Build 91 (Live Ops v1): the Fleet Home summary strip / Needs You approval
+# flow / Operation Detail swarm view all live behind this pattern, plus the
+# existing Home-truth suites their changes can affect.
+LiveOps|Operation => LiveOps FOS4TruthfulHome U4Dashboard FOS6ComponentDensity FOS8Accessibility R9ApprovalBanner
 ImageGeneration|ImageGen => ImageGenerationAnimation
 Artifact => ArtifactsDestination
 ReasoningSlider => ReasoningSlider

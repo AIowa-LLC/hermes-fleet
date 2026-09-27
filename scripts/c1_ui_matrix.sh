@@ -76,6 +76,10 @@ UI_CLASSES=(
   FleetUnreadBadge
   # ADR-0012 (launch cache): cached-first cold launch.
   FleetLaunchCache
+  # Build 91 (Live Ops v1 — Worker B): Fleet Home summary strip / Needs You
+  # approval flow / Operation Detail swarm view, all over the deterministic
+  # scripted Live Ops fixture (no live gateway).
+  LiveOps
 )
 
 # C1 elapsed-runtime weights in tenths of a minute, in the same order as
@@ -90,6 +94,10 @@ UI_WEIGHT_TENTHS_OF_MINUTE=(
   123 38 60 82 71 76 83 92 86 55 390 120
   75 129 94 71 90 199 46 74 108 101 41 91
   73 60 65 47 114 150 223 55 62 43 33
+  # LiveOps (Build 91): no observed CI run yet — estimated in line with
+  # comparably-scoped scripted-fleet suites (FOS4TruthfulHome/CronManagement)
+  # pending a real measured runtime.
+  100
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They

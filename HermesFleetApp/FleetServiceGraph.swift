@@ -216,6 +216,7 @@ enum FleetServiceGraph {
             // LAContext; DEBUG device dogfood too, since makeDefaultEnvironment
             // only scripts the SIMULATOR).
             biometrics: makeApprovalBiometrics(),
+            liveOpsFactory: makeLiveOpsFactory(credentialStore: credentialStore, pinStore: pinStore),
             seedRegistrations: [],
             // R10-T4: the REAL on-device voice engine (Speech framework STT +
             // AVSpeechSynthesizer TTS) — a documented client-side deviation:
@@ -423,6 +424,31 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayManagementClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Live Ops v1 — real per-gateway `GatewayLiveOpsClient` +
+    /// `GatewayApprovalClient` pair over ONE transport (mirrors the
+    /// management seam factory's construction exactly). `nil` endpoint ⇒
+    /// `nil` seam — the store then reports that gateway `.disconnected`
+    /// without ever attempting a request (fail closed, same posture as the
+    /// other per-gateway factories in this file).
+    nonisolated private static func makeLiveOpsFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetLiveOpsFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            return LiveOpsGatewaySeam(
+                ops: GatewayLiveOpsClient(gatewayID: gateway.id, transport: transport),
+                approvals: GatewayApprovalClient(gatewayID: gateway.id, transport: transport)
+            )
         }
     }
 

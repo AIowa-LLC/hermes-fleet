@@ -140,6 +140,16 @@ extension FleetServiceGraph {
                     : ScriptedRoomLinkEngine(gatewayID: gateway.id)
             },
             health: health,
+            // Live Ops v1: deterministic scripted seam (env-knobbed — see
+            // ScriptedLiveOpsEngine) so the Fleet Home summary strip,
+            // Needs You approval flow, and Operation Detail are all walkable
+            // in the simulator without a live gateway.
+            liveOpsFactory: { gateway in
+                LiveOpsGatewaySeam(
+                    ops: ScriptedLiveOpsClient(gatewayID: gateway.id),
+                    approvals: ScriptedLiveOpsApprovals(gatewayID: gateway.id)
+                )
+            },
             seedRegistrations: FleetServiceGraph.zeroGatewaysEnabled
                 ? []
                 : (FleetServiceGraph.singleGatewayEnabled
@@ -780,6 +790,216 @@ final class ScriptedBotModeChatSeam: BotModeChatProviding, @unchecked Sendable {
     func createCanonicalChat(profile: String) async throws -> String {
         created.insert(profile)
         return "botchat-\(profile)"
+    }
+}
+
+// MARK: - Live Ops v1 (deterministic scripted fixture)
+
+/// Live Ops v1 — the shared scripted fixture state (DEBUG simulator only).
+///
+/// Scenario (mission Build 91 Worker B):
+/// - `workstation` reports a PARENT operation `Working` with two root
+///   subagents plus one nested at depth 2 that completes ~40s after launch
+///   (demoing "child completion over time"), and a second, idle/recent
+///   session — so the gateway also exercises the "N idle sessions" collapse.
+///   `workstation`/`sk-parent` is the ONLY session this fixture proves
+///   attachment for (`listSubagents` succeeds) — every other operation
+///   demonstrates the honest `.notAttached` child-controls gate.
+/// - `render-box` reports a `Waiting` operation with one pending approval
+///   for a harmless command (`ls ~/Projects`); approving it flips the
+///   operation to `Working` on the next refresh (never optimistically).
+/// - `arch` ("Lab Node") reports `.unsupported` — the "older Hermes gateway"
+///   case: neutral "limited activity reporting" copy, never an error.
+///
+/// `HERMES_FLEET_LIVEOPS_PARTIAL=1`: `render-box`'s refresh fails
+/// (`.failed`) instead of reporting, so partial-coverage counts (never "0
+/// Active") are reachable deterministically.
+final class ScriptedLiveOpsEngine: @unchecked Sendable {
+    static let shared = ScriptedLiveOpsEngine()
+
+    static let workstationID = GatewayID(rawValue: "workstation")
+    static let renderBoxID = GatewayID(rawValue: "render-box")
+    static let archID = GatewayID(rawValue: "arch")
+    static let approvalRequestID = "approval-ls-projects"
+
+    private let lock = NSLock()
+    private let launchedAt = Date()
+    private var approvedRequestIDs: Set<String> = []
+    private var deniedRequestIDs: Set<String> = []
+
+    private var partialCoverage: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_PARTIAL"] == "1"
+    }
+
+    func snapshot(gatewayID: GatewayID) -> LiveOpsGatewaySnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = Date()
+        switch gatewayID {
+        case Self.workstationID:
+            return LiveOpsGatewaySnapshot(
+                gatewayID: gatewayID, coverage: .reporting,
+                operations: workstationOperations(now: now), observedAt: now)
+        case Self.renderBoxID:
+            if partialCoverage {
+                return LiveOpsGatewaySnapshot(
+                    gatewayID: gatewayID,
+                    coverage: .failed(reason: "connection reset (scripted partial-coverage demo)"),
+                    operations: [], observedAt: now)
+            }
+            return LiveOpsGatewaySnapshot(
+                gatewayID: gatewayID, coverage: .reporting,
+                operations: [renderBoxOperation(now: now)], observedAt: now)
+        case Self.archID:
+            return LiveOpsGatewaySnapshot(gatewayID: gatewayID, coverage: .unsupported, operations: [], observedAt: now)
+        default:
+            return LiveOpsGatewaySnapshot(gatewayID: gatewayID, coverage: .disconnected, operations: [], observedAt: now)
+        }
+    }
+
+    private func workstationOperations(now: Date) -> [LiveOperation] {
+        let elapsed = now.timeIntervalSince(launchedAt)
+        var subagents: [LiveOpsSubagent] = [
+            LiveOpsSubagent(
+                subagentID: "sub-writer", parentID: nil, depth: 0,
+                goal: "Draft the Build 91 release notes", model: "claude-opus",
+                startedAt: launchedAt, status: "working", toolCount: 4,
+                lastTool: "editor", acceptingSteer: true),
+            LiveOpsSubagent(
+                subagentID: "sub-researcher", parentID: nil, depth: 0,
+                goal: "Research competitor pricing pages", model: "claude-sonnet",
+                startedAt: launchedAt, status: "working", toolCount: 9,
+                lastTool: "web_search", acceptingSteer: true),
+        ]
+        // Nested depth-2 child completes ~40s after launch — the swarm tree
+        // and the Operation Detail timeline both observe it disappear.
+        if elapsed < 40 {
+            subagents.append(LiveOpsSubagent(
+                subagentID: "sub-nested-summarize", parentID: "sub-researcher", depth: 1,
+                goal: "Summarize the pricing page", model: "claude-haiku",
+                startedAt: launchedAt, status: "working", toolCount: 2,
+                lastTool: "fetch", acceptingSteer: false))
+        }
+        let workingOp = LiveOperation(
+            id: LiveOperationID(gatewayID: Self.workstationID, runtimeSessionID: "rt-parent"),
+            sessionKey: "sk-parent",
+            title: "Ship Build 91",
+            preview: "Wiring the Live Ops summary strip into Fleet Home…",
+            model: "claude-opus",
+            startedAt: launchedAt,
+            lastActive: now,
+            messageCount: 40,
+            status: .working,
+            subagents: subagents)
+        let idleOp = LiveOperation(
+            id: LiveOperationID(gatewayID: Self.workstationID, runtimeSessionID: "rt-idle"),
+            sessionKey: "sk-idle",
+            title: "Morning triage",
+            preview: "",
+            model: "claude-haiku",
+            startedAt: launchedAt.addingTimeInterval(-3600),
+            lastActive: now.addingTimeInterval(-200),
+            messageCount: 12,
+            status: .idle,
+            subagents: [])
+        return [workingOp, idleOp]
+    }
+
+    private func renderBoxOperation(now: Date) -> LiveOperation {
+        let resolved = approvedRequestIDs.contains(Self.approvalRequestID)
+        return LiveOperation(
+            id: LiveOperationID(gatewayID: Self.renderBoxID, runtimeSessionID: "rt-render"),
+            sessionKey: "sk-render",
+            title: "Clean up the Projects folder",
+            preview: resolved ? "Listing ~/Projects…" : "Waiting on your approval to list ~/Projects",
+            model: "claude-sonnet",
+            startedAt: launchedAt.addingTimeInterval(-120),
+            lastActive: now,
+            messageCount: 6,
+            status: resolved ? .working : .waiting,
+            subagents: [])
+    }
+
+    // MARK: attached-session proof (only the workstation parent)
+
+    func listSubagents(gatewayID: GatewayID, sessionID: String) -> [LiveOpsSubagent]? {
+        guard gatewayID == Self.workstationID, sessionID == "rt-parent" else { return nil }
+        return workstationOperations(now: Date()).first?.subagents
+    }
+
+    // MARK: approvals
+
+    func pendingApprovals(gatewayID: GatewayID, sessionID: String) -> [ApprovalRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard gatewayID == Self.renderBoxID, sessionID == "rt-render",
+              !approvedRequestIDs.contains(Self.approvalRequestID),
+              !deniedRequestIDs.contains(Self.approvalRequestID)
+        else { return [] }
+        return [ApprovalRequest(
+            requestID: Self.approvalRequestID,
+            sessionID: "rt-render",
+            command: "ls ~/Projects",
+            detail: "List files in the Projects directory",
+            choices: ["once", "session", "deny"])]
+    }
+
+    func respond(requestID: String, choice: ApprovalChoice) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        guard requestID == Self.approvalRequestID else { return 0 }
+        if choice == .deny {
+            deniedRequestIDs.insert(requestID)
+        } else {
+            approvedRequestIDs.insert(requestID)
+        }
+        return 1
+    }
+}
+
+/// Scripted `LiveOpsProviding` + `LiveOpsSubagentControlling` over the shared
+/// fixture engine above.
+struct ScriptedLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling {
+    let gatewayID: GatewayID
+
+    func snapshot(gateway: GatewayID) async -> LiveOpsGatewaySnapshot {
+        ScriptedLiveOpsEngine.shared.snapshot(gatewayID: gatewayID)
+    }
+
+    func listSubagents(sessionID: String) async throws -> [LiveOpsSubagent] {
+        guard let subagents = ScriptedLiveOpsEngine.shared.listSubagents(gatewayID: gatewayID, sessionID: sessionID) else {
+            throw LiveOpsControlError.notAttached
+        }
+        return subagents
+    }
+
+    func tail(subagentID: String, sessionID: String) async throws -> LiveOpsSubagentTail {
+        LiveOpsSubagentTail(available: true, text: "…scripted subagent tail…", truncated: false)
+    }
+
+    func steer(subagentID: String, sessionID: String, text: String) async throws -> LiveOpsSteerResult {
+        .queued
+    }
+
+    func interrupt(subagentID: String, sessionID: String) async throws -> Bool {
+        true
+    }
+}
+
+/// Scripted `ApprovalsProviding` for the Live Ops fixture — approve/deny
+/// mutate the shared engine so the `render-box` operation's status flips on
+/// the next refresh (never optimistically, matching `LiveOpsStore`).
+struct ScriptedLiveOpsApprovals: ApprovalsProviding {
+    let gatewayID: GatewayID
+
+    func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
+        ScriptedLiveOpsEngine.shared.respond(requestID: requestID, choice: choice)
+    }
+
+    func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool { false }
+
+    func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
+        ScriptedLiveOpsEngine.shared.pendingApprovals(gatewayID: gatewayID, sessionID: sessionID)
     }
 }
 
