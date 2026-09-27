@@ -390,6 +390,20 @@ public struct GatewayConversationClient: ConversationProviding {
 
     /// Map JSON-RPC error codes onto the conversation vocabulary.
     static func mapRPCError(_ error: JSONRPCError) -> ConversationError {
+        // Upstream methods_prompt.py rejects admission before queuing a turn
+        // with 4090 and data.reason. Do not guess ownership from prose or
+        // confuse an unavailable registry with a confirmed foreign owner.
+        // Snapshot: hermes-agent 9bb2ea1b5c316578d00c826833f0ba01f09d1788.
+        if error.code == 4090 {
+            switch error.data?["reason"]?.stringValue {
+            case "SESSION_NOT_OWNED":
+                return .rpcFailed("Your message was not sent. Another client owns this conversation, even if it appears idle. Finish any running turn and close this conversation in that client, then retry here. Fleet will not interrupt it automatically.")
+            case "SESSION_COORDINATION_UNAVAILABLE":
+                return .rpcFailed("Your message was not sent because the gateway could not verify conversation ownership. Retry later. If this persists, have the gateway operator check session coordination; do not force a takeover.")
+            default:
+                break
+            }
+        }
         switch error.code {
         case 4001:
             // `_sess_nowait` rejects a runtime id the gateway no longer holds
