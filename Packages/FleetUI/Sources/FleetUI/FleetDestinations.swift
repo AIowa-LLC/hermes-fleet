@@ -103,6 +103,7 @@ enum FleetChatsArchiveStore {
 
 struct FleetChatsView: View {
     @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
@@ -461,8 +462,16 @@ struct FleetChatsView: View {
     /// the LEFT of settings, bottom-trailing, hovering over the list.
     /// ADR-0010: New Group lives on the Groups tab — the Chats FAB is a
     /// direct New-conversation button (no menu wrapper needed).
+    ///
+    /// Feedback #4 (dogfood pass): the two buttons previously carried
+    /// asymmetric treatments — pencil bare, gear alone wrapped in
+    /// `.ultraThinMaterial` with NO shape (a grey rectangle) — which read as
+    /// "glitching". Both buttons now share ONE glass capsule with a hairline
+    /// divider between them. Material (not `.glassEffect()`) keeps XCUITest
+    /// hit-testing reliable — see the drawer's own note on that pitfall —
+    /// and Reduce Transparency swaps to a solid theme surface.
     private var floatingActionCluster: some View {
-        HStack(spacing: FleetTheme.spacingSm) {
+        HStack(spacing: 0) {
             Button {
                 showingCompose = true
             } label: {
@@ -470,11 +479,13 @@ struct FleetChatsView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: 48, height: 48)
-                    .contentShape(Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
             .accessibilityLabel("New chat")
             .accessibilityIdentifier("fleet.chats.new")
+
+            Divider().frame(height: 20)
 
             // Settings: navigates to the Settings tab.
             Button {
@@ -484,13 +495,23 @@ struct FleetChatsView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: 48, height: 48)
-                    .contentShape(Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
-            .background(.ultraThinMaterial)
             .accessibilityLabel("Settings")
             .accessibilityIdentifier("fleet.chats.settings")
         }
+        .background {
+            if reduceTransparency {
+                Capsule().fill(theme.surfaceElevated)
+            } else {
+                Capsule().fill(.ultraThinMaterial)
+            }
+        }
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        .accessibilityIdentifier("fleet.chats.actions")
     }
 
     // MARK: - Refresh failure surfaces (dogfood finding 1)
