@@ -113,6 +113,111 @@ final class FOS3FourRootShellUITests: XCTestCase {
                        "Bots must NOT expose the retired toolbar search button")
     }
 
+    // MARK: Feedback #3 — drawer menu glyph + leading-edge swipe (dogfood pass)
+
+    /// The menu button is a plain SF Symbol now (no custom circle/material
+    /// wrapper inside the system toolbar glass), keeps its ≥44pt hit target,
+    /// and still opens the drawer on tap.
+    func testDrawerMenuButtonIsHittableAndOpensDrawer() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), "the drawer menu button must render")
+        XCTAssertTrue(menu.isHittable, "the drawer menu button must be hittable")
+        XCTAssertGreaterThanOrEqual(menu.frame.width, 44,
+                                    "the menu button's hit target must be at least 44pt wide")
+        XCTAssertGreaterThanOrEqual(menu.frame.height, 44,
+                                    "the menu button's hit target must be at least 44pt tall")
+
+        menu.tap()
+        let drawer = app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 10), "tapping the menu button must open the drawer")
+        UITabNavigation.closeDrawer(app)
+    }
+
+    /// A rightward drag starting near the leading edge of a ROOT tab surface
+    /// opens the drawer, mirroring the menu button.
+    func testLeadingEdgeSwipeOpensDrawerOnRootTab() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Bots")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch.exists)
+
+        let start = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 5, dy: 300))
+        let end = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 200, dy: 300))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        let drawer = app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 10),
+                      "an edge swipe on a root tab surface must open the drawer")
+        UITabNavigation.closeDrawer(app)
+    }
+
+    /// The same edge gesture on a PUSHED screen must NOT open the drawer —
+    /// it must fall through to the system back-swipe instead (the strip only
+    /// installs while the tab's path is empty).
+    func testLeadingEdgeSwipeOnPushedScreenPerformsBackNavigationNotDrawer() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Bots")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+
+        let row = app.descendants(matching: .any)
+            .matching(identifier: "fleet.roster.row.workstation#default").firstMatch
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "the workstation bot row must render")
+        row.tap()
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.bot-detail.header").firstMatch.waitForExistence(timeout: 10),
+            "bot detail must be pushed before the edge-swipe probe")
+
+        let start = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 5, dy: 300))
+        let end = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 200, dy: 300))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch.exists,
+                       "an edge swipe on a pushed screen must not open the drawer")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),
+                      "the system back-swipe must pop the pushed bot detail back to Bots")
+    }
+
+    // MARK: Feedback #4 — Chats floating action cluster (dogfood pass)
+
+    /// Both Chats FAB buttons share ONE glass capsule container now (was: a
+    /// bare pencil next to a shapeless grey gear). Both are hittable, equal
+    /// height, and their frames lie inside the shared capsule.
+    func testChatsActionClusterSharesOneContainer() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+
+        let cluster = app.descendants(matching: .any).matching(identifier: "fleet.chats.actions").firstMatch
+        XCTAssertTrue(cluster.waitForExistence(timeout: 10), "the Chats action cluster capsule must render")
+
+        let newChat = app.buttons["fleet.chats.new"].firstMatch
+        let settings = app.buttons["fleet.chats.settings"].firstMatch
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10), "the new-chat button must render")
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "the settings button must render")
+        XCTAssertTrue(newChat.isHittable, "the new-chat button must be hittable")
+        XCTAssertTrue(settings.isHittable, "the settings button must be hittable")
+
+        XCTAssertEqual(newChat.frame.height, settings.frame.height, accuracy: 1,
+                       "both cluster buttons must share the same frame height")
+
+        let clusterFrame = cluster.frame
+        XCTAssertTrue(clusterFrame.insetBy(dx: -1, dy: -1).contains(newChat.frame),
+                      "the new-chat button must lie inside the shared capsule (capsule: \(clusterFrame), button: \(newChat.frame))")
+        XCTAssertTrue(clusterFrame.insetBy(dx: -1, dy: -1).contains(settings.frame),
+                      "the settings button must lie inside the shared capsule (capsule: \(clusterFrame), button: \(settings.frame))")
+    }
+
     /// Build 43: the Gateways registry cockpit keeps its Add toolbar once
     /// entered via Fleet → Manage Gateways.
     func testGatewaysCockpitReachableFromFleetWithAddToolbar() throws {
