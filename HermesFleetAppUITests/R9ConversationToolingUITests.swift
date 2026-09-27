@@ -141,7 +141,6 @@ final class R9ConversationToolingUITests: XCTestCase {
         }
         let group = groupQuery().firstMatch
         let found = group.waitForExistence(timeout: 15)
-        if !found { print("FB5-DEBUG hierarchy:\n\(app.debugDescription)") }
         XCTAssertTrue(found,
                       "six scripted tool calls should collapse into one compact group row")
         XCTAssertEqual(groupQuery().count, 1, "one compact row for the whole multi-tool turn, not one per tool")

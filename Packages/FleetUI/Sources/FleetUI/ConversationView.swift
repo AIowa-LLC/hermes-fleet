@@ -1138,12 +1138,22 @@ enum ConversationHeaderChips {
     /// growth (a token, or a streaming Reasoning block, growing the SAME
     /// last row) so a spring animation never replays on every delta; true
     /// only for a brand-new row arriving or an explicit "Latest" jump.
-    private func scrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
+    private func transcriptBlockID(containing rowID: String, rows: [ConversationRow]) -> String {
+        TranscriptBlock.id(containing: rowID, in: ToolActivityGrouping.group(rows)) ?? "row:\(rowID)"
+    }
+
+    private func scrollToLive(
+        _ id: String,
+        rows: [ConversationRow],
+        proxy: ScrollViewProxy,
+        animate: Bool
+    ) {
+        let targetID = transcriptBlockID(containing: id, rows: rows)
         isProgrammaticFollow = true
         if animate && !reduceMotion {
-            withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+            withAnimation { proxy.scrollTo(targetID, anchor: .bottom) }
         } else {
-            proxy.scrollTo(id, anchor: .bottom)
+            proxy.scrollTo(targetID, anchor: .bottom)
         }
         Task { @MainActor in
             await Task.yield()
@@ -1177,7 +1187,7 @@ enum ConversationHeaderChips {
                         switch block {
                         case .row(let row):
                             bubbleView(model: model, row: row)
-                            .id(row.id)
+                            .id(block.id)
                             // P0-B: the active find match gets a border ring
                             // (decorative — the find bar carries the AX truth).
                             .overlay {
@@ -1203,7 +1213,7 @@ enum ConversationHeaderChips {
                             }
                         case .toolGroup(let group):
                             ToolActivityGroupView(group: group)
-                                .id(group.id)
+                                .id(block.id)
                         }
                     }
                     // Hermes-parity working indicator: animated dots + a
@@ -1281,8 +1291,9 @@ enum ConversationHeaderChips {
                                 Button {
                                     showingTimeline = false
                                     followingLatest = false
-                                    if reduceMotion { proxy.scrollTo(row.id, anchor: .top) }
-                                    else { withAnimation(.snappy) { proxy.scrollTo(row.id, anchor: .top) } }
+                                    let targetID = transcriptBlockID(containing: row.id, rows: model.transcript)
+                                    if reduceMotion { proxy.scrollTo(targetID, anchor: .top) }
+                                    else { withAnimation(.snappy) { proxy.scrollTo(targetID, anchor: .top) } }
                                 } label: {
                                     Text(row.text).font(.body).lineLimit(3)
                                         .foregroundStyle(theme.textPrimary).padding(.vertical, 4)
@@ -1303,7 +1314,7 @@ enum ConversationHeaderChips {
             .onChange(of: model.transcript.last?.id) {
                 guard followingLatest, shouldAutoFollow(model),
                       let last = model.transcript.last else { return }
-                scrollToLive(last.id, proxy: proxy, animate: true)
+                scrollToLive(last.id, rows: model.transcript, proxy: proxy, animate: true)
             }
             // B87 fix: the row-identity rescroll above only fires when a
             // NEW row appears. A streaming turn instead grows the SAME last
@@ -1325,7 +1336,7 @@ enum ConversationHeaderChips {
             }) { _, _ in
                 guard followingLatest, shouldAutoFollow(model),
                       let last = model.transcript.last else { return }
-                scrollToLive(last.id, proxy: proxy, animate: false)
+                scrollToLive(last.id, rows: model.transcript, proxy: proxy, animate: false)
             }
             // Dogfood top-space fix: the toolbar/menu "Latest" action bumps
             // `scrollPulse` (the toolbar cannot reach this proxy); scrolling
@@ -1333,14 +1344,15 @@ enum ConversationHeaderChips {
             // animating.
             .onChange(of: scrollPulse) { _, _ in
                 guard followingLatest, let last = model.transcript.last else { return }
-                scrollToLive(last.id, proxy: proxy, animate: true)
+                scrollToLive(last.id, rows: model.transcript, proxy: proxy, animate: true)
             }
             // P0-B: jumps to the active find match (the find bar sits above
             // this ScrollView and cannot reach the proxy).
             .onChange(of: findScrollPulse) { _, _ in
                 guard let target = findTargetRowID else { return }
-                if reduceMotion { proxy.scrollTo(target, anchor: .center) }
-                else { withAnimation(.snappy) { proxy.scrollTo(target, anchor: .center) } }
+                let blockID = transcriptBlockID(containing: target, rows: model.transcript)
+                if reduceMotion { proxy.scrollTo(blockID, anchor: .center) }
+                else { withAnimation(.snappy) { proxy.scrollTo(blockID, anchor: .center) } }
             }
             // P0-B: keep matches fresh while the transcript grows (or the
             // bounded display window trims) under a live query.

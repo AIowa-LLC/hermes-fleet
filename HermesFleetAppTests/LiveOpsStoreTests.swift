@@ -18,6 +18,8 @@ final class LiveOpsStoreTests: XCTestCase {
         private let lock = NSLock()
         private var _snapshotCallCount = 0
         var snapshotCallCount: Int { lock.lock(); defer { lock.unlock() }; return _snapshotCallCount }
+        private var _controlSessionIDs: [String] = []
+        var controlSessionIDs: [String] { lock.lock(); defer { lock.unlock() }; return _controlSessionIDs }
         var listSubagentsResult: Result<[LiveOpsSubagent], LiveOpsControlError> = .failure(.notAttached)
 
         init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
@@ -28,21 +30,32 @@ final class LiveOpsStoreTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }
             _snapshotCallCount += 1
         }
+        private func recordControlSession(_ sessionID: String) {
+            lock.lock(); defer { lock.unlock() }
+            _controlSessionIDs.append(sessionID)
+        }
 
         func snapshot(gateway: GatewayID) async -> LiveOpsGatewaySnapshot {
             recordSnapshotCall()
             return LiveOpsGatewaySnapshot(gatewayID: gatewayID, coverage: coverage, operations: operations, observedAt: Date())
         }
 
-        func listSubagents(sessionID: String) async throws -> [LiveOpsSubagent] { try listSubagentsResult.get() }
+        func listSubagents(sessionID: String) async throws -> [LiveOpsSubagent] {
+            recordControlSession(sessionID)
+            return try listSubagentsResult.get()
+        }
         func tail(subagentID: String, sessionID: String) async throws -> LiveOpsSubagentTail {
             LiveOpsSubagentTail(available: false, text: "", truncated: false)
         }
         var steerResult: Result<LiveOpsSteerResult, LiveOpsControlError> = .success(.queued)
         func steer(subagentID: String, sessionID: String, text: String) async throws -> LiveOpsSteerResult {
-            try steerResult.get()
+            recordControlSession(sessionID)
+            return try steerResult.get()
         }
-        func interrupt(subagentID: String, sessionID: String) async throws -> Bool { true }
+        func interrupt(subagentID: String, sessionID: String) async throws -> Bool {
+            recordControlSession(sessionID)
+            return true
+        }
     }
 
     private final class ScriptedApprovals: ApprovalsProviding, @unchecked Sendable {
@@ -50,6 +63,8 @@ final class LiveOpsStoreTests: XCTestCase {
         var pendingByBoolSession: [String: [ApprovalRequest]] = [:]
         private var _pendingCallSessions: [String] = []
         var pendingCallSessions: [String] { lock.lock(); defer { lock.unlock() }; return _pendingCallSessions }
+        var scriptedPendingResponses: [[ApprovalRequest]]?
+        var delayFirstPendingResponse = false
         private var _respondCalls: [(sessionID: String, requestID: String, choice: ApprovalChoice)] = []
         var respondCalls: [(sessionID: String, requestID: String, choice: ApprovalChoice)] {
             lock.lock(); defer { lock.unlock() }; return _respondCalls
@@ -60,9 +75,10 @@ final class LiveOpsStoreTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }
             _respondCalls.append((sessionID, requestID, choice))
         }
-        private func recordPending(_ sessionID: String) {
+        private func recordPending(_ sessionID: String) -> Int {
             lock.lock(); defer { lock.unlock() }
             _pendingCallSessions.append(sessionID)
+            return _pendingCallSessions.count
         }
 
         func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
@@ -71,7 +87,13 @@ final class LiveOpsStoreTests: XCTestCase {
         }
         func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool { false }
         func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
-            recordPending(sessionID)
+            let callIndex = recordPending(sessionID)
+            if callIndex == 1, delayFirstPendingResponse {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            if let scriptedPendingResponses, callIndex <= scriptedPendingResponses.count {
+                return scriptedPendingResponses[callIndex - 1]
+            }
             return pendingByBoolSession[sessionID] ?? []
         }
     }
@@ -150,7 +172,7 @@ final class LiveOpsStoreTests: XCTestCase {
             gateways: { [FleetGateway(id: self.gatewayA, displayName: "A", endpoint: nil)] },
             connectionState: { _ in .disconnected })
         store.beginObserving(.home)
-        for _ in 0..<50 where store.snapshot != nil {
+        for _ in 0..<50 where store.snapshot == nil {
             try? await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(ops.snapshotCallCount, 0, "a disconnected gateway must never be asked")
@@ -316,13 +338,48 @@ final class LiveOpsStoreTests: XCTestCase {
         // Someone else resolved it — the seam now reports no pending approval.
         approvals.pendingByBoolSession = ["r1": []]
         let before = approvals.pendingCallSessions.count
-        for _ in 0..<100 where approvals.pendingCallSessions.count <= before {
+        // Home polls every five seconds; allow one full scheduled cycle.
+        for _ in 0..<350 where approvals.pendingCallSessions.count <= before {
             try? await Task.sleep(for: .milliseconds(20))
         }
         // Allow one more scheduled tick to fully settle attentionItems.
         try? await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(store.attentionItems.allSatisfy { $0.pendingApproval == nil },
                       "an item resolved elsewhere must not keep showing a stale Approve button")
+        store.endObserving(.home)
+    }
+
+    func testOlderApprovalRefreshCannotRestoreResolvedRequest() async {
+        let ops = ScriptedOps(gatewayID: gatewayA)
+        ops.operations = [makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .waiting)]
+        let approval = ApprovalRequest(requestID: "req-old", sessionID: "r1", command: "ls", detail: nil, choices: ["once", "deny"])
+        let approvals = ScriptedApprovals()
+        approvals.scriptedPendingResponses = [[approval], []]
+        approvals.delayFirstPendingResponse = true
+        let store = makeStore(
+            ops: [gatewayA: ops], approvals: [gatewayA: approvals],
+            gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
+
+        store.beginObserving(.home)
+        for _ in 0..<50 where approvals.pendingCallSessions.isEmpty {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(approvals.pendingCallSessions.count, 1)
+
+        // Start a newer detail refresh while the first approval.pending call
+        // is suspended. The newer cycle observes the resolved state first.
+        store.beginObserving(.detail(LiveOperationID(gatewayID: gatewayA, runtimeSessionID: "r1")))
+        for _ in 0..<50 where approvals.pendingCallSessions.count < 2 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(approvals.pendingCallSessions.count, 2)
+        for _ in 0..<50 where store.attentionItems.first?.pendingApproval != nil {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        try? await Task.sleep(for: .milliseconds(350)) // Let the older call return.
+        XCTAssertTrue(store.attentionItems.allSatisfy { $0.pendingApproval == nil })
+
+        store.endObserving(.detail(LiveOperationID(gatewayID: gatewayA, runtimeSessionID: "r1")))
         store.endObserving(.home)
     }
 
@@ -335,10 +392,10 @@ final class LiveOpsStoreTests: XCTestCase {
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: ScriptedApprovals()],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
-        store.beginObserving(.home)
+        store.beginObserving(.detail(operation.id))
         await store.verifyAttachment(operation)
         XCTAssertFalse(store.attachedOperations.contains(operation.id))
-        store.endObserving(.home)
+        store.endObserving(.detail(operation.id))
     }
 
     func testChildControlsShownWhenAttached() async {
@@ -348,21 +405,25 @@ final class LiveOpsStoreTests: XCTestCase {
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: ScriptedApprovals()],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
-        store.beginObserving(.home)
+        store.beginObserving(.detail(operation.id))
         await store.verifyAttachment(operation)
         XCTAssertTrue(store.attachedOperations.contains(operation.id))
-        store.endObserving(.home)
+        XCTAssertEqual(ops.controlSessionIDs, [operation.sessionKey], "controls must use the durable session key")
+        store.endObserving(.detail(operation.id))
     }
 
     // MARK: - Steer copy: queued vs rejected
 
     func testSteerQueuedVsRejected() async {
         let ops = ScriptedOps(gatewayID: gatewayA)
+        ops.listSubagentsResult = .success([])
         let operation = makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .working)
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: ScriptedApprovals()],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
-        store.beginObserving(.home)
+        store.beginObserving(.detail(operation.id))
+        await store.verifyAttachment(operation)
+        XCTAssertEqual(ops.controlSessionIDs, [operation.sessionKey])
 
         ops.steerResult = .success(.queued)
         let queuedResult = await store.steer(subagentID: "sub-1", operation: operation, text: "hi")
@@ -371,6 +432,7 @@ final class LiveOpsStoreTests: XCTestCase {
         ops.steerResult = .success(.rejected)
         let rejectedResult = await store.steer(subagentID: "sub-1", operation: operation, text: "hi")
         guard case .success(.rejected) = rejectedResult else { return XCTFail("expected rejected") }
-        store.endObserving(.home)
+        XCTAssertEqual(ops.controlSessionIDs, Array(repeating: operation.sessionKey, count: 3))
+        store.endObserving(.detail(operation.id))
     }
 }

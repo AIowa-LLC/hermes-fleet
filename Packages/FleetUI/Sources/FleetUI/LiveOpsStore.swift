@@ -146,6 +146,7 @@ public final class LiveOpsStore {
             // Bounded memory: drop the timeline the instant nobody is
             // looking at this operation.
             timelines[id] = nil
+            attachedOperations.remove(id)
         }
         if activeContexts.isEmpty {
             loopTask?.cancel()
@@ -180,6 +181,17 @@ public final class LiveOpsStore {
         return built
     }
 
+    /// Resolve a control seam from the current fleet configuration. Detail
+    /// actions can begin before the first asynchronous snapshot has populated
+    /// the cache, so control authority must not depend on poll timing.
+    private func seam(for operation: LiveOperation) -> LiveOpsGatewaySeam? {
+        guard connectionStateProvider(operation.id.gatewayID) == .connected,
+              let gateway = gatewaysProvider().first(where: { $0.id == operation.id.gatewayID }) else {
+            return nil
+        }
+        return seam(for: gateway)
+    }
+
     /// One coalesced refresh across every CONNECTED gateway, bounded to ≤3
     /// in flight. Disconnected gateways are folded in without a request.
     private func refreshOnce() async {
@@ -187,12 +199,19 @@ public final class LiveOpsStore {
         cycle += 1
         let thisCycle = cycle
         let gateways = gatewaysProvider()
-        guard !gateways.isEmpty else { return }
+        guard !gateways.isEmpty else {
+            snapshot = LiveOpsSnapshot(gateways: [])
+            attentionItems = []
+            attachedOperations.removeAll()
+            return
+        }
 
         let connected = gateways.filter { connectionStateProvider($0.id) == .connected }
         let disconnected = gateways.filter { connectionStateProvider($0.id) != .connected }
 
-        var working = snapshot
+        let currentGatewayIDs = Set(gateways.map(\.id))
+        let retained = snapshot.map { LiveOpsSnapshot(gateways: $0.gateways.filter { currentGatewayIDs.contains($0.gatewayID) }) }
+        var working = retained
         for gateway in disconnected {
             let stamped = LiveOpsGatewaySnapshot(
                 gatewayID: gateway.id, coverage: .disconnected, operations: [],
@@ -239,13 +258,18 @@ public final class LiveOpsStore {
         // above), so at least one `merge` call above ran.
         guard thisCycle == cycle, let resolved = working else { return }
         snapshot = resolved
+        let currentlyReportingIDs = Set(resolved.gateways
+            .filter(\.coverage.isReporting)
+            .flatMap(\.operations)
+            .map(\.id))
+        attachedOperations.formIntersection(currentlyReportingIDs)
         recordTimelineDiffs(newSnapshot: resolved)
-        await refreshApprovalAttention(snapshot: resolved, connected: connected)
+        await refreshApprovalAttention(snapshot: resolved, connected: connected, cycle: thisCycle)
     }
 
     /// `approval.pending` ONLY for operations whose status is `.waiting` —
     /// never a fan-out over every session.
-    private func refreshApprovalAttention(snapshot: LiveOpsSnapshot, connected: [FleetGateway]) async {
+    private func refreshApprovalAttention(snapshot: LiveOpsSnapshot, connected: [FleetGateway], cycle: Int) async {
         var items: [LiveOpsAttentionItem] = []
         for gateway in connected {
             guard let gatewaySnapshot = snapshot.gateways.first(where: { $0.gatewayID == gateway.id }),
@@ -254,12 +278,14 @@ public final class LiveOpsStore {
             let waiting = gatewaySnapshot.operations.filter { $0.status.isWaiting }
             for operation in waiting {
                 let pending = try? await seam.approvals.pendingApprovals(sessionID: operation.id.runtimeSessionID)
+                guard cycle == self.cycle else { return }
                 items.append(LiveOpsAttentionItem(operation: operation, pendingApproval: pending?.first))
             }
         }
         // Key by gateway+operation (one row per waiting operation) — a
         // duplicate can never appear since we build the list fresh each
         // refresh from the current waiting set.
+        guard cycle == self.cycle else { return }
         attentionItems = items
         // An item resolved elsewhere (approved/denied outside Fleet) simply
         // will not reappear here on the next refresh; clear any stale
@@ -426,9 +452,17 @@ public final class LiveOpsStore {
     /// absent on `.notAttached` (or any other failure) — Operation Detail
     /// then shows "Open the chat to control subagents" instead of guessing.
     public func verifyAttachment(_ operation: LiveOperation) async {
-        guard let seam = seams[operation.id.gatewayID] else { return }
+        guard activeContexts.contains(.detail(operation.id)),
+              let seam = seam(for: operation) else {
+            attachedOperations.remove(operation.id)
+            return
+        }
         do {
-            _ = try await seam.ops.listSubagents(sessionID: operation.id.runtimeSessionID)
+            _ = try await seam.ops.listSubagents(sessionID: operation.sessionKey)
+            guard activeContexts.contains(.detail(operation.id)) else {
+                attachedOperations.remove(operation.id)
+                return
+            }
             attachedOperations.insert(operation.id)
         } catch {
             attachedOperations.remove(operation.id)
@@ -436,9 +470,10 @@ public final class LiveOpsStore {
     }
 
     public func steer(subagentID: String, operation: LiveOperation, text: String) async -> Result<LiveOpsSteerResult, LiveOpsControlError> {
-        guard let seam = seams[operation.id.gatewayID] else { return .failure(.notConnected) }
+        guard attachedOperations.contains(operation.id) else { return .failure(.notAttached) }
+        guard let seam = seam(for: operation) else { return .failure(.notConnected) }
         do {
-            return .success(try await seam.ops.steer(subagentID: subagentID, sessionID: operation.id.runtimeSessionID, text: text))
+            return .success(try await seam.ops.steer(subagentID: subagentID, sessionID: operation.sessionKey, text: text))
         } catch let error as LiveOpsControlError {
             return .failure(error)
         } catch {
@@ -449,9 +484,10 @@ public final class LiveOpsStore {
     /// `found: false` reads as "Subagent already finished" per the wire
     /// contract — this returns the raw bool; the view owns that copy.
     public func interruptChild(subagentID: String, operation: LiveOperation) async -> Result<Bool, LiveOpsControlError> {
-        guard let seam = seams[operation.id.gatewayID] else { return .failure(.notConnected) }
+        guard attachedOperations.contains(operation.id) else { return .failure(.notAttached) }
+        guard let seam = seam(for: operation) else { return .failure(.notConnected) }
         do {
-            return .success(try await seam.ops.interrupt(subagentID: subagentID, sessionID: operation.id.runtimeSessionID))
+            return .success(try await seam.ops.interrupt(subagentID: subagentID, sessionID: operation.sessionKey))
         } catch let error as LiveOpsControlError {
             return .failure(error)
         } catch {

@@ -511,6 +511,7 @@ struct FleetChatsView: View {
         .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
         .clipShape(Capsule())
         .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("fleet.chats.actions")
     }
 

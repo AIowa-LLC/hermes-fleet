@@ -198,7 +198,7 @@ public struct LiveOperationDetailView: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
-                if isAttached {
+                if isAttached && !environment.liveOps.isStale(operation) {
                     Menu {
                         Button("Steer…") { steeringSubagentID = node.subagent.subagentID }
                         Button("Stop", role: .destructive) {
@@ -277,39 +277,50 @@ public struct LiveOperationDetailView: View {
             Text("Controls")
                 .font(FleetTheme.sectionHeaderFont)
                 .foregroundStyle(theme.textSecondary)
-            let route = environment.route(forLiveOperationSessionKey: operation.sessionKey, gatewayID: operation.id.gatewayID)
-            if let route {
-                NavigationLink {
-                    conversationDestination(route: route, sessionID: operation.sessionKey)
-                } label: {
-                    Label("Open Chat", systemImage: "message")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("fleet.liveOpsDetail.openChat")
-
-                Button(role: .destructive) {
-                    Task {
-                        if let session = environment.conversationSession(for: operation.id.gatewayID) {
-                            _ = try? await session.conversation.interrupt(sessionID: operation.sessionKey)
-                        }
-                    }
-                } label: {
-                    Label("Stop", systemImage: "stop.circle")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("fleet.liveOpsDetail.stop")
+            if environment.liveOps.isStale(operation) {
+                Text("Controls are unavailable while this operation is stale.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("fleet.liveOpsDetail.controls.stale")
             } else {
-                Text("This session isn't open on this phone yet — use Open Chat to attach and control it.")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(theme.textSecondary)
-            }
-            if !isAttached {
-                Text("Open the chat to control subagents")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(theme.textSecondary)
-                    .accessibilityIdentifier("fleet.liveOpsDetail.notAttached")
+                let route = environment.route(forLiveOperationSessionKey: operation.sessionKey, gatewayID: operation.id.gatewayID)
+                if let route {
+                    NavigationLink {
+                        conversationDestination(route: route, sessionID: operation.sessionKey)
+                    } label: {
+                        Label("Open Chat", systemImage: "message")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("fleet.liveOpsDetail.openChat")
+
+                    Button(role: .destructive) {
+                        Task {
+                            if let session = environment.conversationSession(for: operation.id.gatewayID) {
+                                _ = try? await session.conversation.interrupt(sessionID: operation.sessionKey)
+                            }
+                        }
+                    } label: {
+                        Label("Stop", systemImage: "stop.circle")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("fleet.liveOpsDetail.stop")
+                } else {
+                    Text(isAttached
+                         ? "Subagent controls are available here. Open this session in Chats for conversation controls."
+                         : "No local conversation is open for this operation.")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if !isAttached {
+                    Text(route == nil
+                         ? "Subagent controls require an attached conversation session."
+                         : "Open the chat to control subagents")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.liveOpsDetail.notAttached")
+                }
             }
             if let childActionMessage {
                 Text(childActionMessage)

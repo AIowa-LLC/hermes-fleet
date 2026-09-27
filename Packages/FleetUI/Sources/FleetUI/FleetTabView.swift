@@ -43,6 +43,8 @@ struct FleetDrawerMenu: ToolbarContent {
                             }
                         }
                 }
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel(showsUnreadBadge ? "Menu, unread conversations" : "Menu")
                 .accessibilityIdentifier("fleet.drawer.open")
                 .keyboardShortcut("m", modifiers: .command)
@@ -227,12 +229,12 @@ public struct FleetTabView: View {
                 .onChange(of: navigation.selection) { old, new in
                     visitedDestinations.formUnion([old, new])
                 }
-                // Feedback #3 (dogfood pass): a thin leading-edge strip that
-                // opens the drawer on a rightward swipe. ROOT surfaces only —
-                // a non-empty path means a screen is PUSHED on the stack, and
-                // that screen owns the system back-swipe (this strip must not
-                // compete with it). VoiceOver users have the toolbar button;
-                // the gesture adds nothing to the accessibility tree.
+                // Feedback #3 (dogfood pass): root surfaces open the drawer
+                // from the leading edge. Only compact pushed screens get a
+                // fallback edge strip that pops one destination; regular
+                // width leaves interactive pop to the native navigation UI.
+                // Both strips are hidden from accessibility, which uses the
+                // toolbar button.
                 if !drawerPresented && isRootShowing {
                     Color.clear
                         .frame(width: 20)
@@ -240,6 +242,19 @@ public struct FleetTabView: View {
                         .contentShape(Rectangle())
                         .accessibilityHidden(true)
                         .simultaneousGesture(edgeSwipeToOpenDrawerGesture)
+                        .zIndex(3)
+                } else if !drawerPresented && horizontalSizeClass != .regular {
+                    // Keep the compact shell's leading-edge gesture useful
+                    // on pushed screens when the native interactive pop is
+                    // unavailable (for example, inside the compact ZStack
+                    // navigation host). This strip only pops the active
+                    // stack after a decisive inward swipe.
+                    Color.clear
+                        .frame(width: 20)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .accessibilityHidden(true)
+                        .highPriorityGesture(backSwipeOnPushedScreenGesture)
                         .zIndex(3)
                 }
                 if drawerPresented {
@@ -348,6 +363,22 @@ public struct FleetTabView: View {
                 guard sign * t.width > 60 else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                     drawerPresented = true
+                }
+            }
+    }
+
+    private var backSwipeOnPushedScreenGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onEnded { value in
+                let t = value.translation
+                guard abs(t.width) > 2 * abs(t.height) else { return }
+                let sign: CGFloat = layoutDirection == .rightToLeft ? -1 : 1
+                guard sign * t.width > 60,
+                      var path = navigation.paths[navigation.selection],
+                      !path.isEmpty else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    path.removeLast()
+                    navigation.paths[navigation.selection] = path
                 }
             }
     }

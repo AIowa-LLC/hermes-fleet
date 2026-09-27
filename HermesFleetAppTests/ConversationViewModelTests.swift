@@ -820,6 +820,40 @@ final class ConversationViewModelTests: XCTestCase {
 
     // MARK: - Cold-start persisted history (M10)
 
+    func testEmptyInitialHistoryDoesNotEraseRowsArrivingWhileFetchIsInFlight() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        let gate = OneShotGate()
+        scripted.historyGate = gate
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 0, messages: []))
+
+        await viewModel.start()
+        for _ in 0..<20 where scripted.historyParkedCount == 0 {
+            await flush()
+        }
+        XCTAssertEqual(scripted.historyParkedCount, 1, "initial empty history fetch is held in flight")
+
+        await viewModel.send("run the tools")
+        let names = ["terminal", "memory", "git", "browser", "editor", "make"]
+        for (index, name) in names.enumerated() {
+            scripted.push(.toolStart(
+                sessionID: "s-1", toolID: "t-\(index)", name: name,
+                context: "fixture", argsText: nil))
+            scripted.push(.toolComplete(
+                sessionID: "s-1", toolID: "t-\(index)", name: name,
+                summary: "complete"))
+        }
+        scripted.push(.messageStart(sessionID: "s-1"))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil))
+        await flush()
+
+        gate.open()
+        await flush()
+
+        XCTAssertEqual(
+            viewModel.transcript.filter { $0.kind == .tool }.map(\.text), names,
+            "the stale empty snapshot must not erase tool rows streamed after its request began")
+    }
+
     func testColdStartHydratesFromCache() async throws {
         // Pre-seed the cache with persisted history for the session.
         let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")

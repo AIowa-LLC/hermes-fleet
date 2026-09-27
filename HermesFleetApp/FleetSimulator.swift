@@ -140,6 +140,7 @@ extension FleetServiceGraph {
                     : ScriptedRoomLinkEngine(gatewayID: gateway.id)
             },
             health: health,
+            biometrics: FleetServiceGraph.makeApprovalBiometrics(),
             // Live Ops v1: deterministic scripted seam (env-knobbed — see
             // ScriptedLiveOpsEngine) so the Fleet Home summary strip,
             // Needs You approval flow, and Operation Detail are all walkable
@@ -826,17 +827,29 @@ final class ScriptedLiveOpsEngine: @unchecked Sendable {
     private let launchedAt = Date()
     private var approvedRequestIDs: Set<String> = []
     private var deniedRequestIDs: Set<String> = []
+    private var snapshotCounts: [GatewayID: Int] = [:]
 
     private var partialCoverage: Bool {
         ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_PARTIAL"] == "1"
+    }
+
+    private var staleCoverage: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_STALE"] == "1"
     }
 
     func snapshot(gatewayID: GatewayID) -> LiveOpsGatewaySnapshot {
         lock.lock()
         defer { lock.unlock() }
         let now = Date()
+        snapshotCounts[gatewayID, default: 0] += 1
         switch gatewayID {
         case Self.workstationID:
+            if staleCoverage, snapshotCounts[gatewayID, default: 0] > 1 {
+                return LiveOpsGatewaySnapshot(
+                    gatewayID: gatewayID,
+                    coverage: .failed(reason: "connection reset (scripted stale-operation demo)"),
+                    operations: [], observedAt: now)
+            }
             return LiveOpsGatewaySnapshot(
                 gatewayID: gatewayID, coverage: .reporting,
                 operations: workstationOperations(now: now), observedAt: now)
@@ -923,7 +936,9 @@ final class ScriptedLiveOpsEngine: @unchecked Sendable {
     // MARK: attached-session proof (only the workstation parent)
 
     func listSubagents(gatewayID: GatewayID, sessionID: String) -> [LiveOpsSubagent]? {
-        guard gatewayID == Self.workstationID, sessionID == "rt-parent" else { return nil }
+        // LiveOpsStore keys attachment by the durable session key, not the
+        // gateway's transient runtime session identifier.
+        guard gatewayID == Self.workstationID, sessionID == "sk-parent" else { return nil }
         return workstationOperations(now: Date()).first?.subagents
     }
 
@@ -2757,7 +2772,10 @@ enum ScriptedFleet {
 private struct ScriptedGatewayConnection: GatewayConnectivityProviding {
     let gatewayID: GatewayID
 
-    private var isOutage: Bool { gatewayID.rawValue == "arch" }
+    private var isOutage: Bool {
+        gatewayID.rawValue == "arch"
+            && ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] != "1"
+    }
 
     var status: GatewayStatus {
         // Scripted connections report online immediately for healthy

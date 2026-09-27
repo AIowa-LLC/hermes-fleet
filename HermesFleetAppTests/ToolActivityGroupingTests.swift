@@ -53,13 +53,42 @@ final class ToolActivityGroupingTests: XCTestCase {
         ]
         let blocks = ToolActivityGrouping.group(rows)
         XCTAssertEqual(blocks.count, 3, "user row, one tool group, assistant row")
-        XCTAssertEqual(blocks[0].id, "u1")
+        XCTAssertEqual(blocks[0].id, "row:u1")
         guard case .toolGroup(let group) = blocks[1] else {
             return XCTFail("expected a toolGroup block")
         }
         XCTAssertEqual(group.totalCount, 4)
         XCTAssertEqual(group.toolRows.map(\.id), ["t1", "t2", "t3", "t4"])
-        XCTAssertEqual(blocks[2].id, "a1")
+        XCTAssertEqual(blocks[1].id, "tool-group:t4")
+        XCTAssertEqual(blocks[2].id, "row:a1")
+    }
+
+    func testLiveToolToCompletedGroupGetsNewStructuralIdentity() throws {
+        let live = try XCTUnwrap(ToolActivityGrouping.group([
+            toolRow("tail", name: "make", inFlight: true)
+        ]).first)
+        let completed = try XCTUnwrap(ToolActivityGrouping.group([
+            toolRow("tail", name: "make")
+        ]).first)
+
+        XCTAssertEqual(live.id, "row:tail")
+        XCTAssertEqual(completed.id, "tool-group:tail")
+        XCTAssertNotEqual(live.id, completed.id,
+                          "ForEach must replace the live row subtree when it becomes a group")
+    }
+
+    func testContainedTranscriptRowMapsToItsRenderedBlockIdentity() {
+        let rows = [
+            userRow("u1"),
+            toolRow("t1", name: "terminal"),
+            toolRow("t2", name: "memory"),
+            assistantRow("a1", text: "Done."),
+        ]
+        let blocks = ToolActivityGrouping.group(rows)
+
+        XCTAssertEqual(TranscriptBlock.id(containing: "t1", in: blocks), "tool-group:t2")
+        XCTAssertEqual(TranscriptBlock.id(containing: "u1", in: blocks), "row:u1")
+        XCTAssertNil(TranscriptBlock.id(containing: "missing", in: blocks))
     }
 
     // MARK: - In-flight tool is never grouped

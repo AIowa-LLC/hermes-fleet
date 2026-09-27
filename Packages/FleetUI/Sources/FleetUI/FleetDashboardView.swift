@@ -293,40 +293,50 @@ public struct FleetDashboardView: View {
         let rowID = "fleet.dashboard.needsYou.liveOps.\(item.operation.id.gatewayID.rawValue).\(sanitized(item.operation.id.runtimeSessionID))"
         return Group {
             if let approval = item.pendingApproval {
-                HStack(spacing: FleetTheme.spacingMd) {
-                    Image(systemName: "hand.raised")
-                        .foregroundStyle(FleetTheme.statusNeedsIntervention)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(operationTitle(item.operation)) · \(gatewayName(item.operation.id.gatewayID))")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(theme.textPrimary)
-                        Text("Approval needed · \(approval.command)")
-                            .font(FleetTheme.secondaryFont)
-                            .foregroundStyle(theme.textSecondary)
-                            .lineLimit(1)
-                        if let message = environment.liveOps.actionErrors[approval.requestID] {
-                            Text(message)
+                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                    HStack(alignment: .top, spacing: FleetTheme.spacingMd) {
+                        Image(systemName: "hand.raised")
+                            .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                            .accessibilityHidden(true)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(operationTitle(item.operation)) · \(gatewayName(item.operation.id.gatewayID))")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(theme.textPrimary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Approval needed · \(approval.command)")
                                 .font(FleetTheme.secondaryFont)
-                                .foregroundStyle(FleetTheme.statusDegraded)
-                                .lineLimit(1)
+                                .foregroundStyle(theme.textSecondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let message = environment.liveOps.actionErrors[approval.requestID] {
+                                Text(message)
+                                    .font(FleetTheme.secondaryFont)
+                                    .foregroundStyle(FleetTheme.statusDegraded)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Spacer()
                     let busy = environment.liveOps.resolvingRequestIDs.contains(approval.requestID)
                     HStack(spacing: FleetTheme.spacingSm) {
+                        Spacer(minLength: 0)
                         Button("Deny") { Task { await environment.liveOps.deny(item) } }
                             .buttonStyle(.bordered)
                             .disabled(busy)
                             .accessibilityIdentifier("\(rowID).deny")
+                            .frame(minWidth: 88, minHeight: 44)
+                            .fixedSize()
                         Button("Approve") { Task { await environment.liveOps.approve(item) } }
                             .buttonStyle(.borderedProminent)
                             .disabled(busy)
                             .accessibilityIdentifier("\(rowID).approve")
+                            .frame(minWidth: 104, minHeight: 44)
+                            .fixedSize()
                     }
-                    .frame(minHeight: 44)
                 }
-                .accessibilityIdentifier(rowID)
             } else {
                 NavigationLink {
                     LiveOperationDetailView(environment: environment, operation: item.operation)
@@ -639,7 +649,8 @@ public struct FleetDashboardView: View {
         case .unknown: statusWord = "Unknown"
         }
         let modelPart = operation.model.isEmpty ? "" : " · \(operation.model)"
-        return "\(statusWord)\(modelPart) · \(gateway)"
+        let freshness = stale ? "Last known \(statusWord)" : statusWord
+        return "\(freshness)\(modelPart) · \(gateway)"
     }
 
     private func operationMetaLine(_ operation: LiveOperation, stale: Bool) -> String {

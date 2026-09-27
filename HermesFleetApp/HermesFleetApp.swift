@@ -1,6 +1,7 @@
 import SwiftUI
 import AppIntents
 import FleetUI
+import FleetCore
 
 /// Composition root for Hermes Fleet.
 ///
@@ -34,6 +35,17 @@ struct HermesFleetApp: App {
                             await lockController.authenticateIfNeeded()
                             guard !lockController.isLocked else { return }
                             await environment.hydrateIfNeeded()
+                            #if DEBUG && targetEnvironment(simulator)
+                            if ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" {
+                                // This UI fixture exercises the monitor's
+                                // connected-only polling contract without
+                                // relying on connection intent persisted by
+                                // another simulator test.
+                                await environment.connect(to: GatewayID(rawValue: "workstation"))
+                                await environment.connect(to: GatewayID(rawValue: "render-box"))
+                                await environment.connect(to: GatewayID(rawValue: "arch"))
+                            }
+                            #endif
                         }
 
                     // Continue the launch artwork past the native LaunchScreen

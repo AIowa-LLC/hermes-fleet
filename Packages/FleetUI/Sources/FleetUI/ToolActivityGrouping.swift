@@ -100,9 +100,26 @@ public enum TranscriptBlock: Identifiable, Equatable, Sendable {
 
     public var id: String {
         switch self {
-        case .row(let row): return row.id
-        case .toolGroup(let group): return group.id
+        // Prefix each case so a live tool row that becomes a completed group
+        // cannot keep the same ForEach identity. Scroll callers map row IDs
+        // to this rendered block ID, while ToolActivityGroup.id remains the
+        // transcript-tail identity used by the grouping model.
+        case .row(let row): return "row:\(row.id)"
+        case .toolGroup(let group): return "tool-group:\(group.id)"
         }
+    }
+
+    /// Find the rendered block that owns a transcript row. A collapsed tool
+    /// group still contains the row identity used by search and timeline
+    /// actions, so those actions can target the block that is actually in the
+    /// LazyVStack.
+    public static func id(containing rowID: String, in blocks: [TranscriptBlock]) -> String? {
+        blocks.first { block in
+            switch block {
+            case .row(let row): return row.id == rowID
+            case .toolGroup(let group): return group.rows.contains { $0.id == rowID }
+            }
+        }?.id
     }
 }
 
