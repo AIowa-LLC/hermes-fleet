@@ -142,8 +142,10 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines follow the unchanged source: 619 core, 545 networking,
-39 persistence, and 37 security tests. Focused selection maps the newer Kanban,
+Package baselines follow the unchanged source: 648 core, 564 networking,
+39 persistence, and 37 security tests (Live Ops v1 added 29 FleetCore +
+19 FleetNetworking cases on top of the recorded 619/545 Build 90 counts).
+Focused selection maps the newer Kanban,
 artifacts, image generation, cron, reasoning, slash-parity, cached-launch,
 unread-state, About, and compact-chrome surfaces to their registered suites.
 
