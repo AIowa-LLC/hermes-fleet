@@ -23,13 +23,14 @@ final class GatewayApprovalClientTests: XCTestCase {
 
     private func makeTransport(
         serverPort: UInt16,
-        requestTimeout: Duration = .seconds(2)
+        requestTimeout: Duration = .seconds(2),
+        connectTimeout: Duration = .seconds(10)
     ) -> GatewayWebSocketTransport {
         let base = URL(string: "http://127.0.0.1:\(serverPort)")!
         let config = TransportConfiguration(
             pingInterval: .seconds(30),
             inboundDeadline: .seconds(30),
-            connectTimeout: .seconds(10),
+            connectTimeout: connectTimeout,
             requestTimeout: requestTimeout
         )
         return GatewayWebSocketTransport(
@@ -162,6 +163,49 @@ final class GatewayApprovalClientTests: XCTestCase {
     }
 
     // MARK: 2. respond RPC shape
+
+    func testRespondConnectsColdTransportBeforeSendingRPC() async throws {
+        let captured = ApprovalParamCapture()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, _) = Self.extractRequest(frame), method == "approval.respond" else {
+                    return []
+                }
+                captured.record(["method": method])
+                return [Self.responseFrame(id: id, result: ["resolved": 1])]
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        XCTAssertEqual(transport.state, .disconnected)
+        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let resolved = try await client.respond(
+            sessionID: "abc12345", requestID: "req-cold", choice: .once, all: false
+        )
+        XCTAssertEqual(resolved, 1)
+        let params = captured.params
+        XCTAssertEqual(params["method"] as? String, "approval.respond")
+        await transport.disconnect()
+    }
+
+    func testColdTransportConnectFailureIsReportedAsRPCFailure() async throws {
+        let transport = makeTransport(
+            serverPort: 0, requestTimeout: .milliseconds(500), connectTimeout: .milliseconds(250))
+        let client = GatewayApprovalClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+
+        do {
+            _ = try await client.pendingApprovals(sessionID: "abc12345")
+            XCTFail("expected the transport connection to fail")
+        } catch ConversationError.rpcFailed(_) {
+            // The connect error is surfaced through the client's established
+            // transport error mapping, rather than being reported as an
+            // initially disconnected client.
+        }
+    }
 
     func testRespondSendsCorrectParamsAndDecodesResolvedCount() async throws {
         let captured = ApprovalParamCapture()

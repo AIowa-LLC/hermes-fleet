@@ -67,6 +67,35 @@ final class GatewayLiveOpsClientTests: XCTestCase {
 
     // MARK: 1. session.active_list → snapshot decode
 
+    func testSnapshotConnectsColdTransportBeforeReporting() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, _) = Self.extractRequest(frame) else { return [] }
+                if method == "session.active_list" {
+                    return [Self.responseFrame(id: id, result: ["sessions": []])]
+                }
+                if method == "delegation.status" {
+                    return [Self.errorFrame(id: id, code: -32601, message: "method not found")]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+        let transport = makeTransport(serverPort: server.listeningPort)
+        let client = GatewayLiveOpsClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        defer { Task { await transport.disconnect() } }
+
+        XCTAssertEqual(transport.state, .disconnected, "test starts with the transport cold")
+        let snapshot = await client.snapshot()
+
+        XCTAssertEqual(snapshot.coverage, .reporting)
+        XCTAssertTrue(snapshot.operations.isEmpty)
+        XCTAssertEqual(transport.state, .connected, "snapshot owns opening its per-gateway transport")
+    }
+
     func testSnapshotDecodesActiveListRowsWithSourceQualifiedIdentity() async throws {
         let script = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],
@@ -302,11 +331,13 @@ final class GatewayLiveOpsClientTests: XCTestCase {
         XCTAssertEqual(snapshot.operations, [])
     }
 
-    func testDisconnectedTransportClassifiesAsDisconnectedCoverageWithoutRPC() async throws {
+    func testColdTransportConnectFailureClassifiesAsFailedCoverage() async throws {
         let transport = makeTransport(serverPort: 1) // never connected
         let client = GatewayLiveOpsClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         let snapshot = await client.snapshot()
-        XCTAssertEqual(snapshot.coverage, .disconnected)
+        guard case .failed = snapshot.coverage else {
+            return XCTFail("expected a classified connect failure, got \(snapshot.coverage)")
+        }
         XCTAssertEqual(snapshot.operations, [])
     }
 
@@ -496,16 +527,18 @@ final class GatewayLiveOpsClientTests: XCTestCase {
         }
     }
 
-    // MARK: 7. disconnected transport → notConnected
+    // MARK: 7. cold transport connects on demand; connection failure is surfaced
 
-    func testControlMethodsThrowNotConnectedWhenTransportIsDisconnected() async throws {
+    func testControlConnectFailureIsMappedToRPCFailure() async throws {
         let transport = makeTransport(serverPort: 1) // never connected
         let client = GatewayLiveOpsClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
         do {
             _ = try await client.listSubagents(sessionID: "sess-1")
-            XCTFail("expected .notConnected")
-        } catch LiveOpsControlError.notConnected {
-            // expected
+            XCTFail("expected a classified connection failure")
+        } catch LiveOpsControlError.rpcFailed {
+            // A failed connect is preserved as an RPC transport failure.
+        } catch {
+            XCTFail("expected .rpcFailed, got \(error)")
         }
     }
 }

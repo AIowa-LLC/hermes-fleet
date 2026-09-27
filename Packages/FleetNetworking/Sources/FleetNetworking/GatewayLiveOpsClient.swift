@@ -79,13 +79,9 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
     /// Never throws: every failure classifies into `LiveOpsGatewayCoverage`.
     public func snapshot() async -> LiveOpsGatewaySnapshot {
         let now = Date()
-        guard case .connected = transport.state else {
-            return LiveOpsGatewaySnapshot(
-                gatewayID: gatewayID, coverage: .disconnected, operations: [], observedAt: now)
-        }
-
         let rows: [JSONValue]
         do {
+            try await ensureTransportConnected()
             let result = try await transport.request(method: "session.active_list", params: .object([:]))
             rows = result["sessions"]?.arrayValue ?? []
         } catch let error as JSONRPCError {
@@ -156,9 +152,9 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
 
     public func listSubagents(sessionID: String) async throws -> [LiveOpsSubagent] {
         try Self.requireValidSessionKey(sessionID)
-        guard case .connected = transport.state else { throw LiveOpsControlError.notConnected }
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
+            try await ensureTransportConnected()
             let result = try await transport.request(method: "subagent.list", params: params)
             let rows = result["subagents"]?.arrayValue ?? []
             return rows.prefix(Self.maxSubagentRows).compactMap(Self.decodeSubagent)
@@ -174,12 +170,12 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         guard !subagentID.isEmpty else {
             throw LiveOpsControlError.rpcFailed("subagent_id required")
         }
-        guard case .connected = transport.state else { throw LiveOpsControlError.notConnected }
         let params: JSONValue = .object([
             "session_id": .string(sessionID),
             "subagent_id": .string(subagentID),
         ])
         do {
+            try await ensureTransportConnected()
             let result = try await transport.request(method: "subagent.tail", params: params)
             return LiveOpsSubagentTail(
                 available: result["available"]?.boolValue ?? false,
@@ -198,13 +194,13 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         guard !subagentID.isEmpty else {
             throw LiveOpsControlError.rpcFailed("subagent_id required")
         }
-        guard case .connected = transport.state else { throw LiveOpsControlError.notConnected }
         let params: JSONValue = .object([
             "session_id": .string(sessionID),
             "subagent_id": .string(subagentID),
             "text": .string(text),
         ])
         do {
+            try await ensureTransportConnected()
             let result = try await transport.request(method: "subagent.steer", params: params)
             // "queued" is not "delivered" — surfaced verbatim as the enum;
             // anything else (including a missing/garbled status) is treated
@@ -222,12 +218,12 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         guard !subagentID.isEmpty else {
             throw LiveOpsControlError.rpcFailed("subagent_id required")
         }
-        guard case .connected = transport.state else { throw LiveOpsControlError.notConnected }
         let params: JSONValue = .object([
             "session_id": .string(sessionID),
             "subagent_id": .string(subagentID),
         ])
         do {
+            try await ensureTransportConnected()
             let result = try await transport.request(method: "subagent.interrupt", params: params)
             return result["found"]?.boolValue ?? false
         } catch let error as JSONRPCError {
@@ -238,6 +234,14 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
     }
 
     // MARK: session-key guard (M9)
+
+    /// Per-gateway transports are created cold by the composition root. Every
+    /// operation owns the responsibility for opening its transport, matching
+    /// the other gateway clients. `connect()` is idempotent when already open.
+    private func ensureTransportConnected() async throws {
+        if case .connected = transport.state { return }
+        try await transport.connect()
+    }
 
     private static func requireValidSessionKey(_ sessionID: String) throws {
         guard RoutingGuard.isValidSessionKey(sessionID) else {

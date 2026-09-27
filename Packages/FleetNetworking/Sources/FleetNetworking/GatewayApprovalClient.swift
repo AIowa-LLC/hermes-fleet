@@ -42,7 +42,7 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
-        guard case .connected = transport.state else { throw ConversationError.notConnected }
+        try await ensureConnected()
         // EXACTLY the four documented params (methods_prompt.py:1882-1906).
         let params: JSONValue = .object([
             "session_id": .string(sessionID),
@@ -69,7 +69,7 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
-        guard case .connected = transport.state else { throw ConversationError.notConnected }
+        try await ensureConnected()
         // server.py:15016-15032: per-session scope — value "1"/"0"; the
         // session's flag flips and a session.info event reflects the change.
         let params: JSONValue = .object([
@@ -99,7 +99,7 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
         }
-        guard case .connected = transport.state else { throw ConversationError.notConnected }
+        try await ensureConnected()
         let params: JSONValue = .object(["session_id": .string(sessionID)])
         do {
             let result = try await transport.request(method: "approval.pending", params: params)
@@ -115,6 +115,21 @@ public struct GatewayApprovalClient: ApprovalsProviding {
     }
 
     // MARK: decoding (wire → domain, shared with the push event path)
+
+    /// A per-gateway approval client can be the first RPC user of its
+    /// transport. Connect idempotently so cold transports behave like the
+    /// sibling management clients; an already-open conversation transport is
+    /// a no-op.
+    private func ensureConnected() async throws {
+        if case .connected = transport.state { return }
+        do {
+            try await transport.connect()
+        } catch let error as TransportError {
+            throw Self.mapTransportError(error)
+        } catch {
+            throw ConversationError.rpcFailed(Redaction.safeErrorDescription(error))
+        }
+    }
 
     /// Decode one approval payload (`_approval_request_payload` shape,
     /// server.py:3036) into the domain. Returns nil — fail-soft — when the
