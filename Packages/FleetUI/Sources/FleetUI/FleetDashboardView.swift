@@ -86,6 +86,21 @@ public struct FleetDashboardView: View {
     private var attentionItems: [FleetAttentionItem] { environment.attentionItems() }
     private var attentionCoverageComplete: Bool { environment.attentionCoverage().allGatewaysClassified }
 
+    // MARK: Live Ops v1 (additive — mission "mobile control room" upgrade)
+
+    private var liveOpsSnapshot: LiveOpsSnapshot? { environment.liveOps.snapshot }
+    /// Live Ops is the primary concept once at least one gateway has ever
+    /// reported it; otherwise Home falls back to the existing honest
+    /// roster-derived Active Now section unchanged.
+    private var liveOpsAvailable: Bool {
+        guard let liveOpsSnapshot else { return false }
+        return liveOpsSnapshot.gateways.contains(where: \.hasEverReported)
+    }
+    private var liveOperations: [LiveOperation] {
+        (liveOpsSnapshot?.allOperations ?? []).sorted { $0.startedAt > $1.startedAt }
+    }
+    private var liveOpsAttentionItems: [LiveOpsAttentionItem] { environment.liveOps.attentionItems }
+
     private var continueEntries: [FleetContinueIndexStore.Entry] {
         Array(environment.continueIndex.entries().prefix(2))
     }
@@ -99,7 +114,11 @@ public struct FleetDashboardView: View {
                     glanceStrip
                     coverageLine
                     needsYouSection
-                    activeSection
+                    if liveOpsAvailable {
+                        liveOperationsSection
+                    } else {
+                        activeSection
+                    }
                     continueSection
                     gatewaysSection
                     connectionActivitySection
@@ -131,6 +150,15 @@ public struct FleetDashboardView: View {
                 try? await Task.sleep(for: .seconds(60))
             }
         }
+        .task {
+            // Live Ops v1: Home is one polling context. Registered for the
+            // lifetime of this `.task` — cancelled the instant Home
+            // disappears, so a backgrounded/dismissed dashboard never keeps
+            // the fleet-wide poll loop running.
+            environment.liveOps.beginObserving(.home)
+            defer { environment.liveOps.endObserving(.home) }
+            try? await Task.sleep(for: .seconds(3600 * 24))
+        }
     }
 
     // MARK: 1. Glance strip (compact 2×2 facts, no bordered tiles)
@@ -159,16 +187,22 @@ public struct FleetDashboardView: View {
         )
     }
 
-    /// Active glance VALUE: a count ONLY with executing coverage;
-    /// otherwise "—" (unknown is never zero, SPEC §7).
+    /// Active glance VALUE: Live Ops' own active count (working/starting/
+    /// waiting) when at least one gateway has ever reported it — a truer,
+    /// session-level signal than the roster's per-bot activity flag; falls
+    /// back to the existing roster-derived count otherwise. `.partial`
+    /// coverage never renders zero (SPEC §7).
     private var activeGlanceValue: String {
+        if liveOpsAvailable, let count = liveOpsSnapshot?.activeCount {
+            return count.value.map { "\($0)" } ?? "—"
+        }
         guard rosterLoaded else { return "—" }
         let count = executingBots.count
         return count > 0 ? "\(count)" : "—"
     }
 
     private var needsYouGlanceValue: String {
-        let count = attentionItems.count
+        let count = attentionItems.count + liveOpsAttentionItems.count
         if count > 0 { return "\(count)" }
         return attentionCoverageComplete ? "0" : "—"
     }
@@ -210,6 +244,9 @@ public struct FleetDashboardView: View {
             let names = failed.map(\.displayName).joined(separator: ", ")
             parts.append("unavailable from this phone: \(names)")
         }
+        if let caveat = environment.liveOps.coverageCaveat {
+            parts.append(caveat)
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -217,27 +254,117 @@ public struct FleetDashboardView: View {
 
     @ViewBuilder
     private var needsYouSection: some View {
-        if !attentionItems.isEmpty {
+        let totalCount = attentionItems.count + liveOpsAttentionItems.count
+        if totalCount > 0 {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
                 needsYouHeader
-                // One expanded preview + count (SPEC §7 first-viewport rule);
-                // every item navigates to its owning screen for confirmation.
-                ForEach(attentionItems.prefix(3)) { item in
+                // Live Ops rows lead (an approval blocking a running agent is
+                // the most time-sensitive class of "needs you"), then the
+                // existing observed items — one expanded preview + count
+                // (SPEC §7 first-viewport rule); every item navigates/acts.
+                ForEach(liveOpsAttentionItems.prefix(3)) { item in
+                    liveOpsAttentionRow(item)
+                }
+                let remainingSlots = max(0, 3 - liveOpsAttentionItems.count)
+                ForEach(attentionItems.prefix(remainingSlots)) { item in
                     attentionRow(item)
                 }
-                if attentionItems.count > 3 {
-                    Text("+ \(attentionItems.count - 3) more")
+                let shown = min(liveOpsAttentionItems.count, 3) + min(attentionItems.count, remainingSlots)
+                if totalCount > shown {
+                    Text("+ \(totalCount - shown) more")
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(theme.textSecondary)
                 }
                 if !attentionCoverageComplete {
-                    Text("\(attentionItems.count) known item\(attentionItems.count == 1 ? "" : "s") — more may be pending elsewhere")
+                    Text("\(totalCount) known item\(totalCount == 1 ? "" : "s") — more may be pending elsewhere")
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.dashboard.needsYou.caveat")
                 }
             }
         }
+    }
+
+    /// A Live Ops attention row: a pending approval renders inline
+    /// Approve/Deny (Approve is biometric-gated, same posture as the
+    /// conversation approval banner); a waiting session with no known
+    /// approval renders "Waiting for you" and navigates to Operation Detail.
+    private func liveOpsAttentionRow(_ item: LiveOpsAttentionItem) -> some View {
+        let rowID = "fleet.dashboard.needsYou.liveOps.\(item.operation.id.gatewayID.rawValue).\(sanitized(item.operation.id.runtimeSessionID))"
+        return Group {
+            if let approval = item.pendingApproval {
+                HStack(spacing: FleetTheme.spacingMd) {
+                    Image(systemName: "hand.raised")
+                        .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(operationTitle(item.operation)) · \(gatewayName(item.operation.id.gatewayID))")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(theme.textPrimary)
+                        Text("Approval needed · \(approval.command)")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                        if let message = environment.liveOps.actionErrors[approval.requestID] {
+                            Text(message)
+                                .font(FleetTheme.secondaryFont)
+                                .foregroundStyle(FleetTheme.statusDegraded)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    let busy = environment.liveOps.resolvingRequestIDs.contains(approval.requestID)
+                    HStack(spacing: FleetTheme.spacingSm) {
+                        Button("Deny") { Task { await environment.liveOps.deny(item) } }
+                            .buttonStyle(.bordered)
+                            .disabled(busy)
+                            .accessibilityIdentifier("\(rowID).deny")
+                        Button("Approve") { Task { await environment.liveOps.approve(item) } }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(busy)
+                            .accessibilityIdentifier("\(rowID).approve")
+                    }
+                    .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier(rowID)
+            } else {
+                NavigationLink {
+                    LiveOperationDetailView(environment: environment, operation: item.operation)
+                } label: {
+                    HStack(spacing: FleetTheme.spacingMd) {
+                        Image(systemName: "hourglass")
+                            .foregroundStyle(FleetTheme.statusNeutral)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(operationTitle(item.operation)) · \(gatewayName(item.operation.id.gatewayID))")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(theme.textPrimary)
+                            Text("Waiting for you")
+                                .font(FleetTheme.secondaryFont)
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        Spacer()
+                        Text("Review")
+                            .font(FleetTheme.secondaryFont)
+                            .foregroundStyle(theme.highlight)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .buttonStyle(.fleetPressable)
+                .accessibilityIdentifier(rowID)
+            }
+        }
+    }
+
+    private func operationTitle(_ operation: LiveOperation) -> String {
+        operation.title.isEmpty ? "Untitled session" : operation.title
+    }
+
+    private func gatewayName(_ id: GatewayID) -> String {
+        environment.gateway(for: id)?.displayName ?? id.rawValue
     }
 
     private var needsYouHeader: some View {
@@ -399,6 +526,133 @@ public struct FleetDashboardView: View {
         }
         .buttonStyle(.fleetPressable)
         .accessibilityIdentifier("fleet.dashboard.active.recent.\(bot.route.gatewayID.rawValue)#\(bot.route.profileSlug.rawValue)")
+    }
+
+    // MARK: 3b. Live Operations (Live Ops v1 — primary concept when available)
+
+    private var liveOperationsHeader: some View {
+        Text("Live Operations")
+            .font(FleetTheme.sectionHeaderFont)
+            .foregroundStyle(theme.textSecondary)
+            .accessibilityIdentifier("fleet.dashboard.liveOps.header")
+    }
+
+    private var nonIdleOperations: [LiveOperation] { liveOperations.filter { $0.status.isActive } }
+    private var idleOperationCount: Int { liveOperations.count - nonIdleOperations.count }
+
+    @ViewBuilder
+    private var liveOperationsSection: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            liveOperationsHeader
+            if nonIdleOperations.isEmpty && idleOperationCount == 0 {
+                Text("No live operations right now.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("fleet.dashboard.liveOps.empty")
+            } else {
+                ForEach(nonIdleOperations.prefix(4)) { operation in
+                    liveOperationCard(operation)
+                }
+                if idleOperationCount > 0 {
+                    Text("\(idleOperationCount) idle session\(idleOperationCount == 1 ? "" : "s")")
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.dashboard.liveOps.idleCount")
+                }
+            }
+        }
+    }
+
+    private func liveOperationCard(_ operation: LiveOperation) -> some View {
+        let stale = environment.liveOps.isStale(operation)
+        return NavigationLink {
+            LiveOperationDetailView(environment: environment, operation: operation)
+        } label: {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                HStack(spacing: FleetTheme.spacingSm) {
+                    statusPill(operation.status, stale: stale)
+                    Text(operationTitle(operation))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityHidden(true)
+                }
+                Text(operationSubtitle(operation, stale: stale))
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+                if !operation.preview.isEmpty {
+                    Text(operation.preview)
+                        .font(FleetTheme.secondaryFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(2)
+                }
+                TimelineView(.periodic(from: operation.startedAt, by: 60)) { _ in
+                    Text(operationMetaLine(operation, stale: stale))
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .padding(FleetTheme.spacingMd)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay(
+                RoundedRectangle(cornerRadius: FleetTheme.radiusCard)
+                    .strokeBorder(theme.textMuted.opacity(0.15))
+            )
+        }
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.liveOps.operation.\(operation.id.gatewayID.rawValue)#\(sanitized(operation.id.runtimeSessionID))")
+    }
+
+    private func statusPill(_ status: LiveOperationStatus, stale: Bool) -> some View {
+        let (label, color): (String, Color) = {
+            if stale { return ("Stale", FleetTheme.statusNeutral) }
+            switch status {
+            case .working: return ("Working", FleetTheme.statusExecuting)
+            case .starting: return ("Starting", FleetTheme.statusExecuting)
+            case .waiting: return ("Waiting", FleetTheme.statusNeedsIntervention)
+            case .idle: return ("Idle", FleetTheme.statusNeutral)
+            case .unknown: return ("Unknown", FleetTheme.statusNeutral)
+            }
+        }()
+        return Text(label)
+            .font(FleetTheme.monoCaptionFont)
+            .foregroundStyle(color)
+            .padding(.horizontal, FleetTheme.spacingSm)
+            .padding(.vertical, 2)
+            .background(FleetTheme.statusPillTint(color), in: Capsule())
+    }
+
+    private func operationSubtitle(_ operation: LiveOperation, stale: Bool) -> String {
+        let gateway = gatewayName(operation.id.gatewayID)
+        let statusWord: String
+        switch operation.status {
+        case .working: statusWord = "Working"
+        case .starting: statusWord = "Starting"
+        case .waiting: statusWord = "Waiting"
+        case .idle: statusWord = "Idle"
+        case .unknown: statusWord = "Unknown"
+        }
+        let modelPart = operation.model.isEmpty ? "" : " · \(operation.model)"
+        return "\(statusWord)\(modelPart) · \(gateway)"
+    }
+
+    private func operationMetaLine(_ operation: LiveOperation, stale: Bool) -> String {
+        var parts: [String] = []
+        if let subagents = operation.subagents {
+            parts.append("\(subagents.count) subagent\(subagents.count == 1 ? "" : "s")")
+        }
+        let elapsed = FleetDashboardFormatting.relativeTime(from: operation.startedAt, since: now)
+        parts.append(elapsed)
+        if stale, let lastReported = environment.liveOps.lastReportedAt(operation) {
+            parts.append("Last reported \(FleetDashboardFormatting.relativeTime(from: lastReported, since: now))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: 4. Continue (this phone's recent-open index)

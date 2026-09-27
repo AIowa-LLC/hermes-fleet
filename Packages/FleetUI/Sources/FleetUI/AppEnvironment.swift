@@ -108,6 +108,13 @@ public typealias FleetRoomSourceFactory = @Sendable (
 /// AVFoundation/Speech directly.
 public typealias FleetVoiceEngineFactory = @Sendable () -> (any VoiceTranscribing)?
 
+// MARK: - Live Ops v1 (fleet-wide session/subagent observation)
+//
+// `FleetLiveOpsFactory` itself is declared in LiveOpsStore.swift (next to
+// the store it feeds) — this MARK only covers this file's additive wiring:
+// one injected factory param (default nil) + a small `liveOps` accessor. See
+// LiveOpsStore.swift for the polling/attention/approval logic.
+
 /// Injected invalidation hooks keep FleetUI independent of FleetNetworking's
 /// ephemeral session store while ensuring credential/configuration changes
 /// cannot retain an authenticated lease for old gateway state.
@@ -235,6 +242,14 @@ public final class AppEnvironment {
     /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
     /// avatar/sections) over the per-gateway seam.
     public let botManagement: BotManagementController
+
+    // MARK: Live Ops v1 (additive — see LiveOpsStore.swift)
+
+    /// Fleet-wide Live Ops observation (Home summary strip, Needs You
+    /// approval rows, Operation Detail). Always constructed — with no
+    /// factory wired it simply never has a seam to poll and reports nothing,
+    /// so callers can read `environment.liveOps` unconditionally.
+    public let liveOps: LiveOpsStore
 
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
@@ -601,6 +616,7 @@ public final class AppEnvironment {
         roomLinkFactory: FleetRoomLinkFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
+        liveOpsFactory: FleetLiveOpsFactory? = nil,
         seedRegistrations: [GatewayRegistration] = [],
         bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
@@ -651,7 +667,16 @@ public final class AppEnvironment {
         // Application Support location. (Assigned BEFORE any self capture.)
         self.continueIndex = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL())
         self.botManagement = BotManagementController(factory: botProfileFactory)
+        // Live Ops v1: nil factory ⇒ an empty seam map — the store still
+        // exists (callers never optional-chain `environment.liveOps`), it
+        // just never has anything to poll. Constructed BEFORE any closure
+        // captures `self` below — Swift requires every stored property
+        // assigned before `self` can be used (even a weak capture).
+        self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
+        liveOps.setProviders(
+            gateways: { [weak self] in self?.gateways ?? [] },
+            connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -2179,6 +2204,25 @@ public final class AppEnvironment {
     /// The registered gateway for an ID, or nil.
     public func gateway(for id: GatewayID) -> FleetGateway? {
         gateways.first { $0.id == id }
+    }
+
+    /// Live Ops v1: resolve the source-qualified `Route` that owns a live
+    /// operation's `sessionKey`, by matching it against the current fleet
+    /// roster's known session identities (latest session id, or the
+    /// canonical Bot Chat id/compression-tip). The Live Ops domain itself
+    /// carries no profile — this is the same "never guess a route" contract
+    /// as `continueDestination(for:)`: no match means Operation Detail's
+    /// Open Chat is honestly unavailable, never a fabricated destination.
+    public func route(forLiveOperationSessionKey sessionKey: String, gatewayID: GatewayID) -> Route? {
+        guard let snapshot = rosterSnapshot else { return nil }
+        for bot in snapshot.roster.allBots where bot.route.gatewayID == gatewayID {
+            if bot.latestSession?.id == sessionKey { return bot.route }
+            if let canonical = bot.canonicalSession,
+               canonical.id == sessionKey || canonical.resolvedID == sessionKey {
+                return bot.route
+            }
+        }
+        return nil
     }
 
     // MARK: Registry passthroughs (U2 Gateway management reuses these)
