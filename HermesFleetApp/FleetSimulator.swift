@@ -1810,6 +1810,38 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 emitGenerationStart()
                 await emitGenerationCompletion()
             }
+            // FB5 demo hook (simulator only): `HERMES_FLEET_MULTI_TOOL_DEMO=1`
+            // runs SIX ordinary (non-image) tool calls to completion before
+            // the reply — the fixture the compact tool-activity UI test
+            // (`ToolActivityGrouping`) needs to prove a multi-tool turn
+            // collapses to one row instead of six. Every call fully
+            // completes (start → complete) before the next starts, matching
+            // the live gateway's serialized tool-call shape.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_MULTI_TOOL_DEMO"] == "1" {
+                // Distinct names: `updateLastTool`/`toolStart` adopt an
+                // EXISTING same-named row within the current turn (the real
+                // gateway shape for a repeated call) — six DISTINCT names
+                // guarantee six separate rows here, so the fixture actually
+                // exercises the "many rows collapse to one group" density
+                // claim rather than the VM's own same-name row reuse.
+                let scriptedTools: [(name: String, context: String, summary: String)] = [
+                    ("terminal", "ls -la", "12 files"),
+                    ("memory", "recall: fleet build notes", "3 memories"),
+                    ("git", "git status", "clean"),
+                    ("browser", "open docs/dev-loop.md", "loaded"),
+                    ("editor", "save build 91 notes", "stored"),
+                    ("make", "make dev-check", "ok"),
+                ]
+                for (index, tool) in scriptedTools.enumerated() {
+                    let toolID = "t-multi-\(index)"
+                    streamBox.yield(.toolStart(
+                        sessionID: sessionID, toolID: toolID, name: tool.name,
+                        context: tool.context, argsText: nil))
+                    streamBox.yield(.toolComplete(
+                        sessionID: sessionID, toolID: toolID, name: tool.name,
+                        summary: tool.summary, resultText: nil))
+                }
+            }
             streamBox.yield(.messageStart(sessionID: sessionID))
             // Streaming: the turn is already streaming while the tool runs
             // (the composer's Stop control exists in this window).

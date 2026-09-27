@@ -1163,32 +1163,47 @@ enum ConversationHeaderChips {
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
+                // FB5 (Build 90 feedback #5 — "too much room for tool
+                // calling"): fold consecutive COMPLETED tool calls (plus any
+                // absorbed completed reasoning) into one compact block
+                // before rendering. Pure/cheap over the already-bounded
+                // display window; an in-flight tool, a failure, an approval
+                // (never a transcript row at all), and any artifact/
+                // generation row are excluded by the grouping function
+                // itself and always render as their own live row below.
+                let blocks = ToolActivityGrouping.group(model.transcript)
                 LazyVStack(spacing: 12) {
-                    ForEach(model.transcript) { row in
-                        bubbleView(model: model, row: row)
-                        .id(row.id)
-                        // P0-B: the active find match gets a border ring
-                        // (decorative — the find bar carries the AX truth).
-                        .overlay {
-                            if findActive, let target = findTargetRowID, row.id == target {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .strokeBorder(theme.highlight.opacity(0.7), lineWidth: 1.5)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
+                    ForEach(blocks) { block in
+                        switch block {
+                        case .row(let row):
+                            bubbleView(model: model, row: row)
+                            .id(row.id)
+                            // P0-B: the active find match gets a border ring
+                            // (decorative — the find bar carries the AX truth).
+                            .overlay {
+                                if findActive, let target = findTargetRowID, row.id == target {
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .strokeBorder(theme.highlight.opacity(0.7), lineWidth: 1.5)
+                                        .allowsHitTesting(false)
+                                        .accessibilityHidden(true)
+                                }
                             }
-                        }
 
-                        // R10-T3: `@file:`/`@folder:` refs tap through into
-                        // the Projects browser. Rendered OUTSIDE the bubble
-                        // (the bubble combines its children for a11y — the
-                        // R9-T6 lesson: .combine hides descendant buttons).
-                        // D-2: rendered under USER rows only — the assistant
-                        // bubble's raw @file: text is what wedged iOS 26 AX
-                        // snapshots (see FleetSimulator D-2 fix note); the
-                        // user row's own refs (the ones the sender attached)
-                        // keep the tap-through affordance.
-                        if row.kind == .user {
-                            fileRefChips(row)
+                            // R10-T3: `@file:`/`@folder:` refs tap through into
+                            // the Projects browser. Rendered OUTSIDE the bubble
+                            // (the bubble combines its children for a11y — the
+                            // R9-T6 lesson: .combine hides descendant buttons).
+                            // D-2: rendered under USER rows only — the assistant
+                            // bubble's raw @file: text is what wedged iOS 26 AX
+                            // snapshots (see FleetSimulator D-2 fix note); the
+                            // user row's own refs (the ones the sender attached)
+                            // keep the tap-through affordance.
+                            if row.kind == .user {
+                                fileRefChips(row)
+                            }
+                        case .toolGroup(let group):
+                            ToolActivityGroupView(group: group)
+                                .id(group.id)
                         }
                     }
                     // Hermes-parity working indicator: animated dots + a
@@ -2248,6 +2263,90 @@ private struct ReasoningDisclosure: View {
                 expansionState.applyDefault(preference)
             }
         }
+    }
+}
+
+/// FB5 (Build 90 feedback #5 — "Too much room for tool calling." / "It
+/// should look more a chat than technical reporting."): one compact,
+/// chat-like row for a whole run of COMPLETED tool activity
+/// (`ToolActivityGrouping`), rendered instead of one full-height card per
+/// tool call. Tap discloses exactly the SAME per-tool content the
+/// uncollapsed transcript already shows (`FleetToolActivityView` /
+/// `ReasoningDisclosure`, reused unchanged) — nothing newly hidden or
+/// newly exposed, only the vertical cost collapsed while idle.
+private struct ToolActivityGroupView: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let group: ToolActivityGroup
+    @State private var expanded = false
+
+    private var symbolName: String {
+        group.isAllSucceeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private var tint: Color {
+        group.isAllSucceeded ? theme.textSecondary : FleetTheme.statusDestructive
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            Button {
+                if reduceMotion {
+                    expanded.toggle()
+                } else {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingXs) {
+                    Image(systemName: symbolName)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(tint)
+                    // Dynamic Type: wraps freely, never truncates the count.
+                    Text(group.summaryLine)
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: FleetTheme.spacingXs)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // A single combined VoiceOver element: the group reads as ONE
+            // stop ("Used 4 tools: terminal, memory, and 2 more."), the hint
+            // carries the disclosure affordance, and the value announces
+            // expanded/collapsed — never the per-tool chatter underneath
+            // until the reader asks for it.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(group.accessibilitySummary)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Double-tap to \(expanded ? "hide" : "show") details")
+            .accessibilityIdentifier("conversation.toolGroup.\(group.id)")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                    ForEach(group.rows, id: \.id) { row in
+                        if row.kind == .tool {
+                            FleetToolActivityView(title: row.text, detail: row.detail)
+                        } else {
+                            // An absorbed completed-reasoning aside — same
+                            // presentation as an inline assistant Reasoning
+                            // block.
+                            ReasoningDisclosure(text: row.detail ?? "")
+                        }
+                    }
+                }
+                .accessibilityIdentifier("conversation.toolGroup.\(group.id).detail")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
     }
 }
 
