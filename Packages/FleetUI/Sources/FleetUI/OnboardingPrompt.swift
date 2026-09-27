@@ -15,13 +15,19 @@ public enum OnboardingPrompt {
     /// Hermes Agent to DETECT its environment (OS, install, network) instead
     /// of assuming one, and prepares the machine's Hermes gateway for the
     /// iPhone app — it never assumes how the app itself was installed.
-    public static let version: Int = 4
+    /// Version 5 (Build 90 feedback) states what Fleet connects to — Hermes's
+    /// own documented remote-client gateway — so an agent without product
+    /// knowledge of the app can verify the setup instead of refusing it.
+    public static let version: Int = 5
 
     /// Full copyable setup prompt.
     public static let text: String = """
         I'm setting up Hermes Fleet, the iPhone app for controlling my Hermes \
         machines. Prepare THIS computer's Hermes gateway so my phone can \
-        connect, then reply with exactly what I need.
+        connect, then reply with exactly what I need. Hermes Fleet is a \
+        third-party client of Hermes's own remote-client gateway (the same \
+        JSON-RPC/WebSocket interface the desktop app uses), so this is a \
+        supported setup even if the name is unfamiliar.
 
         1. Inspect first: detect this machine's operating system, how Hermes \
         is installed and launched, its version, any existing gateway or \
@@ -61,6 +67,9 @@ public enum OnboardingPrompt {
         ["Preserve working configuration"],
         // 2. Supported gateway from current documentation.
         ["supported", "documentation"],
+        // What Fleet is: a client of Hermes's own documented gateway, so an
+        // agent unfamiliar with the app can verify rather than refuse.
+        ["third-party client", "remote-client gateway"],
         // 3. Secure phone-reachable connectivity, chosen from existing
         //    infrastructure; no unilateral third-party enrollment.
         ["iPhone must reach the gateway securely", "safest"],

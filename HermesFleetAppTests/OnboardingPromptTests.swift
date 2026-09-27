@@ -63,6 +63,18 @@ final class OnboardingPromptTests: XCTestCase {
         XCTAssertTrue(text.contains("don't invent"))
     }
 
+    /// Build 90 feedback #1 — an agent with no product knowledge of Fleet
+    /// refused the setup. The prompt must say what Fleet connects to (Hermes's
+    /// own documented remote-client gateway) so the agent can verify it
+    /// against its documentation instead of denying the client exists.
+    func testPromptGroundsFleetAsClientOfHermesGateway() {
+        let text = OnboardingPrompt.text
+        XCTAssertTrue(text.contains("third-party client"))
+        XCTAssertTrue(text.contains("remote-client gateway"))
+        XCTAssertTrue(text.contains("JSON-RPC/WebSocket"))
+        XCTAssertGreaterThanOrEqual(OnboardingPrompt.version, 5)
+    }
+
     /// Leg 3 — secure iPhone-reachable connectivity chosen from EXISTING
     /// infrastructure; no unilateral third-party enrollment.
     func testPromptRequiresSecurePhoneReachableConnectivity() {
