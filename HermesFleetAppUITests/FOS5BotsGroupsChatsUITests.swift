@@ -10,8 +10,8 @@ import XCTest
 ///    the Groups section; Bots scope hides group rows.
 /// 3. Groups terminology: roster section header says "GROUPS"; legacy room
 ///    row reads "Managed by Hermes Desktop · Read only".
-/// 4. Chats: Compose opens the source-qualified bot picker; heading stays
-///    "Newest sessions".
+/// 4. Chats: Compose opens the source-qualified bot picker; the list shows
+///    recent conversations.
 final class FOS5BotsGroupsChatsUITests: XCTestCase {
 
     private var app: XCUIApplication?
@@ -288,6 +288,32 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
     }
 
     // MARK: 4. Chats Compose + heading
+
+    func testChatsAndDrawerExcludeScheduledRunsAndEmptyDrafts() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_CHAT_SOURCE_FIXTURE"] = "1"
+        app.launch()
+
+        let human = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1")
+        XCTAssertTrue(human.waitForExistence(timeout: 10), "human conversation must load")
+        for id in ["cron-1", "empty-1"] {
+            XCTAssertFalse(firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.\(id)").exists,
+                           "Chats must not show \(id)")
+        }
+
+        let drawer = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 5))
+        drawer.tap()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer.recent.workstation#default/workstation.default.s1")
+            .waitForExistence(timeout: 5), "drawer Recents must show the human conversation")
+        for id in ["cron-1", "empty-1"] {
+            XCTAssertFalse(firstMatch(in: app, identifier: "fleet.drawer.recent.workstation#default/workstation.default.\(id)").exists,
+                           "drawer Recents must not show \(id)")
+        }
+    }
 
     func testChatsComposeOpensSourceQualifiedBotPicker() throws {
         let app = XCUIApplication()

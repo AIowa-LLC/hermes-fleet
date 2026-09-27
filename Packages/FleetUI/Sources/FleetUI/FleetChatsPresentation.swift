@@ -25,6 +25,31 @@ public enum RefreshFailureSurface: Equatable, Sendable {
 
 public enum FleetChatsPresentation {
 
+    /// Hermes Desktop's Recents slice contains persisted, human-facing local
+    /// conversations. The gateway's `session.list` is broader: it also returns
+    /// empty drafts, cron runs, and messaging threads that Desktop places in
+    /// other sections. Keep unknown sources visible so a newer interactive
+    /// client is not silently hidden.
+    public static func isRecentConversation(_ session: SessionSummary) -> Bool {
+        guard session.messageCount > 0 else { return false }
+        let source = session.source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return !excludedRecentSources.contains(source)
+    }
+
+    /// `session.list` is already ordered by activity; use its timestamp for
+    /// the combined cross-gateway list too. Older gateways may omit it.
+    public static func recency(_ session: SessionSummary) -> Double {
+        session.lastActive > 0 ? session.lastActive : session.startedAt
+    }
+
+    private static let excludedRecentSources: Set<String> = [
+        "cron", "kanban", "oneshot", "subagent", "tool",
+        "telegram", "discord", "slack", "mattermost", "matrix", "signal",
+        "whatsapp", "bluebubbles", "photon", "homeassistant", "email",
+        "sms", "webhook", "api_server", "weixin", "wecom", "qqbot",
+        "yuanbao", "dingtalk", "feishu",
+    ]
+
     /// Which failure surface the Chats list renders.
     ///
     /// - Parameters:

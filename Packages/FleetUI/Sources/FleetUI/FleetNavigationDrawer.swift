@@ -36,12 +36,17 @@ struct FleetNavigationDrawer: View {
     private var recentEntries: [FleetChatEntry] {
         environment.sessionsByRoute
             .flatMap { route, sessions in
-                sessions.map { FleetChatEntry(route: route, session: $0) }
+                sessions.filter {
+                    FleetChatsPresentation.isRecentConversation($0) &&
+                    !environment.isCanonicalBotChat(route: route, sessionID: $0.id)
+                }.map { FleetChatEntry(route: route, session: $0) }
             }
             .filter { environment.gateway(for: $0.route.gatewayID) != nil }
             .sorted {
-                if $0.session.startedAt == $1.session.startedAt { return $0.id < $1.id }
-                return $0.session.startedAt > $1.session.startedAt
+                let left = FleetChatsPresentation.recency($0.session)
+                let right = FleetChatsPresentation.recency($1.session)
+                if left == right { return $0.id < $1.id }
+                return left > right
             }
             .filter {
                 !pinnedIDs.contains(

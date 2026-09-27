@@ -28,6 +28,10 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 
 ## Conversations
 
+- Chats and drawer Recents apply Hermes Desktop's human-facing Recents rules
+  within each gateway/profile and order conversations by last activity.
+  Scheduled runs and external messaging threads belong to their own surfaces
+  and do not appear as duplicate chats.
 - create and resume sessions
 - stream assistant output and tool activity
 - reconnect and recover missed events

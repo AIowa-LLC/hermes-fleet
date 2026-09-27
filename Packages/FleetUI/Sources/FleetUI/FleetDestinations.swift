@@ -171,15 +171,20 @@ struct FleetChatsView: View {
     /// from a hard requirement to a display-name enrichment.
     private var entries: [FleetChatEntry] {
         environment.sessionsByRoute.flatMap { route, sessions in
-            sessions.filter { !environment.isCanonicalBotChat(route: route, sessionID: $0.id) }
+            sessions.filter {
+                FleetChatsPresentation.isRecentConversation($0) &&
+                !environment.isCanonicalBotChat(route: route, sessionID: $0.id)
+            }
                 .map { FleetChatEntry(route: route, session: $0) }
         }.filter { entry in
             environment.gateway(for: entry.route.gatewayID) != nil &&
             (gatewayID == nil || entry.route.gatewayID == gatewayID) &&
             (query.isEmpty || "\(entry.session.title) \(entry.session.preview) \(botDisplayName(entry.route)) \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? "")".localizedCaseInsensitiveContains(query))
         }.sorted {
-            if $0.session.startedAt == $1.session.startedAt { return $0.id < $1.id }
-            return $0.session.startedAt > $1.session.startedAt
+            let left = FleetChatsPresentation.recency($0.session)
+            let right = FleetChatsPresentation.recency($1.session)
+            if left == right { return $0.id < $1.id }
+            return left > right
         }
     }
 
@@ -206,7 +211,8 @@ struct FleetChatsView: View {
         environment.sessionsByRoute.reduce(0) { count, pair in
             guard environment.gateway(for: pair.key.gatewayID) != nil else { return count }
             return count + pair.value.filter {
-                !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
+                FleetChatsPresentation.isRecentConversation($0)
+                    && !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
                     && !isLocallyHidden(FleetChatEntry(route: pair.key, session: $0))
             }.count
         }
@@ -295,11 +301,8 @@ struct FleetChatsView: View {
             case .prominent:
                 prominentRefreshFailure
             }
-            // FOS-5 (SPEC §10): heading stays "Newest sessions" — honest
-            // startedAt ordering; not renamed to "Recent" (no last-activity
-            // ranking until it is real). lastActive IS decoded+preserved on
-            // SessionSummary for the future upgrade.
-            Section("Newest sessions") {
+            // Match Hermes Desktop's activity-ranked Recents slice.
+            Section("Recent conversations") {
                 ForEach(visibleEntries) { entry in
                     NavigationLink(value: FleetScreen.conversation(entry.route, sessionID: entry.session.id)) {
                         // Codex/ChatGPT-style row diet: single-line title +
@@ -376,7 +379,7 @@ struct FleetChatsView: View {
                     // OCR re-review: the gate counts the rows the LIST renders
                     // (`visibleEntries`) — with every row locally archived the
                     // unfiltered `entries` check never fired, leaving a bare
-                    // "Newest sessions" header with no explanation.
+                    // "Recent conversations" header with no explanation.
                     let empty = FleetChatsPresentation.emptyState(
                         hasQuery: !query.isEmpty,
                         hasGatewayFilter: gatewayID != nil,

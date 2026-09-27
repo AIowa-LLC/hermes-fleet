@@ -19,6 +19,44 @@ final class FleetChatsPresentationTests: XCTestCase {
         Route(gatewayID: gateway, profileSlug: ProfileSlug(rawValue: slug))
     }
 
+    // MARK: - Desktop Recents parity
+
+    func testCronRunsDoNotAppearAsChats() {
+        let run = SessionSummary(
+            id: "scheduled-run-1", title: "Repeated job title",
+            startedAt: 100, lastActive: 200, messageCount: 38, source: "cron")
+        XCTAssertFalse(FleetChatsPresentation.isRecentConversation(run))
+    }
+
+    func testOnlyPersistedLocalConversationsAppearInRecents() {
+        let interactive = SessionSummary(
+            id: "chat-1", title: "A real chat", messageCount: 1, source: "desktop")
+        let empty = SessionSummary(
+            id: "draft-1", title: "", messageCount: 0, source: "desktop")
+        let messaging = SessionSummary(
+            id: "thread-1", title: "External thread", messageCount: 4, source: "telegram")
+        let newerClient = SessionSummary(
+            id: "chat-2", title: "Another chat", messageCount: 2, source: "ios")
+        XCTAssertTrue(FleetChatsPresentation.isRecentConversation(interactive))
+        XCTAssertFalse(FleetChatsPresentation.isRecentConversation(empty))
+        XCTAssertFalse(FleetChatsPresentation.isRecentConversation(messaging))
+        XCTAssertTrue(FleetChatsPresentation.isRecentConversation(newerClient))
+    }
+
+    func testRecencyUsesLastActivityWithCreationFallback() {
+        let active = SessionSummary(
+            id: "chat-1", title: "Chat", startedAt: 100, lastActive: 300,
+            messageCount: 2, source: "desktop")
+        let olderGateway = SessionSummary(
+            id: "chat-2", title: "Chat", startedAt: 200,
+            messageCount: 2, source: "desktop")
+        XCTAssertEqual(FleetChatsPresentation.recency(active), 300)
+        XCTAssertEqual(FleetChatsPresentation.recency(olderGateway), 200)
+        XCTAssertTrue(FleetChatsPresentation.isRecentConversation(active))
+        XCTAssertTrue(FleetChatsPresentation.isRecentConversation(olderGateway),
+                      "same titles with distinct IDs remain distinct chats")
+    }
+
     // MARK: - Failure surface decision
 
     func testNoFailuresRendersNoFailureSurface() {

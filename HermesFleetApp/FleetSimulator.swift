@@ -2735,7 +2735,7 @@ enum ScriptedFleet {
                     ),
                 ]
             }
-            return [
+            var sessions = [
                 ScriptedFleet.session(gateway: route.gatewayID, slug: "default"),
                 SessionSummary(
                     id: "workstation.default.s2", title: "Replay plan review",
@@ -2746,6 +2746,18 @@ enum ScriptedFleet {
                     lastActive: 1_755_000_600, messageCount: 24, source: "ios"
                 ),
             ]
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_CHAT_SOURCE_FIXTURE"] == "1" {
+                sessions += [
+                    SessionSummary(
+                        id: "workstation.default.cron-1", title: "Scheduled build audit",
+                        startedAt: 1_755_000_700, lastActive: 1_755_000_900,
+                        messageCount: 38, source: "cron"),
+                    SessionSummary(
+                        id: "workstation.default.empty-1", title: "Untitled conversation",
+                        startedAt: 1_755_000_800, messageCount: 0, source: "desktop"),
+                ]
+            }
+            return sessions
         default:
             return [ScriptedFleet.session(gateway: route.gatewayID, slug: route.profileSlug.rawValue)]
         }
