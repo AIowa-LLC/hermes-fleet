@@ -987,6 +987,27 @@ public final class AppEnvironment {
         scheduleRosterSyncAfterConnectionRepair(for: id)
     }
 
+    /// FB2 (gap): the connection can already be `.connected` the whole time
+    /// while its last roster observation is `.failed` (e.g. one refresh timed
+    /// out) — no `.connected`/`.online` TRANSITION and no manual Test
+    /// Connection ever happens, so neither of the two repair triggers above
+    /// fires, and Bot Detail is left on the ghost outcome until the summary
+    /// backoff (up to 300s) happens to land.
+    ///
+    /// Bot Detail calls this on appearance for the gateway it is showing.
+    /// Fires ONLY when the gateway is currently connected AND its last
+    /// observation is failed/unclassified — never for a disconnected gateway
+    /// (never fabricates presence over a real outage) and never when the
+    /// outcome is already `.loaded` (no redundant refresh on every visit).
+    /// Reuses the same coalesced, generation-fenced `refreshRoster()` — an
+    /// already in-flight refresh absorbs this request instead of stacking
+    /// another one, and repeat appearances after a settled `.loaded` outcome
+    /// are no-ops (no polling loop).
+    public func refreshRosterIfStaleForVisibleBot(on gatewayID: GatewayID) {
+        guard connectionStates[gatewayID] == .connected else { return }
+        scheduleRosterSyncIfStaleAfterRepair(for: gatewayID)
+    }
+
     private func queuePostConnectRosterSync() {
         guard !postConnectSyncQueued else { return }
         postConnectSyncQueued = true

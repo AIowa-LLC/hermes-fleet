@@ -499,6 +499,90 @@ final class BotsPresenceSyncTests: XCTestCase {
         XCTAssertEqual(environment.botPresence(for: other.route), .unreachable)
     }
 
+    // MARK: FB2 (gap) — Bot Detail appearance while CONNECTED the whole time
+    //
+    // The two triggers above only fire on a `.connected`/`.online`
+    // TRANSITION or a manual Test Connection. A gateway can stay
+    // `.connected` throughout while one later roster refresh times out
+    // (`.failed`) and the summary backoff climbs to 120-300s — no transition
+    // and no manual probe ever happens, so Bot Detail was left on the ghost
+    // outcome for up to 5 minutes. `refreshRosterIfStaleForVisibleBot(on:)`
+    // closes that gap from Bot Detail's own `.task`.
+
+    /// Connected + failed outcome (backoff pending) → the appearance trigger
+    /// forces one authoritative refresh and presence recovers.
+    func testAppearanceTriggerRefreshesStaleOutcomeWhileStillConnected() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let (environment, _) = await makeEnvironment(roster: roster)
+
+        await environment.connect(to: workstation)
+        let initiallyReachable = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(initiallyReachable)
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+
+        // One later background observation times out while the connection
+        // itself stays up — no transition, so neither existing trigger fires.
+        roster.set(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "timed out"),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        await environment.refreshRoster()
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
+        let refreshesBeforeAppearance = roster.refreshCount
+
+        // The gateway is reachable again; Bot Detail appears.
+        roster.set(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        environment.refreshRosterIfStaleForVisibleBot(on: workstation)
+
+        let recovered = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(recovered)
+        XCTAssertGreaterThan(roster.refreshCount, refreshesBeforeAppearance)
+    }
+
+    /// Already `.loaded` → the appearance trigger is a no-op (no redundant
+    /// refresh on every Bot Detail visit).
+    func testAppearanceTriggerDoesNothingWhenOutcomeAlreadyLoaded() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let (environment, _) = await makeEnvironment(roster: roster)
+
+        await environment.connect(to: workstation)
+        let reachable = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(reachable)
+        let refreshesBeforeAppearance = roster.refreshCount
+
+        environment.refreshRosterIfStaleForVisibleBot(on: workstation)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(roster.refreshCount, refreshesBeforeAppearance)
+    }
+
+    /// A DISCONNECTED gateway never gets a refresh forced on it by merely
+    /// appearing in Bot Detail — it stays honestly offline instead of the
+    /// trigger fabricating an unearned refresh cycle.
+    func testAppearanceTriggerDoesNothingForDisconnectedGateway() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "down"),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let (environment, _) = await makeEnvironment(
+            roster: roster, connectionErrors: [workstation: .unreachable])
+        await environment.refreshRoster()
+        XCTAssertNotEqual(environment.connectionStates[workstation], .connected)
+        let refreshesBeforeAppearance = roster.refreshCount
+
+        environment.refreshRosterIfStaleForVisibleBot(on: workstation)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(roster.refreshCount, refreshesBeforeAppearance)
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
+    }
+
     func testBotsEntryAndConnectUseTheNarrowSynchronizationSeams() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let appEnvironment = try String(contentsOf: root.appendingPathComponent("Packages/FleetUI/Sources/FleetUI/AppEnvironment.swift"), encoding: .utf8)
