@@ -201,7 +201,7 @@ final class GatewayLiveOpsClientTests: XCTestCase {
                         "sessions": [[
                             // Deliberately DIFFERENT from session_key — the
                             // join must use session_key, never id.
-                            "id": "runtime-sid-999", "session_key": "durable-owner-1",
+                            "id": "runtime-sid-999", "session_key": "owner-a",
                             "status": "working",
                         ]]
                     ])]
@@ -212,7 +212,7 @@ final class GatewayLiveOpsClientTests: XCTestCase {
                             "subagent_id": "child-1", "parent_id": NSNull(), "depth": 0,
                             "goal": "fixture goal", "model": "m", "started_at": 500.0,
                             "status": "running", "tool_count": 2,
-                            "owner_agent_session_id": "durable-owner-1",
+                            "owner_agent_session_id": "owner-a",
                         ]]
                     ])]
                 }
