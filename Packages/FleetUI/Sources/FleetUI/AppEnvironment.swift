@@ -962,6 +962,31 @@ public final class AppEnvironment {
         }
     }
 
+    /// FB2: whether `id`'s last roster observation is failed or never
+    /// classified — the condition under which a connection repair must force
+    /// an authoritative roster refresh rather than leaving Bot Detail on a
+    /// stale/ghost presence until a manual Refresh or Test Connection.
+    private func hasStaleRosterOutcome(for id: GatewayID) -> Bool {
+        switch rosterSnapshot?.outcome(for: id) {
+        case .loaded: return false
+        case .failed, nil: return true
+        }
+    }
+
+    /// FB2 (TestFlight Build 90 #2): request the same bounded, coalesced
+    /// roster resync as an explicit connect repair, but ONLY when this
+    /// gateway's last observation is failed/stale. Called from every path
+    /// that can observe a gateway becoming reachable again OUTSIDE the
+    /// explicit `connect(to:)` success transition (the transport's own
+    /// auto-recovery landing on `.online`, and the manual §13 Test
+    /// Connection probe) — those paths previously corrected the connection
+    /// chip but never re-armed the roster, leaving presence a ghost until an
+    /// unrelated due-check happened to land.
+    private func scheduleRosterSyncIfStaleAfterRepair(for id: GatewayID) {
+        guard hasStaleRosterOutcome(for: id) else { return }
+        scheduleRosterSyncAfterConnectionRepair(for: id)
+    }
+
     private func queuePostConnectRosterSync() {
         guard !postConnectSyncQueued else { return }
         postConnectSyncQueued = true
@@ -1876,6 +1901,17 @@ public final class AppEnvironment {
             // A live connection clears the retry budget.
             reconnectAttempts[id] = 0
             cancelPendingRetry(for: id)
+            // FB2: the transport can self-heal (e.g. its own reconnect logic
+            // lands on `.online`) WITHOUT ever going through `connect(to:)`'s
+            // success branch, which is the only place that used to re-arm the
+            // roster. Mirror that repair path here on the genuine
+            // failed/idle/connecting → online transition (guarded so a
+            // steady-state `.online` tick, observed every watch interval,
+            // never re-triggers this or starts a polling loop).
+            if connectionStates[id] != .connected {
+                connectionStates[id] = .connected
+                scheduleRosterSyncIfStaleAfterRepair(for: id)
+            }
         case .connecting:
             break
         case .offline, .degraded, .authenticationRequired, .unsupported:
@@ -2482,6 +2518,15 @@ public final class AppEnvironment {
             recordFault(
                 category: "Gateway connection", gateway: gateway,
                 status: status, detail: nil)
+        }
+        // FB2 (TestFlight Build 90 #2): a manual "Test Connection" (the
+        // tester's "check status") that finds the gateway reachable again
+        // must re-arm the roster the same way an explicit connect repair
+        // does — otherwise the probe fixes only this connection chip while
+        // Bot Detail keeps showing the last-known failed/ghost presence
+        // until an unrelated due-check happens to land.
+        if state == .connected {
+            scheduleRosterSyncIfStaleAfterRepair(for: id)
         }
     }
 
