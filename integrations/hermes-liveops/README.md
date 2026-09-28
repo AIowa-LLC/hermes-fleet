@@ -15,9 +15,12 @@ transcripts, open sessions, or database timestamps.
 
 Copy this directory to the Hermes root's `plugins/fleet-liveops` directory.
 Enable `fleet-liveops` in `plugins.enabled` in the configuration of the
-gateway backend and each Desktop profile to observe. Hermes Desktop's Plugins
-settings or `hermes plugins enable fleet-liveops` in the intended profile's
-scope can perform that configuration change.
+gateway backend and each Desktop profile to observe. Preserve the other enabled
+plugins and remove `fleet-liveops` from `plugins.disabled` if present. The shared
+root installation is discovered by Desktop's dashboard backends, but the current
+`hermes plugins enable` command searches only the selected profile's plugin
+directory. For a shared installation, edit each profile's configuration directly;
+the CLI can otherwise report that the installed plugin was not found.
 
 Restart the affected Desktop and dashboard backends after enabling the plugin;
 wait for active work to finish first. Dashboard API plugins are loaded when
@@ -66,6 +69,10 @@ durable child ownership, private-field exclusion, expiry, malformed snapshots,
 authentication failure, fallback scope, and observation-only control authority.
 The UI regression covers an idle parent whose asynchronous child is running.
 
-Live acceptance: enable and restart the relevant backends, start a long-running
+Live acceptance: first confirm the authenticated snapshot endpoint returns
+HTTP 200 with fresh publishers from the gateway and the intended Desktop
+profile. Then start a long-running
 delegation from a Desktop profile, and confirm its parent and child tree appear
-on Fleet within the next poll. This requires the next app build on the device.
+on Fleet within the next poll. The device must have a Fleet build that includes
+the dashboard reporting client; a newer app build cannot replace the Hermes
+installation and backend reload steps above.
