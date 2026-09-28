@@ -121,6 +121,21 @@ final class LiveOpsUITests: XCTestCase {
 
     // MARK: - Operation Detail
 
+    func testIdleParentWithRunningSubagentsAppearsAsDelegating() throws {
+        let app = XCUIApplication()
+        launch(app, extraEnv: ["HERMES_FLEET_LIVEOPS_IDLE_DELEGATING": "1"])
+        openFleetTab(app)
+        let card = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier CONTAINS %@", "fleet.dashboard.liveOps.operation.workstation"))
+            .firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.label.contains("Delegating"), "running children must keep an idle parent visible")
+        card.tap()
+        let status = firstMatch(in: app, identifier: "fleet.liveOpsDetail.status")
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertEqual(status.label, "Delegating")
+    }
+
     func testOperationDetailShowsSwarm() throws {
         let app = XCUIApplication()
         launch(app)

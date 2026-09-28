@@ -67,6 +67,18 @@ final class GatewayLiveOpsClientTests: XCTestCase {
 
     // MARK: 1. session.active_list → snapshot decode
 
+    func testMissingSessionsArrayIsUnavailableNotReportingZero() async throws {
+        let (client, server, transport) = try await connectedClient(script: .init(
+            onOpen: [Self.readyFrame()], onText: { frame in
+                guard let (id, _, _) = Self.extractRequest(frame) else { return [] }
+                return [Self.responseFrame(id: id, result: [:])]
+            }))
+        defer { server.stop(); Task { await transport.disconnect() } }
+        let snapshot = await client.snapshot()
+        XCTAssertFalse(snapshot.coverage.isReporting)
+        XCTAssertTrue(LiveOpsSnapshot(gateways: [snapshot]).activeCount.isPartial)
+    }
+
     func testSnapshotConnectsColdTransportBeforeReporting() async throws {
         let script = InProcessWebSocketServer.Script(
             onOpen: [Self.readyFrame()],

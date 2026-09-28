@@ -239,11 +239,22 @@ public struct LiveOperation: Identifiable, Hashable, Sendable {
     /// gateway (e.g. unsupported) — distinct from "known to have zero
     /// subagents" (`[]`).
     public let subagents: [LiveOpsSubagent]?
+    /// Cross-process observers have no transport authority over the source session.
+    public let observationOnly: Bool
 
     /// `true` when `subagents` reflects an actual `delegation.status` read;
     /// `false` when the gateway does not support delegation status (the
     /// caller must render "subagents unknown", never "0 subagents").
     public var subagentsKnown: Bool { subagents != nil }
+
+    /// Async delegation can outlive the parent's turn. A registry-reported
+    /// running child keeps the operation active even when the parent is idle.
+    /// Unknown child statuses and unavailable delegation data are not activity.
+    public var isActive: Bool {
+        status.isActive || subagents?.contains { $0.status == "running" } == true
+    }
+
+    public var isDelegating: Bool { !status.isActive && isActive }
 
     public init(
         id: LiveOperationID,
@@ -255,7 +266,8 @@ public struct LiveOperation: Identifiable, Hashable, Sendable {
         lastActive: Date,
         messageCount: Int,
         status: LiveOperationStatus,
-        subagents: [LiveOpsSubagent]? = nil
+        subagents: [LiveOpsSubagent]? = nil,
+        observationOnly: Bool = false
     ) {
         self.id = id
         self.sessionKey = sessionKey
@@ -267,6 +279,7 @@ public struct LiveOperation: Identifiable, Hashable, Sendable {
         self.messageCount = messageCount
         self.status = status
         self.subagents = subagents
+        self.observationOnly = observationOnly
     }
 
     /// Reconstructed swarm tree for this operation's known subagents (`nil`
@@ -333,6 +346,9 @@ public struct LiveOpsGatewaySnapshot: Identifiable, Hashable, Sendable {
     /// flag get the obviously-correct answer for a single snapshot.
     public let hasEverReported: Bool
 
+    /// Limits of the observer's process/profile scope, independent of transport health.
+    public let observationNote: String?
+
     public var id: GatewayID { gatewayID }
 
     public init(
@@ -341,9 +357,11 @@ public struct LiveOpsGatewaySnapshot: Identifiable, Hashable, Sendable {
         operations: [LiveOperation],
         observedAt: Date,
         generation: Int = 0,
-        hasEverReported: Bool? = nil
+        hasEverReported: Bool? = nil,
+        observationNote: String? = nil
     ) {
         self.gatewayID = gatewayID
+        self.observationNote = observationNote
         self.coverage = coverage
         self.operations = operations
         self.observedAt = observedAt
@@ -417,8 +435,8 @@ public struct LiveOpsSnapshot: Sendable {
         gateways.filter(\.hasEverReported)
     }
 
-    /// `active` = `working | starting | waiting` (idle excluded — see
-    /// `LiveOperationStatus.isActive`). `.partial` when NO gateway has ever
+    /// Active parents or parents with running delegated children (see
+    /// `LiveOperation.isActive`). `.partial` when NO gateway has ever
     /// reported (an empty snapshot, or every gateway with zero trustworthy
     /// history) — NEVER `.known(0)` in that case, since "the fleet reported
     /// zero active operations" and "the fleet has never been heard from"
@@ -427,7 +445,7 @@ public struct LiveOpsSnapshot: Sendable {
     /// reducer's rule 2) — a failure alone must never zero out this count.
     public var activeCount: LiveOpsCount {
         guard !gatewaysWithData.isEmpty else { return .partial }
-        return .known(allOperations.filter { $0.status.isActive }.count)
+        return .known(allOperations.filter(\.isActive).count)
     }
 
     public var waitingCount: LiveOpsCount {
@@ -606,7 +624,9 @@ public enum LiveOpsSnapshotReducer {
             operations: resolvedOperations,
             observedAt: incoming.observedAt,
             generation: incoming.generation,
-            hasEverReported: hasEverReported
+            hasEverReported: hasEverReported,
+            observationNote: incoming.coverage.isReporting ? incoming.observationNote
+                : incoming.observationNote ?? existing.observationNote
         )
         return LiveOpsSnapshot(gateways: gateways)
     }

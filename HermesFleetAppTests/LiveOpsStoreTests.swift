@@ -109,13 +109,14 @@ final class LiveOpsStoreTests: XCTestCase {
     private let gatewayB = GatewayID(rawValue: "gw-b")
 
     private func makeOperation(
-        gatewayID: GatewayID, runtimeID: String, status: LiveOperationStatus, subagents: [LiveOpsSubagent]? = []
+        gatewayID: GatewayID, runtimeID: String, status: LiveOperationStatus, subagents: [LiveOpsSubagent]? = [],
+        observationOnly: Bool = false
     ) -> LiveOperation {
         LiveOperation(
             id: LiveOperationID(gatewayID: gatewayID, runtimeSessionID: runtimeID),
             sessionKey: "key-\(runtimeID)", title: "Op \(runtimeID)", preview: "preview",
             model: "claude-opus", startedAt: Date(timeIntervalSince1970: 1_000), lastActive: Date(),
-            messageCount: 1, status: status, subagents: subagents)
+            messageCount: 1, status: status, subagents: subagents, observationOnly: observationOnly)
     }
 
     private func makeStore(
@@ -188,17 +189,21 @@ final class LiveOpsStoreTests: XCTestCase {
             makeOperation(gatewayID: gatewayA, runtimeID: "working-1", status: .working),
             makeOperation(gatewayID: gatewayA, runtimeID: "waiting-1", status: .waiting),
             makeOperation(gatewayID: gatewayA, runtimeID: "idle-1", status: .idle),
+            makeOperation(gatewayID: gatewayA, runtimeID: "fleet:desktop:waiting", status: .waiting, observationOnly: true),
         ]
         let approvals = ScriptedApprovals()
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: approvals],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
         store.beginObserving(.home)
-        for _ in 0..<50 where approvals.pendingCallSessions.isEmpty {
+        for _ in 0..<50 where store.attentionItems.count < 2 {
             try? await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(approvals.pendingCallSessions, ["waiting-1"],
                        "must query approval.pending ONLY for the waiting session, never working/idle")
+        let observed = store.attentionItems.first { $0.operation.observationOnly }
+        XCTAssertNotNil(observed, "Desktop waiting operations remain visible without pretending to own approvals")
+        XCTAssertNil(observed?.pendingApproval)
         store.endObserving(.home)
     }
 

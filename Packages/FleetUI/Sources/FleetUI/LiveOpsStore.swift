@@ -248,7 +248,8 @@ public final class LiveOpsStore {
         for raw in results {
             let stamped = LiveOpsGatewaySnapshot(
                 gatewayID: raw.gatewayID, coverage: raw.coverage, operations: raw.operations,
-                observedAt: raw.observedAt, generation: thisCycle, hasEverReported: raw.hasEverReported)
+                observedAt: raw.observedAt, generation: thisCycle, hasEverReported: raw.hasEverReported,
+                observationNote: raw.observationNote)
             working = LiveOpsSnapshotReducer.merge(incoming: stamped, into: working)
         }
 
@@ -277,7 +278,8 @@ public final class LiveOpsStore {
                   let seam = seams[gateway.id] else { continue }
             let waiting = gatewaySnapshot.operations.filter { $0.status.isWaiting }
             for operation in waiting {
-                let pending = try? await seam.approvals.pendingApprovals(sessionID: operation.id.runtimeSessionID)
+                let pending = operation.observationOnly ? nil
+                    : try? await seam.approvals.pendingApprovals(sessionID: operation.id.runtimeSessionID)
                 guard cycle == self.cycle else { return }
                 items.append(LiveOpsAttentionItem(operation: operation, pendingApproval: pending?.first))
             }

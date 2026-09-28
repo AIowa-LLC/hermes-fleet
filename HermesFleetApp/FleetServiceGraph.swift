@@ -445,8 +445,15 @@ enum FleetServiceGraph {
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
                 configuration: .standard
             )
+            let httpSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
             return LiveOpsGatewaySeam(
-                ops: GatewayLiveOpsClient(gatewayID: gateway.id, transport: transport),
+                ops: DashboardLiveOpsClient(
+                    gatewayID: gateway.id, baseURL: base,
+                    legacy: GatewayLiveOpsClient(gatewayID: gateway.id, transport: transport),
+                    httpCredential: makeDashboardHTTPCredential(
+                        gateway: gateway, credentialStore: credentialStore, pinStore: pinStore,
+                        urlSession: httpSession),
+                    urlSession: httpSession),
                 approvals: GatewayApprovalClient(gatewayID: gateway.id, transport: transport)
             )
         }

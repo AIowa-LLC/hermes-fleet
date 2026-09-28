@@ -12,8 +12,8 @@ FAIL=0
 declare -a FAILURES=()
 expected_test_count() {
   case "$1" in
-    FleetCore) echo 648 ;;
-    FleetNetworking) echo 569 ;;
+    FleetCore) echo 650 ;;
+    FleetNetworking) echo 576 ;;
     FleetPersistence) echo 39 ;;
     FleetSecurity) echo 37 ;;
     *) return 1 ;;
@@ -49,7 +49,7 @@ run_pkg() {
   count=$(printf '%s\n' "$summary" | sed -nE 's/^[[:space:]]*Executed ([0-9]+) tests?, with ([0-9]+ tests? skipped and )?0 failures([[:space:](]|$).*/\1/p')
 
   # Exact count is intentional: the current declared XCTest inventories are
-  # 648/569/39/37 (Live Ops v1 plus five cold-connect regressions). Update
+  # 650/576/39/37 (including cross-process Live Ops regressions). Update
   # these baselines with deliberate test additions or removals; a partial run
   # must never look green merely because its completed subset reported zero
   # failures.

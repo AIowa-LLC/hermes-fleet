@@ -547,13 +547,19 @@ public struct FleetDashboardView: View {
             .accessibilityIdentifier("fleet.dashboard.liveOps.header")
     }
 
-    private var nonIdleOperations: [LiveOperation] { liveOperations.filter { $0.status.isActive } }
+    private var nonIdleOperations: [LiveOperation] { liveOperations.filter(\.isActive) }
     private var idleOperationCount: Int { liveOperations.count - nonIdleOperations.count }
 
     @ViewBuilder
     private var liveOperationsSection: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             liveOperationsHeader
+            ForEach(environment.liveOps.snapshot?.gateways.filter { $0.observationNote != nil } ?? []) { gateway in
+                Text(gateway.observationNote ?? "")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("fleet.dashboard.liveOps.scope.\(gateway.gatewayID.rawValue)")
+            }
             if nonIdleOperations.isEmpty && idleOperationCount == 0 {
                 Text("No live operations right now.")
                     .font(FleetTheme.secondaryFont)
@@ -580,7 +586,7 @@ public struct FleetDashboardView: View {
         } label: {
             VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
                 HStack(spacing: FleetTheme.spacingSm) {
-                    statusPill(operation.status, stale: stale)
+                    statusPill(operation, stale: stale)
                     Text(operationTitle(operation))
                         .font(.body.weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
@@ -619,10 +625,11 @@ public struct FleetDashboardView: View {
         .accessibilityIdentifier("fleet.dashboard.liveOps.operation.\(operation.id.gatewayID.rawValue)#\(sanitized(operation.id.runtimeSessionID))")
     }
 
-    private func statusPill(_ status: LiveOperationStatus, stale: Bool) -> some View {
+    private func statusPill(_ operation: LiveOperation, stale: Bool) -> some View {
         let (label, color): (String, Color) = {
             if stale { return ("Stale", FleetTheme.statusNeutral) }
-            switch status {
+            if operation.isDelegating { return ("Delegating", FleetTheme.statusExecuting) }
+            switch operation.status {
             case .working: return ("Working", FleetTheme.statusExecuting)
             case .starting: return ("Starting", FleetTheme.statusExecuting)
             case .waiting: return ("Waiting", FleetTheme.statusNeedsIntervention)
@@ -649,7 +656,8 @@ public struct FleetDashboardView: View {
         case .unknown: statusWord = "Unknown"
         }
         let modelPart = operation.model.isEmpty ? "" : " · \(operation.model)"
-        let freshness = stale ? "Last known \(statusWord)" : statusWord
+        let activity = operation.isDelegating ? "Delegating" : statusWord
+        let freshness = stale ? "Last known \(activity)" : activity
         return "\(freshness)\(modelPart) · \(gateway)"
     }
 

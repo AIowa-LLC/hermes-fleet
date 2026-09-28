@@ -83,6 +83,27 @@ final class LiveOpsDomainTests: XCTestCase {
         XCTAssertTrue(makeOperation(subagents: []).subagentsKnown)
     }
 
+    func testIdleParentWithRunningChildCountsAsActive() {
+        let child = LiveOpsSubagent(subagentID: "child", parentID: nil, depth: 0,
+                                   goal: "Synthetic task", model: nil, startedAt: Date(),
+                                   status: "running", toolCount: 0)
+        let operation = makeOperation(status: .idle, subagents: [child])
+        XCTAssertTrue(operation.isActive)
+        XCTAssertTrue(operation.isDelegating)
+        let gateway = LiveOpsGatewaySnapshot(gatewayID: operation.id.gatewayID,
+                                            coverage: .reporting, operations: [operation], observedAt: Date())
+        XCTAssertEqual(LiveOpsSnapshot(gateways: [gateway]).activeCount.value, 1)
+        XCTAssertFalse(makeOperation(status: .idle, subagents: []).isActive)
+        XCTAssertFalse(makeOperation(status: .idle, subagents: nil).isActive)
+    }
+
+    func testUnknownChildStatusDoesNotFabricateActivity() {
+        let child = LiveOpsSubagent(subagentID: "child", parentID: nil, depth: 0,
+                                   goal: "Synthetic task", model: nil, startedAt: Date(),
+                                   status: "future-state", toolCount: 0)
+        XCTAssertFalse(makeOperation(status: .idle, subagents: [child]).isActive)
+    }
+
     func testSwarmTreeNilWhenSubagentsUnknown() {
         XCTAssertNil(makeOperation(subagents: nil).swarmTree)
     }
@@ -247,7 +268,8 @@ final class LiveOpsDomainTests: XCTestCase {
         let good = LiveOpsGatewaySnapshot(
             gatewayID: GatewayID(rawValue: "gw-a"), coverage: .reporting,
             operations: [makeOperation(sid: "good", status: .working)],
-            observedAt: Date(timeIntervalSince1970: 100), generation: 1
+            observedAt: Date(timeIntervalSince1970: 100), generation: 1,
+            observationNote: "Synthetic observer scope"
         )
         let existing = LiveOpsSnapshot(gateways: [good])
 
@@ -263,6 +285,11 @@ final class LiveOpsDomainTests: XCTestCase {
         // The aggregate must never read as "0 active" purely because of the
         // failed refresh — the held-over operation still counts.
         XCTAssertEqual(merged.activeCount.value, 1)
+        XCTAssertEqual(mergedGateway?.observationNote, "Synthetic observer scope")
+        let recovered = LiveOpsGatewaySnapshot(
+            gatewayID: good.gatewayID, coverage: .reporting, operations: [],
+            observedAt: Date(timeIntervalSince1970: 300), generation: 3)
+        XCTAssertNil(LiveOpsSnapshotReducer.merge(incoming: recovered, into: merged).gateways.first?.observationNote)
     }
 
     func testFirstSnapshotForAGatewayIsAlwaysAccepted() {

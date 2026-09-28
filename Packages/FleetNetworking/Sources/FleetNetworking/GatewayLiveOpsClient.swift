@@ -83,7 +83,12 @@ public struct GatewayLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlling
         do {
             try await ensureTransportConnected()
             let result = try await transport.request(method: "session.active_list", params: .object([:]))
-            rows = result["sessions"]?.arrayValue ?? []
+            guard let reportedRows = result["sessions"]?.arrayValue else {
+                return LiveOpsGatewaySnapshot(
+                    gatewayID: gatewayID, coverage: .failed(reason: "Malformed live session response"),
+                    operations: [], observedAt: now)
+            }
+            rows = reportedRows
         } catch let error as JSONRPCError {
             return LiveOpsGatewaySnapshot(
                 gatewayID: gatewayID, coverage: Self.coverage(for: error), operations: [], observedAt: now)

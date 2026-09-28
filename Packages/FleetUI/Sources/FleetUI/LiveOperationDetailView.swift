@@ -103,6 +103,7 @@ public struct LiveOperationDetailView: View {
         let stale = environment.liveOps.isStale(operation)
         let (label, color): (String, Color) = {
             if stale { return ("Stale", FleetTheme.statusNeutral) }
+            if operation.isDelegating { return ("Delegating", FleetTheme.statusExecuting) }
             switch operation.status {
             case .working: return ("Working", FleetTheme.statusExecuting)
             case .starting: return ("Starting", FleetTheme.statusExecuting)
@@ -277,7 +278,12 @@ public struct LiveOperationDetailView: View {
             Text("Controls")
                 .font(FleetTheme.sectionHeaderFont)
                 .foregroundStyle(theme.textSecondary)
-            if environment.liveOps.isStale(operation) {
+            if operation.observationOnly {
+                Text("Open the original Hermes conversation to control this run.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("fleet.liveOpsDetail.controls.observationOnly")
+            } else if environment.liveOps.isStale(operation) {
                 Text("Controls are unavailable while this operation is stale.")
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(theme.textSecondary)

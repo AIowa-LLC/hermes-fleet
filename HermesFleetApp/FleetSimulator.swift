@@ -872,11 +872,12 @@ final class ScriptedLiveOpsEngine: @unchecked Sendable {
 
     private func workstationOperations(now: Date) -> [LiveOperation] {
         let elapsed = now.timeIntervalSince(launchedAt)
+        let idleDelegating = ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_IDLE_DELEGATING"] == "1"
         var subagents: [LiveOpsSubagent] = [
             LiveOpsSubagent(
                 subagentID: "sub-writer", parentID: nil, depth: 0,
                 goal: "Draft the Build 91 release notes", model: "claude-opus",
-                startedAt: launchedAt, status: "working", toolCount: 4,
+                startedAt: launchedAt, status: idleDelegating ? "running" : "working", toolCount: 4,
                 lastTool: "editor", acceptingSteer: true),
             LiveOpsSubagent(
                 subagentID: "sub-researcher", parentID: nil, depth: 0,
@@ -902,7 +903,7 @@ final class ScriptedLiveOpsEngine: @unchecked Sendable {
             startedAt: launchedAt,
             lastActive: now,
             messageCount: 40,
-            status: .working,
+            status: idleDelegating ? .idle : .working,
             subagents: subagents)
         let idleOp = LiveOperation(
             id: LiveOperationID(gatewayID: Self.workstationID, runtimeSessionID: "rt-idle"),
