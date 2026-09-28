@@ -79,6 +79,14 @@ struct ComposeBotPickerSheet: View {
 /// never claimed as server deletions.
 enum FleetChatsArchiveStore {
     private static let key = "fleet.chats.archived.v1"
+    static let didChange = Notification.Name("fleet.chats.archive.changed")
+
+    static func entryID(for identity: FleetConversationIdentity) -> String {
+        switch identity {
+        case .individual(let route, let sessionID): "\(route.id)/\(sessionID)"
+        case .group: identity.id
+        }
+    }
 
     static func hiddenIDs() -> Set<String> {
         Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
@@ -98,6 +106,7 @@ enum FleetChatsArchiveStore {
             ids.remove(entryID)
         }
         UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
+        NotificationCenter.default.post(name: didChange, object: nil)
     }
 }
 
@@ -447,6 +456,9 @@ struct FleetChatsView: View {
         // edge (content scrolls under a permanently transparent edge).
         .toolbarBackground(.hidden, for: .navigationBar)
         .onAppear { hiddenEntryIDs = FleetChatsArchiveStore.hiddenIDs() }
+        .onReceive(NotificationCenter.default.publisher(for: FleetChatsArchiveStore.didChange)) { _ in
+            hiddenEntryIDs = FleetChatsArchiveStore.hiddenIDs()
+        }
         .scrollContentBackground(.hidden).background(theme.background)
         // Dogfood finding 3: reserve bottom breathing room with a SwiftUI
         // safe-area API (design-token value) so the final card comes to rest

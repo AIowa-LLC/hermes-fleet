@@ -281,6 +281,88 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         let noticePredicate = NSPredicate(format: "label CONTAINS %@", "Archived on this device")
         let notice = app.descendants(matching: .any).matching(noticePredicate).firstMatch
         XCTAssertTrue(notice.waitForExistence(timeout: 5), "archive surfaces the honest device-level notice")
+        app.buttons["fleet.drawer.open"].firstMatch.tap()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer").waitForExistence(timeout: 5))
+        XCTAssertFalse(firstMatch(in: app, identifier: "fleet.drawer.recent.workstation#default/workstation.default.s2").exists,
+                       "Chats archive also hides the drawer row")
+    }
+
+    func testDrawerSwipePinUnpinArchiveAndDelete() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
+        let entryID = "workstation#default/workstation.default.s1"
+        let identity = "individual:" + entryID
+        let chat = firstMatch(in: app, identifier: "fleet.chats.session." + entryID)
+        XCTAssertTrue(chat.waitForExistence(timeout: 10))
+        app.buttons["fleet.drawer.open"].firstMatch.tap()
+        let recent = firstMatch(in: app, identifier: "fleet.drawer.recent." + entryID)
+        XCTAssertTrue(recent.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !recent.isHittable {
+            firstMatch(in: app, identifier: "fleet.drawer").swipeUp(velocity: .slow)
+        }
+        recent.swipeRight()
+        let pin = firstMatch(in: app, identifier: "fleet.drawer.swipe.pin." + identity)
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        pin.tap()
+        let pinned = firstMatch(in: app, identifier: "fleet.drawer.pinned." + identity)
+        XCTAssertTrue(pinned.waitForExistence(timeout: 5))
+        pinned.swipeRight()
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        XCTAssertEqual(pin.label, "Unpin")
+        pin.tap()
+        XCTAssertTrue(recent.waitForExistence(timeout: 5))
+        recent.swipeRight()
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        pin.tap()
+        XCTAssertTrue(pinned.waitForExistence(timeout: 5))
+        pinned.swipeLeft()
+        let archive = firstMatch(in: app, identifier: "fleet.drawer.swipe.archive." + identity)
+        let delete = firstMatch(in: app, identifier: "fleet.drawer.swipe.delete." + identity)
+        XCTAssertTrue(archive.waitForExistence(timeout: 5), "row swipe must not dismiss the drawer")
+        XCTAssertTrue(delete.exists)
+        delete.tap()
+        XCTAssertTrue(app.alerts["Delete conversation?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(pinned.exists, "Cancel retains the conversation")
+        pinned.swipeLeft()
+        XCTAssertTrue(archive.waitForExistence(timeout: 5))
+        archive.tap()
+        XCTAssertTrue(pinned.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(recent.exists)
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer.archived.notice").exists)
+        app.buttons["fleet.drawer.destination.chats"].tap()
+        XCTAssertTrue(chat.waitForNonExistence(timeout: 5), "drawer archive updates the already mounted Chats list")
+
+        app.buttons["fleet.drawer.open"].firstMatch.tap()
+        let secondID = "workstation#default/workstation.default.s2"
+        let second = firstMatch(in: app, identifier: "fleet.drawer.recent." + secondID)
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !second.isHittable {
+            firstMatch(in: app, identifier: "fleet.drawer").swipeUp(velocity: .slow)
+        }
+        second.swipeLeft()
+        let remove = firstMatch(in: app, identifier: "fleet.drawer.swipe.delete.individual:" + secondID)
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.tap()
+        XCTAssertTrue(app.alerts["Delete conversation?"].waitForExistence(timeout: 5))
+        app.alerts["Delete conversation?"].buttons["Delete"].firstMatch.tap()
+        XCTAssertTrue(second.waitForNonExistence(timeout: 5))
+        app.buttons["fleet.drawer.destination.chats"].tap()
+        XCTAssertFalse(firstMatch(in: app, identifier: "fleet.chats.session." + secondID).exists)
+
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "HERMES_FLEET_NAV_RESET")
+        app.launch()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10))
+        XCTAssertFalse(chat.exists, "archive persists across relaunch")
+        XCTAssertFalse(firstMatch(in: app, identifier: "fleet.chats.session." + secondID).exists)
+        app.buttons["fleet.drawer.open"].firstMatch.tap()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer").waitForExistence(timeout: 5))
+        XCTAssertFalse(pinned.exists)
+        XCTAssertFalse(recent.exists)
+        XCTAssertFalse(second.exists)
+        // Non-chat chrome retains the shell's swipe-to-dismiss behavior.
+        app.buttons["fleet.drawer.destination.fleet"].swipeLeft()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer").waitForNonExistence(timeout: 5))
     }
 
     // MARK: 4. Chats Compose + heading

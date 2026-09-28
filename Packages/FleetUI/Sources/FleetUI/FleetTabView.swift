@@ -270,6 +270,8 @@ public struct FleetTabView: View {
                         environment: environment,
                         selection: navigation.selection,
                         compact: true,
+                        dismissGesture: AnyGesture(drawerSwipeGesture(
+                            width: min(340, geometry.size.width * 0.78))),
                         onSearch: { showingCommandCenter = true },
                         onNewChat: {
                             navigation.selection = .chats
@@ -317,8 +319,6 @@ public struct FleetTabView: View {
                     .frame(maxHeight: .infinity)
                     .background(theme.background)
                     .offset(x: drawerDrag)
-                    .simultaneousGesture(
-                        drawerSwipeGesture(width: min(340, geometry.size.width * 0.78)))
                     .transition(reduceMotion ? .identity : .move(edge: .leading))
                     .zIndex(2)
                 }
@@ -383,13 +383,16 @@ public struct FleetTabView: View {
             }
     }
 
-    private func drawerSwipeGesture(width: CGFloat) -> some Gesture {
+    // Install only on drawer chrome. List cells own horizontal drags so
+    // revealing Archive/Delete cannot also move or dismiss the drawer.
+    private func drawerSwipeGesture(width: CGFloat) -> some Gesture<DragGesture.Value> {
         DragGesture(minimumDistance: 16)
             .onChanged { value in
                 guard !reduceMotion else { return }
                 let t = value.translation
                 // Axis lock: horizontal-dominant drags only — a mostly
-                // vertical drag belongs to the drawer's ScrollView.
+                // vertical drag belongs to the drawer's list. Conversation rows
+                // reserve horizontal drags for their native swipe actions.
                 guard abs(t.width) > abs(t.height) else { return }
                 drawerDrag = min(0, t.width)
             }
