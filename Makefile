@@ -1,11 +1,10 @@
 # Hermes Fleet — local development validation targets.
 #
-# For quick iteration while developing, the targets below are the fast local
-# loop. The authoritative broad repository/CI validation gate is
-# scripts/c1_ci_validate.sh (XcodeGen generation + drift gate, package tests,
-# hosted unit tests, simulator UI suites, module-boundary enforcement,
-# public-safety residue guard, and gitleaks) — use `make ci` or run the
-# script directly before opening a pull request.
+# Use the smallest relevant tests while iterating, then `make dev-check`.
+# Required PR validation and exact merge-candidate checks follow Dev Loop v3
+# in docs/dev-loop.md. `make ci` is the broad local validation lane, not an
+# unconditional prerequisite to opening every focused pull request.
+# Shared-layer changes still require the broader coverage selected by policy.
 PROJECT := HermesFleetApp
 DEST := platform=iOS Simulator,name=iPhone 17 Pro,OS=latest
 DD := build/DerivedData
@@ -36,9 +35,10 @@ test-core:
 ## Not the full repository gate — run `make ci` for that.
 validate: generate build test test-core
 
-## Fast local development loop (Dev Loop v2): static guards -> simulator build
+## Fast local development loop (Dev Loop v3): static guards -> simulator build
 ## -> package tests -> focused UI suites selected from the working diff.
-## Never runs the complete UI matrix; the merge queue runs the full C1.
+## PR/merge coverage and critical smoke follow docs/dev-loop.md; broad shared
+## changes still select broader coverage. Use `make ci` for the broad local lane.
 dev-check:
 	bash scripts/dev_check.sh
 
