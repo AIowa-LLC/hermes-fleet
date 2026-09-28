@@ -645,11 +645,14 @@ private struct RoomLatestScrollTargetFramePreferenceKey: PreferenceKey {
     }
 }
 
-private struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
+struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
     static let defaultValue = CGRect.null
 
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
+        // Adaptive containers also contribute the absent default. Preserve
+        // the actual viewport instead of erasing it with a sibling's null.
+        let next = nextValue()
+        if !next.isNull { value = next }
     }
 }
 
