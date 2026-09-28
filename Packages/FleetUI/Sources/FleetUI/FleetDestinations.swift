@@ -419,10 +419,9 @@ struct FleetChatsView: View {
         } message: { _ in
             Text("This removes the conversation from this device. It stays on the gateway.")
         }
-        // Codex/ChatGPT-style floating action cluster: new chat (left) +
-        // settings (right), Liquid Glass, hovering OVER the list.
+        // One labeled Chat action, floating above the list.
         .overlay(alignment: .bottomTrailing) {
-            floatingActionCluster
+            floatingChatButton
             .padding(.trailing, FleetTheme.spacingLg)
             .padding(.bottom, FleetTheme.spacingMd)
         }
@@ -461,48 +460,29 @@ struct FleetChatsView: View {
         .refreshable { await refresh(force: true) }.task { await refresh() }
     }
 
-    /// Floating Liquid Glass action cluster (Codex-inspired): new chat to
-    /// the LEFT of settings, bottom-trailing, hovering over the list.
-    /// ADR-0010: New Group lives on the Groups tab — the Chats FAB is a
-    /// direct New-conversation button (no menu wrapper needed).
-    ///
-    /// Feedback #4 (dogfood pass): the two buttons previously carried
-    /// asymmetric treatments — pencil bare, gear alone wrapped in
-    /// `.ultraThinMaterial` with NO shape (a grey rectangle) — which read as
-    /// "glitching". Both buttons now share ONE glass capsule with a hairline
-    /// divider between them. Material (not `.glassEffect()`) keeps XCUITest
-    /// hit-testing reliable — see the drawer's own note on that pitfall —
-    /// and Reduce Transparency swaps to a solid theme surface.
-    private var floatingActionCluster: some View {
-        HStack(spacing: 0) {
+    /// A single, labeled Chat button with a larger target and shared material
+    /// treatment. Material keeps hit-testing reliable; Reduce Transparency
+    /// uses a solid theme surface.
+    private var floatingChatButton: some View {
+        HStack {
             Button {
                 showingCompose = true
             } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: 48, height: 48)
-                    .contentShape(Rectangle())
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Chat")
+                        .font(.headline)
+                }
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .frame(minWidth: 112, minHeight: 56)
+                .contentShape(Capsule())
             }
             .buttonStyle(.fleetPressable)
             .accessibilityLabel("New chat")
             .accessibilityIdentifier("fleet.chats.new")
-
-            Divider().frame(height: 20)
-
-            // Settings: navigates to the Settings tab.
-            Button {
-                environment.requestSettingsTab()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: 48, height: 48)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.fleetPressable)
-            .accessibilityLabel("Settings")
-            .accessibilityIdentifier("fleet.chats.settings")
         }
         .background {
             if reduceTransparency {

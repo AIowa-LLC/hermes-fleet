@@ -187,9 +187,8 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
 
     // MARK: 4a. Codex-style chat menu cleanup (dogfood)
 
-    /// The floating cluster: new-chat (menu: direct + group) and settings
-    /// gear, Liquid Glass, bottom-trailing. Rows scroll under it.
-    func testChatsFloatingClusterNewChatAndSettings() throws {
+    /// The floating Chat button opens the source-qualified compose picker.
+    func testChatsFloatingChatOpensComposeWithoutSettings() throws {
         let app = XCUIApplication()
         self.app = app
         app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
@@ -206,18 +205,15 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         let candidate = app.descendants(matching: .any)["fleet.chats.compose.bot.workstation#researcher"]
         XCTAssertTrue(candidate.waitForExistence(timeout: 10), "direct opens the bot picker")
 
-        // Dismiss the sheet via its own Cancel BEFORE touching the gear (the
-        // cluster sits under presented sheets — a tap there computes no hit).
+        // Dismiss the picker and confirm Chat remains the sole floating action.
         let cancel = app.buttons["Cancel"].firstMatch
         if cancel.waitForExistence(timeout: 3) { cancel.tap() }
         _ = candidate.waitForNonExistence(timeout: 5)
 
-        // Settings gear routes to the Settings tab.
-        let settings = firstMatch(in: app, identifier: "fleet.chats.settings")
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "floating settings gear must render")
-        settings.tap()
-        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10),
-                      "gear selects the Settings tab")
+        XCTAssertFalse(app.buttons["fleet.chats.settings"].exists)
+        XCTAssertTrue(newChat.isHittable)
+        XCTAssertTrue(app.navigationBars["Chats"].exists)
+
     }
 
     /// Swipe right (leading) on a conversation row exposes Pin; the row

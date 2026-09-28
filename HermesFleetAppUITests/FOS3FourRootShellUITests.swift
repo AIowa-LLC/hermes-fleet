@@ -188,34 +188,25 @@ final class FOS3FourRootShellUITests: XCTestCase {
                       "the system back-swipe must pop the pushed bot detail back to Bots")
     }
 
-    // MARK: Feedback #4 — Chats floating action cluster (dogfood pass)
+    // MARK: Chats floating Chat button
 
-    /// Both Chats FAB buttons share ONE glass capsule container now (was: a
-    /// bare pencil next to a shapeless grey gear). Both are hittable, equal
-    /// height, and their frames lie inside the shared capsule.
-    func testChatsActionClusterSharesOneContainer() throws {
+    func testChatsHasOneLargerFloatingChatButton() throws {
         let app = launch()
         UITabNavigation.selectTab(app, label: "Chats")
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
 
-        let cluster = app.descendants(matching: .any).matching(identifier: "fleet.chats.actions").firstMatch
-        XCTAssertTrue(cluster.waitForExistence(timeout: 10), "the Chats action cluster capsule must render")
-
+        let actions = app.descendants(matching: .any).matching(identifier: "fleet.chats.actions").firstMatch
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
         let newChat = app.buttons["fleet.chats.new"].firstMatch
-        let settings = app.buttons["fleet.chats.settings"].firstMatch
-        XCTAssertTrue(newChat.waitForExistence(timeout: 10), "the new-chat button must render")
-        XCTAssertTrue(settings.waitForExistence(timeout: 10), "the settings button must render")
-        XCTAssertTrue(newChat.isHittable, "the new-chat button must be hittable")
-        XCTAssertTrue(settings.isHittable, "the settings button must be hittable")
-
-        XCTAssertEqual(newChat.frame.height, settings.frame.height, accuracy: 1,
-                       "both cluster buttons must share the same frame height")
-
-        let clusterFrame = cluster.frame
-        XCTAssertTrue(clusterFrame.insetBy(dx: -1, dy: -1).contains(newChat.frame),
-                      "the new-chat button must lie inside the shared capsule (capsule: \(clusterFrame), button: \(newChat.frame))")
-        XCTAssertTrue(clusterFrame.insetBy(dx: -1, dy: -1).contains(settings.frame),
-                      "the settings button must lie inside the shared capsule (capsule: \(clusterFrame), button: \(settings.frame))")
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10))
+        XCTAssertTrue(newChat.isHittable)
+        XCTAssertFalse(app.buttons["fleet.chats.settings"].exists,
+                       "Settings must not appear beside the floating Chat button")
+        XCTAssertEqual(actions.buttons.count, 1)
+        XCTAssertGreaterThanOrEqual(newChat.frame.height, 56)
+        XCTAssertGreaterThanOrEqual(newChat.frame.width, 112)
+        XCTAssertTrue(newChat.staticTexts["Chat"].exists, "Chat must have a visible label")
+        XCTAssertTrue(actions.frame.insetBy(dx: -1, dy: -1).contains(newChat.frame))
     }
 
     /// Build 43: the Gateways registry cockpit keeps its Add toolbar once
