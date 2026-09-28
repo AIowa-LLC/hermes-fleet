@@ -1250,31 +1250,58 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(completed?.text, "post-restart turn")
     }
 
-    // MARK: - t_a07ca37e heartbeat-freshness poll gate
+    // MARK: - Confirmed connection state outranks frame freshness
 
-    /// Transport-fresh liveness (<12s silence) means PROVABLY alive: the
-    /// status watcher must SKIP its polls in that window, so a transient
-    /// offline status flip is not acted on while heartbeats just flowed.
-    /// Past the fresh window the poll resumes and the flip applies.
-    func testStatusPollSkippedWhileTransportFresh() async throws {
+    /// A recently received frame must not mask a subsequent disconnect.
+    /// Keep the snapshot fresh throughout: waiting for its expiry would
+    /// reproduce the bug rather than prove prompt disconnect detection.
+    func testOfflineStatusWinsWhileTransportSnapshotIsFresh() async throws {
         let (scripted, viewModel) = try await makeFixture()
-        // Fresh frame right now.
         scripted.livenessValue = ConnectionLivenessSnapshot(lastFrameReceivedAt: .now)
         await viewModel.start()
         XCTAssertEqual(viewModel.phase, .ready)
 
-        // Offline flip while FRESH: poll gated — no disconnected transition.
         scripted.statusValue = .offline
-        try await Task.sleep(for: .milliseconds(60))
-        XCTAssertEqual(viewModel.phase, .ready,
-                       "fresh transport (<12s silence) must skip the status poll")
-
-        // Silence ages past the fresh window (30s): polls resume, flip applies.
-        scripted.livenessValue = ConnectionLivenessSnapshot(
-            lastFrameReceivedAt: .now - .seconds(30))
-        try await Task.sleep(for: .milliseconds(60))
+        let deadline = ContinuousClock.now + .seconds(1)
+        while viewModel.phase != .disconnected && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(scripted.livenessValue?.tier(), .fresh)
         XCTAssertEqual(viewModel.phase, .disconnected,
-                       "non-fresh transport must resume status polling")
+                       "a confirmed disconnect must not wait for freshness to expire")
+        XCTAssertEqual(scripted.connectCount, 1, "status observation must not reconnect silently")
+    }
+
+    func testAuthenticationFailureWinsWhileTransportSnapshotIsFresh() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        scripted.livenessValue = ConnectionLivenessSnapshot(lastFrameReceivedAt: .now)
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        scripted.statusValue = .authenticationRequired
+        let deadline = ContinuousClock.now + .seconds(1)
+        while viewModel.phase != .authRequired && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(scripted.livenessValue?.tier(), .fresh)
+        XCTAssertEqual(viewModel.phase, .authRequired)
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertEqual(scripted.reauthenticateCount, 0, "re-authentication remains an explicit user action")
+    }
+
+    func testUnsupportedStatusWinsWhileTransportSnapshotIsFresh() async throws {
+        let (scripted, viewModel) = try await makeFixture()
+        scripted.livenessValue = ConnectionLivenessSnapshot(lastFrameReceivedAt: .now)
+        await viewModel.start()
+        XCTAssertEqual(viewModel.phase, .ready)
+
+        scripted.statusValue = .unsupported
+        let deadline = ContinuousClock.now + .seconds(1)
+        while viewModel.phase != .disconnected && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(scripted.livenessValue?.tier(), .fresh)
+        XCTAssertEqual(viewModel.phase, .disconnected)
     }
 
     /// Nil liveness (no transport signal — doubles/previews) keeps the

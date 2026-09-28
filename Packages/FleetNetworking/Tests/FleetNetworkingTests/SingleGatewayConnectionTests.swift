@@ -91,13 +91,29 @@ final class SingleGatewayConnectionTests: XCTestCase {
     // MARK: reachable / unreachable state
 
     func testUnreachableEndpointMapsToUnreachableError() async throws {
-        // No listener on this port → connect must classify, not hang.
-        let server = try InProcessWebSocketServer(script: .init())
-        try await server.start()
-        let port = server.listeningPort
-        server.stop() // close the only listener
+        // Deterministic unreachable transport: do not depend on a real socket
+        // racing a just-closed listener. URLSession may surface that host/OS
+        // timing window as different NSURLError values across runners.
+        let config = TransportConfiguration(
+            pingInterval: .seconds(30),
+            inboundDeadline: .seconds(30),
+            connectTimeout: .seconds(2),
+            requestTimeout: .seconds(10)
+        )
+        let base = URL(string: "http://127.0.0.1:1")!
+        let transport = GatewayWebSocketTransport(
+            baseURL: base,
+            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)),
+            sessionFactory: DyingSessionFactory(closeDelay: .zero),
+            configuration: config
+        )
+        let connection = SingleGatewayConnection(
+            gatewayID: GatewayID(rawValue: "workstation"),
+            displayName: "MacBook",
+            endpoint: base,
+            transport: transport
+        )
 
-        let connection = makeConnection(serverPort: port, connectTimeout: .seconds(2))
         do {
             try await connection.connect()
             XCTFail("expected unreachable")
