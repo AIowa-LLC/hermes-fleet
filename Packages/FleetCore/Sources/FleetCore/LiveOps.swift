@@ -323,6 +323,15 @@ public enum LiveOpsGatewayCoverage: Hashable, Sendable {
     }
 }
 
+/// Companion-plugin detection, independent of process-local RPC coverage.
+/// Only a successful fresh dashboard snapshot establishes reporting.
+public enum LiveOpsReportingSetup: Hashable, Sendable {
+    case unknown
+    case required
+    case reporting(backends: Int)
+    case unavailable
+}
+
 /// One gateway's Live Ops snapshot at a point in time.
 public struct LiveOpsGatewaySnapshot: Identifiable, Hashable, Sendable {
     public let gatewayID: GatewayID
@@ -348,6 +357,7 @@ public struct LiveOpsGatewaySnapshot: Identifiable, Hashable, Sendable {
 
     /// Limits of the observer's process/profile scope, independent of transport health.
     public let observationNote: String?
+    public let reportingSetup: LiveOpsReportingSetup
 
     public var id: GatewayID { gatewayID }
 
@@ -358,10 +368,12 @@ public struct LiveOpsGatewaySnapshot: Identifiable, Hashable, Sendable {
         observedAt: Date,
         generation: Int = 0,
         hasEverReported: Bool? = nil,
-        observationNote: String? = nil
+        observationNote: String? = nil,
+        reportingSetup: LiveOpsReportingSetup = .unknown
     ) {
         self.gatewayID = gatewayID
         self.observationNote = observationNote
+        self.reportingSetup = reportingSetup
         self.coverage = coverage
         self.operations = operations
         self.observedAt = observedAt
@@ -626,7 +638,9 @@ public enum LiveOpsSnapshotReducer {
             generation: incoming.generation,
             hasEverReported: hasEverReported,
             observationNote: incoming.coverage.isReporting ? incoming.observationNote
-                : incoming.observationNote ?? existing.observationNote
+                : incoming.observationNote ?? existing.observationNote,
+            reportingSetup: incoming.reportingSetup == .unknown && !incoming.coverage.isReporting
+                ? existing.reportingSetup : incoming.reportingSetup
         )
         return LiveOpsSnapshot(gateways: gateways)
     }

@@ -842,6 +842,15 @@ final class ScriptedLiveOpsEngine: @unchecked Sendable {
         defer { lock.unlock() }
         let now = Date()
         snapshotCounts[gatewayID, default: 0] += 1
+        if let setup = ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_SETUP_FIXTURE"] {
+            if gatewayID == Self.workstationID {
+                return LiveOpsGatewaySnapshot(
+                    gatewayID: gatewayID, coverage: setup == "missing" ? .unsupported : .reporting,
+                    operations: [], observedAt: now,
+                    reportingSetup: setup == "missing" ? .required : .reporting(backends: 2))
+            }
+            return LiveOpsGatewaySnapshot(gatewayID: gatewayID, coverage: .unsupported, operations: [], observedAt: now)
+        }
         switch gatewayID {
         case Self.workstationID:
             if staleCoverage, snapshotCounts[gatewayID, default: 0] > 1 {

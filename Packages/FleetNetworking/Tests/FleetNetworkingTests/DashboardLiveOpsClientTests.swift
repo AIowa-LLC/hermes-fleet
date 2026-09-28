@@ -25,6 +25,7 @@ final class DashboardLiveOpsClientTests: XCTestCase {
         let client = client(body: #"{"schema":1,"publishers":2,"sessions":[{"id":"fleet:a:rt","session_key":"stored-a","title":"Delegate fixture","status":"idle","subagents":[{"subagent_id":"child","status":"running","goal":"Synthetic work"}]},{"id":"fleet:b:rt","session_key":"stored-b","status":"working","subagents":[]}]}"#)
         let snapshot = await client.snapshot(gateway: gateway)
         XCTAssertEqual(snapshot.coverage, .reporting)
+        XCTAssertEqual(snapshot.reportingSetup, .reporting(backends: 2))
         XCTAssertEqual(Set(snapshot.operations.map(\.id)).count, 2)
         let parent = try XCTUnwrap(snapshot.operations.first)
         XCTAssertTrue(parent.isDelegating)
@@ -37,9 +38,11 @@ final class DashboardLiveOpsClientTests: XCTestCase {
     func testNoPublisherIsUnavailableNotKnownZero() async {
         let snapshot = await client(body: #"{"schema":1,"publishers":0,"sessions":[]}"#).snapshot(gateway: gateway)
         XCTAssertFalse(snapshot.coverage.isReporting)
+        XCTAssertEqual(snapshot.reportingSetup, .unavailable)
         XCTAssertTrue(LiveOpsSnapshot(gateways: [snapshot]).activeCount.isPartial)
         let partial = await client(body: #"{"schema":1,"publishers":1,"stale_publishers":1,"sessions":[]}"#).snapshot(gateway: gateway)
         XCTAssertFalse(partial.coverage.isReporting, "another quiet publisher cannot conceal a stalled Desktop reporter")
+        XCTAssertEqual(partial.reportingSetup, .unavailable)
     }
 
     func testMalformedPayloadDoesNotBecomeQuietFleet() async {
@@ -53,6 +56,7 @@ final class DashboardLiveOpsClientTests: XCTestCase {
     func testAuthenticationRejectionDoesNotFallBackToDifferentScope() async {
         let snapshot = await client(status: 403, body: "{}").snapshot(gateway: gateway)
         XCTAssertEqual(snapshot.coverage, .authFailed)
+        XCTAssertEqual(snapshot.reportingSetup, .unknown, "authentication failure is not evidence of a missing plugin")
         XCTAssertEqual(MediaStubURLProtocol.capturedRequests.count, 1)
     }
 
@@ -87,6 +91,18 @@ final class DashboardLiveOpsClientTests: XCTestCase {
         let snapshot = await client(status: 404, body: "{}", transport: transport).snapshot(gateway: gateway)
         XCTAssertEqual(snapshot.coverage, .reporting)
         XCTAssertTrue(snapshot.operations.isEmpty)
-        XCTAssertTrue(snapshot.observationNote?.contains("other profiles") == true)
+        XCTAssertEqual(snapshot.reportingSetup, .required)
+        XCTAssertTrue(snapshot.observationNote?.contains("Desktop") == true)
+    }
+
+    func testSetupDetectionRecoversAfterPluginIsInstalledWithoutRecreatingClient() async {
+        let client = client(status: 404, body: "{}")
+        let missing = await client.snapshot(gateway: gateway)
+        XCTAssertEqual(missing.reportingSetup, .required)
+        MediaStubURLProtocol.plan = .init(status: 200, body: Data(#"{"schema":1,"publishers":2,"sessions":[]}"#.utf8))
+        let installed = await client.snapshot(gateway: gateway)
+        XCTAssertEqual(installed.coverage, .reporting)
+        XCTAssertEqual(installed.reportingSetup, .reporting(backends: 2))
+        XCTAssertEqual(MediaStubURLProtocol.capturedRequests.count, 2)
     }
 }

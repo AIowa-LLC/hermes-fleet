@@ -62,6 +62,8 @@ public final class LiveOpsStore {
     public enum PollContext: Hashable, Sendable {
         case home
         case detail(LiveOperationID)
+        case setup(GatewayID)
+        case gateway(GatewayID)
     }
 
     // MARK: Observable state
@@ -174,6 +176,10 @@ public final class LiveOpsStore {
 
     // MARK: Refresh
 
+    public func checkReportingNow() async {
+        await refreshOnce()
+    }
+
     private func seam(for gateway: FleetGateway) -> LiveOpsGatewaySeam? {
         if let existing = seams[gateway.id] { return existing }
         guard let built = factory(gateway) else { return nil }
@@ -249,7 +255,7 @@ public final class LiveOpsStore {
             let stamped = LiveOpsGatewaySnapshot(
                 gatewayID: raw.gatewayID, coverage: raw.coverage, operations: raw.operations,
                 observedAt: raw.observedAt, generation: thisCycle, hasEverReported: raw.hasEverReported,
-                observationNote: raw.observationNote)
+                observationNote: raw.observationNote, reportingSetup: raw.reportingSetup)
             working = LiveOpsSnapshotReducer.merge(incoming: stamped, into: working)
         }
 

@@ -40,7 +40,8 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
                 return LiveOpsGatewaySnapshot(
                     gatewayID: gatewayID, coverage: fallback.coverage, operations: fallback.operations,
                     observedAt: fallback.observedAt,
-                    observationNote: "Only this gateway process is visible. Desktop runs in other profiles require the Hermes Fleet live reporting plugin.")
+                    observationNote: "Desktop activity needs Fleet Live Reporting on the Hermes computer.",
+                    reportingSetup: .required)
             }
             if http.statusCode == 401 || http.statusCode == 403 {
                 return LiveOpsGatewaySnapshot(gatewayID: gatewayID, coverage: .authFailed, operations: [], observedAt: now)
@@ -50,7 +51,7 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             if (payload["stale_publishers"]?.intValue ?? 0) > 0 {
                 return LiveOpsGatewaySnapshot(
                     gatewayID: gatewayID, coverage: .failed(reason: "A Hermes live reporter stopped responding"),
-                    operations: [], observedAt: now)
+                    operations: [], observedAt: now, reportingSetup: .unavailable)
             }
             guard payload["schema"]?.intValue == 1,
                   let publishers = payload["publishers"]?.intValue, publishers > 0,
@@ -69,10 +70,12 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             }
             return LiveOpsGatewaySnapshot(
                 gatewayID: gatewayID, coverage: .reporting, operations: operations, observedAt: now,
-                observationNote: "Live reporting from \(publishers) Hermes backend\(publishers == 1 ? "" : "s"). Only backends with the reporting plugin enabled are visible.")
+                observationNote: "Live reporting from \(publishers) Hermes backend\(publishers == 1 ? "" : "s"). Only enabled profiles are visible.",
+                reportingSetup: .reporting(backends: publishers))
         } catch {
             return LiveOpsGatewaySnapshot(
-                gatewayID: gatewayID, coverage: .failed(reason: "Live reporting unavailable"), operations: [], observedAt: now)
+                gatewayID: gatewayID, coverage: .failed(reason: "Live reporting unavailable"), operations: [], observedAt: now,
+                reportingSetup: .unavailable)
         }
     }
 

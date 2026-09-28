@@ -11,6 +11,39 @@ import XCTest
 ///      gateway's neutral "limited activity reporting" copy is reachable.
 final class LiveOpsUITests: XCTestCase {
 
+    func testMissingReportingOffersSetupWhenLegacyRPCIsUnsupported() throws {
+        let app = XCUIApplication()
+        launch(app, extraEnv: ["HERMES_FLEET_LIVEOPS_SETUP_FIXTURE": "missing"])
+        openFleetTab(app)
+        let setup = app.buttons["fleet.liveOpsReporting.setup.workstation"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 10))
+        XCTAssertEqual(setup.label, "Set up Live Operations")
+        setup.tap()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.liveOpsSetup").waitForExistence(timeout: 10))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.liveOpsSetup.download").exists)
+        let status = firstMatch(in: app, identifier: "fleet.liveOpsReporting.status.workstation")
+        XCTAssertTrue(status.label.contains("needs Fleet Live Reporting"))
+        app.swipeUp()
+        let check = app.buttons["fleet.liveOpsSetup.check"]
+        if !check.isHittable { app.swipeUp() }
+        XCTAssertTrue(check.waitForExistence(timeout: 5))
+        check.tap()
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Live reporting connected")).firstMatch.exists)
+    }
+
+    func testInstalledReportingShowsVerifiedStatusAndSetupRemainsReachable() throws {
+        let app = XCUIApplication()
+        launch(app, extraEnv: ["HERMES_FLEET_LIVEOPS_SETUP_FIXTURE": "installed"])
+        openFleetTab(app)
+        let status = firstMatch(in: app, identifier: "fleet.liveOpsReporting.status.workstation")
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.label.contains("Live reporting connected"))
+        XCTAssertTrue(status.label.contains("2 backends"))
+        app.buttons["fleet.liveOpsReporting.setup.workstation"].tap()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.liveOpsSetup").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Share setup link"].exists)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }

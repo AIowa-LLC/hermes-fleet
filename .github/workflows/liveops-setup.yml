@@ -1,0 +1,44 @@
+name: Live Ops setup
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/hermes-liveops/**'
+      - 'scripts/build_liveops_bundle.py'
+      - 'Packages/FleetUI/Sources/FleetUI/LiveOpsSetupView.swift'
+      - '.github/workflows/liveops-setup.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/hermes-liveops/**'
+      - 'scripts/build_liveops_bundle.py'
+      - 'Packages/FleetUI/Sources/FleetUI/LiveOpsSetupView.swift'
+      - '.github/workflows/liveops-setup.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup-tests:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test libraries
+        run: python -m pip install -r integrations/hermes-liveops/requirements-test.txt
+      - name: Synthetic installer and reporting tests
+        run: python -m unittest discover -s integrations/hermes-liveops/tests -v
+      - name: Build exact-source setup bundle
+        run: python scripts/build_liveops_bundle.py --sha "$GITHUB_SHA" --output build/liveops-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fleet-liveops-setup-${{ matrix.os }}
+          path: build/liveops-release/*
+          if-no-files-found: error

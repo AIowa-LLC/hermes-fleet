@@ -117,6 +117,7 @@ public struct FleetDashboardView: View {
                     if liveOpsAvailable {
                         liveOperationsSection
                     } else {
+                        liveReportingSetupSection
                         activeSection
                     }
                     continueSection
@@ -551,17 +552,39 @@ public struct FleetDashboardView: View {
     private var idleOperationCount: Int { liveOperations.count - nonIdleOperations.count }
 
     @ViewBuilder
+    private var liveReportingSetupSection: some View {
+        let gateways = environment.liveOps.snapshot?.gateways.filter { $0.reportingSetup != .unknown } ?? []
+        if !gateways.isEmpty {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                liveOperationsHeader
+                ForEach(gateways) { gateway in
+                    reportingStatus(gateway)
+                }
+            }
+        }
+    }
+
+    private func reportingStatus(_ gateway: LiveOpsGatewaySnapshot) -> some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            if environment.gateways.count > 1 {
+                Text(environment.gateway(for: gateway.gatewayID)?.displayName ?? "Hermes gateway")
+                    .font(FleetTheme.secondaryFont)
+            }
+            LiveOpsReportingStatusView(environment: environment, gatewayID: gateway.gatewayID)
+        }
+    }
+
+    @ViewBuilder
     private var liveOperationsSection: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
             liveOperationsHeader
-            ForEach(environment.liveOps.snapshot?.gateways.filter { $0.observationNote != nil } ?? []) { gateway in
-                Text(gateway.observationNote ?? "")
-                    .font(FleetTheme.secondaryFont)
-                    .foregroundStyle(theme.textSecondary)
-                    .accessibilityIdentifier("fleet.dashboard.liveOps.scope.\(gateway.gatewayID.rawValue)")
+            ForEach(environment.liveOps.snapshot?.gateways.filter { $0.reportingSetup != .unknown || $0.observationNote != nil } ?? []) { gateway in
+                reportingStatus(gateway)
             }
             if nonIdleOperations.isEmpty && idleOperationCount == 0 {
-                Text("No live operations right now.")
+                Text(liveOpsSnapshot?.gateways.contains(where: { $0.reportingSetup == .required }) == true
+                     ? "Set up reporting to see Desktop operations."
+                     : "No live operations right now.")
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("fleet.dashboard.liveOps.empty")

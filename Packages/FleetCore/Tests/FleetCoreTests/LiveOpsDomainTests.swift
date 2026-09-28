@@ -7,6 +7,33 @@ import XCTest
 /// `LiveOps.swift` (hermes-agent origin/main 6636b08).
 final class LiveOpsDomainTests: XCTestCase {
 
+    func testReportingSetupRequiredIsVisibleEvenWhenLegacyRPCIsUnsupported() {
+        let gateway = GatewayID(rawValue: "setup-fixture")
+        let missing = LiveOpsGatewaySnapshot(gatewayID: gateway, coverage: .unsupported,
+            operations: [], observedAt: Date(), reportingSetup: .required)
+        XCTAssertFalse(missing.hasEverReported)
+        XCTAssertEqual(missing.reportingSetup, .required)
+        let recovered = LiveOpsGatewaySnapshot(gatewayID: gateway, coverage: .reporting,
+            operations: [], observedAt: Date(), generation: 1, reportingSetup: .reporting(backends: 2))
+        let merged = LiveOpsSnapshotReducer.merge(incoming: recovered, into: LiveOpsSnapshot(gateways: [missing]))
+        XCTAssertEqual(merged.gateways.first?.reportingSetup, .reporting(backends: 2))
+        XCTAssertTrue(merged.isCoverageComplete)
+    }
+
+    func testReportingSetupRetainsDetectionAcrossDisconnectButExplicitFailureSupersedesIt() {
+        let gateway = GatewayID(rawValue: "setup-fixture")
+        let ready = LiveOpsGatewaySnapshot(gatewayID: gateway, coverage: .reporting,
+            operations: [], observedAt: Date(), reportingSetup: .reporting(backends: 2))
+        let offline = LiveOpsGatewaySnapshot(gatewayID: gateway, coverage: .disconnected,
+            operations: [], observedAt: Date(), generation: 1)
+        let merged = LiveOpsSnapshotReducer.merge(incoming: offline, into: LiveOpsSnapshot(gateways: [ready]))
+        XCTAssertEqual(merged.gateways.first?.reportingSetup, .reporting(backends: 2))
+        XCTAssertFalse(merged.isCoverageComplete)
+        let stalled = LiveOpsGatewaySnapshot(gatewayID: gateway, coverage: .failed(reason: "Reporter stalled"),
+            operations: [], observedAt: Date(), generation: 2, reportingSetup: .unavailable)
+        XCTAssertEqual(LiveOpsSnapshotReducer.merge(incoming: stalled, into: merged).gateways.first?.reportingSetup, .unavailable)
+    }
+
     // MARK: identity
 
     func testSameRuntimeSidOnTwoGatewaysDoesNotCollide() {

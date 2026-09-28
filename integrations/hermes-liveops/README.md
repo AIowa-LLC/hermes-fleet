@@ -13,6 +13,42 @@ transcripts, open sessions, or database timestamps.
 
 ## Enable on the Hermes machine
 
+### Guided setup (recommended)
+
+In Fleet, open **Set up Live Operations** when reporting is missing, or
+**Live Operations setup** on the Fleet or gateway detail screen. The guide
+provides a download link, a share link for the computer, restart instructions,
+and **Check reporting**. Authentication and connection failures do not claim
+that the plugin is missing. A connected status requires a fresh authenticated
+snapshot, not just a connected machine or completed installer.
+
+Download `Fleet-Live-Reporting-0.2.0.zip` from the
+[versioned companion release](https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.2.0).
+Extract the complete archive on the Hermes computer. On Mac open
+`Setup.command`. For Linux or a custom runtime,
+follow `README.txt` in the bundle and run `setup.py` with Hermes's Python.
+Other platforms use the manual instructions below; the guided installer
+requires POSIX file permissions for its private recovery copies.
+
+Setup asks which existing profiles to observe and confirms the selection.
+Include the profile hosting the Fleet gateway if it is not the default.
+It also enables the default gateway configuration, scans the runtime plugin
+with Hermes's security scanner, validates the bundled file hashes, and saves
+private recovery copies before changing settings. It preserves comments,
+literal environment references, other plugins, and configuration file modes.
+Repeating the same installation is safe; newer installed versions are not
+downgraded. A new profile created later needs setup again. Omitting a profile
+does not disable reporting that was already enabled there.
+
+Wait for running work to finish and restart Desktop and any separate Fleet
+gateway service. Open each selected Desktop profile to start its backend,
+then check reporting from the phone and run a delegation test. Setup never
+stops processes, changes authentication, installs dependencies, or sends
+provider requests. A connected status confirms that at least one backend
+is publishing; it does not certify that every profile has been restarted.
+
+### Manual setup (advanced)
+
 Copy this directory to the Hermes root's `plugins/fleet-liveops` directory.
 Enable `fleet-liveops` in `plugins.enabled` in the configuration of the
 gateway backend and each Desktop profile to observe. Preserve the other enabled
@@ -56,9 +92,13 @@ fresh publishers remain unavailable coverage instead of a quiet fleet.
 
 ## Validate
 
-Use a Python environment with Hermes's FastAPI and HTTPX dependencies:
+Synthetic tests need only the pinned test libraries; no Hermes account or
+running gateway is required. Scanner decisions and CLI discovery use explicit
+synthetic SDK contracts. Before publishing, also run the extracted installer
+with the supported Hermes Python environment and its real security scanner.
 
 ```sh
+python -m pip install -r integrations/hermes-liveops/requirements-test.txt
 python -m unittest discover -s integrations/hermes-liveops/tests -v
 swift test --package-path Packages/FleetNetworking --filter DashboardLiveOpsClientTests
 swift test --package-path Packages/FleetCore --filter LiveOpsDomainTests
@@ -68,6 +108,37 @@ Synthetic tests cover separate Desktop processes with colliding runtime IDs,
 durable child ownership, private-field exclusion, expiry, malformed snapshots,
 authentication failure, fallback scope, and observation-only control authority.
 The UI regression covers an idle parent whose asynchronous child is running.
+Installer tests also cover extracted release installation, profile selection,
+preservation of configuration and credentials references, idempotence, private
+backups, scan rejection, corruption, symlinks, concurrent settings edits,
+rollback, and downgrade refusal. They use temporary synthetic Hermes roots.
+
+## Build and publish the setup bundle
+
+Build from an exact committed source revision:
+
+```sh
+python3 scripts/build_liveops_bundle.py --sha <commit> --output <artifact-directory>
+```
+
+The deterministic ZIP contains only the five allowlisted runtime plugin files,
+the setup tool and launchers, its user guide, and a `release.json` recording
+source commit and runtime hashes. The app's versioned guide link, both plugin
+manifests, and setup version must agree. Publish the ZIP and `SHA256SUMS.txt`
+on the `fleet-liveops-v0.2.0` GitHub companion release after testing the
+extracted artifact. This is a companion-plugin release, separate from iOS
+TestFlight distribution. Never replace assets on an existing versioned release;
+publish a new version for changes. The Python installer and Mac launcher are validated
+with synthetic roots without touching a user's real settings.
+
+### Removal
+
+Remove `fleet-liveops` from enabled plugins in the intended profiles (or add
+it to disabled plugins), then restart their idle backends. Once disabled
+everywhere and those backends have stopped, the shared plugin and private
+snapshot directories may be removed. Conversation history is unaffected.
+
+## Live acceptance
 
 Live acceptance: first confirm the authenticated snapshot endpoint returns
 HTTP 200 with fresh publishers from the gateway and the intended Desktop
