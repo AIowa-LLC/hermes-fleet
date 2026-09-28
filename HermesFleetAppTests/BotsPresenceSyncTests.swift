@@ -337,7 +337,7 @@ final class BotsPresenceSyncTests: XCTestCase {
         let (environment, _) = await makeEnvironment(roster: roster)
         roster.closeGate()
         let refresh = Task { await environment.refreshRoster() }
-        let refreshStarted = await waitUntil { environment.isRefreshing }
+        let refreshStarted = await waitUntil { environment.isRefreshing && roster.refreshCount == 1 }
         XCTAssertTrue(refreshStarted)
         roster.set(snapshot(
             workstationOutcome: .loaded(profileCount: 1),
@@ -346,9 +346,11 @@ final class BotsPresenceSyncTests: XCTestCase {
         XCTAssertEqual(roster.refreshCount, 1)
         roster.openGate()
         await refresh.value
-        let trailingRefreshRecovered = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
-        XCTAssertTrue(trailingRefreshRecovered)
-        XCTAssertEqual(roster.refreshCount, 2)
+        let trailingRefreshSettled = await waitUntil {
+            roster.refreshCount == 2 && !environment.isRefreshing
+        }
+        XCTAssertTrue(trailingRefreshSettled, "the in-flight refresh must be followed by exactly one settled observation")
+        XCTAssertEqual(environment.botPresence(for: bot.route), .reachable)
         try? await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(roster.refreshCount, 2)
     }
