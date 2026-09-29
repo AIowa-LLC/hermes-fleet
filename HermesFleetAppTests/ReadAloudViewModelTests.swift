@@ -21,9 +21,11 @@ final class ReadAloudViewModelTests: XCTestCase {
         private var _speakCalls: [String] = []
         private var _stopCalls = 0
         private var _isSpeaking = false
+        private var _speakingObservations = 0
 
         var speakCalls: [String] { lock.withLock { _speakCalls } }
         var stopCalls: Int { lock.withLock { _stopCalls } }
+        var speakingObservations: Int { lock.withLock { _speakingObservations } }
 
         func setSpeaking(_ speaking: Bool) { lock.withLock { _isSpeaking = speaking } }
 
@@ -43,7 +45,12 @@ final class ReadAloudViewModelTests: XCTestCase {
                 _isSpeaking = false
             }
         }
-        var isSpeaking: Bool { lock.withLock { _isSpeaking } }
+        var isSpeaking: Bool {
+            lock.withLock {
+                if _isSpeaking { _speakingObservations += 1 }
+                return _isSpeaking
+            }
+        }
     }
 
     private func makeViewModel(voice: (any VoiceTranscribing)? = nil) async throws -> ConversationViewModel {
@@ -141,6 +148,15 @@ final class ReadAloudViewModelTests: XCTestCase {
 
         _ = await viewModel.readReplyAloud(rowID: "r1", text: "finished reply")
         XCTAssertEqual(viewModel.readAloudRowID, "r1")
+        // Natural completion follows the monitor observing active speech.
+        // Otherwise this exercises its startup grace period and leaves only
+        // 100 ms of scheduling margin in the unchanged completion budget.
+        let deadline = Date().addingTimeInterval(3)
+        while voice.speakingObservations == 0 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertGreaterThan(voice.speakingObservations, 0,
+                             "completion monitor must observe speech before it finishes")
         voice.setSpeaking(false)
         try await Task.sleep(for: .milliseconds(700))
 
