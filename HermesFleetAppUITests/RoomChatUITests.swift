@@ -66,7 +66,11 @@ final class RoomChatUITests: XCTestCase {
             guard found().exists else { return false }
             let windowFrame = window.frame
             // If the window itself cannot be measured, keep the old behaviour.
-            if !windowFrame.isEmpty && !found().frame.intersects(windowFrame) { return false }
+            // A partially visible row can report hittable while its default
+            // activation point is below the window. Bring the whole target
+            // inside before tapping (critical smoke's room row crossed its
+            // lower boundary, leaving the app on Bots on both attempts).
+            if !windowFrame.isEmpty && !windowFrame.contains(found().frame) { return false }
             return found().isHittable
         }
         if hittable() { return found() }
@@ -80,8 +84,7 @@ final class RoomChatUITests: XCTestCase {
                 .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
             if hittable() { return found() }
         }
-        if found().exists { return found() }
-        XCTFail("element not found: identifier=\(identifier ?? "-") label=\(label ?? "-")")
+        XCTFail("element not fully visible and hittable: identifier=\(identifier ?? "-") label=\(label ?? "-")")
         return found()
     }
 

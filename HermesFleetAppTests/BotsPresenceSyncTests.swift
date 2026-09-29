@@ -346,11 +346,15 @@ final class BotsPresenceSyncTests: XCTestCase {
         XCTAssertEqual(roster.refreshCount, 1)
         roster.openGate()
         await refresh.value
+        // The first gated refresh returns the updated snapshot too, so reachable
+        // alone can become true before the queued trailing task has started.
         let trailingRefreshSettled = await waitUntil {
             roster.refreshCount == 2 && !environment.isRefreshing
+                && environment.botPresence(for: bot.route) == .reachable
         }
         XCTAssertTrue(trailingRefreshSettled, "the in-flight refresh must be followed by exactly one settled observation")
         XCTAssertEqual(environment.botPresence(for: bot.route), .reachable)
+        XCTAssertEqual(roster.refreshCount, 2)
         try? await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(roster.refreshCount, 2)
     }

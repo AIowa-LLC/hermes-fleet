@@ -16,13 +16,14 @@ import FleetCore
 final class SwiftDataLaunchCacheStoreTests: XCTestCase {
 
     private let m5 = GatewayID(rawValue: "workstation")
-    /// Recent, exactly-representable instant — inside the 7-day TTL and safe
-    /// for JSON round-trips (Date equality on decoded payloads).
+    /// Frozen, exactly-representable clock for JSON round-trips. The store
+    /// uses this same instant so these fixtures never expire with calendar time.
     private let recent = Date(timeIntervalSince1970: 1_790_000_000)
 
     private func makeSharedSeam() async throws -> SwiftDataLaunchCacheStore {
         let cacheStore = try SwiftDataCacheStore.makeInMemory()
-        return SwiftDataLaunchCacheStore(container: cacheStore.container)
+        let now = recent
+        return SwiftDataLaunchCacheStore(container: cacheStore.container, clock: { now })
     }
 
     func testRosterCacheRoundTripsOnSharedContainer() async throws {
@@ -44,6 +45,26 @@ final class SwiftDataLaunchCacheStoreTests: XCTestCase {
         XCTAssertEqual(loaded.count, 1, "session-list cache row must persist on the shared container schema")
         XCTAssertEqual(loaded.first?.route, route)
         XCTAssertEqual(loaded.first, entry)
+    }
+
+    func testLaunchCacheTTLBoundaryWithFrozenClock() async throws {
+        let launchCache = try await makeSharedSeam()
+        let route = Route(gatewayID: m5, profileSlug: ProfileSlug(rawValue: "default"))
+        let boundary = recent.addingTimeInterval(-FleetLaunchCachePolicy.ttl)
+        try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: m5, bots: [], cachedAt: boundary))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: route, sessions: [], cachedAt: boundary))
+        let expiredRosters = try await launchCache.loadRosterCache()
+        let expiredSessions = try await launchCache.loadSessionListCache()
+        XCTAssertTrue(expiredRosters.isEmpty, "rows expire at exactly the seven-day TTL")
+        XCTAssertTrue(expiredSessions.isEmpty)
+
+        let stillFresh = boundary.addingTimeInterval(1)
+        try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: m5, bots: [], cachedAt: stillFresh))
+        try await launchCache.saveSessionListCache(CachedSessionList(route: route, sessions: [], cachedAt: stillFresh))
+        let freshRosters = try await launchCache.loadRosterCache()
+        let freshSessions = try await launchCache.loadSessionListCache()
+        XCTAssertEqual(freshRosters.map(\.gatewayID), [m5], "rows one second inside the TTL remain readable")
+        XCTAssertEqual(freshSessions.map(\.route), [route])
     }
 
     func testClearLaunchCacheEmptiesBothSurfaces() async throws {
@@ -86,7 +107,8 @@ extension SwiftDataLaunchCacheStoreTests {
 
         // 2. Re-open with the production factory (9 models) — must migrate.
         let store = try SwiftDataCacheStore.makeFileBacked(storeURL: url)
-        let launchCache = SwiftDataLaunchCacheStore(container: store.container)
+        let now = recent
+        let launchCache = SwiftDataLaunchCacheStore(container: store.container, clock: { now })
         try await launchCache.saveRosterCache(CachedGatewayRoster(gatewayID: m5, bots: [], cachedAt: recent))
         let loaded = try await launchCache.loadRosterCache()
         XCTAssertEqual(loaded.count, 1, "launch rows must be writable after additive migration")

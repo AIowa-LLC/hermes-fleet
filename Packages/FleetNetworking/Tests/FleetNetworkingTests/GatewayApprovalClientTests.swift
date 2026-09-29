@@ -318,7 +318,8 @@ final class GatewayApprovalClientTests: XCTestCase {
         let infoFrame = Self.eventFrame(
             type: "session.info",
             sessionID: "abc12345",
-            payload: ["model": "m1", "provider": "nous", "yolo": true, "approval_mode": "manual"]
+            payload: ["model": "m1", "provider": "nous", "yolo": true, "approval_mode": "manual"],
+            seq: 1
         )
         let script = InProcessWebSocketServer.Script(onOpen: [Self.readyFrame(), infoFrame])
         let server = try InProcessWebSocketServer(script: script)
@@ -326,16 +327,25 @@ final class GatewayApprovalClientTests: XCTestCase {
         defer { server.stop() }
 
         let transport = makeTransport(serverPort: server.listeningPort)
+        // Open frames fan out immediately. Register before connecting so the
+        // session.info fixture is buffered even if its mapping task runs late.
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        let stream = client.events
         try await transport.connect()
         defer { Task { await transport.disconnect() } }
 
-        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
-        let stream = client.events
         try await withTimeout(.seconds(3)) {
+            // Confirm the open frame arrived before consuming its buffered
+            // event. The original watchdog bounds both steps together.
+            while await transport.watermark(for: "abc12345") < 1 {
+                try Task.checkCancellation()
+                await Task.yield()
+            }
             for await event in stream {
-                if case .sessionInfo(_, _, _, _, _, _, let yolo, let mode, _) = event {
+                if case .sessionInfo(_, _, _, _, _, _, let yolo, let mode, let seq) = event {
                     XCTAssertEqual(yolo, true)
                     XCTAssertEqual(mode, "manual")
+                    XCTAssertEqual(seq, 1)
                     return
                 }
             }

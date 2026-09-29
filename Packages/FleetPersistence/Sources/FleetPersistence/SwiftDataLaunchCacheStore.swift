@@ -46,18 +46,20 @@ final public class LaunchSessionListRow {
 
 public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
     private let container: ModelContainer
+    private let clock: @Sendable () -> Date
 
     /// Shares the app's cache-store container (same non-secret posture and
     /// file protection) or stands alone in-memory for tests/previews.
-    public init(container: ModelContainer) {
+    public init(container: ModelContainer, clock: @escaping @Sendable () -> Date = { Date() }) {
         self.container = container
+        self.clock = clock
     }
 
     private static let ttl = FleetLaunchCachePolicy.ttl
 
     public func loadRosterCache() async throws -> [CachedGatewayRoster] {
         let ctx = ModelContext(container)
-        let now = Date()
+        let now = clock()
         let rows = try ctx.fetch(FetchDescriptor<LaunchRosterRow>())
         return rows.compactMap { row in
             guard now.timeIntervalSince(row.cachedAt) < Self.ttl else { return nil }
@@ -71,7 +73,7 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
 
     public func loadSessionListCache() async throws -> [CachedSessionList] {
         let ctx = ModelContext(container)
-        let now = Date()
+        let now = clock()
         let rows = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>())
         return rows.compactMap { row in
             guard now.timeIntervalSince(row.cachedAt) < Self.ttl else { return nil }
@@ -96,7 +98,7 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
             ctx.insert(LaunchRosterRow(gatewayID: key, payload: payload, cachedAt: entry.cachedAt))
         }
         // Maintenance: prune expired rows on every write (Hermex pattern).
-        let cutoff = Date().addingTimeInterval(-Self.ttl)
+        let cutoff = clock().addingTimeInterval(-Self.ttl)
         let stale = try ctx.fetch(FetchDescriptor<LaunchRosterRow>(
             predicate: #Predicate { $0.cachedAt < cutoff }
         ))
@@ -120,7 +122,7 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
         } else {
             ctx.insert(LaunchSessionListRow(routeKey: key, payload: payload, cachedAt: entry.cachedAt))
         }
-        let cutoff = Date().addingTimeInterval(-Self.ttl)
+        let cutoff = clock().addingTimeInterval(-Self.ttl)
         let stale = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>(
             predicate: #Predicate { $0.cachedAt < cutoff }
         ))

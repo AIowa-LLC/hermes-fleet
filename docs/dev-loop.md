@@ -79,6 +79,17 @@ actual runtimes before tightening these or changing shard balance. Hosted units
 and simulator startup can still dominate. Xcode/runner pinning requires separate
 validation; provenance records the selected environment.
 
+## Hosted unit diagnostics
+
+The hosted-unit runner retains a unique directory per invocation containing its
+full Xcode log, source/toolchain/destination metadata, and the xcresult bundle
+when Xcode creates one. CI uploads that exact directory on success or failure
+and retains it for seven days; reruns use separate artifact names. Early
+infrastructure failures retain their logs without inventing an xcresult.
+Failed case names are printed before the bounded summary so later passing
+suites cannot hide them. Test selection, simulator signing, macro trust, and
+Xcode exit-code pass/fail behavior are unchanged.
+
 ## Local tests of CI plumbing
 
 These tests do not start a simulator and are not product acceptance evidence:
@@ -90,6 +101,7 @@ bash scripts/c1_ui_preflight_test.sh
 python3 scripts/c1_ui_runner_contract_test.py
 python3 scripts/c1_xcresult_parse_test.py
 bash scripts/c1_packages_contract_test.sh
+python3 scripts/c1_units_contract_test.py
 ```
 
 Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
@@ -142,11 +154,13 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 652 core, 577 networking, 39 persistence, and 37
-security tests. These include the Live Ops runtime, cold-transport, and
-cross-process reporting regressions. Update the exact-count gate when adding
-or removing tests; partial runs must remain failures.
-Focused selection maps the newer Kanban,
+Package baselines are 652 core, 582 networking, 40 persistence, and 37
+security tests. These include the Live Ops runtime, cold-transport,
+cross-process reporting, structured ownership-refusal, and frozen-clock
+launch-cache TTL boundary regressions. Launch-cache fixtures use an injected
+clock so their seven-day expiry is deterministic rather than dependent on the
+date CI runs. Update the exact-count gate when adding or removing tests;
+partial runs must remain failures. Focused selection maps the newer Kanban,
 artifacts, image generation, cron, reasoning, slash-parity, cached-launch,
 unread-state, About, and compact-chrome surfaces to their registered suites.
 
