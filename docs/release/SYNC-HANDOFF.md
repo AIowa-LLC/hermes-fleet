@@ -1,9 +1,11 @@
-# Final local-to-GitHub synchronization handoff
+# Historical source synchronization handoff (Issue #50)
 
-This handoff supports Issue #50. It is intentionally source-synchronization
-work only; it does not pull from, inspect, or modify the active local Hermes
-development worktree and does not declare that the current GitHub snapshot is
-the final release candidate.
+This document preserves the synchronization plan prepared for Issue #50. It
+is historical planning context, not the current release procedure or evidence
+that an issue is open or closed. It does not establish the current release
+candidate, App Store Connect state, or distribution availability. Use the
+current source, [`../release-preflight.md`](../release-preflight.md), and
+[`../../RELEASES.md`](../../RELEASES.md) for release work.
 
 ## Required information from the final local build
 
@@ -37,7 +39,7 @@ Resolve these deliberately rather than interleaving unrelated merges:
 | `docs/features.md`, `README.md`, and release metadata | The local build may add, remove, or rename user-visible surfaces. | Reconcile claims against source and the installed final build; keep status unpublished until TestFlight is live. |
 | `docs/release/*` | This branch adds independent launch-preparation docs while the final source may add release notes or evidence. | Merge content intentionally and retain the no-secrets/no-premature-claims rules. |
 
-## Dependencies that must be resolved first
+## Historical dependencies recorded by this handoff
 
 1. The local engineering session confirms that its candidate is final.
 2. `origin/main` is fetched and any remote changes are reviewed.
@@ -47,7 +49,7 @@ Resolve these deliberately rather than interleaving unrelated merges:
    gitleaks, package tests, hosted unit tests, and the applicable UI topology.
 5. A fresh exact-SHA Release archive is produced before any TestFlight claim.
 
-## Post-sync validation sequence
+## Historical post-sync validation sequence
 
 Run from a clean checkout of the synchronization result:
 
@@ -79,7 +81,7 @@ Then, only on the approved RC and with the required owner approvals:
 No upload, TestFlight submission, or public announcement is implied by the
 commands above.
 
-## GitHub-visible evidence required before closing dependent issues
+## Historical closeout evidence checklist
 
 | Issue | Evidence required on GitHub |
 | --- | --- |
@@ -87,5 +89,5 @@ commands above.
 | #14 | Exact-SHA preflight report showing archive, distribution export, artifact inspection, and Apple validation results; upload/processing evidence for full closure. |
 | #15 | Completed RC checklist plus public-safe evidence report naming the exact SHA/version/build and physical-device/live-gateway results. |
 | #18 | Reviewer environment reachability/containment evidence and completed App Store Connect metadata; credentials remain private. |
-| #50 | Sync PR merged to `main`, generated project drift clean, and post-sync validation attached. |
+| #50 | The original plan listed a merged sync PR, clean generated project, and post-sync validation as closeout evidence. Check the issue separately for its current state. |
 | #51 | Release notes and checklist reconciled to the final RC, with no premature availability claim. |

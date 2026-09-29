@@ -5,10 +5,10 @@ The audited app target owns the manifest at
 `HermesFleetApp/PrivacyInfo.xcprivacy`; `project.yml` adds that file to the
 target resources and XcodeGen produces the corresponding resource phase.
 
-Audit snapshot: 2026-09-18 at repository `d0f607b`. The source audit is
-evidence for this GitHub snapshot only. Re-run it after Issue #50
-synchronization and validate the built/archive copy before using it for App
-Store Connect answers.
+Audit snapshot: source `788907a5ed591ad8b59319fddddf0d6d58dd57d4`
+(2026-09-29), checked with `bash scripts/privacy_required_reason_audit.sh`.
+This is source-only evidence. Re-run against the exact RC and inspect the
+built/archive copy and resolved dependencies before App Store Connect use.
 
 ## Scope and dependency graph
 
@@ -41,23 +41,29 @@ build products are excluded from call-site findings.
 
 ### UserDefaults source locations
 
-The current scanner reports 24 production hits, all in app-owned defaults
-used for local settings/state. Line numbers are for the audited snapshot and
-may move after synchronization:
+The scanner reports 49 production API hits in app-owned defaults used for
+local settings/state. Line numbers belong to the source snapshot above.
 
 | File | Lines |
 | --- | --- |
-| `HermesFleetApp/FleetServiceGraph.swift` | 91, 223 |
-| `Packages/FleetUI/Sources/FleetUI/AppEnvironment.swift` | 454 |
+| `HermesFleetApp/FleetConversationShortcuts.swift` | 45 |
+| `HermesFleetApp/FleetServiceGraph.swift` | 91, 229 |
+| `Packages/FleetCore/Sources/FleetCore/ConversationPinning.swift` | 77, 79, 92, 111 |
+| `Packages/FleetUI/Sources/FleetUI/AppEnvironment.swift` | 623 |
 | `Packages/FleetUI/Sources/FleetUI/AppLockController.swift` | 101, 108 |
 | `Packages/FleetUI/Sources/FleetUI/ConnectionIntentStore.swift` | 12, 15 |
-| `Packages/FleetUI/Sources/FleetUI/ConversationToolingViewModel.swift` | 64, 100, 102 |
-| `Packages/FleetUI/Sources/FleetUI/FleetAccent.swift` | 51, 53 |
+| `Packages/FleetUI/Sources/FleetUI/ConversationToolingViewModel.swift` | 69, 111, 113 |
+| `Packages/FleetUI/Sources/FleetUI/CronHomeView.swift` | 197, 460 |
+| `Packages/FleetUI/Sources/FleetUI/FleetAccent.swift` | 108, 110 |
 | `Packages/FleetUI/Sources/FleetUI/FleetAppearance.swift` | 45, 47 |
-| `Packages/FleetUI/Sources/FleetUI/FleetTabView.swift` | 81, 99 |
-| `Packages/FleetUI/Sources/FleetUI/FleetThemePalette.swift` | 552, 555, 582 |
+| `Packages/FleetUI/Sources/FleetUI/FleetDestinations.swift` | 92, 98, 108 |
+| `Packages/FleetUI/Sources/FleetUI/FleetTabView.swift` | 145, 172 |
+| `Packages/FleetUI/Sources/FleetUI/FleetThemePalette.swift` | 645, 648, 676 |
+| `Packages/FleetUI/Sources/FleetUI/FleetUnreadStore.swift` | 17, 25, 34, 43, 61, 72, 80, 88 |
 | `Packages/FleetUI/Sources/FleetUI/GatewayResourceView.swift` | 64, 71, 207 |
-| `Packages/FleetUI/Sources/FleetUI/KanbanBoardSelectionStore.swift` | 17, 20 |
+| `Packages/FleetUI/Sources/FleetUI/KanbanBoardSelectionStore.swift` | 17, 20, 42 |
+| `Packages/FleetUI/Sources/FleetUI/ReasoningPresentation.swift` | 20 |
+| `Packages/FleetUI/Sources/FleetUI/RoomChatView.swift` | 600, 607, 613, 615, 620 |
 
 The source also reads local file-size and file-attribute values for attachment
 handling, but the current Apple required-reason table audited by the scanner
@@ -121,7 +127,7 @@ shipping bundle.
 
 ## Final-RC dependency handoff
 
-After source synchronization, record the exact resolved SwiftPM graph and
+For the exact release candidate, record the resolved SwiftPM graph and
 inspect the archive for every embedded framework, dynamic library, and package
 bundle. For each item, record whether it contains `PrivacyInfo.xcprivacy`,
 whether it uses a required-reason API, and whether Apple lists it among SDKs

@@ -7,23 +7,27 @@ Hermes Fleet is a native iPhone control plane for user-owned Hermes Agent deploy
 Hermes Fleet is under active development. The current project targets **iOS 26**, uses **Swift 6**, and is generated from `project.yml` with XcodeGen.
 
 This repository contains source code and development tooling. It does not require an AIowa-hosted relay or shared operator account.
+The capability list describes source behavior; consult [`RELEASES.md`](RELEASES.md) for the exact contents and status of a distributed build.
 
 ## Capabilities
 
 Current surfaces include:
 
-- four-tab navigation — **Fleet, Chats, Bots, Gateways** — where every screen has exactly one owning tab (see [`docs/navigation.md`](docs/navigation.md))
+- eight top-level destinations — **Bots, Chats, Groups, Scheduled, Kanban, Fleet, Settings, About** — with canonical screen ownership, including Groups rooms opened from the Bots roster (see [`docs/navigation.md`](docs/navigation.md))
+- **Live Ops** — operations, subagent detail, and approval attention from reporting gateways, with explicit coverage limits
 - **Fleet Home** — a truthful glance surface: connected/known-bot facts, known attention items, real execution activity, this phone's recent destinations, and connection summaries (coverage limits below)
 - **Gateway Detail** — one cockpit per machine: identity, connection controls, current work, the machine's attention item, and its resource rows (Bots, Groups, Projects, Kanban, Schedules, Skills, Memory)
 - multi-gateway registration, connection state, health, and fleet roster
 - **Bot Mode**: a fleet-wide Bots roster with full bot lifecycle management (see [Bot Mode](#bot-mode) below)
+- **Groups** — a separate fleet-wide home for hosted and archived group rooms, apart from ordinary conversations in Chats
+- **Settings and About** — dedicated destinations for preferences, security, local data, app information, and legal/support links
 - canonical Bot Chat with continuous-chat semantics, `@Bot` mentions, and Bot Routines
 - hosted Group rooms, including cross-gateway rooms linked over gateway-to-gateway RoomLink
 - RoomLink management: peer grants and route registration, replication/replay, and authority promotion
 - streaming conversations with reconnect and replay handling
 - gateway authentication and Keychain-backed credential storage
 - approvals, session controls, model selection, context information, cron, and skills
-- read-only Kanban visibility, memory graph, and Projects browsing
+- Kanban visibility and task editing when the gateway exposes a board operator; memory graph and Projects browsing
 - attachments, message reactions, and on-device voice input/output
 
 Some features depend on methods exposed by the connected Hermes gateway version. Unsupported capabilities should fail closed or remain unavailable rather than fabricate state.
@@ -32,8 +36,8 @@ Some features depend on methods exposed by the connected Hermes gateway version.
 
 Fleet Home's attention and activity sections are **known-items only**:
 
-- **Needs You** lists already-observed actionable items (classified gateway failures plus attention seen in rooms this phone has opened). It is not a fleet-wide pending-action inbox — unobserved rooms contribute nothing, and incomplete coverage is labeled as such ("N known items"), never rendered as an empty inbox.
-- **Active Now** shows real execution signals from roster data only. There is no fleet-wide execution telemetry; when coverage is incomplete the section says so instead of guessing.
+- **Needs You** lists observed gateway failures, room attention, and approvals reported by supporting Live Ops gateways. It is not a fleet-wide pending-action inbox — unobserved rooms contribute nothing, and incomplete coverage is labeled as such ("N known items"), never rendered as an empty inbox.
+- **Active Now** shows roster execution signals and operations reported by supporting Live Ops gateways. Missing or stale coverage stays explicit; unseen activity is not claimed as idle.
 - **Continue** is device-local: a recent-open index on this phone (at most 50 references, 30-day retention, pruned on gateway removal). It is not synchronized across devices.
 - Unknown never renders as zero. A partial fleet outage is shown as partial, not as "all quiet".
 
@@ -79,7 +83,7 @@ HermesFleetApp     composition root that wires concrete implementations
 
 ## Requirements
 
-- macOS with Xcode 26.x
+- macOS with Xcode 26.x or 27.x
 - Swift 6 toolchain
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 - an iOS 26 simulator or compatible device
@@ -141,7 +145,7 @@ Start with [`docs/README.md`](docs/README.md).
 
 - [`docs/architecture.md`](docs/architecture.md) - module boundaries, data flow, and architectural constraints
 - [`docs/features.md`](docs/features.md) - current feature surfaces and important limitations
-- [`docs/navigation.md`](docs/navigation.md) - four-tab structure, ownership model, and restoration
+- [`docs/navigation.md`](docs/navigation.md) - top-level destinations, ownership model, and restoration
 - [`docs/gateway-pairing.md`](docs/gateway-pairing.md) - gateway setup and QR pairing
 - [`docs/adr/`](docs/adr/) - architectural decision records
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - development and pull request guidance

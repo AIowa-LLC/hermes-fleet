@@ -118,6 +118,9 @@ fi
 echo "Release SHA: $EXPECTED_SHA"
 echo "Commit: $(git show -s --format='%s' HEAD)"
 
+echo "=== Approved integration baseline ==="
+bash scripts/release_lineage_guard.sh "$EXPECTED_SHA"
+
 echo "=== XcodeGen drift ==="
 bash scripts/xcodegen_drift_gate.sh
 
@@ -357,7 +360,7 @@ EXPORT_OPTIONS="scripts/release_export_options.plist"
 [[ -f "$EXPORT_OPTIONS" ]] || { echo "ERROR: missing $EXPORT_OPTIONS" >&2; exit 1; }
 mkdir -p "$EXPORT_PATH"
 echo "=== Distribution export ==="
-echo "Export method: app-store-connect (Xcode 26 current value)"
+echo "Export method: app-store-connect"
 EXPORT_ARGS=(
   xcodebuild -exportArchive
   -archivePath "$ARCHIVE_PATH"

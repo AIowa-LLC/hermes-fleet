@@ -1,15 +1,15 @@
 # Feature guide
 
-Hermes Fleet exposes Hermes fleet and session controls in a native iOS interface. Availability can vary with the capabilities provided by a connected gateway.
+Hermes Fleet exposes Hermes fleet and session controls in a native iOS interface. Availability can vary with the capabilities provided by a connected gateway. This guide describes source behavior; [`../RELEASES.md`](../RELEASES.md) identifies the source commit and status recorded for each distributed build.
 
 ## Navigation surfaces
 
-The app is organized into four tabs — **Fleet, Chats, Bots, Gateways** — each owning an independent navigation stack. Every screen has exactly one owning tab; cross-tab links change to the owner and open the target there. Settings is a sheet from the Fleet toolbar; Command Center is a global search-and-jump sheet. See [`navigation.md`](navigation.md) for the full ownership model and restoration behavior.
+The app has eight top-level destinations — **Bots, Chats, Groups, Scheduled, Kanban, Fleet, Settings, About** — with separate navigation state and explicit screen ownership. Shared links select the canonical owner and open the target there, including rooms selected from the Bots roster. Command Center is a global search-and-jump sheet. See [`navigation.md`](navigation.md) for the ownership and restoration model.
 
 ## Fleet and gateways
 
 - register, edit, test, and remove gateways
-- multiple authentication strategies
+- password/session, API key, and token authentication where supported; OAuth-only provider sign-in remains tracked in #61
 - connection lifecycle and reconnect controls
 - multi-gateway roster aggregation
 - bot and session discovery
@@ -21,10 +21,18 @@ The app is organized into four tabs — **Fleet, Chats, Bots, Gateways** — eac
 
 The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, Continue, gateway summary rows, and connection activity. Its coverage is deliberately bounded:
 
-- **Needs You is known-items only.** It lists already-observed actionable items — classified gateway authentication/configuration failures plus attention observed in rooms this phone has opened. Unobserved rooms contribute nothing; when gateway coverage is incomplete the section is labeled "N known items" rather than reading as a complete (empty) inbox. There is no fleet-wide pending-action summary.
-- **Active Now is real execution only.** Working/thinking/using-tool states come from actual roster signals; a recent worker heartbeat renders as "Recent worker activity", never as executing. There is no fleet-wide execution telemetry — unseen bots are not claimed to be idle, and incomplete coverage renders honest copy instead of a partial list dressed as the whole fleet.
+- **Needs You is known-items only.** It lists already-observed actionable items — classified gateway authentication/configuration failures plus attention observed in rooms this phone has opened. Unobserved rooms contribute nothing; when gateway coverage is incomplete the section is labeled "N known items" rather than reading as a complete (empty) inbox. Live Ops adds reported approval items from supporting gateways; missing or stale reporting remains explicit.
+- **Active Now is real execution only.** Working/thinking/using-tool states come from actual roster signals; a recent worker heartbeat renders as "Recent worker activity", never as executing. Supporting gateways also report Live Ops operations, subagent trees, and timelines. Missing, stale, disconnected, or unsupported coverage stays explicit; unseen bots are not claimed to be idle.
 - **Continue is device-local.** A recent-open index stored on this phone (at most 50 references, 30-day retention, pruned when gateways are removed or destinations tombstone). It is not synchronized across devices and implies nothing about other clients.
 - **Unknown never renders as zero.** Not-yet-loaded bot counts, partial outages, and unclassifiable gateways display as unknown or partial — never as "0" or "all quiet".
+
+## Live Ops
+
+Fleet Home observes operations and Needs You approvals across reporting gateways.
+Operation Detail shows one operation, its subagent tree, and timeline. Approval
+actions use the biometric gate; child controls require verified session
+attachment. Desktop reporting requires the optional Hermes reporting plugin;
+see [setup and coverage](../integrations/hermes-liveops/README.md).
 
 ## Conversations
 
@@ -36,6 +44,7 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 - stream assistant output and tool activity
 - reconnect and recover missed events
 - preserve cached conversation history for cold-start presentation
+- show device-local unread indicators in Chats and drawer Recents; existing sessions are baselined on first observation and opening a conversation marks its gateway timestamp as read
 - approvals and per-session control surfaces
 - model selection and context information
 - steer, rename, and fork workflows where supported
@@ -69,16 +78,17 @@ The Bots tab is a fleet-wide roster of every bot on every registered gateway. Bo
 - **Canonical Bot Chat** — one continuous chat per bot. `/new` and `/reset` are intercepted and replaced with `/compact` (Bot Chat context is never silently reset). Canonical Bot Chats are filtered out of the ordinary Chats list.
 - **`@Bot` mentions** — roster-wide autocomplete with duplicate disambiguation: bare name when unique, `name-gateway-label` when duplicated (`@researcher-mac` vs `@researcher-4090`), and a short deterministic suffix only when the qualified label still collides. Mentions identify teammates; dispatch happens through the agent, not the client.
 - **Bot Routines** — structured interval/time-of-day schedules with raw-expression editing; schedules are validated client-side and applied through the profile surface.
-- **Hosted Groups** — create rooms on a gateway, chat (`groups.send`), replay history (`groups.log`), rename, stop, retry, resolve pending approvals, and disband.
-- **Cross-gateway Groups** — invite bots from other gateways into a hosted room. Setup choreography: create on the home gateway, invite on the target, register on the home gateway. Afterwards the gateways exchange room traffic **directly with each other** (upstream RoomLink); the iPhone is controller-only.
-- **RoomLink panel** — per-room negotiation state (honest unsupported reason when the gateway disables RoomLink), scoped peer grants with explicit TTL and revocation, route registration using the target's exact advertised capability catalog (never a reconstruction), linked-peer status, manual replay/replication, and authority takeover with an explicit, previous-authority-naming confirmation.
-- **Replication/promotion semantics** — replay submits the authority's verbatim log pages to the target replica (`groups.replicate` is idempotent and refuses sequence gaps and epoch regressions). Promotion continues the room on the promoting gateway at `epoch + 1`; it is only offered for a caught-up replica of a foreign authority and always requires explicit confirmation. **Promotion does not fence the previous authority.** Fleet cannot verify that the old writer has been externally fenced — the operator must confirm the previous authority can no longer commit before taking over. A timeout, a disconnect, or a Stop operation is not sufficient proof of fencing.
+- The roster's Groups filter shows matching rooms within Bots; selecting a row opens the room in Groups. See [`groups-tab.md`](groups-tab.md) for the room home and ownership rules.
 
 ### Bot Mode limitations
 
 - Cross-gateway `@Bot` DM relay is **not guaranteed by Fleet**: a remote mention passes identity to the agent, but Fleet does not verify or carry the remote messaging route.
-- Cross-gateway rooms are text-only (upstream RoomLink advertises `attachments: false`).
-- The iPhone performs no background couriering of room traffic; gateway-to-gateway linking is the gateways' own direct connection.
+
+## Groups
+
+Groups has a separate fleet-wide home for hosted and archived room conversations. It supports gateway filtering, search by group or member, room navigation, refresh, and a New Group flow. Chats is reserved for ordinary conversations. Shared navigation links route rooms to Groups, including room selections from the Bots roster. Saved room paths from older app versions are migrated when navigation state is restored.
+
+RoomLink capabilities depend on the connected gateways. Cross-gateway room traffic travels between gateways; the iPhone does not relay it in the background. Linked rooms are text-only. Promotion requires explicit confirmation and a caught-up replica; Fleet cannot verify that the previous authority has been externally fenced. See [`groups-tab.md`](groups-tab.md) for the current surface summary.
 
 ## Management surfaces
 
@@ -86,12 +96,18 @@ Depending on gateway support, the app includes:
 
 - cron management
 - skills management
-- read-only Kanban board visibility
+- Kanban board visibility and task mutations when the connected gateway exposes a board operator
 - Projects browsing
 - memory/learning graph browsing and supported mutations
 - connection-health details
 
-The Kanban surface is intentionally read-only in the current client.
+Kanban is read-only when a gateway has no board operator. When that capability
+is available, the client sends task creation, updates, and bulk changes to the
+gateway; failed writes do not appear as successful local changes.
+
+## Settings and About
+
+Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and the agent setup prompt. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.
 
 ## Voice
 
