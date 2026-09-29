@@ -1,6 +1,6 @@
 import XCTest
 import FleetCore
-import FleetNetworking
+@testable import FleetNetworking
 
 /// M5 conversation streaming client: `GatewayConversationClient`
 /// (session.create / session.resume / prompt.submit / session.interrupt +
@@ -286,6 +286,68 @@ final class ConversationClientTests: XCTestCase {
         } catch {
             XCTFail("unexpected error \(error)")
         }
+    }
+
+    // MARK: Structured prompt-admission refusals (issue #55)
+
+    func testOwnershipRefusalExplainsIdleOwnershipAndSafeRecovery() {
+        let error = JSONRPCError(code: 4090, message: "backend detail deliberately omitted",
+                                 data: .object(["reason": .string("SESSION_NOT_OWNED")]))
+        guard case .rpcFailed(let message) = GatewayConversationClient.mapRPCError(error) else {
+            return XCTFail("ownership admission refusal must remain a failed submission")
+        }
+        XCTAssertTrue(message.contains("Your message was not sent"))
+        XCTAssertTrue(message.contains("Another client owns"))
+        XCTAssertTrue(message.contains("idle"))
+        XCTAssertTrue(message.contains("then retry here"))
+        XCTAssertTrue(message.contains("will not interrupt it automatically"))
+        XCTAssertFalse(message.contains(error.message))
+    }
+
+    func testUnavailableCoordinationDoesNotInventAnotherOwner() {
+        let error = JSONRPCError(code: 4090, message: "registry unavailable",
+                                 data: .object(["reason": .string("SESSION_COORDINATION_UNAVAILABLE")]))
+        guard case .rpcFailed(let message) = GatewayConversationClient.mapRPCError(error) else {
+            return XCTFail("unverified ownership must remain a failed submission")
+        }
+        XCTAssertTrue(message.contains("could not verify conversation ownership"))
+        XCTAssertTrue(message.contains("do not force a takeover"))
+        XCTAssertFalse(message.contains("Another client owns"))
+    }
+
+    func testUnknownMissingAndMalformedAdmissionReasonsPreserveGatewayError() {
+        let variants: [JSONValue?] = [
+            nil, .null, .object([:]),
+            .object(["reason": .string("MAX_CONCURRENT_SESSIONS")]),
+            .object(["reason": .string("FUTURE_REFUSAL")]),
+            .object(["reason": .number(4090)]),
+            .array([.string("SESSION_NOT_OWNED")]),
+        ]
+        for data in variants {
+            let error = JSONRPCError(code: 4090, message: "original refusal", data: data)
+            XCTAssertEqual(GatewayConversationClient.mapRPCError(error),
+                           .rpcFailed("original refusal (4090)"))
+        }
+    }
+
+    func testOwnershipReasonCannotOverrideUnrelatedRPCCodes() {
+        let data: JSONValue = .object(["reason": .string("SESSION_NOT_OWNED")])
+        XCTAssertEqual(GatewayConversationClient.mapRPCError(
+            JSONRPCError(code: 4001, message: "session gone", data: data)),
+            .sessionNotFound("session gone"))
+        XCTAssertEqual(GatewayConversationClient.mapRPCError(
+            JSONRPCError(code: 4999, message: "unrelated failure", data: data)),
+            .rpcFailed("unrelated failure (4999)"))
+    }
+
+    func testOwnershipReasonSurvivesWireDecoding() throws {
+        let bytes = Data(#"{"code":4090,"message":"owner exists","data":{"reason":"SESSION_NOT_OWNED"}}"#.utf8)
+        let error = try JSONDecoder().decode(JSONRPCError.self, from: bytes)
+        guard case .rpcFailed(let message) = GatewayConversationClient.mapRPCError(error) else {
+            return XCTFail("decoded ownership refusal must not become success")
+        }
+        XCTAssertTrue(message.contains("Another client owns"))
+        XCTAssertFalse(message.contains("owner exists"))
     }
 
     // MARK: prompt.submit

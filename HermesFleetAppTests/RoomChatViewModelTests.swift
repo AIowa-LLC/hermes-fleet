@@ -1,6 +1,6 @@
 import XCTest
 import FleetCore
-import FleetUI
+@testable import FleetUI
 
 /// TRUE BOTS MODE slice 4 (D15/D16/D18) — RoomChatViewModel over scripted
 /// command + driver-status seams: capability gating (disabled mutations
@@ -413,5 +413,30 @@ final class RoomChatViewModelTests: XCTestCase {
         XCTAssertEqual(vm.transcript.count, 1, "matching-authority page still merges")
         XCTAssertEqual(vm.transcript.first?.text, "current")
         XCTAssertNil(vm.errorMessage)
+    }
+}
+
+// Adaptive-container defaults must not erase the measured timeline viewport.
+final class RoomTimelineGeometryTests: XCTestCase {
+    func testMissingSiblingDoesNotEraseMeasuredViewport() {
+        let viewport = CGRect(x: 16, y: 100, width: 1000, height: 1100)
+        var value = RoomScrollViewportFramePreferenceKey.defaultValue
+        RoomScrollViewportFramePreferenceKey.reduce(value: &value) { viewport }
+        RoomScrollViewportFramePreferenceKey.reduce(value: &value) { .null }
+        XCTAssertEqual(value, viewport,
+                       "An absent sibling measurement must not hide the room's visible scroll region")
+    }
+
+    func testUpdatedViewportReplacesPreviousMeasurement() {
+        var value = CGRect(x: 0, y: 100, width: 400, height: 700)
+        let resized = CGRect(x: 0, y: 100, width: 400, height: 400)
+        RoomScrollViewportFramePreferenceKey.reduce(value: &value) { resized }
+        XCTAssertEqual(value, resized, "Keyboard and layout changes must update the visible region")
+    }
+
+    func testMissingMeasurementRemainsUnknown() {
+        var value = RoomScrollViewportFramePreferenceKey.defaultValue
+        RoomScrollViewportFramePreferenceKey.reduce(value: &value) { .null }
+        XCTAssertTrue(value.isNull, "Do not invent a viewport before layout measures it")
     }
 }

@@ -279,7 +279,12 @@ final class BotsPresenceSyncTests: XCTestCase {
         XCTAssertEqual(roster.refreshCount, 1)
         roster.openGate()
         await refresh.value
-        let trailingRefreshRecovered = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        // The first gated refresh returns the updated snapshot too, so reachable
+        // alone can become true before the queued trailing task has started.
+        let trailingRefreshRecovered = await waitUntil {
+            roster.refreshCount == 2 && !environment.isRefreshing
+                && environment.botPresence(for: bot.route) == .reachable
+        }
         XCTAssertTrue(trailingRefreshRecovered)
         XCTAssertEqual(roster.refreshCount, 2)
         try? await Task.sleep(for: .milliseconds(100))

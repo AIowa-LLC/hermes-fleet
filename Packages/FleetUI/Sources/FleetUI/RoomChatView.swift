@@ -645,11 +645,14 @@ private struct RoomLatestScrollTargetFramePreferenceKey: PreferenceKey {
     }
 }
 
-private struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
+struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
     static let defaultValue = CGRect.null
 
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
+        // Adaptive containers also contribute the absent default. Preserve
+        // the actual viewport instead of erasing it with a sibling's null.
+        let next = nextValue()
+        if !next.isNull { value = next }
     }
 }
 
@@ -736,7 +739,9 @@ public struct RoomChatView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
-            .overlay(alignment: .bottom) { composer }
+            // Reserve the composer's measured height in the scroll region so
+            // scrollTo(.bottom) leaves the newest content readable above it.
+            .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             .background(theme.background.ignoresSafeArea())
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
@@ -833,9 +838,9 @@ public struct RoomChatView: View {
                 }
             }
             .onScrollGeometryChange(for: Bool.self) { geometry in
-                // At-bottom detection (tolerance covers the composer overlay
-                // and lazy height estimation). This observer only CONFIRMS
-                // arrival — unfollowing is USER-driven (see phase observer).
+                // At-bottom detection tolerates lazy height estimation. This
+                // observer only confirms arrival — unfollowing is user-driven
+                // (see phase observer).
                 geometry.contentSize.height
                     - geometry.contentOffset.y
                     - geometry.visibleRect.height <= 160
@@ -934,13 +939,14 @@ public struct RoomChatView: View {
         return latestScrollTargetFrame.frame.intersects(scrollViewportFrame)
     }
 
-    /// The target's bottom edge must reach the scroll viewport's end. Merely
-    /// intersecting the viewport can happen while a deep lazy stack is still
-    /// correcting its height estimates, before open-at-latest has converged.
+    /// The target's bottom edge must fit within the scroll region, whose
+    /// safe-area inset reserves the actual composer height. Merely intersecting
+    /// it can happen before deep lazy history has converged. Short histories
+    /// also fit; no assumed composer height or full-viewport row height is used.
     private var isLatestScrollTargetAtEnd: Bool {
         guard isLatestScrollTargetVisible,
               let targetFrame = latestScrollTargetFrame?.frame else { return false }
-        return targetFrame.maxY <= scrollViewportFrame.maxY - 96
+        return targetFrame.maxY <= scrollViewportFrame.maxY + 1
     }
 
     /// Re-assert scrollTo(latest) until the target reaches the visible end of

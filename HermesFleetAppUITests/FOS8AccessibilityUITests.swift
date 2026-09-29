@@ -369,6 +369,12 @@ final class FOS8AccessibilityUITests: XCTestCase {
             visible,
             "final entry is on-screen (frame \(finalEntry.frame), window \(window.frame))")
 
+        let composer = app.descendants(matching: .any)["fleet.room.composer"].firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(
+            finalEntry.frame.maxY, composer.frame.minY + 1,
+            "the latest entry must be readable above the composer, not merely inside the window")
+
         // While following latest after open there is no history escape to
         // offer: the Latest control must NOT render.
         XCTAssertFalse(

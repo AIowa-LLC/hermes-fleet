@@ -21,7 +21,15 @@ final class R10ProjectsBrowserUITests: XCTestCase {
     }
 
     private func tap(_ element: XCUIElement) {
-        XCTAssertTrue(element.isHittable || element.isEnabled, "element not hittable/enabled")
+        // Cross-tab routes can expose an enabled row before its destination
+        // finishes becoming interactive. Match the reactions suite's readiness
+        // contract; enabled alone does not prove an activation point exists.
+        XCTAssertTrue(element.waitForExistence(timeout: 10), "element should exist before activation")
+        let deadline = Date().addingTimeInterval(10)
+        while !element.isHittable && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertTrue(element.isHittable, "element should be hittable before activation")
         element.tap()
     }
 
