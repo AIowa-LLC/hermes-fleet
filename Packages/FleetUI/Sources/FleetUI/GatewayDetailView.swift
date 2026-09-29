@@ -53,6 +53,9 @@ struct GatewayDetailView: View {
                     contextualConnectionControls
                 }
                 workingSection
+                Section("Live Operations") {
+                    LiveOpsReportingStatusView(environment: environment, gatewayID: gatewayID)
+                }
                 Section("Resources") {
                     resource("Bots", "cpu", .bots(gatewayID), "bots")
                     resource("Groups", "person.3", .gatewayGroups(gatewayID), "groups")
@@ -103,6 +106,11 @@ struct GatewayDetailView: View {
                 Text(operationError ?? "")
             }
             .accessibilityIdentifier("fleet.gateway-detail.\(gatewayID.rawValue)")
+            .task {
+                environment.liveOps.beginObserving(.gateway(gatewayID))
+                defer { environment.liveOps.endObserving(.gateway(gatewayID)) }
+                try? await Task.sleep(for: .seconds(3600 * 24))
+            }
         }
     }
 

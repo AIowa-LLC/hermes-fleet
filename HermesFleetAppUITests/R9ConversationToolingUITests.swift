@@ -112,6 +112,49 @@ final class R9ConversationToolingUITests: XCTestCase {
         attachScreenshot(of: app, name: "r9-session-actions-menu")
     }
 
+    /// FB5 (Build 90 feedback #5 — "Too much room for tool calling."): a
+    /// six-tool scripted turn (`HERMES_FLEET_MULTI_TOOL_DEMO=1`, FleetSimulator)
+    /// must render as ONE compact `conversation.toolGroup.*` row — not six
+    /// full-height tool cards — and disclose the individual tool names on tap.
+    func testMultiToolTurnCollapsesToOneGroupAndExpands() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_MULTI_TOOL_DEMO"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        let deadline = Date().addingTimeInterval(15)
+        while !composer.isEnabled && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        XCTAssertTrue(composer.isEnabled, "composer should enable once the session is ready")
+        composer.tap()
+        composer.typeText("run the tools")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        // Exactly ONE collapsed group renders for the six scripted tool
+        // calls — density is the whole point of FB5.
+        func groupQuery() -> XCUIElementQuery {
+            app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier BEGINSWITH 'conversation.toolGroup.' AND NOT (identifier ENDSWITH '.detail')"))
+        }
+        let group = groupQuery().firstMatch
+        let found = group.waitForExistence(timeout: 15)
+        XCTAssertTrue(found,
+                      "six scripted tool calls should collapse into one compact group row")
+        XCTAssertEqual(groupQuery().count, 1, "one compact row for the whole multi-tool turn, not one per tool")
+        XCTAssertTrue(group.label.contains("6"), "the collapsed row states the total tool count: \(group.label)")
+
+        // Tap discloses the individual tool names (the same per-tool row the
+        // uncollapsed transcript always rendered — `FleetToolActivityView`,
+        // reused unchanged).
+        group.tap()
+        XCTAssertTrue(app.staticTexts["terminal"].waitForExistence(timeout: 10),
+                      "expanding the group should disclose the individual tool names")
+        attachScreenshot(of: app, name: "fb5-tool-group-expanded")
+    }
+
     // MARK: - Helpers (same shapes as the R9 approval suite)
 
     private func tap(_ element: XCUIElement) {

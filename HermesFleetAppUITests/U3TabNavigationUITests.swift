@@ -348,8 +348,9 @@ final class U3TabNavigationUITests: XCTestCase {
     }
 
     /// ADR-0008 (round-3 Codex parity): the ✕ close is retired — an
-    /// interactive left swipe on the drawer dismisses it, and the scrim
-    /// remains the deterministic dismissal control.
+    /// interactive left swipe on drawer chrome dismisses it. Chat rows
+    /// reserve horizontal swipes for conversation actions; the scrim remains
+    /// the deterministic dismissal control.
     func testDrawerSwipeLeftDismisses() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
@@ -369,7 +370,11 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["fleet.drawer.search"].exists, "search stays")
         attachScreenshot(of: app, name: "u3-drawer-r3-open")
 
-        drawer.swipeLeft()
+        // Native chat rows own horizontal swipes for Pin/Archive/Delete.
+        // Exercise the dismissal gesture on the pinned footer chrome.
+        let chrome = app.buttons["fleet.drawer.destination.settings"]
+        XCTAssertTrue(chrome.isHittable, "drawer navigation chrome is reachable")
+        chrome.swipeLeft()
         var dismissed = false
         for _ in 0..<20 where !dismissed {
             if !app.descendants(matching: .any)["fleet.drawer"].exists { dismissed = true } else { usleep(250_000) }

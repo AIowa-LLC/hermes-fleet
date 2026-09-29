@@ -113,6 +113,102 @@ final class FOS3FourRootShellUITests: XCTestCase {
                        "Bots must NOT expose the retired toolbar search button")
     }
 
+    // MARK: Feedback #3 — drawer menu glyph + leading-edge swipe (dogfood pass)
+
+    /// The menu button is a plain SF Symbol now (no custom circle/material
+    /// wrapper inside the system toolbar glass), keeps its ≥44pt hit target,
+    /// and still opens the drawer on tap.
+    func testDrawerMenuButtonIsHittableAndOpensDrawer() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), "the drawer menu button must render")
+        XCTAssertTrue(menu.isHittable, "the drawer menu button must be hittable")
+        XCTAssertGreaterThanOrEqual(menu.frame.width, 44,
+                                    "the menu button's hit target must be at least 44pt wide")
+        XCTAssertGreaterThanOrEqual(menu.frame.height, 44,
+                                    "the menu button's hit target must be at least 44pt tall")
+
+        menu.tap()
+        let drawer = app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 10), "tapping the menu button must open the drawer")
+        UITabNavigation.closeDrawer(app)
+    }
+
+    /// A rightward drag starting near the leading edge of a ROOT tab surface
+    /// opens the drawer, mirroring the menu button.
+    func testLeadingEdgeSwipeOpensDrawerOnRootTab() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Bots")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch.exists)
+
+        let start = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 5, dy: 300))
+        let end = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 200, dy: 300))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        let drawer = app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch
+        XCTAssertTrue(drawer.waitForExistence(timeout: 10),
+                      "an edge swipe on a root tab surface must open the drawer")
+        UITabNavigation.closeDrawer(app)
+    }
+
+    /// The same edge gesture on a PUSHED screen must NOT open the drawer —
+    /// it must fall through to the system back-swipe instead (the strip only
+    /// installs while the tab's path is empty).
+    func testLeadingEdgeSwipeOnPushedScreenPerformsBackNavigationNotDrawer() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Bots")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+
+        let row = app.descendants(matching: .any)
+            .matching(identifier: "fleet.roster.row.workstation#default").firstMatch
+        if !row.waitForExistence(timeout: 5) {
+            for _ in 0..<6 where !row.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "the workstation bot row must render")
+        row.tap()
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(identifier: "fleet.bot-detail.header").firstMatch.waitForExistence(timeout: 10),
+            "bot detail must be pushed before the edge-swipe probe")
+
+        let start = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 5, dy: 300))
+        let end = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 200, dy: 300))
+        start.press(forDuration: 0.05, thenDragTo: end)
+
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch.exists,
+                       "an edge swipe on a pushed screen must not open the drawer")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),
+                      "the system back-swipe must pop the pushed bot detail back to Bots")
+    }
+
+    // MARK: Chats floating Chat button
+
+    func testChatsHasOneLargerFloatingChatButton() throws {
+        let app = launch()
+        UITabNavigation.selectTab(app, label: "Chats")
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10))
+
+        let actions = app.descendants(matching: .any).matching(identifier: "fleet.chats.actions").firstMatch
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        let newChat = app.buttons["fleet.chats.new"].firstMatch
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10))
+        XCTAssertTrue(newChat.isHittable)
+        XCTAssertFalse(app.buttons["fleet.chats.settings"].exists,
+                       "Settings must not appear beside the floating Chat button")
+        XCTAssertEqual(actions.buttons.count, 1)
+        XCTAssertGreaterThanOrEqual(newChat.frame.height, 56)
+        XCTAssertGreaterThanOrEqual(newChat.frame.width, 112)
+        XCTAssertTrue(newChat.staticTexts["Chat"].exists, "Chat must have a visible label")
+        XCTAssertTrue(actions.frame.insetBy(dx: -1, dy: -1).contains(newChat.frame))
+    }
+
     /// Build 43: the Gateways registry cockpit keeps its Add toolbar once
     /// entered via Fleet → Manage Gateways.
     func testGatewaysCockpitReachableFromFleetWithAddToolbar() throws {

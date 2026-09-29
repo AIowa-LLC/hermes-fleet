@@ -79,6 +79,14 @@ struct ComposeBotPickerSheet: View {
 /// never claimed as server deletions.
 enum FleetChatsArchiveStore {
     private static let key = "fleet.chats.archived.v1"
+    static let didChange = Notification.Name("fleet.chats.archive.changed")
+
+    static func entryID(for identity: FleetConversationIdentity) -> String {
+        switch identity {
+        case .individual(let route, let sessionID): "\(route.id)/\(sessionID)"
+        case .group: identity.id
+        }
+    }
 
     static func hiddenIDs() -> Set<String> {
         Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
@@ -98,11 +106,13 @@ enum FleetChatsArchiveStore {
             ids.remove(entryID)
         }
         UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
+        NotificationCenter.default.post(name: didChange, object: nil)
     }
 }
 
 struct FleetChatsView: View {
     @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
@@ -170,15 +180,20 @@ struct FleetChatsView: View {
     /// from a hard requirement to a display-name enrichment.
     private var entries: [FleetChatEntry] {
         environment.sessionsByRoute.flatMap { route, sessions in
-            sessions.filter { !environment.isCanonicalBotChat(route: route, sessionID: $0.id) }
+            sessions.filter {
+                FleetChatsPresentation.isRecentConversation($0) &&
+                !environment.isCanonicalBotChat(route: route, sessionID: $0.id)
+            }
                 .map { FleetChatEntry(route: route, session: $0) }
         }.filter { entry in
             environment.gateway(for: entry.route.gatewayID) != nil &&
             (gatewayID == nil || entry.route.gatewayID == gatewayID) &&
             (query.isEmpty || "\(entry.session.title) \(entry.session.preview) \(botDisplayName(entry.route)) \(environment.gateway(for: entry.route.gatewayID)?.displayName ?? "")".localizedCaseInsensitiveContains(query))
         }.sorted {
-            if $0.session.startedAt == $1.session.startedAt { return $0.id < $1.id }
-            return $0.session.startedAt > $1.session.startedAt
+            let left = FleetChatsPresentation.recency($0.session)
+            let right = FleetChatsPresentation.recency($1.session)
+            if left == right { return $0.id < $1.id }
+            return left > right
         }
     }
 
@@ -205,7 +220,8 @@ struct FleetChatsView: View {
         environment.sessionsByRoute.reduce(0) { count, pair in
             guard environment.gateway(for: pair.key.gatewayID) != nil else { return count }
             return count + pair.value.filter {
-                !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
+                FleetChatsPresentation.isRecentConversation($0)
+                    && !environment.isCanonicalBotChat(route: pair.key, sessionID: $0.id)
                     && !isLocallyHidden(FleetChatEntry(route: pair.key, session: $0))
             }.count
         }
@@ -294,11 +310,8 @@ struct FleetChatsView: View {
             case .prominent:
                 prominentRefreshFailure
             }
-            // FOS-5 (SPEC §10): heading stays "Newest sessions" — honest
-            // startedAt ordering; not renamed to "Recent" (no last-activity
-            // ranking until it is real). lastActive IS decoded+preserved on
-            // SessionSummary for the future upgrade.
-            Section("Newest sessions") {
+            // Match Hermes Desktop's activity-ranked Recents slice.
+            Section("Recent conversations") {
                 ForEach(visibleEntries) { entry in
                     NavigationLink(value: FleetScreen.conversation(entry.route, sessionID: entry.session.id)) {
                         // Codex/ChatGPT-style row diet: single-line title +
@@ -375,7 +388,7 @@ struct FleetChatsView: View {
                     // OCR re-review: the gate counts the rows the LIST renders
                     // (`visibleEntries`) — with every row locally archived the
                     // unfiltered `entries` check never fired, leaving a bare
-                    // "Newest sessions" header with no explanation.
+                    // "Recent conversations" header with no explanation.
                     let empty = FleetChatsPresentation.emptyState(
                         hasQuery: !query.isEmpty,
                         hasGatewayFilter: gatewayID != nil,
@@ -415,10 +428,9 @@ struct FleetChatsView: View {
         } message: { _ in
             Text("This removes the conversation from this device. It stays on the gateway.")
         }
-        // Codex/ChatGPT-style floating action cluster: new chat (left) +
-        // settings (right), Liquid Glass, hovering OVER the list.
+        // One labeled Chat action, floating above the list.
         .overlay(alignment: .bottomTrailing) {
-            floatingActionCluster
+            floatingChatButton
             .padding(.trailing, FleetTheme.spacingLg)
             .padding(.bottom, FleetTheme.spacingMd)
         }
@@ -444,6 +456,9 @@ struct FleetChatsView: View {
         // edge (content scrolls under a permanently transparent edge).
         .toolbarBackground(.hidden, for: .navigationBar)
         .onAppear { hiddenEntryIDs = FleetChatsArchiveStore.hiddenIDs() }
+        .onReceive(NotificationCenter.default.publisher(for: FleetChatsArchiveStore.didChange)) { _ in
+            hiddenEntryIDs = FleetChatsArchiveStore.hiddenIDs()
+        }
         .scrollContentBackground(.hidden).background(theme.background)
         // Dogfood finding 3: reserve bottom breathing room with a SwiftUI
         // safe-area API (design-token value) so the final card comes to rest
@@ -457,40 +472,42 @@ struct FleetChatsView: View {
         .refreshable { await refresh(force: true) }.task { await refresh() }
     }
 
-    /// Floating Liquid Glass action cluster (Codex-inspired): new chat to
-    /// the LEFT of settings, bottom-trailing, hovering over the list.
-    /// ADR-0010: New Group lives on the Groups tab — the Chats FAB is a
-    /// direct New-conversation button (no menu wrapper needed).
-    private var floatingActionCluster: some View {
-        HStack(spacing: FleetTheme.spacingSm) {
+    /// A single, labeled Chat button with a larger target and shared material
+    /// treatment. Material keeps hit-testing reliable; Reduce Transparency
+    /// uses a solid theme surface.
+    private var floatingChatButton: some View {
+        HStack {
             Button {
                 showingCompose = true
             } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: 48, height: 48)
-                    .contentShape(Circle())
+                HStack(spacing: FleetTheme.spacingSm) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Chat")
+                        .font(.headline)
+                }
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .frame(minWidth: 112, minHeight: 56)
+                .contentShape(Capsule())
             }
             .buttonStyle(.fleetPressable)
             .accessibilityLabel("New chat")
             .accessibilityIdentifier("fleet.chats.new")
-
-            // Settings: navigates to the Settings tab.
-            Button {
-                environment.requestSettingsTab()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
-                    .frame(width: 48, height: 48)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.fleetPressable)
-            .background(.ultraThinMaterial)
-            .accessibilityLabel("Settings")
-            .accessibilityIdentifier("fleet.chats.settings")
         }
+        .background {
+            if reduceTransparency {
+                Capsule().fill(theme.surfaceElevated)
+            } else {
+                Capsule().fill(.ultraThinMaterial)
+            }
+        }
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("fleet.chats.actions")
     }
 
     // MARK: - Refresh failure surfaces (dogfood finding 1)

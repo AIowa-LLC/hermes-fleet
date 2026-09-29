@@ -396,6 +396,59 @@ final class GatewayWebSocketTransportTests: XCTestCase {
         await transport.disconnect()
     }
 
+    func testConcurrentColdConnectCallsShareOneHandshake() async throws {
+        // Hold gateway.ready so the second caller enters while the first
+        // connection is still opening, then release both with one frame.
+        let server = try InProcessWebSocketServer(script: .init())
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort, connectTimeout: .seconds(3))
+        let first = Task { try await transport.connect() }
+        for _ in 0..<200 {
+            if transport.state == .connecting && server.connectionCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(transport.state, .connecting)
+        XCTAssertEqual(server.connectionCount, 1)
+
+        let second = Task { try await transport.connect() }
+        // Give the second caller a chance to join the in-flight handshake.
+        try await Task.sleep(for: .milliseconds(20))
+        server.sendText(readyFrame())
+
+        try await first.value
+        try await second.value
+        XCTAssertEqual(transport.state, .connected)
+        XCTAssertEqual(server.connectionCount, 1)
+        await transport.disconnect()
+    }
+
+    func testConcurrentColdConnectCallsShareHandshakeFailure() async throws {
+        let server = try InProcessWebSocketServer(script: .init()) // no gateway.ready
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort, connectTimeout: .milliseconds(500))
+        let first = Task { try await transport.connect() }
+        for _ in 0..<200 {
+            if transport.state == .connecting && server.connectionCount == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(transport.state, .connecting)
+
+        let second = Task { try await transport.connect() }
+        for attempt in [first, second] {
+            do {
+                try await attempt.value
+                XCTFail("expected the shared handshake to time out")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, .readyTimeout)
+            }
+        }
+        XCTAssertEqual(server.connectionCount, 1)
+    }
+
     // MARK: P0-7 — event fan-out (multi-subscriber)
 
     /// Thread-safe accumulator for the fan-out tests (module-local).

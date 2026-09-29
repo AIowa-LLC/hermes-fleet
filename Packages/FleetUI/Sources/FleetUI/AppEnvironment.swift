@@ -108,6 +108,13 @@ public typealias FleetRoomSourceFactory = @Sendable (
 /// AVFoundation/Speech directly.
 public typealias FleetVoiceEngineFactory = @Sendable () -> (any VoiceTranscribing)?
 
+// MARK: - Live Ops v1 (fleet-wide session/subagent observation)
+//
+// `FleetLiveOpsFactory` itself is declared in LiveOpsStore.swift (next to
+// the store it feeds) — this MARK only covers this file's additive wiring:
+// one injected factory param (default nil) + a small `liveOps` accessor. See
+// LiveOpsStore.swift for the polling/attention/approval logic.
+
 /// Injected invalidation hooks keep FleetUI independent of FleetNetworking's
 /// ephemeral session store while ensuring credential/configuration changes
 /// cannot retain an authenticated lease for old gateway state.
@@ -235,6 +242,14 @@ public final class AppEnvironment {
     /// True Bots Mode slice 2: bot profile management (create/edit/duplicate/
     /// avatar/sections) over the per-gateway seam.
     public let botManagement: BotManagementController
+
+    // MARK: Live Ops v1 (additive — see LiveOpsStore.swift)
+
+    /// Fleet-wide Live Ops observation (Home summary strip, Needs You
+    /// approval rows, Operation Detail). Always constructed — with no
+    /// factory wired it simply never has a seam to poll and reports nothing,
+    /// so callers can read `environment.liveOps` unconditionally.
+    public let liveOps: LiveOpsStore
 
     /// FOS-4 (SPEC §7 Continue / §17): device-local recent-open index.
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
@@ -601,6 +616,7 @@ public final class AppEnvironment {
         roomLinkFactory: FleetRoomLinkFactory? = nil,
         health: any ConnectionHealthAccumulating,
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
+        liveOpsFactory: FleetLiveOpsFactory? = nil,
         seedRegistrations: [GatewayRegistration] = [],
         bridgedStoreURL: URL? = nil,
         voiceEngineFactory: FleetVoiceEngineFactory? = nil,
@@ -651,7 +667,16 @@ public final class AppEnvironment {
         // Application Support location. (Assigned BEFORE any self capture.)
         self.continueIndex = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL())
         self.botManagement = BotManagementController(factory: botProfileFactory)
+        // Live Ops v1: nil factory ⇒ an empty seam map — the store still
+        // exists (callers never optional-chain `environment.liveOps`), it
+        // just never has anything to poll. Constructed BEFORE any closure
+        // captures `self` below — Swift requires every stored property
+        // assigned before `self` can be used (even a weak capture).
+        self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
+        liveOps.setProviders(
+            gateways: { [weak self] in self?.gateways ?? [] },
+            connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -960,6 +985,52 @@ public final class AppEnvironment {
         } else {
             queuePostConnectRosterSync()
         }
+    }
+
+    /// FB2: whether `id`'s last roster observation is failed or never
+    /// classified — the condition under which a connection repair must force
+    /// an authoritative roster refresh rather than leaving Bot Detail on a
+    /// stale/ghost presence until a manual Refresh or Test Connection.
+    private func hasStaleRosterOutcome(for id: GatewayID) -> Bool {
+        switch rosterSnapshot?.outcome(for: id) {
+        case .loaded: return false
+        case .failed, nil: return true
+        }
+    }
+
+    /// FB2 (TestFlight Build 90 #2): request the same bounded, coalesced
+    /// roster resync as an explicit connect repair, but ONLY when this
+    /// gateway's last observation is failed/stale. Called from every path
+    /// that can observe a gateway becoming reachable again OUTSIDE the
+    /// explicit `connect(to:)` success transition (the transport's own
+    /// auto-recovery landing on `.online`, and the manual §13 Test
+    /// Connection probe) — those paths previously corrected the connection
+    /// chip but never re-armed the roster, leaving presence a ghost until an
+    /// unrelated due-check happened to land.
+    private func scheduleRosterSyncIfStaleAfterRepair(for id: GatewayID) {
+        guard hasStaleRosterOutcome(for: id) else { return }
+        scheduleRosterSyncAfterConnectionRepair(for: id)
+    }
+
+    /// FB2 (gap): the connection can already be `.connected` the whole time
+    /// while its last roster observation is `.failed` (e.g. one refresh timed
+    /// out) — no `.connected`/`.online` TRANSITION and no manual Test
+    /// Connection ever happens, so neither of the two repair triggers above
+    /// fires, and Bot Detail is left on the ghost outcome until the summary
+    /// backoff (up to 300s) happens to land.
+    ///
+    /// Bot Detail calls this on appearance for the gateway it is showing.
+    /// Fires ONLY when the gateway is currently connected AND its last
+    /// observation is failed/unclassified — never for a disconnected gateway
+    /// (never fabricates presence over a real outage) and never when the
+    /// outcome is already `.loaded` (no redundant refresh on every visit).
+    /// Reuses the same coalesced, generation-fenced `refreshRoster()` — an
+    /// already in-flight refresh absorbs this request instead of stacking
+    /// another one, and repeat appearances after a settled `.loaded` outcome
+    /// are no-ops (no polling loop).
+    public func refreshRosterIfStaleForVisibleBot(on gatewayID: GatewayID) {
+        guard connectionStates[gatewayID] == .connected else { return }
+        scheduleRosterSyncIfStaleAfterRepair(for: gatewayID)
     }
 
     private func queuePostConnectRosterSync() {
@@ -1876,6 +1947,17 @@ public final class AppEnvironment {
             // A live connection clears the retry budget.
             reconnectAttempts[id] = 0
             cancelPendingRetry(for: id)
+            // FB2: the transport can self-heal (e.g. its own reconnect logic
+            // lands on `.online`) WITHOUT ever going through `connect(to:)`'s
+            // success branch, which is the only place that used to re-arm the
+            // roster. Mirror that repair path here on the genuine
+            // failed/idle/connecting → online transition (guarded so a
+            // steady-state `.online` tick, observed every watch interval,
+            // never re-triggers this or starts a polling loop).
+            if connectionStates[id] != .connected {
+                connectionStates[id] = .connected
+                scheduleRosterSyncIfStaleAfterRepair(for: id)
+            }
         case .connecting:
             break
         case .offline, .degraded, .authenticationRequired, .unsupported:
@@ -2181,6 +2263,25 @@ public final class AppEnvironment {
         gateways.first { $0.id == id }
     }
 
+    /// Live Ops v1: resolve the source-qualified `Route` that owns a live
+    /// operation's `sessionKey`, by matching it against the current fleet
+    /// roster's known session identities (latest session id, or the
+    /// canonical Bot Chat id/compression-tip). The Live Ops domain itself
+    /// carries no profile — this is the same "never guess a route" contract
+    /// as `continueDestination(for:)`: no match means Operation Detail's
+    /// Open Chat is honestly unavailable, never a fabricated destination.
+    public func route(forLiveOperationSessionKey sessionKey: String, gatewayID: GatewayID) -> Route? {
+        guard let snapshot = rosterSnapshot else { return nil }
+        for bot in snapshot.roster.allBots where bot.route.gatewayID == gatewayID {
+            if bot.latestSession?.id == sessionKey { return bot.route }
+            if let canonical = bot.canonicalSession,
+               canonical.id == sessionKey || canonical.resolvedID == sessionKey {
+                return bot.route
+            }
+        }
+        return nil
+    }
+
     // MARK: Registry passthroughs (U2 Gateway management reuses these)
 
     public func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
@@ -2482,6 +2583,15 @@ public final class AppEnvironment {
             recordFault(
                 category: "Gateway connection", gateway: gateway,
                 status: status, detail: nil)
+        }
+        // FB2 (TestFlight Build 90 #2): a manual "Test Connection" (the
+        // tester's "check status") that finds the gateway reachable again
+        // must re-arm the roster the same way an explicit connect repair
+        // does — otherwise the probe fixes only this connection chip while
+        // Bot Detail keeps showing the last-known failed/ghost presence
+        // until an unrelated due-check happens to land.
+        if state == .connected {
+            scheduleRosterSyncIfStaleAfterRepair(for: id)
         }
     }
 

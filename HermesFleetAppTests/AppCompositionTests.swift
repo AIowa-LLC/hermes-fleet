@@ -31,13 +31,21 @@ final class AppCompositionTests: XCTestCase {
         let source = try String(
             contentsOf: root.appendingPathComponent("Packages/FleetUI/Sources/FleetUI/FleetTabView.swift"),
             encoding: .utf8)
-        // `equals` is NOT a real SF Symbol (verified against CoreGlyphs
-        // 2026-09-19) — Image(systemName:) renders BLANK. The menu glyph is
-        // custom-drawn capsule bars; the retired name may not return.
-        XCTAssertFalse(source.contains("systemName: \"equals\""),
-                      "the menu glyph must stay custom-drawn — 'equals' renders blank")
-        XCTAssertTrue(source.contains("Capsule().fill(Color.primary)"),
-                      "the menu glyph must be the two custom capsule bars")
+        // iOS 26 supplies the toolbar's Liquid Glass container. Keep the menu
+        // as a plain SF Symbol so it does not render a second inner circle.
+        let menuStart = try XCTUnwrap(source.range(of: "Button(action: openDrawer)")).lowerBound
+        let menuEnd = try XCTUnwrap(source.range(of: ".accessibilityLabel(showsUnreadBadge", range: menuStart..<source.endIndex)).lowerBound
+        let menuImplementation = String(source[menuStart..<menuEnd])
+        XCTAssertTrue(menuImplementation.contains("Image(systemName: \"line.3.horizontal\")"),
+                      "the menu button must use the current horizontal-lines SF Symbol")
+        XCTAssertFalse(menuImplementation.contains("systemName: \"equals\""),
+                       "the retired invalid equals glyph must not return")
+        XCTAssertFalse(menuImplementation.contains("Capsule().fill(Color.primary)"),
+                       "the menu button must not draw its retired custom capsule bars")
+        XCTAssertFalse(menuImplementation.contains(".background(Circle"),
+                       "the menu button must not add a circular background inside the system toolbar container")
+        XCTAssertFalse(menuImplementation.contains(".ultraThinMaterial"),
+                       "the menu button must not add an inner material surface")
         // The search (Command Center) icon's neutral ink must be INSIDE the
         // label (on the Image); a Button-level style loses to the root tint.
         // Dogfood r4: search is DRAWER-ONLY. The root toolbar block must NOT

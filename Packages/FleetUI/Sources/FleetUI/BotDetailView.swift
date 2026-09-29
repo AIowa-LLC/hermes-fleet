@@ -68,6 +68,12 @@ public struct BotDetailView: View {
             // list. For a ghost the read fails and records its classified
             // error — the CACHED sessions remain readable below it.
             await environment.loadSessions(for: route)
+            // FB2: a connected gateway whose last roster observation is
+            // failed/stale (no connection transition, so the repair triggers
+            // never fired) must not leave this screen on the ghost outcome
+            // for up to the 300s backoff cap — request one authoritative
+            // refresh, a no-op when the outcome is already loaded.
+            environment.refreshRosterIfStaleForVisibleBot(on: route.gatewayID)
         }
         .background(theme.background.ignoresSafeArea())
         .accessibilityIdentifier("fleet.bot-detail")

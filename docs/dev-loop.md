@@ -154,11 +154,13 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 619 core, 550 networking,
-40 persistence, and 37 security tests. These include the five structured
-ownership-refusal tests and the frozen-clock launch-cache TTL boundary
-regression. Launch-cache fixtures use an injected clock so their seven-day
-expiry is deterministic rather than dependent on the date CI runs. Focused selection maps the newer Kanban,
+Package baselines are 652 core, 582 networking, 40 persistence, and 37
+security tests. These include the Live Ops runtime, cold-transport,
+cross-process reporting, structured ownership-refusal, and frozen-clock
+launch-cache TTL boundary regressions. Launch-cache fixtures use an injected
+clock so their seven-day expiry is deterministic rather than dependent on the
+date CI runs. Update the exact-count gate when adding or removing tests;
+partial runs must remain failures. Focused selection maps the newer Kanban,
 artifacts, image generation, cron, reasoning, slash-parity, cached-launch,
 unread-state, About, and compact-chrome surfaces to their registered suites.
 

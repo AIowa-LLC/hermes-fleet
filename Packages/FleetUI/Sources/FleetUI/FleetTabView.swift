@@ -17,31 +17,34 @@ struct FleetDrawerMenu: ToolbarContent {
     var body: some ToolbarContent {
         if let openDrawer {
             ToolbarItem(placement: .topBarLeading) {
-                // Dogfood r3: the ChatGPT two-line mark, CUSTOM-DRAWN —
-                // `equals` is not a real SF Symbol (CoreGlyphs check
-                // 2026-09-19) and rendered as a blank glyph inside the
-                // glass. Two capsule bars render identically on every OS.
-                // `.ultraThinMaterial` keeps XCUITest taps working (the
-                // .glassEffect() look computes hit point {-1,-1}).
+                // Feedback #3 (dogfood pass): iOS 26 already wraps toolbar
+                // items in the system Liquid Glass container, so the old
+                // custom `.ultraThinMaterial` circle rendered as a circle
+                // INSIDE that glass capsule — "button in button". A plain SF
+                // Symbol lets the system glass be the only container.
+                // `line.3.horizontal` is a real glyph (unlike `equals`,
+                // which is not a valid SF Symbol name).
                 Button(action: openDrawer) {
-                    VStack(spacing: 5) {
-        Capsule().fill(Color.primary).frame(width: 15, height: 2.5)
-        Capsule().fill(Color.primary).frame(width: 15, height: 2.5)
-                    }
-                    .frame(width: 34, height: 34)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
-                    // Dogfood r4: unread badge (ChatGPT parity) — a small
-                    // accent dot at the glass circle's top-right edge.
-                    if showsUnreadBadge {
-                        Circle()
-                            .fill(theme.highlight)
-                            .frame(width: 10, height: 10)
-                            .offset(x: 10, y: -10)
-                            .accessibilityLabel("Unread conversations")
-                            .accessibilityIdentifier("fleet.menu.unread-badge")
-                    }
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                        .overlay(alignment: .topTrailing) {
+                            // Dogfood r4: unread badge (ChatGPT parity) — a
+                            // small accent dot pinned to the glyph's
+                            // top-trailing corner.
+                            if showsUnreadBadge {
+                                Circle()
+                                    .fill(theme.highlight)
+                                    .frame(width: 10, height: 10)
+                                    .offset(x: 2, y: -2)
+                                    .accessibilityLabel("Unread conversations")
+                                    .accessibilityIdentifier("fleet.menu.unread-badge")
+                            }
+                        }
                 }
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
                 .accessibilityLabel(showsUnreadBadge ? "Menu, unread conversations" : "Menu")
                 .accessibilityIdentifier("fleet.drawer.open")
                 .keyboardShortcut("m", modifiers: .command)
@@ -99,6 +102,7 @@ public struct FleetTabView: View {
     @State private var autoNavHandled = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.layoutDirection) private var layoutDirection
     @State private var drawerPresented = false
     /// ADR-0008: live left-swipe offset while the drawer is presented.
     @State private var drawerDrag: CGFloat = 0
@@ -225,6 +229,34 @@ public struct FleetTabView: View {
                 .onChange(of: navigation.selection) { old, new in
                     visitedDestinations.formUnion([old, new])
                 }
+                // Feedback #3 (dogfood pass): root surfaces open the drawer
+                // from the leading edge. Only compact pushed screens get a
+                // fallback edge strip that pops one destination; regular
+                // width leaves interactive pop to the native navigation UI.
+                // Both strips are hidden from accessibility, which uses the
+                // toolbar button.
+                if !drawerPresented && isRootShowing {
+                    Color.clear
+                        .frame(width: 20)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .accessibilityHidden(true)
+                        .simultaneousGesture(edgeSwipeToOpenDrawerGesture)
+                        .zIndex(3)
+                } else if !drawerPresented && horizontalSizeClass != .regular {
+                    // Keep the compact shell's leading-edge gesture useful
+                    // on pushed screens when the native interactive pop is
+                    // unavailable (for example, inside the compact ZStack
+                    // navigation host). This strip only pops the active
+                    // stack after a decisive inward swipe.
+                    Color.clear
+                        .frame(width: 20)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .accessibilityHidden(true)
+                        .highPriorityGesture(backSwipeOnPushedScreenGesture)
+                        .zIndex(3)
+                }
                 if drawerPresented {
                     FleetTheme.drawerScrim
                         .ignoresSafeArea()
@@ -238,6 +270,8 @@ public struct FleetTabView: View {
                         environment: environment,
                         selection: navigation.selection,
                         compact: true,
+                        dismissGesture: AnyGesture(drawerSwipeGesture(
+                            width: min(340, geometry.size.width * 0.78))),
                         onSearch: { showingCommandCenter = true },
                         onNewChat: {
                             navigation.selection = .chats
@@ -285,8 +319,6 @@ public struct FleetTabView: View {
                     .frame(maxHeight: .infinity)
                     .background(theme.background)
                     .offset(x: drawerDrag)
-                    .simultaneousGesture(
-                        drawerSwipeGesture(width: min(340, geometry.size.width * 0.78)))
                     .transition(reduceMotion ? .identity : .move(edge: .leading))
                     .zIndex(2)
                 }
@@ -306,13 +338,61 @@ public struct FleetTabView: View {
     /// drawer follows a horizontal drag, springs back under threshold, and
     /// dismisses past 25% of its width (or a decisive flick). Reduce Motion
     /// skips the live follow — the threshold still dismisses.
-    private func drawerSwipeGesture(width: CGFloat) -> some Gesture {
+    /// True when the currently selected tab is showing its ROOT screen (an
+    /// empty push path) rather than a pushed destination. The edge-swipe
+    /// affordance only installs while this holds — a pushed screen keeps the
+    /// system back-swipe uncontested.
+    private var isRootShowing: Bool {
+        navigation.paths[navigation.selection]?.isEmpty ?? true
+    }
+
+    /// Feedback #3 (dogfood pass): leading-edge swipe-to-open. Starting the
+    /// drag within the thin edge strip already satisfies the "near the
+    /// leading edge" requirement; the gesture itself confirms a
+    /// horizontal-dominant, decisive drag AWAY from that edge before opening
+    /// the drawer, and cancels otherwise (no partial/live follow, unlike the
+    /// dismiss gesture — this is a discrete open, not a drag-to-reveal).
+    private var edgeSwipeToOpenDrawerGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onEnded { value in
+                let t = value.translation
+                guard abs(t.width) > 2 * abs(t.height) else { return }
+                // "Leading edge, opening inward" is a rightward drag in LTR
+                // and a leftward drag in RTL.
+                let sign: CGFloat = layoutDirection == .rightToLeft ? -1 : 1
+                guard sign * t.width > 60 else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    drawerPresented = true
+                }
+            }
+    }
+
+    private var backSwipeOnPushedScreenGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onEnded { value in
+                let t = value.translation
+                guard abs(t.width) > 2 * abs(t.height) else { return }
+                let sign: CGFloat = layoutDirection == .rightToLeft ? -1 : 1
+                guard sign * t.width > 60,
+                      var path = navigation.paths[navigation.selection],
+                      !path.isEmpty else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    path.removeLast()
+                    navigation.paths[navigation.selection] = path
+                }
+            }
+    }
+
+    // Install only on drawer chrome. List cells own horizontal drags so
+    // revealing Archive/Delete cannot also move or dismiss the drawer.
+    private func drawerSwipeGesture(width: CGFloat) -> some Gesture<DragGesture.Value> {
         DragGesture(minimumDistance: 16)
             .onChanged { value in
                 guard !reduceMotion else { return }
                 let t = value.translation
                 // Axis lock: horizontal-dominant drags only — a mostly
-                // vertical drag belongs to the drawer's ScrollView.
+                // vertical drag belongs to the drawer's list. Conversation rows
+                // reserve horizontal drags for their native swipe actions.
                 guard abs(t.width) > abs(t.height) else { return }
                 drawerDrag = min(0, t.width)
             }

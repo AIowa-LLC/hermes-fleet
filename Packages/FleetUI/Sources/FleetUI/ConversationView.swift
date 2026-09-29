@@ -1138,12 +1138,22 @@ enum ConversationHeaderChips {
     /// growth (a token, or a streaming Reasoning block, growing the SAME
     /// last row) so a spring animation never replays on every delta; true
     /// only for a brand-new row arriving or an explicit "Latest" jump.
-    private func scrollToLive(_ id: String, proxy: ScrollViewProxy, animate: Bool) {
+    private func transcriptBlockID(containing rowID: String, rows: [ConversationRow]) -> String {
+        TranscriptBlock.id(containing: rowID, in: ToolActivityGrouping.group(rows)) ?? "row:\(rowID)"
+    }
+
+    private func scrollToLive(
+        _ id: String,
+        rows: [ConversationRow],
+        proxy: ScrollViewProxy,
+        animate: Bool
+    ) {
+        let targetID = transcriptBlockID(containing: id, rows: rows)
         isProgrammaticFollow = true
         if animate && !reduceMotion {
-            withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+            withAnimation { proxy.scrollTo(targetID, anchor: .bottom) }
         } else {
-            proxy.scrollTo(id, anchor: .bottom)
+            proxy.scrollTo(targetID, anchor: .bottom)
         }
         Task { @MainActor in
             await Task.yield()
@@ -1163,32 +1173,47 @@ enum ConversationHeaderChips {
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
+                // FB5 (Build 90 feedback #5 — "too much room for tool
+                // calling"): fold consecutive COMPLETED tool calls (plus any
+                // absorbed completed reasoning) into one compact block
+                // before rendering. Pure/cheap over the already-bounded
+                // display window; an in-flight tool, a failure, an approval
+                // (never a transcript row at all), and any artifact/
+                // generation row are excluded by the grouping function
+                // itself and always render as their own live row below.
+                let blocks = ToolActivityGrouping.group(model.transcript)
                 LazyVStack(spacing: 12) {
-                    ForEach(model.transcript) { row in
-                        bubbleView(model: model, row: row)
-                        .id(row.id)
-                        // P0-B: the active find match gets a border ring
-                        // (decorative — the find bar carries the AX truth).
-                        .overlay {
-                            if findActive, let target = findTargetRowID, row.id == target {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .strokeBorder(theme.highlight.opacity(0.7), lineWidth: 1.5)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
+                    ForEach(blocks) { block in
+                        switch block {
+                        case .row(let row):
+                            bubbleView(model: model, row: row)
+                            .id(block.id)
+                            // P0-B: the active find match gets a border ring
+                            // (decorative — the find bar carries the AX truth).
+                            .overlay {
+                                if findActive, let target = findTargetRowID, row.id == target {
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .strokeBorder(theme.highlight.opacity(0.7), lineWidth: 1.5)
+                                        .allowsHitTesting(false)
+                                        .accessibilityHidden(true)
+                                }
                             }
-                        }
 
-                        // R10-T3: `@file:`/`@folder:` refs tap through into
-                        // the Projects browser. Rendered OUTSIDE the bubble
-                        // (the bubble combines its children for a11y — the
-                        // R9-T6 lesson: .combine hides descendant buttons).
-                        // D-2: rendered under USER rows only — the assistant
-                        // bubble's raw @file: text is what wedged iOS 26 AX
-                        // snapshots (see FleetSimulator D-2 fix note); the
-                        // user row's own refs (the ones the sender attached)
-                        // keep the tap-through affordance.
-                        if row.kind == .user {
-                            fileRefChips(row)
+                            // R10-T3: `@file:`/`@folder:` refs tap through into
+                            // the Projects browser. Rendered OUTSIDE the bubble
+                            // (the bubble combines its children for a11y — the
+                            // R9-T6 lesson: .combine hides descendant buttons).
+                            // D-2: rendered under USER rows only — the assistant
+                            // bubble's raw @file: text is what wedged iOS 26 AX
+                            // snapshots (see FleetSimulator D-2 fix note); the
+                            // user row's own refs (the ones the sender attached)
+                            // keep the tap-through affordance.
+                            if row.kind == .user {
+                                fileRefChips(row)
+                            }
+                        case .toolGroup(let group):
+                            ToolActivityGroupView(group: group)
+                                .id(block.id)
                         }
                     }
                     // Hermes-parity working indicator: animated dots + a
@@ -1266,8 +1291,9 @@ enum ConversationHeaderChips {
                                 Button {
                                     showingTimeline = false
                                     followingLatest = false
-                                    if reduceMotion { proxy.scrollTo(row.id, anchor: .top) }
-                                    else { withAnimation(.snappy) { proxy.scrollTo(row.id, anchor: .top) } }
+                                    let targetID = transcriptBlockID(containing: row.id, rows: model.transcript)
+                                    if reduceMotion { proxy.scrollTo(targetID, anchor: .top) }
+                                    else { withAnimation(.snappy) { proxy.scrollTo(targetID, anchor: .top) } }
                                 } label: {
                                     Text(row.text).font(.body).lineLimit(3)
                                         .foregroundStyle(theme.textPrimary).padding(.vertical, 4)
@@ -1288,7 +1314,7 @@ enum ConversationHeaderChips {
             .onChange(of: model.transcript.last?.id) {
                 guard followingLatest, shouldAutoFollow(model),
                       let last = model.transcript.last else { return }
-                scrollToLive(last.id, proxy: proxy, animate: true)
+                scrollToLive(last.id, rows: model.transcript, proxy: proxy, animate: true)
             }
             // B87 fix: the row-identity rescroll above only fires when a
             // NEW row appears. A streaming turn instead grows the SAME last
@@ -1310,7 +1336,7 @@ enum ConversationHeaderChips {
             }) { _, _ in
                 guard followingLatest, shouldAutoFollow(model),
                       let last = model.transcript.last else { return }
-                scrollToLive(last.id, proxy: proxy, animate: false)
+                scrollToLive(last.id, rows: model.transcript, proxy: proxy, animate: false)
             }
             // Dogfood top-space fix: the toolbar/menu "Latest" action bumps
             // `scrollPulse` (the toolbar cannot reach this proxy); scrolling
@@ -1318,14 +1344,15 @@ enum ConversationHeaderChips {
             // animating.
             .onChange(of: scrollPulse) { _, _ in
                 guard followingLatest, let last = model.transcript.last else { return }
-                scrollToLive(last.id, proxy: proxy, animate: true)
+                scrollToLive(last.id, rows: model.transcript, proxy: proxy, animate: true)
             }
             // P0-B: jumps to the active find match (the find bar sits above
             // this ScrollView and cannot reach the proxy).
             .onChange(of: findScrollPulse) { _, _ in
                 guard let target = findTargetRowID else { return }
-                if reduceMotion { proxy.scrollTo(target, anchor: .center) }
-                else { withAnimation(.snappy) { proxy.scrollTo(target, anchor: .center) } }
+                let blockID = transcriptBlockID(containing: target, rows: model.transcript)
+                if reduceMotion { proxy.scrollTo(blockID, anchor: .center) }
+                else { withAnimation(.snappy) { proxy.scrollTo(blockID, anchor: .center) } }
             }
             // P0-B: keep matches fresh while the transcript grows (or the
             // bounded display window trims) under a live query.
@@ -2248,6 +2275,90 @@ private struct ReasoningDisclosure: View {
                 expansionState.applyDefault(preference)
             }
         }
+    }
+}
+
+/// FB5 (Build 90 feedback #5 — "Too much room for tool calling." / "It
+/// should look more a chat than technical reporting."): one compact,
+/// chat-like row for a whole run of COMPLETED tool activity
+/// (`ToolActivityGrouping`), rendered instead of one full-height card per
+/// tool call. Tap discloses exactly the SAME per-tool content the
+/// uncollapsed transcript already shows (`FleetToolActivityView` /
+/// `ReasoningDisclosure`, reused unchanged) — nothing newly hidden or
+/// newly exposed, only the vertical cost collapsed while idle.
+private struct ToolActivityGroupView: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let group: ToolActivityGroup
+    @State private var expanded = false
+
+    private var symbolName: String {
+        group.isAllSucceeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private var tint: Color {
+        group.isAllSucceeded ? theme.textSecondary : FleetTheme.statusDestructive
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            Button {
+                if reduceMotion {
+                    expanded.toggle()
+                } else {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingXs) {
+                    Image(systemName: symbolName)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(tint)
+                    // Dynamic Type: wraps freely, never truncates the count.
+                    Text(group.summaryLine)
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: FleetTheme.spacingXs)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            // A single combined VoiceOver element: the group reads as ONE
+            // stop ("Used 4 tools: terminal, memory, and 2 more."), the hint
+            // carries the disclosure affordance, and the value announces
+            // expanded/collapsed — never the per-tool chatter underneath
+            // until the reader asks for it.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(group.accessibilitySummary)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Double-tap to \(expanded ? "hide" : "show") details")
+            .accessibilityIdentifier("conversation.toolGroup.\(group.id)")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+                    ForEach(group.rows, id: \.id) { row in
+                        if row.kind == .tool {
+                            FleetToolActivityView(title: row.text, detail: row.detail)
+                        } else {
+                            // An absorbed completed-reasoning aside — same
+                            // presentation as an inline assistant Reasoning
+                            // block.
+                            ReasoningDisclosure(text: row.detail ?? "")
+                        }
+                    }
+                }
+                .accessibilityIdentifier("conversation.toolGroup.\(group.id).detail")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
     }
 }
 

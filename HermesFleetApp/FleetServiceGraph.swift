@@ -216,6 +216,7 @@ enum FleetServiceGraph {
             // LAContext; DEBUG device dogfood too, since makeDefaultEnvironment
             // only scripts the SIMULATOR).
             biometrics: makeApprovalBiometrics(),
+            liveOpsFactory: makeLiveOpsFactory(credentialStore: credentialStore, pinStore: pinStore),
             seedRegistrations: [],
             // R10-T4: the REAL on-device voice engine (Speech framework STT +
             // AVSpeechSynthesizer TTS) — a documented client-side deviation:
@@ -423,6 +424,38 @@ enum FleetServiceGraph {
                 configuration: .standard
             )
             return GatewayManagementClient(gatewayID: gateway.id, transport: transport)
+        }
+    }
+
+    /// Live Ops v1 — real per-gateway `GatewayLiveOpsClient` +
+    /// `GatewayApprovalClient` pair over ONE transport (mirrors the
+    /// management seam factory's construction exactly). `nil` endpoint ⇒
+    /// `nil` seam — the store then reports that gateway `.disconnected`
+    /// without ever attempting a request (fail closed, same posture as the
+    /// other per-gateway factories in this file).
+    nonisolated private static func makeLiveOpsFactory(
+        credentialStore: any CredentialStoring,
+        pinStore: any SynchronousPinStoring
+    ) -> FleetLiveOpsFactory {
+        { gateway in
+            guard let base = gateway.endpoint else { return nil }
+            let transport = GatewayWebSocketTransport(
+                baseURL: base,
+                authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
+                sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
+                configuration: .standard
+            )
+            let httpSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
+            return LiveOpsGatewaySeam(
+                ops: DashboardLiveOpsClient(
+                    gatewayID: gateway.id, baseURL: base,
+                    legacy: GatewayLiveOpsClient(gatewayID: gateway.id, transport: transport),
+                    httpCredential: makeDashboardHTTPCredential(
+                        gateway: gateway, credentialStore: credentialStore, pinStore: pinStore,
+                        urlSession: httpSession),
+                    urlSession: httpSession),
+                approvals: GatewayApprovalClient(gatewayID: gateway.id, transport: transport)
+            )
         }
     }
 

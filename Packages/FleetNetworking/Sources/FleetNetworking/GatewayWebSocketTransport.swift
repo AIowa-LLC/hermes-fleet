@@ -80,6 +80,8 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     // MARK: lifecycle state (actor-isolated)
     private var connectionState: ConnectionState = .idle
+    private var connectAttemptID = 0
+    private var connectWaiters: [Int: [CheckedContinuation<Void, any Error>]] = [:]
     private var session: (any WebSocketSession)?
     private var receiveLoopTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
@@ -229,8 +231,8 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// ALREADY-OPEN shared transport. That must be "already connected", never
     /// an error (dogfood defect: "invalid gateway connection state: connect()
     /// from open" rendered in-conversation on every send after re-entry).
-    /// Only `.connecting` still rejects — a CONCURRENT connect is a genuine
-    /// programming bug, not a re-entry.
+    /// Concurrent callers share the same handshake. Live Ops polling and
+    /// approval controls can be the first users of one shared transport.
     public func connect() async throws {
         switch connectionState {
         case .open:
@@ -239,8 +241,24 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case .idle, .closed, .error:
             break
         case .connecting:
-            throw TransportError.invalidState("connect() from \(connectionState)")
+            return try await withCheckedThrowingContinuation { continuation in
+                connectWaiters[connectAttemptID, default: []].append(continuation)
+            }
         }
+        connectAttemptID += 1
+        let attemptID = connectAttemptID
+        do {
+            try await performConnect()
+            let waiters = connectWaiters.removeValue(forKey: attemptID) ?? []
+            for waiter in waiters { waiter.resume() }
+        } catch {
+            let waiters = connectWaiters.removeValue(forKey: attemptID) ?? []
+            for waiter in waiters { waiter.resume(throwing: error) }
+            throw error
+        }
+    }
+
+    private func performConnect() async throws {
         connectionState = .connecting
         stateBox.set(.connecting)
         healthContinuation.yield(.connectStarted)

@@ -52,6 +52,14 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
     /// artifact slot / tool chip already tells the outcome) — so the
     /// animation can never overlap a delivered image.
     public var generationActivity: ImageGenerationActivity?
+    /// FB5 (compact tool activity, Build 90 feedback #5): whether a `.tool`
+    /// row is still running — the VM's own ground truth, set true on
+    /// `tool.start`/`tool.generating`/`tool.progress` and false on
+    /// `tool.complete` (`updateLastTool`). `ToolActivityGrouping` never
+    /// folds an in-flight row into a compact group — a working session must
+    /// never read as idle. Always false for a row rebuilt from persisted
+    /// history (a reload can never observe mid-flight work).
+    public var toolIsInFlight: Bool = false
 
     public init(
         id: String,
@@ -61,7 +69,8 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         timestamp: Double? = nil,
         isStreaming: Bool = false,
         isFailed: Bool = false,
-        rowID: String? = nil
+        rowID: String? = nil,
+        toolIsInFlight: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -71,6 +80,7 @@ public struct ConversationRow: Identifiable, Equatable, Sendable {
         self.isStreaming = isStreaming
         self.isFailed = isFailed
         self.rowID = rowID
+        self.toolIsInFlight = toolIsInFlight
     }
 
     // MARK: VoiceOver semantics (P2-7)
@@ -445,6 +455,10 @@ public final class ConversationViewModel {
     /// Authoritative transcript history — unbounded, persisted to the cache
     /// (P2-8). The public `transcript` is a capped display window over this.
     private var allRows: [ConversationRow] = []
+    /// Changes whenever a new local or streamed transcript row lands. An
+    /// empty history snapshot that was already in flight must not erase rows
+    /// submitted/streamed after that snapshot began.
+    private var transcriptMutationRevision: UInt64 = 0
     /// Maximum rows kept in the in-memory display window (P2-8 retention
     /// policy). Older rows remain in the persisted authoritative history.
     private let maxDisplayRows: Int
@@ -2196,6 +2210,7 @@ public final class ConversationViewModel {
     /// replaces the transcript. `nil` keeps the pre-existing unconditional
     /// behavior for unfenced callers.
     private func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async {
+        let transcriptRevisionAtRequest = transcriptMutationRevision
         // H1: a failed fetch must NEVER wipe the transcript. Cached/projection
         // rows stay rendered, an honest non-secret error surfaces, and the
         // placeholder stays armed only if nothing ever landed (still loading,
@@ -2204,6 +2219,16 @@ public final class ConversationViewModel {
             let history = try await session.history.fetchSessionHistory(sessionID: sessionID)
             guard isCurrent(token) else { return }
             if history.messages.isEmpty {
+                // The empty result is authoritative only for the point in
+                // time at which the request began. A prompt/event may have
+                // populated the transcript while this fetch was suspended;
+                // preserve those newer rows instead of resetting them.
+                guard transcriptMutationRevision == transcriptRevisionAtRequest else {
+                    hydratedFromCache = false
+                    isHistoryHydrationInProgress = false
+                    historyLoadError = nil
+                    return
+                }
                 // Authoritative empty (session.history always carries the
                 // persisted rows) — the session genuinely has no messages.
                 allRows = []
@@ -2330,9 +2355,10 @@ public final class ConversationViewModel {
                 if let context, !context.isEmpty {
                     allRows[idx].detail = context
                 }
+                allRows[idx].toolIsInFlight = true
                 rowIndex = idx
             } else {
-                appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context))
+                appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: context, toolIsInFlight: true))
                 rowIndex = allRows.count - 1
             }
             // Card E: a verified generation start (by tool name) begins the
@@ -2560,9 +2586,15 @@ public final class ConversationViewModel {
             } else {
                 allRows[idx].detail = generating ? "Generating…" : allRows[idx].detail
             }
+            // FB5: ground truth for the compact-group fold — set from THIS
+            // frame's own `generating` flag, never inferred from the detail
+            // string (a `tool.complete` with no summary leaves the prior
+            // "Generating…" text in place; the in-flight flag must still
+            // clear so the row can fold once it truly completes).
+            allRows[idx].toolIsInFlight = generating
             return idx
         } else {
-            appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: generating ? "Generating…" : nil))
+            appendRow(.init(id: nextRowID(), kind: .tool, text: name, detail: generating ? "Generating…" : nil, toolIsInFlight: generating))
             return allRows.count - 1
         }
     }
@@ -2668,6 +2700,7 @@ public final class ConversationViewModel {
 
     private func appendRow(_ row: ConversationRow) {
         allRows.append(row)
+        transcriptMutationRevision &+= 1
     }
 
     private func nextRowID() -> String {

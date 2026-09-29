@@ -101,6 +101,45 @@ final class BotsPresenceSyncTests: XCTestCase {
         }
     }
 
+    /// FB2: a connection whose `status` can flip to `.online` on its own
+    /// (simulating the transport's own reconnect landing) WITHOUT another
+    /// `connect()` call — the exact shape of a self-healing socket the
+    /// explicit `connect(to:)`/`scheduleAutoReconnect()` paths never see.
+    /// `lastDisconnectReason()` stays nil (the protocol default: no retryable
+    /// classification), so the auto-reconnect ladder never fires either —
+    /// isolating the connection-watch `.online` repair branch under test.
+    private final class SelfHealingConnection: GatewayConnectivityProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        private let lock = NSLock()
+        private var _status: GatewayStatus
+        private(set) var connectCount = 0
+
+        init(gatewayID: GatewayID, initialStatus: GatewayStatus) {
+            self.gatewayID = gatewayID
+            self._status = initialStatus
+        }
+
+        var status: GatewayStatus {
+            lock.lock(); defer { lock.unlock() }
+            return _status
+        }
+
+        func setStatus(_ status: GatewayStatus) {
+            lock.lock()
+            _status = status
+            lock.unlock()
+        }
+
+        func connect() async throws {
+            connectCount += 1
+        }
+        func disconnect() async {}
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
+        }
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+    }
+
     private struct EmptySessionList: SessionListProviding {
         func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { [] }
     }
@@ -161,6 +200,34 @@ final class BotsPresenceSyncTests: XCTestCase {
             seedRegistrations: [registration(workstation), registration(arch)])
         await environment.load()
         return (environment, connections)
+    }
+
+    /// FB2: builds an environment around explicit `SelfHealingConnection`
+    /// instances (rather than the scripted `SyncConnection`) so a test can
+    /// flip a gateway's live `status` without ever calling `connect()` again.
+    private func makeEnvironment(
+        roster: SyncRoster,
+        connections: [GatewayID: SelfHealingConnection],
+        recoveryTiming: ConnectionRecoveryTiming = ConnectionRecoveryTiming(watchInterval: 0.1)
+    ) async -> AppEnvironment {
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in SyncConnection(gatewayID: gateway.id) })
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: EmptySessionList(),
+            connectionFactory: { gateway, _ in
+                let resolved: any GatewayConnectivityProviding = connections[gateway.id] ?? SyncConnection(gatewayID: gateway.id)
+                return resolved
+            },
+            health: EmptyHealth(),
+            seedRegistrations: [self.registration(self.workstation), self.registration(self.arch)],
+            recoveryTiming: recoveryTiming)
+        await environment.load()
+        return environment
     }
 
     private func waitUntil(
@@ -270,7 +337,7 @@ final class BotsPresenceSyncTests: XCTestCase {
         let (environment, _) = await makeEnvironment(roster: roster)
         roster.closeGate()
         let refresh = Task { await environment.refreshRoster() }
-        let refreshStarted = await waitUntil { environment.isRefreshing }
+        let refreshStarted = await waitUntil { environment.isRefreshing && roster.refreshCount == 1 }
         XCTAssertTrue(refreshStarted)
         roster.set(snapshot(
             workstationOutcome: .loaded(profileCount: 1),
@@ -281,14 +348,245 @@ final class BotsPresenceSyncTests: XCTestCase {
         await refresh.value
         // The first gated refresh returns the updated snapshot too, so reachable
         // alone can become true before the queued trailing task has started.
-        let trailingRefreshRecovered = await waitUntil {
+        let trailingRefreshSettled = await waitUntil {
             roster.refreshCount == 2 && !environment.isRefreshing
                 && environment.botPresence(for: bot.route) == .reachable
         }
-        XCTAssertTrue(trailingRefreshRecovered)
+        XCTAssertTrue(trailingRefreshSettled, "the in-flight refresh must be followed by exactly one settled observation")
+        XCTAssertEqual(environment.botPresence(for: bot.route), .reachable)
         XCTAssertEqual(roster.refreshCount, 2)
         try? await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(roster.refreshCount, 2)
+    }
+
+    // MARK: FB2 — TestFlight Build 90 #2 ("Bot shows offline but is online")
+    //
+    // Root cause: `connect(to:)`'s own success branch already re-armed the
+    // roster (the tests above). Two OTHER paths that can observe a gateway
+    // becoming reachable again did not: (1) the connection-watch loop noticing
+    // the transport's own `.online` self-heal, and (2) the manual §13 "Test
+    // Connection" probe (Gateway management's "check status", per the
+    // tester). Both used to correct only `connectionStates` and leave
+    // `rosterSnapshot` — and therefore Bot Detail's presence — on the stale
+    // failed/ghost outcome until an unrelated due-check happened to land.
+
+    /// The transport repairs itself (its own `status` flips to `.online`)
+    /// with NO further `connect()` call. The connection watch must notice on
+    /// its next tick and re-arm the roster exactly like an explicit repair —
+    /// presence recovers, and `connectCount` proves no reconnect was needed.
+    func testSelfHealingConnectionAutomaticallyRefreshesRosterPresence() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "down"),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let workstationConnection = SelfHealingConnection(gatewayID: workstation, initialStatus: .offline)
+        let archConnection = SelfHealingConnection(gatewayID: arch, initialStatus: .online)
+        let environment = await makeEnvironment(
+            roster: roster,
+            connections: [workstation: workstationConnection, arch: archConnection])
+        await environment.refreshRoster()
+
+        // Establish the failed connection (mirrors the tester's dropped
+        // gateway) — the watch loop starts even though connect() fails.
+        await environment.connect(to: workstation)
+        XCTAssertEqual(environment.connectionStates[workstation], .failed(.offline))
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
+        let connectCountAtFailure = workstationConnection.connectCount
+
+        // The gateway becomes reachable again purely at the transport level.
+        roster.set(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        workstationConnection.setStatus(.online)
+
+        let recovered = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(recovered)
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+        // No second connect() was needed — this is the watch's own `.online`
+        // repair branch, not the auto-reconnect ladder.
+        XCTAssertEqual(workstationConnection.connectCount, connectCountAtFailure)
+    }
+
+    /// Once the watch loop has already caught the repair, further ticks with
+    /// the connection still `.online` and the roster already `.loaded` must
+    /// NOT keep re-triggering roster refreshes (no polling storm).
+    func testSelfHealingConnectionDoesNotRefreshStormOnceSettled() async {
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "down"),
+            archOutcome: .loaded(profileCount: 0)))
+        let workstationConnection = SelfHealingConnection(gatewayID: workstation, initialStatus: .offline)
+        let archConnection = SelfHealingConnection(gatewayID: arch, initialStatus: .online)
+        let environment = await makeEnvironment(
+            roster: roster,
+            connections: [workstation: workstationConnection, arch: archConnection])
+
+        await environment.connect(to: workstation)
+        roster.set(snapshot(
+            workstationOutcome: .loaded(profileCount: 0),
+            archOutcome: .loaded(profileCount: 0)))
+        workstationConnection.setStatus(.online)
+        let settled = await waitUntil { environment.connectionStates[self.workstation] == .connected }
+        XCTAssertTrue(settled)
+        _ = await waitUntil { roster.refreshCount >= 2 }
+        let refreshesAfterRepair = roster.refreshCount
+
+        // Several more watch ticks with nothing changed.
+        try? await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(roster.refreshCount, refreshesAfterRepair)
+    }
+
+    /// The manual §13 Test Connection probe ("check status" in the gateway
+    /// menu) finding the gateway reachable again must re-arm the roster the
+    /// same way, so Bot Detail is not left waiting on an unrelated due-check.
+    func testManualTestConnectionAutomaticallyRefreshesStalePresence() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "down"),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let credentials = InMemoryCredentialStore()
+        // The registry's OWN connection factory answers online — this is the
+        // probe's transport, independent of AppEnvironment's connections.
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in SyncConnection(gatewayID: gateway.id) })
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: EmptySessionList(),
+            connectionFactory: { gateway, _ in SyncConnection(gatewayID: gateway.id, error: .unreachable) },
+            health: EmptyHealth(),
+            seedRegistrations: [registration(workstation), registration(arch)])
+        await environment.load()
+        await environment.refreshRoster()
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
+
+        roster.set(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        try? await environment.testConnection(to: workstation)
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+
+        let recovered = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(recovered)
+    }
+
+    /// Negative: a Test Connection probe that STILL classifies the gateway as
+    /// failed must not fabricate presence or force an unneeded roster
+    /// refresh — the failed truth (and any other gateway's independent
+    /// failure) is preserved.
+    func testManualTestConnectionStillFailedDoesNotRefreshOrFabricatePresence() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let other = FleetBot(route: route(arch, "default"), displayName: "Default")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "down"),
+            archOutcome: .failed(status: .offline, detail: "also down"), bots: [bot, other]))
+        let credentials = InMemoryCredentialStore()
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in SyncConnection(gatewayID: gateway.id, error: .unreachable) })
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: roster,
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: EmptySessionList(),
+            connectionFactory: { gateway, _ in SyncConnection(gatewayID: gateway.id, error: .unreachable) },
+            health: EmptyHealth(),
+            seedRegistrations: [registration(workstation), registration(arch)])
+        await environment.load()
+        await environment.refreshRoster()
+        let before = roster.refreshCount
+
+        try? await environment.testConnection(to: workstation)
+        XCTAssertEqual(environment.connectionStates[workstation], .failed(.offline))
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(roster.refreshCount, before)
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
+        XCTAssertEqual(environment.botPresence(for: other.route), .unreachable)
+    }
+
+    // MARK: FB2 (gap) — Bot Detail appearance while CONNECTED the whole time
+    //
+    // The two triggers above only fire on a `.connected`/`.online`
+    // TRANSITION or a manual Test Connection. A gateway can stay
+    // `.connected` throughout while one later roster refresh times out
+    // (`.failed`) and the summary backoff climbs to 120-300s — no transition
+    // and no manual probe ever happens, so Bot Detail was left on the ghost
+    // outcome for up to 5 minutes. `refreshRosterIfStaleForVisibleBot(on:)`
+    // closes that gap from Bot Detail's own `.task`.
+
+    /// Connected + failed outcome (backoff pending) → the appearance trigger
+    /// forces one authoritative refresh and presence recovers.
+    func testAppearanceTriggerRefreshesStaleOutcomeWhileStillConnected() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let (environment, _) = await makeEnvironment(roster: roster)
+
+        await environment.connect(to: workstation)
+        let initiallyReachable = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(initiallyReachable)
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+
+        // One later background observation times out while the connection
+        // itself stays up — no transition, so neither existing trigger fires.
+        roster.set(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "timed out"),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        await environment.refreshRoster()
+        XCTAssertEqual(environment.connectionStates[workstation], .connected)
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
+        let refreshesBeforeAppearance = roster.refreshCount
+
+        // The gateway is reachable again; Bot Detail appears.
+        roster.set(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        environment.refreshRosterIfStaleForVisibleBot(on: workstation)
+
+        let recovered = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(recovered)
+        XCTAssertGreaterThan(roster.refreshCount, refreshesBeforeAppearance)
+    }
+
+    /// Already `.loaded` → the appearance trigger is a no-op (no redundant
+    /// refresh on every Bot Detail visit).
+    func testAppearanceTriggerDoesNothingWhenOutcomeAlreadyLoaded() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .loaded(profileCount: 1),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let (environment, _) = await makeEnvironment(roster: roster)
+
+        await environment.connect(to: workstation)
+        let reachable = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
+        XCTAssertTrue(reachable)
+        let refreshesBeforeAppearance = roster.refreshCount
+
+        environment.refreshRosterIfStaleForVisibleBot(on: workstation)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(roster.refreshCount, refreshesBeforeAppearance)
+    }
+
+    /// A DISCONNECTED gateway never gets a refresh forced on it by merely
+    /// appearing in Bot Detail — it stays honestly offline instead of the
+    /// trigger fabricating an unearned refresh cycle.
+    func testAppearanceTriggerDoesNothingForDisconnectedGateway() async {
+        let bot = FleetBot(route: route(workstation, "researcher"), displayName: "Researcher")
+        let roster = SyncRoster(snapshot(
+            workstationOutcome: .failed(status: .offline, detail: "down"),
+            archOutcome: .loaded(profileCount: 0), bots: [bot]))
+        let (environment, _) = await makeEnvironment(
+            roster: roster, connectionErrors: [workstation: .unreachable])
+        await environment.refreshRoster()
+        XCTAssertNotEqual(environment.connectionStates[workstation], .connected)
+        let refreshesBeforeAppearance = roster.refreshCount
+
+        environment.refreshRosterIfStaleForVisibleBot(on: workstation)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(roster.refreshCount, refreshesBeforeAppearance)
+        XCTAssertEqual(environment.botPresence(for: bot.route), .unreachable)
     }
 
     func testBotsEntryAndConnectUseTheNarrowSynchronizationSeams() throws {
