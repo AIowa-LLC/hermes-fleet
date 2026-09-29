@@ -112,4 +112,8 @@ require_in "$CI_WORKFLOW" "        run: bash scripts/ci_gate_policy_check.sh" "C
 require_in "$CI_WORKFLOW" "        run: bash scripts/ci_gate_policy_contract_test.sh" "CI must execute gate contract tests"
 require_in "$CI_WORKFLOW" "        run: bash scripts/c1_ui_preflight_test.sh" "CI must test the changed-area selector"
 
+# Every rerun preserves prior diagnostic artifacts with distinct attempt and
+# matrix identities; immutable-name collisions must not derail a job rerun.
+python3 scripts/ci_artifact_contract_test.py || exit 1
+
 echo "PASS: Dev Loop v3 CI Gate is fail-closed, requires focused plus critical merge UI, and keeps the full matrix in a separate deep lane."

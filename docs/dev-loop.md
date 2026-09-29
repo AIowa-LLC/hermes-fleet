@@ -90,12 +90,19 @@ Failed case names are printed before the bounded summary so later passing
 suites cannot hide them. Test selection, simulator signing, macro trust, and
 Xcode exit-code pass/fail behavior are unchanged.
 
+Diagnostic package and UI artifact names also include the workflow run attempt
+and the shard where applicable. Rerunning a failed job preserves its previous
+evidence and uploads a distinct artifact; it cannot collide with an immutable
+artifact from an earlier attempt. The CI policy guard checks producer, attempt,
+and shard uniqueness against the actual CI/deep workflow templates.
+
 ## Local tests of CI plumbing
 
 These tests do not start a simulator and are not product acceptance evidence:
 
 ```sh
 bash scripts/ci_gate_policy_check.sh
+python3 scripts/ci_artifact_contract_test.py
 bash scripts/ci_gate_policy_contract_test.sh
 bash scripts/c1_ui_preflight_test.sh
 python3 scripts/c1_ui_runner_contract_test.py

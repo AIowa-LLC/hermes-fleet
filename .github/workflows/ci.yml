@@ -64,7 +64,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: package-test-diagnostics
+          name: package-test-diagnostics-attempt-${{ github.run_attempt }}
           path: /tmp/c1_Fleet*.log.*
           retention-days: 14
           if-no-files-found: ignore
@@ -109,7 +109,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcresults-critical-smoke
+          name: xcresults-critical-smoke-attempt-${{ github.run_attempt }}
           path: |
             /tmp/hermes-c1-results*/
           retention-days: 7
@@ -140,7 +140,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcresults-ui-preflight-${{ matrix.shard }}
+          name: xcresults-ui-preflight-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: |
             /tmp/hermes-c1-results*/
           retention-days: 7
