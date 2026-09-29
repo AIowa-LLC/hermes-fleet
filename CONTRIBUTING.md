@@ -6,7 +6,7 @@ Hermes Fleet is a native iPhone control plane for user-owned Hermes Agent deploy
 
 You will need:
 
-- macOS with Xcode 26.x
+- macOS with Xcode 26.x or 27.x
 - Swift 6
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 - an iOS 26 simulator or compatible device

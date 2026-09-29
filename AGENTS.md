@@ -37,6 +37,15 @@ HermesFleetApp depends on all modules.
 6. **Treat visual assets as implementation assets, not permanent brand specifications.** Visual direction can change independently of architecture and protocol behavior.
 7. **Do not weaken validation to make a change pass.** Classify environmental failures separately from product failures.
 
+## Parallel development
+
+Start each agent lane in an isolated worktree from freshly fetched `origin/main`.
+Keep the primary checkout on synchronized `main`. Follow the shared-file
+ownership contract in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#parallel-agent-lanes):
+one CI/release integrator coordinates package counts, UI registration, project
+generation, release metadata, and shared CI topology. Do not use historical
+dogfood/recovery branches as a default development base.
+
 ## Standard validation
 
 Run the smallest relevant tests while iterating, then the broader gate appropriate to the change:

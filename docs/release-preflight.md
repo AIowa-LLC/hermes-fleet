@@ -5,12 +5,12 @@ construction: a run must start from a clean checkout whose `HEAD` equals the
 explicit full SHA supplied to the script, and every report/archive is written
 under a SHA-specific disposable `build/` directory.
 
-This document describes procedure, not RC evidence. The repository snapshot
-audited on 2026-09-18 is `d0f607b` with source version `0.2.0` and build `32`;
-those values are not a release authorization and must be replaced by the
-synchronized candidate values from Issue #50. The archive, physical-device,
-live-gateway, App Store Connect validation, and upload stages were not run by
-the repository-preparation pass.
+This is procedure, not RC evidence. `RELEASES.md` records the Build 86
+submission and the owner's reported public Build 90 availability, including
+historical source-to-archive limitations. Current source has advanced through
+PR #60; it does not change either distributed binary. Confirm an unused build
+number with the release owner before changing `project.yml`, then regenerate
+and release the exact reviewed source. No new upload is authorized here.
 
 ## Archive and distribution stages
 
@@ -21,9 +21,9 @@ separate:
 2. Inspect archive provenance and application content. Archive signing, when
    present, is informational at this stage; an Apple-Development or unsigned
    archive is not rejected merely for that reason.
-3. Run `xcodebuild -exportArchive`. With the Xcode 26 toolchain, the export
-   options use `method=app-store-connect`; distribution signing and App Store
-   provisioning are selected during this export step.
+3. Run `xcodebuild -exportArchive`. The release preflight accepts Xcode 26.x
+   and 27.x; its export options use `method=app-store-connect`. Distribution
+   signing and App Store provisioning are selected during this export step.
 4. Inspect the IPA that export actually produced.
 5. Optionally run Apple's credentialed validation. Upload and processing are
    never performed by this script.
@@ -32,10 +32,12 @@ The default path performs steps 1–4 and reports Apple validation as not run:
 
 ```bash
 SHA="$(git rev-parse HEAD)"
+HF_APPROVED_VERSION="${OWNER_APPROVED_VERSION:?Confirm the release version first}"
+HF_APPROVED_BUILD="${OWNER_APPROVED_BUILD:?Confirm the release build number first}"
 bash scripts/release_preflight.sh \
   --sha "$SHA" \
-  --expected-version 0.2.0 \
-  --expected-build 32
+  --expected-version "$HF_APPROVED_VERSION" \
+  --expected-build "$HF_APPROVED_BUILD"
 ```
 
 Archive inspection verifies the bundle identifier, marketing version, build
@@ -60,11 +62,40 @@ checkout is the intended release source. The release record must include:
 - final archive/export/validation results, with unavailable credential-gated
   steps marked `NOT RUN` or `BLOCKED` rather than inferred as pass.
 
-The candidate must be a clean checkout of the approved integration source.
+The candidate must be a clean checkout of the approved, green `main` source.
 Run `git fetch origin`, inspect the current `origin/main`, and do not archive
 from a dirty worktree or an unreviewed development branch. Run
 `bash scripts/xcodegen_drift_gate.sh` before the archive; it regenerates from
 `project.yml` and fails if the committed Xcode project drifts.
+
+Every archive entry point runs `scripts/release_lineage_guard.sh` before
+project generation or Xcode archive work. It reads the approved integration
+SHA from committed `docs/release/integration-baseline.sha`, requires that
+commit to be present and an ancestor of the exact candidate HEAD, and rejects
+tracked or untracked source changes. The initial pin is the accepted PR #60
+integration at `788907a5ed591ad8b59319fddddf0d6d58dd57d4`. Updating it requires a
+reviewed protected-main change. Use a full-history checkout; missing objects
+in a shallow clone fail closed. This ancestry floor does not replace current
+candidate CI or release acceptance evidence.
+
+The compatibility `archive_and_export.sh` helper requires an explicit SHA and
+`main` or `release/*` branch. It uses the same clean-tree/ancestry guard and
+has no dirty override or machine-specific checkout requirement. Its build
+argument must be an owner-approved unused number. Prefer the full preflight
+for generation, privacy, signing inspection, and Apple validation.
+
+## Toolchain evidence
+
+On 2026-09-29 the selected local host reports Xcode 27.0 (27A266a).
+`release_preflight.sh` already accepts majors 26 and 27; the older Xcode-26-only
+prose was stale. The export plist uses `app-store-connect`. No policy expansion
+is needed for this host. Acceptance of the toolchain version is not proof of a
+signed RC: record clean generation, Release build/archive, exported artifact
+inspection, Apple validation, and ASC processing on the exact candidate and
+selected toolchain before declaring release readiness. Any future major-version
+policy change needs those results and contract coverage in a reviewed PR.
+Ordinary feature-development readiness remains separate from these release
+credentials and artifact checks.
 
 ## Machines without distribution export credentials
 
@@ -90,17 +121,20 @@ validation with an App Store Connect API key:
 export ASC_API_KEY_ID="..."
 export ASC_API_ISSUER_ID="..."
 export ASC_API_KEY_PATH="/secure/path/AuthKey_KEYID.p8"
+HF_APPROVED_VERSION="${OWNER_APPROVED_VERSION:?Confirm the release version first}"
+HF_APPROVED_BUILD="${OWNER_APPROVED_BUILD:?Confirm the release build number first}"
 bash scripts/release_preflight.sh \
   --sha "$SHA" \
-  --expected-version 0.2.0 \
-  --expected-build 32 \
+  --expected-version "$HF_APPROVED_VERSION" \
+  --expected-build "$HF_APPROVED_BUILD" \
   --validate \
   --allow-provisioning-updates
 ```
 
 `ASC_API_KEY_PATH` is a real input: it is passed to `xcodebuild` through its
-supported `-authenticationKeyPath`/ID/issuer options and to Xcode 26's
-`xcrun altool --validate-app` through `--p8-file-path`. The private key must be
+supported `-authenticationKeyPath`/ID/issuer options and to the selected Xcode
+26.x or 27.x toolchain's `xcrun altool --validate-app` through
+`--p8-file-path`. The private key must be
 outside the repository, have owner-only permissions, and never appear in
 shell history, logs, CI output, or a committed file. The script never prints
 key material and never uploads. Organizer or an equivalent credentialed
@@ -114,13 +148,14 @@ to approved documentation in TestFlight. See Apple's
 
 ## Build-number retry policy
 
-`CURRENT_PROJECT_VERSION` in `project.yml` is the source of truth. For every
-new TestFlight upload or retry after a build has been uploaded/processed,
-increment it, regenerate with `xcodegen generate`, commit the generated
-project, and release a new exact Git SHA. Never overwrite a released build
-number or silently auto-increment it during archive. A retry that only changes
-credentials or validation flags may reuse a not-yet-uploaded archive; once
-Apple has accepted the build into processing, use a new number.
+`CURRENT_PROJECT_VERSION` in `project.yml` is the source of truth. Builds recorded as uploaded or processed are consumed; the ledger includes
+Builds 86 and 90. Local source build counters do not prove upload status. For any new upload or retry after upload/processing, the
+release owner must confirm the build number before `project.yml` changes; then
+regenerate the project and release the exact resulting Git SHA. Never reuse a
+released number or silently auto-increment during archive. A retry that only
+changes credentials or validation flags may reuse a not-yet-uploaded archive;
+once Apple has accepted a build into processing, a new owner-approved number
+is required.
 
 Issue #17 additionally requires release candidates to originate only from a
 fully green `main`; this preflight does not override that integration gate.

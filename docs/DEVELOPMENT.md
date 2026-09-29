@@ -54,3 +54,50 @@ main. Do not rebuild or relabel it merely to make a squash-merge SHA match.
 Record the original source and integration SHA separately. Product or build-input
 changes during reconciliation require fresh validation. See
 [integration-safe-main.md](integration-safe-main.md).
+
+## Parallel agent lanes
+
+The primary checkout stays on synchronized `main` as the operator base. Each
+Codex, Hermes, or Claude worker owns an isolated worktree for one coherent
+feature or fix. Start every lane from a freshly fetched `origin/main`:
+
+```sh
+git fetch origin --prune
+git worktree add -b feature/example .worktrees/example origin/main
+```
+
+Record the starting SHA, scope, owned files, and dependencies in the PR or lane
+handoff. Coordinate overlapping runtime/domain changes before editing them.
+Independent lanes can proceed concurrently; a dependent lane refreshes from
+main after its prerequisite merges. Never use a historical dogfood, recovery,
+or worker branch as the default base for new work.
+
+One CI/release integrator coordinates shared integration surfaces per batch:
+
+| Surface | Integration responsibility |
+| --- | --- |
+| `scripts/c1_packages.sh` and its contract tests | Reconcile exact package counts with the combined test inventory; preserve failure evidence and real exit status. |
+| `scripts/c1_ui_matrix.sh`, `c1_ui_preflight.sh`, `c1_ui_partition.py`, critical smoke and their contracts | Register every new suite, deterministic/environmental classification, selection mapping, and runtime weight without dropping coverage. |
+| `project.yml` and generated Xcode project | Combine target/resources/dependency edits, generate once from the final inputs, and review drift. Never hand-edit generated output. |
+| `.github/workflows/` and CI gate policy | Preserve required check identity, event topology, merge-candidate coverage, concurrency, and diagnostics. |
+| Version/build settings, `RELEASES.md`, release baseline pin and release tooling | Coordinate the exact release source and approved build number; preserve historical provenance and immutable tags. |
+
+Feature workers describe required integration edits alongside their code and
+can propose them in their PR. The integrator reconciles concurrent proposals
+against current main before queueing; this is coordination, not a mandatory
+extra branch or serial feature-development stage. Review the resulting suite
+selection and exact counts rather than restoring numbers from an older lane.
+
+Run the smallest relevant local tests while iterating, then the gate warranted
+by the changed area. CI confirms a candidate believed correct locally. Use the
+normal PR and protected merge queue; refresh after each dependent merge.
+Retain logs for failures and recovered retries. Rerun the same candidate only
+when evidence supports an infrastructure failure; fix deterministic defects
+at their source. See [dev-loop.md](dev-loop.md).
+
+Before removing an old lane, account for both committed and uncommitted work,
+stashes, ignored evidence, and release/recovery history. Preserve useful work
+on main or retain a named recovery snapshot with a reason. A branch ahead of
+main after a squash merge is not by itself evidence of unmerged product work.
+Release-only privacy, signing, device, gateway, and App Store Connect evidence
+is tracked separately from ordinary feature-development readiness.

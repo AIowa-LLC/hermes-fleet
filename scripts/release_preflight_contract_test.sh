@@ -20,6 +20,9 @@ assert_fails() {
 
 bash -n scripts/release_preflight.sh
 bash -n scripts/release_preflight_contract_test.sh
+bash -n scripts/release_lineage_guard.sh
+bash -n scripts/archive_and_export.sh
+bash scripts/release_lineage_guard_test.sh
 python3 -m py_compile scripts/release_artifact_inspect.py
 plutil -lint scripts/release_export_options.plist >/dev/null
 [[ "$(plutil -extract method raw -o - scripts/release_export_options.plist)" == "app-store-connect" ]] ||
@@ -52,7 +55,7 @@ assert_fails python3 scripts/release_artifact_inspect.py \
   --expected-bundle-id com.aiowa.hermesfleet \
   --expected-version 0.2.0 \
   --expected-build 32 \
-  --expected-team 3JS22HX92T \
+  --expected-team FIXTURE000 \
   --inspection-root "$TMP_ROOT/malformed-extracted"
 
 echo "Release preflight contract tests: PASS"

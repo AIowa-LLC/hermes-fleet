@@ -17,6 +17,7 @@ Package.resolved
 # Local agent/automation scratch state (never ship)
 .hermes/
 .worktrees/
+/.claude/
 .schema
 
 # Xcode generated user-facing extras
