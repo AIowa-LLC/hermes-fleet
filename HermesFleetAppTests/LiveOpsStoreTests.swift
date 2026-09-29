@@ -394,6 +394,7 @@ final class LiveOpsStoreTests: XCTestCase {
         let ops = ScriptedOps(gatewayID: gatewayA)
         ops.listSubagentsResult = .failure(.notAttached)
         let operation = makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .working)
+        ops.operations = [operation]
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: ScriptedApprovals()],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
@@ -407,6 +408,7 @@ final class LiveOpsStoreTests: XCTestCase {
         let ops = ScriptedOps(gatewayID: gatewayA)
         ops.listSubagentsResult = .success([])
         let operation = makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .working)
+        ops.operations = [operation]
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: ScriptedApprovals()],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
@@ -423,10 +425,12 @@ final class LiveOpsStoreTests: XCTestCase {
         let ops = ScriptedOps(gatewayID: gatewayA)
         ops.listSubagentsResult = .success([])
         let operation = makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .working)
+        ops.operations = [operation]
         let store = makeStore(
             ops: [gatewayA: ops], approvals: [gatewayA: ScriptedApprovals()],
             gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)])
         store.beginObserving(.detail(operation.id))
+        defer { store.endObserving(.detail(operation.id)) }
         await store.verifyAttachment(operation)
         XCTAssertEqual(ops.controlSessionIDs, [operation.sessionKey])
 
@@ -434,10 +438,13 @@ final class LiveOpsStoreTests: XCTestCase {
         let queuedResult = await store.steer(subagentID: "sub-1", operation: operation, text: "hi")
         guard case .success(.queued) = queuedResult else { return XCTFail("expected queued") }
 
+        // Polling must retain attachment while this operation is reporting.
+        // Force the interleaving that exposed the previously empty fixture.
+        await store.checkReportingNow()
+        XCTAssertTrue(store.attachedOperations.contains(operation.id))
         ops.steerResult = .success(.rejected)
         let rejectedResult = await store.steer(subagentID: "sub-1", operation: operation, text: "hi")
         guard case .success(.rejected) = rejectedResult else { return XCTFail("expected rejected") }
         XCTAssertEqual(ops.controlSessionIDs, Array(repeating: operation.sessionKey, count: 3))
-        store.endObserving(.detail(operation.id))
     }
 }
