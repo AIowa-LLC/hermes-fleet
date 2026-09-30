@@ -12,8 +12,8 @@ FAIL=0
 declare -a FAILURES=()
 expected_test_count() {
   case "$1" in
-    FleetCore) echo 793 ;;
-    FleetNetworking) echo 779 ;;
+    FleetCore) echo 810 ;;
+    FleetNetworking) echo 784 ;;
     FleetPersistence) echo 67 ;;
     FleetSecurity) echo 68 ;;
     FleetClientKit) echo 52 ;;
@@ -56,7 +56,7 @@ run_pkg() {
   swift_count=$(printf '%s\n' "$swift_summary" | sed -nE 's/.*Test run with ([0-9]+) tests?.* passed after.*/\1/p')
 
   # Exact count is intentional: the current declared XCTest inventories are
-  # 793/779/67/68/52/96 XCTest and 21 FleetCore Swift Testing cases (including
+  # 810/784/67/68/52/96 XCTest and 21 FleetCore Swift Testing cases (including
   # recovery and gateway-purge regressions). Update
   # these baselines with deliberate test additions or removals; a partial run
   # must never look green merely because its completed subset reported zero

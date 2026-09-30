@@ -32,6 +32,13 @@ public actor GatewayReplayEngine: ReplayProviding {
     /// first). Compared against the fresh epoch after each reconnect.
     private var adoptedEpoch: String?
 
+    /// F0: performance signposts (`replay.pass`). Tests inject a recorder.
+    private var signposts: FleetSignposts = .shared
+
+    public func setSignposts(_ signposts: FleetSignposts) {
+        self.signposts = signposts
+    }
+
     /// A replay response larger than this is not injected: it is treated like
     /// a truncated buffer (authoritative history refetch), so a hostile or
     /// runaway `session.events.since` cannot force unbounded client work.
@@ -113,6 +120,7 @@ public actor GatewayReplayEngine: ReplayProviding {
             return [.nothingToReplay]
         }
 
+        let passInterval = signposts.begin(.replayPass)
         var outcomes: [ReplayOutcome] = []
         do {
             for sessionID in watermarks.keys.sorted() {
@@ -131,10 +139,15 @@ public actor GatewayReplayEngine: ReplayProviding {
                 }
             }
         } catch {
+            passInterval.end(after: error)
             await transport.endReplayHold()
             throw error
         }
         await transport.endReplayHold()
+        passInterval.end(Task.isCancelled ? .cancelled : .completed, count: outcomes.reduce(0) {
+            if case .replayed(_, let count) = $1 { return $0 + count }
+            return $0
+        })
         // Live frames dropped by the hold cap leave a gap the watermark never
         // advanced past: report those sessions as needing rehydration.
         for sessionID in await transport.takeReplayHoldOverflowSessions().sorted() {

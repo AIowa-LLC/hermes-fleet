@@ -282,7 +282,8 @@ public struct DiagnosticsReportSheet: View {
             deviceModel: Self.deviceModelIdentifier(),
             surfaceContext: "Settings · Report a Problem",
             gateways: sections,
-            recentEvents: events)
+            recentEvents: events,
+            performance: FleetPerformanceReport.current())
     }
 
     /// Advertised transport capabilities: the last connection-test probe wins,
