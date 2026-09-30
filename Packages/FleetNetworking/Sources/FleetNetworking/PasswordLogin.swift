@@ -104,7 +104,7 @@ public struct PasswordLoginClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         AuthREST.bounded(&request)
 
-        Self.log.info("password-login: GET /api/auth/providers (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
+        Self.log.info("password-login: GET /api/auth/providers (\(Redaction.redactedURL(self.baseURL), privacy: .private))")
         do {
             let (data, response) = try await urlSession.data(for: request)
             guard data.count <= AuthREST.maxResponseBytes else {
@@ -152,7 +152,7 @@ public struct PasswordLoginClient: Sendable {
         request.httpBody = try JSONEncoder().encode(body)
         AuthREST.bounded(&request)
 
-        Self.log.info("password-login: POST /auth/password-login (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
+        Self.log.info("password-login: POST /auth/password-login (\(Redaction.redactedURL(self.baseURL), privacy: .private))")
         let (data, response) = try await urlSession.data(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw PasswordLoginError.malformedProvidersResponse
