@@ -89,6 +89,7 @@ enum FleetServiceGraph {
         if env["HERMES_FLEET_LOCK_RESET"] == "1" {
             let key = AppLockController.defaultsKey
             UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: AppLockController.privacyShieldDefaultsKey)
         }
 
         #if DEBUG

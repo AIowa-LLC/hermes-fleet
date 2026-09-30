@@ -268,6 +268,23 @@ public struct FleetSettingsSecurityView: View {
                      + "credentials stay protected by the Keychain.")
                     .foregroundStyle(theme.textSecondary)
             }
+
+            Section {
+                Toggle(isOn: Binding(
+                    get: { controller.isPrivacyShieldEnabled },
+                    set: { controller.setPrivacyShieldEnabled($0) }
+                )) {
+                    Label("Hide in App Switcher", systemImage: "eye.slash")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .accessibilityIdentifier("fleet.settings.privacy-shield.toggle")
+            } footer: {
+                Text("Cover Hermes Fleet with a blank screen in the app "
+                     + "switcher and whenever the app is inactive, so "
+                     + "conversations never appear in the snapshot. Works "
+                     + "with or without App Lock.")
+                    .foregroundStyle(theme.textSecondary)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())
