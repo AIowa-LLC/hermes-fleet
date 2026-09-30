@@ -185,13 +185,19 @@ final class H1AppLockUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60))
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        XCTAssertTrue(menu.isHittable, "precondition: the visible navigation control is hittable")
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 30))
-        let restored = app.staticTexts["Workstation"]
+        let restored = menu
         let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: restored)
         wait(for: [hittable], timeout: 10)
         XCTAssertFalse(app.descendants(matching: .any)["fleet.privacy-shield"].exists)
+        UITabNavigation.openSettingsSecurity(app)
+        XCTAssertTrue(app.switches["fleet.settings.app-lock.toggle"].waitForExistence(timeout: 10))
+        attachScreenshot(of: app, name: "p03a-background-return-security")
     }
 
     // MARK: - Helpers
