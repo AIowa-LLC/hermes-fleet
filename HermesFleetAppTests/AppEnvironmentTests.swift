@@ -159,7 +159,8 @@ final class AppEnvironmentTests: XCTestCase {
         conversationPinStore: any ConversationPinStoring = InMemoryConversationPinStore(),
         connectionResults: [GatewayID: Result<Void, GatewayConnectivityError>] = [:],
         connectionIntentDefaults: UserDefaults? = nil,
-        launchCache: (any FleetLaunchCaching)? = nil
+        launchCache: (any FleetLaunchCaching)? = nil,
+        signposts: FleetSignposts? = nil
     ) async -> (AppEnvironment, GatewayRegistryService) {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
@@ -194,6 +195,7 @@ final class AppEnvironmentTests: XCTestCase {
             conversationPinStore: conversationPinStore,
             launchCache: launchCache
         )
+        if let signposts { environment.signposts = signposts }
         await environment.load()
         return (environment, registry)
     }
@@ -285,6 +287,46 @@ final class AppEnvironmentTests: XCTestCase {
                        "presence is never fabricated from a missing cache entry")
         XCTAssertEqual(environment.cachedBotsByGateway[hydrated]?.count, 1)
         XCTAssertNil(environment.cachedBotsByGateway[noCacheEntry])
+    }
+
+    /// F0: `launch.to-paint` ends exactly once, as `cached`, when hydration
+    /// paints the cached fleet.
+    func testLaunchToPaintEndsOnceAsCachedWhenCachePaints() async throws {
+        let recorder = FleetSignpostRecorder()
+        let signposts = FleetSignposts(sink: recorder, stats: FleetPerformanceStats())
+        signposts.beginLaunchToPaint()
+        let cache = InMemoryLaunchCache()
+        let gateway = GatewayID(rawValue: "workstation")
+        try await cache.saveRosterCache(CachedGatewayRoster(
+            gatewayID: gateway,
+            bots: [CachedFleetBot(
+                route: Route(gatewayID: gateway, profileSlug: ProfileSlug(rawValue: "default")),
+                displayName: "Researcher")]))
+
+        let (environment, _) = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            launchCache: cache, signposts: signposts)
+        await environment.hydrateIfNeeded() // a second hydrate must not end twice
+
+        XCTAssertEqual(recorder.beginCount(.launchToPaint), 1)
+        XCTAssertEqual(recorder.endEvents(.launchToPaint).map(\.variant), [.cached])
+        XCTAssertEqual(recorder.endEvents(.launchToPaint).map(\.outcome), [.completed])
+        XCTAssertTrue(recorder.isBalanced(.launchToPaint))
+    }
+
+    /// F0: with nothing cached the interval still closes (as `empty`) rather
+    /// than leaking open.
+    func testLaunchToPaintEndsEmptyWhenNothingIsCached() async {
+        let recorder = FleetSignpostRecorder()
+        let signposts = FleetSignposts(sink: recorder, stats: FleetPerformanceStats())
+        signposts.beginLaunchToPaint()
+
+        _ = await makeEnvironment(
+            gateways: [registration("workstation", name: "Workstation")],
+            launchCache: InMemoryLaunchCache(), signposts: signposts)
+
+        XCTAssertEqual(recorder.endEvents(.launchToPaint).map(\.variant), [.empty])
+        XCTAssertTrue(recorder.isBalanced(.launchToPaint))
     }
 
     /// ADR-0012 decision 2: removing a gateway prunes ITS launch-cache rows
