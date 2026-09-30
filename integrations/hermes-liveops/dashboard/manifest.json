@@ -1,9 +1,9 @@
 {
   "name": "fleet-liveops",
   "label": "Fleet Live Reporting",
-  "description": "Read-only live session and delegation reporting across Desktop backends.",
+  "description": "Live session and delegation reporting across Desktop backends, plus opt-in encrypted push notifications.",
   "icon": "activity",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "tab": {"hidden": true},
   "entry": "index.js",
   "api": "plugin_api.py"

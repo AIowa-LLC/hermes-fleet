@@ -32,7 +32,11 @@ Fleet Home observes operations and Needs You approvals across reporting gateways
 Operation Detail shows one operation, its subagent tree, and timeline. Approval
 actions use the biometric gate; child controls require verified session
 attachment. Desktop reporting requires the optional Hermes reporting plugin;
-see [setup and coverage](../integrations/hermes-liveops/README.md).
+see [setup and coverage](../integrations/hermes-liveops/README.md). Since plugin
+0.3.0 the same plugin can also send end-to-end encrypted push notifications
+(approval, clarify, turn end, cron) through the content-blind relay. This is off
+by default and needs the app's device registration (a separate work item); see
+[Push notifications](../integrations/hermes-liveops/README.md#push-notifications).
 
 ## Conversations
 

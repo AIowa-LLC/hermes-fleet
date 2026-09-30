@@ -1,0 +1,24 @@
+{
+  "description": "Shared HPKE vectors for the Hermes Fleet push sender (Python) and the iOS notification extension (CryptoKit). Recipient keys are the published, non-secret RFC 9180 Appendix A.2 keys. Suite: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, base mode. `sealed` is base64url(enc || ciphertext || tag), no padding; AAD is empty.",
+  "rfc9180_a2": {
+    "info": "4f6465206f6e2061204772656369616e2055726e",
+    "ikmE": "909a9b35d3dc4713a5e72a4da274b55d3d3821a37e5d099e74a647db583a904b",
+    "enc": "1afa08d3dec047a643885163f1180476fa7ddb54c6a8029ea33f95796bf2ac4a",
+    "pkRm": "4310ee97d88cc1f088a5576c77ab0cf5c3ac797f3d95139c6c84b5429c59662a",
+    "skRm": "8057991eef8f1f1af18f4a9491d16a1ce333f695d4db8e38da75975c4478e0fb",
+    "shared_secret": "0bbe78490412b4bbea4812666f7916932b828bba79942424abb65244930d69a7",
+    "key": "ad2744de8e17f4ebba575b3f5f5a8fa1f69c2a07f6e7500bc60ca6e3e3ec1c91",
+    "base_nonce": "5c4d98150661b848853b547f",
+    "pt": "4265617574792069732074727574682c20747275746820626561757479",
+    "aad": "436f756e742d30",
+    "ct": "1c5250d8034ec2b784ba2cfd69dbdb8af406cfe3ff938e131f0def8c8b60b4db21993c62ce81883d2dd1b51a28"
+  },
+  "push_v1": {
+    "info": "hermes-fleet-push-v1",
+    "recipient_private_key": "8057991eef8f1f1af18f4a9491d16a1ce333f695d4db8e38da75975c4478e0fb",
+    "recipient_public_key": "4310ee97d88cc1f088a5576c77ab0cf5c3ac797f3d95139c6c84b5429c59662a",
+    "ephemeral_ikm": "909a9b35d3dc4713a5e72a4da274b55d3d3821a37e5d099e74a647db583a904b",
+    "plaintext": "{\"bot\":\"default\",\"command_digest\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"created_at\":1800000000,\"expires_at\":1800000300,\"gateway_label\":\"Example Host\",\"kind\":\"approval\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"redacted_preview\":\"example command --flag\",\"request_id\":\"req-example\",\"request_ref\":\"0123456789abcdef\",\"response_token\":\"example-token-not-real\",\"risk\":\"normal\",\"session_id\":\"session-example\",\"v\":1}",
+    "sealed": "GvoI097AR6ZDiFFj8RgEdvp921TGqAKeoz-VeWvyrEr6Up7i9-AJ5eFr0D2Nvu5SaG-XCs3WH4tCK4gAZb1yJhpEs3u6Hb9YDWQ0F8Wp2BWMd2yBaWY428PdfMoPEHXKdMS8JuC8HyYh6QTwgrJ2Z8O-yEfcIsxhe-OmwS2OwS2QFRa0OLTq4W1TvgOkzjfVyWyclEZBEfcnAgZ7dvd77Xp4Es9JANq6k-xjtrpOkU-i1jdnY6bM5HOUVOkxV2gfTCHAsQv1RdTf-rVThruECOmSrwMqNv4i91XA2_qU4w1659bQQo1LN6y2_17R3KRSKvytgud2dYoorCmO0Xdz0vs0zPZCUhH9KzogqbQRJyZV5Eo3td56JSOOrH-Vhk8IzRd1PJUNQSbWKIEG3VgO9Tk1mV3hYsluM8x2UHasRSmEyG4cOl-feqL03O8Jtfv6IGBep7nRxHq9htzTBG-wONtL9F-s2F3tRngnDQLtpEKnIgEgWtBSHZ3THwJg1fFxhf081Y4auWstE1eNAVaymczg_WTk3A0h9B6EhhmklvhnwlGAixsXqGN4FbOGJZz6qf-FLMaLkWrFMTJyRjgEOvlCh8bLP-X3SgxKV3Ltl05dXgqR6tDlVw"
+  }
+}
