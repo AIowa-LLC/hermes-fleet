@@ -57,7 +57,7 @@ public protocol AppLockBiometricAuth: Sendable {
 /// automatically shows the passcode fallback (`.passcodeFallback` state) —
 /// the failed-biometric acceptance path.
 ///
-/// Privacy shield (P0.3a): independent of App Lock, `.inactive` / `.background`
+/// Privacy shield (P0.3a): when App Lock is enabled, `.inactive` / `.background`
 /// on an UNLOCKED app engages an opaque cover (`isPrivacyShieldVisible`) so the
 /// app-switcher snapshot never captures conversation content. The shield only
 /// engages from `.unlocked`: while the lock screen or a Face ID / passcode
@@ -104,14 +104,10 @@ public final class AppLockController {
 
     public var isLocked: Bool { state != .unlocked }
 
-    /// The persisted privacy-shield setting (default ON; UserDefaults,
-    /// non-secret). Independent of the App Lock toggle.
-    public private(set) var isPrivacyShieldEnabled: Bool
-
     /// Whether the opaque privacy cover should currently be on screen.
     /// `.disabled` mode (deterministic UI-test bypass) never shows it.
     public var isPrivacyShieldVisible: Bool {
-        isPrivacyShieldEngaged && isPrivacyShieldEnabled && mode != .disabled
+        isPrivacyShieldEngaged && shouldLock
     }
 
     // MARK: Private
@@ -120,7 +116,6 @@ public final class AppLockController {
     private let defaults: UserDefaults
     private let mode: Mode
     private let defaultsKey: String
-    private let privacyShieldDefaultsKey: String
     private var hasAuthenticatedThisSession = false
     /// Set on `.inactive`/`.background` from `.unlocked`; cleared on `.active`,
     /// on successful unlock, and when the setting is turned off.
@@ -130,19 +125,12 @@ public final class AppLockController {
         auth: any AppLockBiometricAuth,
         defaults: UserDefaults = .standard,
         mode: Mode = .followSetting,
-        defaultsKey: String = AppLockController.defaultsKey,
-        privacyShieldDefaultsKey: String = AppLockController.privacyShieldDefaultsKey
+        defaultsKey: String = AppLockController.defaultsKey
     ) {
         self.auth = auth
         self.defaults = defaults
         self.mode = mode
         self.defaultsKey = defaultsKey
-        self.privacyShieldDefaultsKey = privacyShieldDefaultsKey
-        // Privacy shield defaults ON when never set (the key is written only
-        // when the user changes the toggle).
-        self.isPrivacyShieldEnabled = defaults.object(forKey: privacyShieldDefaultsKey) == nil
-            ? true
-            : defaults.bool(forKey: privacyShieldDefaultsKey)
         if defaults.object(forKey: defaultsKey) == nil {
             // Toggle defaults ON (acceptance: default ON, persisted).
             self.isEnabled = true
@@ -169,18 +157,10 @@ public final class AppLockController {
                 state = .locked
             }
         } else {
+            isPrivacyShieldEngaged = false
             state = .unlocked
             hasAuthenticatedThisSession = false
         }
-    }
-
-    /// Update the persisted privacy-shield toggle. Turning it OFF removes any
-    /// engaged cover immediately.
-    public func setPrivacyShieldEnabled(_ enabled: Bool) {
-        guard isPrivacyShieldEnabled != enabled else { return }
-        isPrivacyShieldEnabled = enabled
-        defaults.set(enabled, forKey: privacyShieldDefaultsKey)
-        if !enabled { isPrivacyShieldEngaged = false }
     }
 
     // MARK: Scene phase
@@ -199,11 +179,11 @@ public final class AppLockController {
             // App-switcher snapshot protection. Only from `.unlocked`: the
             // lock screen / Face ID sheet already cover content, and their
             // `.inactive` must not arm a cover (no flicker loop).
-            if state == .unlocked, isPrivacyShieldEnabled { isPrivacyShieldEngaged = true }
+            if state == .unlocked, shouldLock { isPrivacyShieldEngaged = true }
         case .background:
             // Covers a `.background` that arrives without a prior `.inactive`.
             // Evaluated BEFORE the re-lock below so it sees `.unlocked`.
-            if state == .unlocked, isPrivacyShieldEnabled { isPrivacyShieldEngaged = true }
+            if state == .unlocked, shouldLock { isPrivacyShieldEngaged = true }
             if shouldLock, state == .unlocked {
                 state = .locked
                 // Foreground must re-authenticate after a background re-lock —
@@ -269,10 +249,6 @@ public final class AppLockController {
     /// Persisted-setting key for the in-app App Lock toggle (UserDefaults,
     /// non-secret preference — the lock gates UI only, never Keychain).
     public static let defaultsKey = "fleet.appLock.enabled"
-
-    /// Persisted-setting key for the privacy-shield toggle (UserDefaults,
-    /// non-secret preference; default ON when absent).
-    public static let privacyShieldDefaultsKey = "fleet.privacyShield.enabled"
 
     private static let reason = "Unlock Hermes Fleet"
 }

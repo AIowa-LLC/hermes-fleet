@@ -54,10 +54,9 @@ SETTINGS
 - **Security sub-screen**: App Lock toggle + existing footer copy move behind
   a chevron row. Toggle id `fleet.settings.app-lock.toggle` is KEPT (11 test
   occurrences across 5 files keep passing after the navigation step is added).
-  The same screen carries the P0.3a "Hide in App Switcher" privacy-shield
-  toggle (`fleet.settings.privacy-shield.toggle`, default ON, independent of
-  App Lock): an opaque cover shown on scene inactive/background so the
-  app-switcher snapshot never shows conversation content.
+  App Lock also enables the P0.3a privacy shield: an opaque cover shown on
+  scene inactive/background to hide app contents in the app switcher.
+  Disabling App Lock disables the shield.
 - **Data & Storage sub-screen**: `Delete Local Cache` + its confirmation dialog,
   alert, and footer explanation move behind a chevron row. Button id
   `fleet.settings.delete-local-cache` is KEPT.

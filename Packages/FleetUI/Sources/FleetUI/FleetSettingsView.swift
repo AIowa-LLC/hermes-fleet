@@ -265,26 +265,11 @@ public struct FleetSettingsSecurityView: View {
             } footer: {
                 Text("Require Face ID (or your device passcode) to unlock "
                      + "Hermes Fleet when the app opens. Stored gateway "
-                     + "credentials stay protected by the Keychain.")
+                     + "credentials stay protected by the Keychain. App Lock also hides "
+                     + "app contents in the app switcher.")
                     .foregroundStyle(theme.textSecondary)
             }
 
-            Section {
-                Toggle(isOn: Binding(
-                    get: { controller.isPrivacyShieldEnabled },
-                    set: { controller.setPrivacyShieldEnabled($0) }
-                )) {
-                    Label("Hide in App Switcher", systemImage: "eye.slash")
-                        .foregroundStyle(theme.textPrimary)
-                }
-                .accessibilityIdentifier("fleet.settings.privacy-shield.toggle")
-            } footer: {
-                Text("Cover Hermes Fleet with a blank screen in the app "
-                     + "switcher and whenever the app is inactive, so "
-                     + "conversations never appear in the snapshot. Works "
-                     + "with or without App Lock.")
-                    .foregroundStyle(theme.textSecondary)
-            }
         }
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())

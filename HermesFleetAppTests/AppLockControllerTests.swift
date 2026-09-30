@@ -220,20 +220,9 @@ final class AppLockControllerTests: XCTestCase {
             defaults: defaults ?? makeDefaults(),
             mode: mode
         )
-        if mode == .enabled { await controller.authenticate() }
+        if mode != .disabled { await controller.authenticate() }
         XCTAssertEqual(controller.state, .unlocked)
         return controller
-    }
-
-    func testPrivacyShieldDefaultsOnAndPersists() {
-        let defaults = makeDefaults()
-        let first = AppLockController(
-            auth: ScriptedAuth(biometric: .success, passcode: true), defaults: defaults)
-        XCTAssertTrue(first.isPrivacyShieldEnabled, "privacy shield defaults ON")
-        first.setPrivacyShieldEnabled(false)
-        let second = AppLockController(
-            auth: ScriptedAuth(biometric: .success, passcode: true), defaults: defaults)
-        XCTAssertFalse(second.isPrivacyShieldEnabled, "toggle persists across instances")
     }
 
     func testInactiveShowsShieldAndActiveRemovesIt() async {
@@ -247,7 +236,7 @@ final class AppLockControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .unlocked)
     }
 
-    func testShieldShowsWithAppLockDisabledInFollowSetting() async {
+    func testShieldNeverShowsWithAppLockDisabledInFollowSetting() async {
         let defaults = makeDefaults()
         let controller = AppLockController(
             auth: ScriptedAuth(biometric: .success, passcode: true),
@@ -255,20 +244,19 @@ final class AppLockControllerTests: XCTestCase {
         controller.setEnabled(false)
         XCTAssertEqual(controller.state, .unlocked)
         controller.handleScenePhase(.inactive)
-        XCTAssertTrue(controller.isPrivacyShieldVisible, "shield works without App Lock")
+        XCTAssertFalse(controller.isPrivacyShieldVisible, "App Lock off means no shield")
+        controller.handleScenePhase(.background)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
     }
 
-    func testShieldSettingOffNeverShowsAndClearsEngagedCover() async {
-        let controller = await makeUnlockedController()
+    func testTurningAppLockOffClearsEngagedCover() async {
+        let controller = await makeUnlockedController(mode: .followSetting)
         controller.handleScenePhase(.inactive)
         XCTAssertTrue(controller.isPrivacyShieldVisible)
-        controller.setPrivacyShieldEnabled(false)
-        XCTAssertFalse(controller.isPrivacyShieldVisible, "turning OFF removes the cover")
+        controller.setEnabled(false)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
         controller.handleScenePhase(.inactive)
-        XCTAssertFalse(controller.isPrivacyShieldVisible, "OFF never shows the cover")
-        controller.setPrivacyShieldEnabled(true)
-        XCTAssertFalse(controller.isPrivacyShieldVisible,
-                       "re-enabling does not resurrect a cover that was never engaged while OFF")
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
     }
 
     func testDisabledModeNeverShowsShield() async {
