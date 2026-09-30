@@ -41,7 +41,7 @@ installation identifiers are not presented in normal row or VoiceOver text.
 Hosted history remains gateway-authoritative. `groups.log` pages are drained by
 cursor, merged by durable event ID, and never synthesized locally. Sends reuse
 a client event ID after an indeterminate transport failure. Unsent composer
-drafts are stored locally by source room identity and are cleared only after a
+drafts are stored locally (in a file-protected, backup-excluded file, not UserDefaults) by source room identity and are cleared only after a
 successful gateway response.
 
 ## Desktop interoperability status

@@ -173,7 +173,16 @@ final class CacheStoreRecoveryTests: XCTestCase {
 
     func testLockedStoreIsLeftUntouchedAndRunsInMemory() async throws {
         try await seedHealthyStore()
-        let before = try Data(contentsOf: storeURL)
+        // The seeding store closes asynchronously and SQLite checkpoints the
+        // WAL into the store file on close. Wait for the bytes to settle so the
+        // baseline is the final seeded state, not a mid-checkpoint snapshot.
+        var before = try Data(contentsOf: storeURL)
+        for _ in 0..<40 {
+            try await Task.sleep(for: .milliseconds(25))
+            let again = try Data(contentsOf: storeURL)
+            if again == before { break }
+            before = again
+        }
 
         let result = try SwiftDataCacheStore.openWithRecovery(
             storeURL: storeURL, faults: [.unreadablePrimaryStore, .protectedDataUnavailable])

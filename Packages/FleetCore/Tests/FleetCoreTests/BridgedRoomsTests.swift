@@ -132,6 +132,65 @@ final class BridgedRoomsTests: XCTestCase {
         XCTAssertTrue(files.isEmpty)
     }
 
+    // MARK: P0.3c file protection
+
+    func testPersistExcludesStoreFromBackupOnEveryWrite() async throws {
+        let store = BridgedRooms.Store(url: storeURL)
+        XCTAssertNil(LocalFileProtection.read(from: storeURL).backupExcluded, "no file yet")
+
+        try await store.upsert(.init(roomKey: "room", name: "Room", members: [], createdAt: 1))
+        let first = await store.protectionAttributes()
+        XCTAssertEqual(first.backupExcluded, true)
+
+        // Every mutation is an atomic replace; the exclusion must survive it.
+        try await store.rename(roomKey: "room", to: "Renamed", at: 2)
+        let second = await store.protectionAttributes()
+        XCTAssertEqual(second.backupExcluded, true)
+    }
+
+    func testLegacyUnprotectedStoreKeepsItsRoomsAndGainsProtectionOnLoad() async throws {
+        // Migration by attribute change: a file written by an earlier build
+        // (plain `.atomic`, default attributes) is read in place, every room
+        // survives, and the existing file gains backup exclusion.
+        let legacy = BridgedRooms.RoomRecord(
+            roomKey: "legacy", name: "Legacy", members: [], createdAt: 5,
+            events: [BridgedRooms.EventRecord(
+                seq: 1, eventID: "e1", kind: "message", actorKind: "member", actorID: "x",
+                payloadText: "synthetic text", createdAt: 5)])
+        try JSONEncoder().encode(["legacy": legacy]).write(to: storeURL, options: .atomic)
+        XCTAssertNotEqual(LocalFileProtection.read(from: storeURL).backupExcluded, true)
+
+        let store = BridgedRooms.Store(url: storeURL)
+        let rooms = await store.roomsSnapshot()
+
+        XCTAssertEqual(rooms.map(\.roomKey), ["legacy"])
+        XCTAssertEqual(rooms.first?.events.first?.payloadText, "synthetic text")
+        let attributes = await store.protectionAttributes()
+        XCTAssertEqual(attributes.backupExcluded, true)
+        // And rooms written afterwards still round-trip through a fresh store.
+        try await store.upsert(.init(roomKey: "next", name: "Next", members: [], createdAt: 6))
+        let reopened = BridgedRooms.Store(url: storeURL)
+        let keys = await reopened.roomsSnapshot().map(\.roomKey).sorted()
+        XCTAssertEqual(keys, ["legacy", "next"])
+    }
+
+    func testQuarantinedUnreadableStoreIsBackupExcluded() async throws {
+        try Data("{ not json".utf8).write(to: storeURL)
+        let store = BridgedRooms.Store(url: storeURL)
+        _ = await store.roomsSnapshot()
+        let quarantined = await store.quarantinedURL
+        let backup = try XCTUnwrap(quarantined)
+        XCTAssertEqual(LocalFileProtection.read(from: backup).backupExcluded, true)
+    }
+
+    func testHealthyProtectionReportsNoFailures() async throws {
+        let reports = FailureBox()
+        let store = BridgedRooms.Store(url: storeURL, protectionReporter: { reports.append($0) })
+        try await store.upsert(.init(roomKey: "room", name: "Room", members: [], createdAt: 1))
+        _ = BridgedRooms.Store(url: storeURL, protectionReporter: { reports.append($0) })
+        XCTAssertTrue(reports.all.isEmpty)
+    }
+
     func testProjectionRendersHostedVocabulary() {
         let member = BridgedRooms.MemberRef(
             gatewayID: "gw-a", profile: "default", displayName: "Atlas", routeID: "gw-a#default")
@@ -169,5 +228,21 @@ final class BridgedRoomsTests: XCTestCase {
         XCTAssertEqual(projection.entries.first?.speaker, "You",
                        "the room's human renders as You, never the local-user plumbing id")
         XCTAssertEqual(projection.entries.last?.failure?.message, "Niner couldn't answer.")
+    }
+}
+
+/// Thread-safe sink for `LocalFileProtection.Failure` reports.
+private final class FailureBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failures: [LocalFileProtection.Failure] = []
+
+    func append(_ failure: LocalFileProtection.Failure) {
+        lock.lock(); defer { lock.unlock() }
+        failures.append(failure)
+    }
+
+    var all: [LocalFileProtection.Failure] {
+        lock.lock(); defer { lock.unlock() }
+        return failures
     }
 }

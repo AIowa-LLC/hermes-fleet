@@ -67,6 +67,11 @@ public final class ArtifactImageStore {
         let fence: RetrievalFence
     }
 
+    /// Told (type-only) when file-protection attributes could not be applied
+    /// to the staging directory or a staged file. The composition root routes
+    /// this to the redacted diagnostics ring.
+    @ObservationIgnored public var protectionReporter: ((LocalFileProtection.Failure) -> Void)?
+
     public init() {}
 
     // MARK: Reads
@@ -93,10 +98,21 @@ public final class ArtifactImageStore {
         }
         guard case .loaded(let payload) = states[reference] else { return nil }
         let directory = Self.shareDirectory
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // P0.3c: the staging directory is protected and backup-excluded so
+        // staged files (and the atomic-write temp files) inherit the class.
+        // Attribute failures never block a share: the bytes are what matter,
+        // and the failure leaves one type-only diagnostics line.
+        do {
+            try LocalFileProtection.prepareDirectory(directory)
+        } catch {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            protectionReporter?(LocalFileProtection.Failure(role: "artifact-directory", error: error))
+        }
         let url = shareFileLocation(for: reference)
         do {
-            try payload.data.write(to: url, options: .atomic)
+            try LocalFileProtection.write(payload.data, to: url, role: "artifact")
+        } catch let failure as LocalFileProtection.Failure {
+            protectionReporter?(failure)
         } catch {
             return nil
         }
@@ -255,8 +271,10 @@ public final class ArtifactImageStore {
     // MARK: Share-file staging on disk
 
     /// The app-scoped temp directory holding staged share files. This store
-    /// is its only writer, and `clear`/`removeAll` are its cleanup path.
-    private static var shareDirectory: URL {
+    /// is its only writer, and `clear`/`removeAll` are its cleanup path. The
+    /// directory is `NSFileProtectionComplete` and backup-excluded (P0.3c);
+    /// internal so hosted tests can read the attributes back.
+    static var shareDirectory: URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("fleet-artifacts", isDirectory: true)
     }

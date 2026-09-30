@@ -86,8 +86,10 @@ public extension SwiftDataCacheStore {
         } catch {
             return try recover(from: error, storeURL: storeURL, faults: faults, now: now)
         }
+        let protectionFailures: [LocalFileProtection.Failure]
         do {
             try CacheStoreProtection.apply(to: storeURL)
+            protectionFailures = CacheStoreProtection.protect(storeURL: storeURL)
         } catch {
             // The store is healthy but protection could not be applied. Never
             // run an unprotected transcript cache, and never quarantine a good
@@ -97,7 +99,8 @@ public extension SwiftDataCacheStore {
                 failureType: typeName(error), faults: faults)
         }
         return CacheOpenResult(
-            store: SwiftDataCacheStore(container: container, storeURL: storeURL),
+            store: SwiftDataCacheStore(
+                container: container, storeURL: storeURL, protectionFailures: protectionFailures),
             recovery: nil)
     }
 }
@@ -175,16 +178,19 @@ private extension SwiftDataCacheStore {
             do {
                 let container = try openFileBackedContainer(storeURL: storeURL)
                 try CacheStoreProtection.apply(to: storeURL)
+                let protectionFailures = CacheStoreProtection.protect(storeURL: storeURL)
                 do {
                     try insert(salvagedRows, into: container)
                 } catch {
                     return CacheOpenResult(
-                        store: SwiftDataCacheStore(container: container, storeURL: storeURL),
+                        store: SwiftDataCacheStore(
+                            container: container, storeURL: storeURL, protectionFailures: protectionFailures),
                         recovery: LocalCacheRecoveryReport(
                             outcome: outcome, registry: .lost, failureType: failureType))
                 }
                 return CacheOpenResult(
-                    store: SwiftDataCacheStore(container: container, storeURL: storeURL),
+                    store: SwiftDataCacheStore(
+                        container: container, storeURL: storeURL, protectionFailures: protectionFailures),
                     recovery: LocalCacheRecoveryReport(
                         outcome: outcome, registry: registry, failureType: failureType))
             } catch {

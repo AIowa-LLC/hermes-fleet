@@ -594,62 +594,6 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
     }
 }
 
-enum RoomDraftStore {
-    private static let prefix = "fleet.room.draft.v1."
-
-    static func resetForUITests(defaults: UserDefaults = .standard) {
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
-            defaults.removeObject(forKey: key)
-        }
-    }
-
-    static func load(for id: FleetRoomID) -> String {
-        UserDefaults.standard.string(forKey: key(for: id)) ?? ""
-    }
-
-    static func save(_ draft: String, for id: FleetRoomID) {
-        let key = key(for: id)
-        if draft.isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
-        } else {
-            UserDefaults.standard.set(draft, forKey: key)
-        }
-    }
-
-    static func clear(for id: FleetRoomID) {
-        UserDefaults.standard.removeObject(forKey: key(for: id))
-    }
-
-    /// Remove every saved draft that belongs to `gatewayID`'s rooms (gateway
-    /// removal). Keys are `<prefix><provenance>:<gatewayID>:<roomKey>` and
-    /// gateway ids may themselves contain `:` (`host:port`), so a bare prefix
-    /// match could also hit a different gateway whose id extends this one.
-    /// `otherGatewayIDs` (the gateways that remain) disambiguates: a key that
-    /// begins with another gateway's own `<provenance>:<id>:` is left alone.
-    static func clearAll(
-        forGateway gatewayID: GatewayID,
-        otherGatewayIDs: [GatewayID],
-        defaults: UserDefaults = .standard
-    ) {
-        let own = [RoomProvenance.hosted, .desktopLegacy].map {
-            prefix + "\($0.rawValue):\(gatewayID.rawValue):"
-        }
-        let others = [RoomProvenance.hosted, .desktopLegacy].flatMap { provenance in
-            otherGatewayIDs.filter { $0 != gatewayID }.map {
-                prefix + "\(provenance.rawValue):\($0.rawValue):"
-            }
-        }
-        for key in defaults.dictionaryRepresentation().keys
-        where own.contains(where: key.hasPrefix) && !others.contains(where: key.hasPrefix) {
-            defaults.removeObject(forKey: key)
-        }
-    }
-
-    private static func key(for id: FleetRoomID) -> String {
-        prefix + id.storageKey
-    }
-}
-
 // MARK: - Screen
 
 private struct RoomLatestScrollTargetFrame: Equatable {
