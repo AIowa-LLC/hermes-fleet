@@ -8,8 +8,8 @@ import FleetPersistence
 /// changes; without this store a half-written message is silently lost.
 ///
 /// Contract:
-/// - Keys are source-qualified: separately escaped gateway/profile components plus the durable
-///   session id (canonical Bot Chat sessions are ordinary session ids and are
+/// - Keys are source-qualified: separately escaped gateway/profile components
+///   plus the durable session id (canonical Bot Chat sessions are ordinary session ids and are
 ///   covered identically). A same-named session on another gateway/profile is
 ///   a different draft.
 /// - Drafts are non-secret but can contain sensitive text, so the single
@@ -53,6 +53,7 @@ public final class ConversationDraftStore: @unchecked Sendable {
     private var loaded = false
     private var needsPersist = false
     private var removedGatewayRaws: Set<String> = []
+    private var gatewaysToDelete: Set<String> = []
     private var deletedKeys: Set<String> = []
     private var registeredGatewayRaws: Set<String>?
     private var pending: [String: Pending] = [:]
@@ -174,6 +175,7 @@ public final class ConversationDraftStore: @unchecked Sendable {
         let raw = gatewayID.rawValue
         lock.lock(); defer { lock.unlock() }
         removedGatewayRaws.insert(raw)
+        gatewaysToDelete.insert(raw)
         needsPersist = true
         for (key, item) in pending where item.gatewayIDRaw == raw {
             item.task.cancel()
@@ -258,10 +260,12 @@ public final class ConversationDraftStore: @unchecked Sendable {
         }
         // Apply removals that arrived while the protected file was unreadable.
         entries = entries.filter {
-            !deletedKeys.contains($0.key) && !removedGatewayRaws.contains($0.value.gatewayIDRaw)
+            !deletedKeys.contains($0.key) && !gatewaysToDelete.contains($0.value.gatewayIDRaw)
+                && !removedGatewayRaws.contains($0.value.gatewayIDRaw)
                 && registeredGatewayRaws?.contains($0.value.gatewayIDRaw) != false
         }
         deletedKeys.removeAll()
+        gatewaysToDelete.removeAll()
         return true
     }
 

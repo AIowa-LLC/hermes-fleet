@@ -299,11 +299,16 @@ final class ConversationDraftStoreTests: XCTestCase {
         let s = store(url)
         s.prune(gatewayID: lab)
         s.scheduleSave("late", route: route(lab, "default"), sessionID: "s2")
+        // Re-register before protected-file recovery: old data must still be
+        // deleted, while genuinely new drafts may be written.
+        s.allowWrites(gatewayID: lab)
+        s.scheduleSave("re-added", route: route(lab, "default"), sessionID: "s3")
         try FileManager.default.removeItem(at: url)
         try FileManager.default.moveItem(at: parked, to: url)
         s.flush()
         XCTAssertEqual(s.draft(route: route(lab, "default"), sessionID: "s1"), "")
         XCTAssertEqual(s.draft(route: route(lab, "default"), sessionID: "s2"), "")
         XCTAssertEqual(s.draft(route: route(ws, "default"), sessionID: "s1"), "keep")
+        XCTAssertEqual(s.draft(route: route(lab, "default"), sessionID: "s3"), "re-added")
     }
 }
