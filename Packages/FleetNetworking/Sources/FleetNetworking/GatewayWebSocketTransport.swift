@@ -154,6 +154,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// P0.1 server→client requests (`approval`, `clarify`, `sudo`, `secret`):
     /// open-request registry + live subscribers. See `ServerRequestBox`.
     private let serverRequests = ServerRequestBox()
+    private var serverRequestReplies: [String: Task<Void, any Error>] = [:]
     private var nextCapabilitiesID = 0
     private var capabilityRequestID: JSONRPCID?
     private var serverRequestSupportState: ServerRequestSupport = .notAdvertised
@@ -706,6 +707,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
             serverRequests.settle(id)
         }
         eventSubscriptions.yield(event)
+        serverRequests.forwardConversation(event)
         if advanceWatermark, let sessionID = event.sessionID, let seq = event.seq {
             sessionWatermarks[sessionID] = max(sessionWatermarks[sessionID] ?? 0, seq)
         }
@@ -744,6 +746,16 @@ public actor GatewayWebSocketTransport: HermesTransport {
         return stream
     }
 
+    /// Conversation events, requests and withdrawals in transport order.
+    public nonisolated func subscribeToConversationEvents() -> AsyncStream<ConversationEvent> {
+        let (stream, continuation) = AsyncStream<ConversationEvent>.makeStream()
+        let token = serverRequests.subscribeConversation(continuation)
+        continuation.onTermination = { [serverRequests] _ in
+            serverRequests.unsubscribeConversation(token)
+        }
+        return stream
+    }
+
     /// Number of server requests currently open on this transport.
     public nonisolated var openServerRequestCount: Int { serverRequests.openCount }
 
@@ -754,9 +766,21 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// user can retry — a failed answer must never look like success.
     public func respondToServerRequest(id: String, result: JSONValue) async throws {
         guard !serverRequests.isSettled(id) else { return }
-        try await sendServerRequestReply(id: id) { wireID in
-            JSONRPCMessage.response(JSONRPCResponse(id: wireID, result: result))
+        // Actor methods are reentrant during socket send. Concurrent taps
+        // share the same send and its failure rather than sending twice or
+        // reporting success while the first answer can still fail.
+        if let reply = serverRequestReplies[id] {
+            try await reply.value
+            return
         }
+        let reply = Task {
+            try await self.sendServerRequestReply(id: id) { wireID in
+                .response(JSONRPCResponse(id: wireID, result: result))
+            }
+        }
+        serverRequestReplies[id] = reply
+        defer { serverRequestReplies[id] = nil }
+        try await reply.value
         serverRequests.settle(id)
     }
 
@@ -775,13 +799,16 @@ public actor GatewayWebSocketTransport: HermesTransport {
         // Echo the id exactly as it arrived (string or number); after a
         // reconnect the registry is re-filled by `open_requests` with the
         // gateway's own ids, which are strings.
-        let wireID = serverRequests.wireID(for: id) ?? .string(id)
+        guard !serverRequests.isSettled(id) else { return }
+        guard let wireID = serverRequests.wireID(for: id) else {
+            throw TransportError.invalidState("server request is no longer open")
+        }
         let line = try JSONRPCCodec.encode(message(wireID))
         do {
             try await session.send(.text(line))
         } catch {
             throw TransportError.transportFailure(
-                "send failed: \(Redaction.safeErrorDescription(error))")
+                "server request response could not be sent")
         }
     }
 

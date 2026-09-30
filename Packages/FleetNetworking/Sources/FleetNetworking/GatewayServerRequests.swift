@@ -157,6 +157,7 @@ final class ServerRequestBox: @unchecked Sendable {
     private struct State {
         var open: [Open] = []
         var subscribers: [UUID: AsyncStream<ServerRequest>.Continuation] = [:]
+        var conversationSubscribers: [UUID: AsyncStream<ConversationEvent>.Continuation] = [:]
         /// Ids answered locally or withdrawn by the gateway, newest last.
         /// A stale `open_requests` snapshot that races the settlement must not
         /// resurrect a prompt the user already answered or the gateway cancelled.
@@ -190,6 +191,9 @@ final class ServerRequestBox: @unchecked Sendable {
             for continuation in state.subscribers.values {
                 continuation.yield(open.request)
             }
+            for continuation in state.conversationSubscribers.values {
+                continuation.yield(.serverRequest(open.request))
+            }
             return .admitted
         }
     }
@@ -206,6 +210,34 @@ final class ServerRequestBox: @unchecked Sendable {
             state.subscribers[token] = continuation
         }
         return token
+    }
+
+    /// Requests and withdrawals share one ordered stream. Merging two
+    /// independent tasks can deliver a withdrawal before its request.
+    func subscribeConversation(_ continuation: AsyncStream<ConversationEvent>.Continuation) -> UUID {
+        let token = UUID()
+        lock.withLock { state in
+            for open in state.open {
+                let r = open.request
+                continuation.yield(.serverRequest(ServerRequest(
+                    id: r.id, sessionID: r.sessionID, kind: r.kind, replayed: true)))
+            }
+            state.conversationSubscribers[token] = continuation
+        }
+        return token
+    }
+
+    func unsubscribeConversation(_ token: UUID) {
+        lock.withLock { _ = $0.conversationSubscribers.removeValue(forKey: token) }
+    }
+
+    func forwardConversation(_ event: GatewayEvent) {
+        guard let decoded = GatewayConversationClient.decodeEvent(event) else { return }
+        lock.withLock { state in
+            for continuation in state.conversationSubscribers.values {
+                continuation.yield(decoded)
+            }
+        }
     }
 
     func unsubscribe(_ token: UUID) {

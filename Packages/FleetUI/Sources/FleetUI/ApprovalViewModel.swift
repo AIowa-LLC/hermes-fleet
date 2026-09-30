@@ -241,6 +241,8 @@ public final class ApprovalViewModel {
         // The FaceID gate comes BEFORE any wire call — a failed scan must
         // never send an approval.
         let auth = await biometrics.evaluateBiometrics(reason: "Approve a dangerous command")
+        // A withdrawal, changed command or denial during authentication
+        // invalidates this tap; reply only to the current registered wire id.
         guard let current = pending, current.requestID == request.requestID,
               current.sessionID == request.sessionID, current.command == request.command,
               reviewTracker.canApprove(current) else { return }
