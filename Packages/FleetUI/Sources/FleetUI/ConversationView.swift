@@ -74,6 +74,7 @@ public struct ConversationView: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingTimeline = false
     @State private var followingLatest = true
     /// Dogfood top-space fix: bumped by the toolbar/menu "Latest" action;
@@ -116,6 +117,9 @@ public struct ConversationView: View {
 
     @State private var viewModel: ConversationViewModel?
     @State private var composerText = ""
+    /// P0.4a: true once the persisted draft for this conversation has been
+    /// applied (or found absent), so it is restored at most once per mount.
+    @State private var draftRestored = false
     /// V4 motion: bumped on every composer submit so `.sensoryFeedback`
     /// fires the send haptic (trigger-based; not on initial appearance).
     @State private var sendPulse = 0
@@ -233,6 +237,7 @@ public struct ConversationView: View {
             if viewModel == nil {
                 viewModel = environment.makeConversationViewModel(route: route, sessionID: sessionID)
                 attemptedOpenTrigger = openTrigger
+                restoreDraftIfNeeded()
             }
             // Nothing to (re)start yet — the next retrigger of `openTrigger`
             // (hydration settling, or the gateway appearing/disappearing)
@@ -253,6 +258,8 @@ public struct ConversationView: View {
             // when the app returns (no manual banner tap).
             viewModel.startForegroundHealing()
             await viewModel.start()
+            // A brand-new chat only learns its durable session id here.
+            restoreDraftIfNeeded()
             // FOS-4 (SPEC §7 Continue / §17): record the open ONLY after the
             // destination resolved — the view model's resolved id is the
             // exact session (resumed or created), never a title guess.
@@ -289,6 +296,12 @@ public struct ConversationView: View {
         }
         .onDisappear {
             viewModel?.teardown()
+            environment.conversationDrafts.flush()
+        }
+        // P0.4a: App Lock / backgrounding can tear the view down before the
+        // debounce fires — write pending draft text out first.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { environment.conversationDrafts.flush() }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .background(theme.background.ignoresSafeArea())
@@ -1679,6 +1692,7 @@ enum ConversationHeaderChips {
         }
         .onChange(of: composerText) { _, newValue in
             model.updateSlashSuggestions(for: newValue)
+            persistDraft(newValue)
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
             guard case .success(let url) = result else {
@@ -2140,6 +2154,33 @@ enum ConversationHeaderChips {
         }
     }
 
+    // MARK: Draft persistence (P0.4a)
+
+    /// The durable session id the draft is keyed on: the id this screen was
+    /// opened with, else (new chat) the one the open resolved. Nil until known.
+    private var draftSessionID: String? {
+        sessionID ?? viewModel?.resolvedSessionID
+    }
+
+    /// Apply the saved draft once, without clobbering text already typed.
+    private func restoreDraftIfNeeded() {
+        guard !draftRestored, let draftID = draftSessionID else { return }
+        draftRestored = true
+        if composerText.isEmpty {
+            composerText = environment.conversationDrafts.draft(route: route, sessionID: draftID)
+        } else {
+            persistDraft(composerText)
+        }
+    }
+
+    private func persistDraft(_ text: String) {
+        guard draftRestored, let draftID = draftSessionID else { return }
+        // Skip echoes of the restore itself so merely opening a conversation
+        // does not refresh the draft's age.
+        guard text != environment.conversationDrafts.draft(route: route, sessionID: draftID) else { return }
+        environment.conversationDrafts.scheduleSave(text, route: route, sessionID: draftID)
+    }
+
     /// Send/stop button side length (pt) — circular, per the hero mock.
     private static let sendButtonSide: CGFloat = 44
 
@@ -2150,6 +2191,11 @@ enum ConversationHeaderChips {
         let text = composerText
         sendPulse += 1
         if await model.send(text) {
+            // P0.4a: cleared ONLY on a successful send; a failed send keeps
+            // both the composer text and its persisted draft.
+            if let draftID = draftSessionID {
+                environment.conversationDrafts.clear(route: route, sessionID: draftID)
+            }
             // A prefill directive (e.g. /undo) REPLACES the draft instead of
             // clearing: adopted synchronously here so the composer's clear
             // can never race the onChange path.
