@@ -121,9 +121,21 @@ agent process (hooks) -> queue -> seal to device key (HPKE) -> relay -> APNs -> 
 - **Hooks** are observers only. They return nothing, never raise and only
   enqueue: `pre_approval_request`, `post_approval_response`, `pre_tool_call`
   (only for `tool_name == "clarify"`) and `on_session_end` (`platform == "cron"`
-  is a cron run; interrupted turns are skipped). Nothing can veto, answer or edit
+  is a cron run; interrupted turns are skipped), plus `subagent_start` to learn
+  which sessions are delegated children. Nothing can veto, answer or edit
   anything. `pre_tool_call` is a policy hook upstream (a timeout blocks the tool),
   so its callback compares one string and returns.
+- **Only real human decisions alert.** The approval hooks also fire for the
+  smart-mode guardian model (`surface: "smart"`, answered with `smart_approve` or
+  `smart_deny` and no person involved). An approval alerts only when `surface` is
+  `gateway`, `cli`, `mcp-elicitation` or `transport:<name>` (values verified
+  against hermes-agent 30de041b01). The smart surface, a hook carrying
+  `decided_by`, and any unknown or missing surface never alert. A smart
+  ESCALATE reaches a person through one of the listed surfaces, which alerts once.
+- **Delegated child agents** do not produce turn-end or cron alerts: sessions
+  announced by `subagent_start` are remembered (bounded) and their
+  `on_session_end` is ignored, so the parent session's alert is the one you get.
+  A child's approval still alerts, because a person must decide it.
 - **Delivery** runs on one daemon thread with a bounded queue (drop-oldest),
   jittered exponential retry with a cap, `Retry-After` honored, and a hard stop
   once a message's own expiry has passed. A relay `410` removes that
@@ -251,7 +263,7 @@ proposal for better ones:
 - There is no clarify observer. `pre_tool_call` fires before the question is
   shown, and it is a policy hook with a strict latency budget.
 - There is no content-free turn-end observer for TUI sessions. `on_session_end` is
-  used, so a delegated child agent's turn may also produce a finished alert.
+  used, and child sessions are filtered through `subagent_start` tracking.
 - There is no interception point on `approval.respond`, hence the separate token
   endpoint.
 - Hooks run in the process that runs the agent. The approval endpoint can resolve
