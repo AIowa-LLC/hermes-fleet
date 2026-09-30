@@ -288,8 +288,8 @@ enum FleetServiceGraph {
     /// leaves it behind, while a fresh install or reinstall starts without it
     /// (the sandbox is deleted with the app; the Keychain is not). MUST be
     /// evaluated before `makeFileBackedCache` runs in this launch.
-    static func hasPriorInstallEvidence() -> Bool {
-        FileManager.default.fileExists(atPath: cacheDirectoryURL().path)
+    static func hasPriorInstallEvidence(cacheDirectory: URL? = nil) -> Bool {
+        FileManager.default.fileExists(atPath: (cacheDirectory ?? cacheDirectoryURL()).path)
     }
 
     /// P0.3d first-launch Keychain purge; see `KeychainInstallHygiene` for

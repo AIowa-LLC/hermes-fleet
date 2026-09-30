@@ -5,7 +5,8 @@ Checks production Swift sources (Packages/*/Sources and HermesFleetApp; test
 targets are excluded) for two regressions:
 
 1. Lock override reads. `HERMES_FLEET_APP_LOCK` and any `HERMES_FLEET_LOCK_*`
-   launch-environment variable must only appear inside an active `#if DEBUG`
+   launch-environment variable, along with security-relevant migration, purge
+   and input fixtures, must only appear inside an active `#if DEBUG`
    region, so a Release build cannot be told to disable App Lock. Comment
    lines are ignored.
 
@@ -28,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-LOCK_VAR = re.compile(r"HERMES_FLEET_(APP_LOCK|LOCK_[A-Z_]+)")
+LOCK_VAR = re.compile(r"HERMES_FLEET_(APP_LOCK|LOCK_[A-Z_]+|SKIP_KEYCHAIN_PURGE|LEGACY_MIGRATION|DEFAULT_ENDPOINT|ATTACHMENT_PICK|PAIRING_SIMULATED_SCAN|PAIRING_CAMERA_DENIED|UI_TEST_PASTE_FIXTURES)")
 ANY_VAR = re.compile(r"HERMES_FLEET_[A-Z_]+")
 SENSITIVE_EXPR = re.compile(
     r"(url|host|endpoint|address|origin|gateway|session|title|path|domain)",
@@ -52,7 +53,9 @@ def debug_only_flags(lines: list[str]) -> list[bool]:
     """Per line: True when the line is inside an active `#if DEBUG` branch.
 
     Only a condition that starts with `DEBUG` (optionally `&& ...`) counts as
-    debug-only. `#else` / `#elseif` branches of such a block are not.
+    debug-only. Conditions containing OR are conservatively rejected because
+    a later operand can allow Release execution. `#else` / `#elseif` branches
+    of such a block are not.
     """
     flags: list[bool] = []
     stack: list[bool] = []  # per open #if: is the current branch debug-only
@@ -60,7 +63,7 @@ def debug_only_flags(lines: list[str]) -> list[bool]:
         m = IF_LINE.match(line)
         if m:
             cond = m.group(1).strip()
-            stack.append(bool(re.match(r"^DEBUG\b(?!\s*\|\|)", cond)))
+            stack.append(bool(re.match(r"^DEBUG\b", cond)) and "||" not in cond)
             flags.append(any(stack))
             continue
         if ELIF_LINE.match(line) or ELSE_LINE.match(line):

@@ -1,5 +1,6 @@
 import XCTest
 import FleetUI
+import FleetPersistence
 @testable import HermesFleetApp
 
 /// P0.3d — launch-environment override hygiene.
@@ -44,6 +45,17 @@ final class LaunchOverrideHygieneTests: XCTestCase {
         // Unset in DEBUG keeps the deterministic UI suites unlocked.
         XCTAssertEqual(mode(nil), .disabled)
         #endif
+    }
+
+    func testClearingLocalCachePreservesUpgradeEvidence() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        XCTAssertFalse(FleetServiceGraph.hasPriorInstallEvidence(cacheDirectory: directory))
+        let cache = try SwiftDataCacheStore.makeFileBacked(storeURL: directory.appendingPathComponent("cache.store"))
+        XCTAssertTrue(FleetServiceGraph.hasPriorInstallEvidence(cacheDirectory: directory))
+        try await cache.clearCachedData()
+        XCTAssertTrue(FleetServiceGraph.hasPriorInstallEvidence(cacheDirectory: directory),
+                      "clearing cached rows cannot make an upgrade look like a reinstall")
     }
 
     #if !DEBUG
