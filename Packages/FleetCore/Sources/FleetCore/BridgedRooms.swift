@@ -156,10 +156,16 @@ public enum BridgedRooms {
 
     // MARK: - JSON store
 
-    /// Device-local JSON persistence for bridged rooms (non-secret; same
-    /// container protection as every other Fleet store).
+    /// Device-local JSON persistence for bridged rooms. The file holds room
+    /// events and member names, so it is written `NSFileProtectionComplete`
+    /// and excluded from backup (`LocalFileProtection`, P0.3c). The file lives
+    /// directly in Application Support (not a directory this store owns), so
+    /// protection is applied to the file itself; an atomic write replaces the
+    /// inode, so attributes are re-applied after every write and to a legacy
+    /// (pre-P0.3c) file when it is first loaded.
     public actor Store {
         private let url: URL
+        private let protectionReporter: (@Sendable (LocalFileProtection.Failure) -> Void)?
         private var rooms: [String: RoomRecord] = [:]
         private var loaded = false
         /// Set when a present store file could not be read/decoded and was
@@ -200,8 +206,21 @@ public enum BridgedRooms {
             }
         }
 
-        public init(url: URL) {
+        /// - Parameter protectionReporter: told (type-only) when protection
+        ///   attributes could not be applied. The store keeps working: the
+        ///   bytes are already on disk, so availability wins and the next
+        ///   write retries. The composition root routes this to diagnostics.
+        public init(
+            url: URL,
+            protectionReporter: (@Sendable (LocalFileProtection.Failure) -> Void)? = nil
+        ) {
             self.url = url
+            self.protectionReporter = protectionReporter
+        }
+
+        /// Read back the store file's protection attributes (tests, diagnostics).
+        public func protectionAttributes() -> LocalFileProtection.Attributes {
+            LocalFileProtection.read(from: url)
         }
 
         /// Live change feed (room storage keys). Every mutation yields the
@@ -237,6 +256,10 @@ public enum BridgedRooms {
             do {
                 let data = try Data(contentsOf: url)
                 rooms = try JSONDecoder().decode([String: RoomRecord].self, from: data)
+                // A file written before P0.3c carries default attributes. The
+                // rooms are already in memory, so protect the existing file in
+                // place: nothing moves and nothing can be lost.
+                protectExistingFile(role: "rooms")
             } catch {
                 quarantineUnreadableStore()
             }
@@ -255,11 +278,26 @@ public enum BridgedRooms {
                 return
             }
             quarantinedURL = backup
+            // The moved-aside bytes are as sensitive as the store itself.
+            if let failure = LocalFileProtection.applyBestEffort(to: [("rooms-quarantine", backup)]).first {
+                protectionReporter?(failure)
+            }
+        }
+
+        private func protectExistingFile(role: String) {
+            for failure in LocalFileProtection.applyBestEffort(to: [(role, url)]) {
+                protectionReporter?(failure)
+            }
         }
 
         private func persist(_ snapshot: [String: RoomRecord]) throws {
             let data = try JSONEncoder().encode(snapshot)
-            try data.write(to: url, options: .atomic)
+            do {
+                try LocalFileProtection.write(data, to: url, role: "rooms")
+            } catch let failure as LocalFileProtection.Failure {
+                // The write itself succeeded; only the attributes failed.
+                protectionReporter?(failure)
+            }
         }
 
         /// Test launches reset before hydration, so previous rooms cannot

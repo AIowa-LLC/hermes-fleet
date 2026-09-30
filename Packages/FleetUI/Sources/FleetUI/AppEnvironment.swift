@@ -633,6 +633,7 @@ public final class AppEnvironment {
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
+        storageProtectionFailures: [LocalFileProtection.Failure] = [],
         recoveryTiming: ConnectionRecoveryTiming = .standard
     ) {
         self.registry = registry
@@ -656,7 +657,15 @@ public final class AppEnvironment {
         self.health = health
         self.biometrics = biometrics
         self.seedRegistrations = seedRegistrations
-        self.bridgedStore = BridgedRooms.Store(url: bridgedStoreURL ?? BridgedRooms.Store.defaultURL())
+        // P0.3c: a protection-attribute failure keeps the store available and
+        // leaves one type-only diagnostics line (no path, no error message).
+        self.bridgedStore = BridgedRooms.Store(
+            url: bridgedStoreURL ?? BridgedRooms.Store.defaultURL(),
+            protectionReporter: { [diagnosticsRecorder] failure in
+                Task { @MainActor in
+                    diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
+                }
+            })
         self.voiceEngineFactory = voiceEngineFactory
         self.connectionIntent = ConnectionIntentStore(defaults: connectionIntentDefaults)
         self.gatewaySessionInvalidator = gatewaySessionInvalidator
@@ -669,6 +678,9 @@ public final class AppEnvironment {
             // path leaves a diagnostics line.
             diagnosticsRecorder.record(category: "persistence", detail: localCacheRecovery.diagnosticsDetail)
             self.localCacheNotices = localCacheRecovery.notices
+        }
+        for failure in storageProtectionFailures {
+            diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
         }
         self.recoveryTiming = recoveryTiming
         self.roomSourceFactory = roomSourceFactory
@@ -686,6 +698,14 @@ public final class AppEnvironment {
         // captures `self` below — Swift requires every stored property
         // assigned before `self` can be used (even a weak capture).
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
+        artifactImages.protectionReporter = { [diagnosticsRecorder] failure in
+            diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
+        }
+        RoomDraftStore.shared.setReporter { [diagnosticsRecorder] failure in
+            Task { @MainActor in
+                diagnosticsRecorder.record(category: "persistence", detail: failure.diagnosticsDetail)
+            }
+        }
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
         liveOps.setProviders(
             gateways: { [weak self] in self?.gateways ?? [] },
@@ -749,6 +769,9 @@ public final class AppEnvironment {
             RoomDraftStore.resetForUITests()
         }
         #endif
+        // P0.3c: move any legacy UserDefaults room drafts into the protected
+        // store now (idempotent; retries on a later access if it cannot finish).
+        RoomDraftStore.shared.migrateLegacyDraftsIfNeeded()
         // P0-4: FIRST rebuild the registry from the durable record store so a
         // user-added gateway survives app close / relaunch (never-connected
         /// entries included, restored disconnected). Restore runs BEFORE the

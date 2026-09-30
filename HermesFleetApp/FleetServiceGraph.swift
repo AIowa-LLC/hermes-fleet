@@ -241,7 +241,8 @@ enum FleetServiceGraph {
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
             launchCache: launchCache,
-            localCacheRecovery: cacheRecovery
+            localCacheRecovery: cacheRecovery,
+            storageProtectionFailures: cacheStore.protectionFailures
         )
     }
 
