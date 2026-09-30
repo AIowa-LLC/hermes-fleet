@@ -8,6 +8,7 @@ import FleetCore
 /// floating menu).
 struct GroupsHomeView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .headline) private var fabSide: CGFloat = 48
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
