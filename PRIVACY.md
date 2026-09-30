@@ -21,6 +21,13 @@ retention rules.
   access. Speech recognition is required to run on the device; recognized text
   is submitted to the gateway only when the user sends it as a conversation
   prompt. Audio is not intentionally uploaded by Hermes Fleet.
+- Performance timings (for example how long launch or a gateway connection
+  took) are kept in memory for the current session, and Apple's MetricKit may
+  hand the app a daily summary of launch time, hangs, memory, and crash counts
+  from iOS. Hermes Fleet keeps only the aggregated numbers, on the device, and
+  never uploads them. They are shared only if you choose to copy or share the
+  "Report a Problem" text yourself; that report removes credentials and
+  gateway addresses first.
 - Attachments and message content are sent to the gateway selected by the user
   when the user explicitly submits them. Hermes Fleet does not sell this data
   or use it for advertising.

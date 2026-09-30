@@ -41,6 +41,48 @@ critical smoke. Broad shared-layer changes retain broader validation; the full
 nightly/manual suite is not an unconditional lock on every narrow change.
 See [dev-loop.md](dev-loop.md) for exact commands and limitations.
 
+## Performance tracing (signposts and MetricKit)
+
+Hermes Fleet emits `OSSignposter` intervals under subsystem
+`com.aiowa.hermesfleet`, category `perf`, through `FleetSignposts` in
+FleetCore (callable from FleetNetworking and FleetUI without cross-imports):
+
+| Interval | Begins | Ends |
+| --- | --- | --- |
+| `launch.to-paint` | `App` initialization | `hydrateFromLaunchCache` finished (`completed cached`, or `completed empty` with nothing to paint). Includes any App Lock authentication wait. |
+| `gateway.connect` | Ticket/auth start of one real connect | `gateway.ready` adopted (`failed` / `cancelled` otherwise). Joined or already-open connects add no interval. |
+| `replay.pass` | Start of a reconnect replay that has sessions to replay | Replay hold released; end metadata is the replayed event count. First-open epoch adoption is not a pass. |
+| `transcript.open` | First `start()` of a conversation | First rows rendered (`completed cached` / `completed live`), an empty new chat (`completed empty`), or `failed` / `cancelled`. |
+
+Signposts carry no caller strings: names come from a closed enum, end markers
+are fixed literals, and the only dynamic value (the replay count) is emitted
+`privacy: .private`. Never add a hostname, session id, title, or bot name to a
+signpost.
+
+Record a trace on a device or simulator:
+
+```sh
+# Instruments: Points of Interest or os_signpost template, filter subsystem
+# com.aiowa.hermesfleet, category perf. Or stream from the command line:
+log stream --signpost --predicate 'subsystem == "com.aiowa.hermesfleet" AND category == "perf"'
+# Simulator variant:
+xcrun simctl spawn booted log stream --signpost --predicate 'subsystem == "com.aiowa.hermesfleet"'
+```
+
+Launch-to-paint targets (< 400 ms p50) should be quoted from a Release build on
+a device, not a Debug simulator run.
+
+`Report a Problem` also renders a PERFORMANCE section: min/median/max of the
+last 20 completed intervals per name (in memory, this launch only) and the
+latest aggregated MetricKit summary. `MetricKit` payloads are received by
+`FleetMetricKitSubscriber` in the app target, reduced to numbers (medians,
+peaks, counts), and kept on-device only (in memory plus one small file under
+`Caches/FleetPerformance`). They leave the device only inside the report the
+user chooses to Copy or Share.
+
+Tests inject a `FleetSignposts` with a `FleetSignpostRecorder` (DEBUG-only) to
+assert an interval began and ended exactly once.
+
 ## Release provenance and catch-up
 
 Every TestFlight build maps to an exact commit and immutable tag recorded in

@@ -31,6 +31,13 @@ public actor GatewayReplayEngine: ReplayProviding {
     /// first). Compared against the fresh epoch after each reconnect.
     private var adoptedEpoch: String?
 
+    /// F0: performance signposts (`replay.pass`). Tests inject a recorder.
+    private var signposts: FleetSignposts = .shared
+
+    public func setSignposts(_ signposts: FleetSignposts) {
+        self.signposts = signposts
+    }
+
     public init(
         gatewayID: GatewayID,
         transport: GatewayWebSocketTransport,
@@ -80,6 +87,7 @@ public actor GatewayReplayEngine: ReplayProviding {
 
         // Park live frames during replay (§10 replayHold) so replayed events
         // inject in order; flush seq-gated afterwards (dedupe).
+        let passInterval = signposts.begin(.replayPass)
         await transport.beginReplayHold()
         var outcomes: [ReplayOutcome] = []
         for sessionID in watermarks.keys.sorted() {
@@ -95,6 +103,10 @@ public actor GatewayReplayEngine: ReplayProviding {
             }
         }
         await transport.endReplayHold()
+        passInterval.end(Task.isCancelled ? .cancelled : .completed, count: outcomes.reduce(0) {
+            if case .replayed(_, let count) = $1 { return $0 + count }
+            return $0
+        })
         return outcomes
     }
 

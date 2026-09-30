@@ -15,6 +15,9 @@ import FleetCore
 /// foreground. Keychain reads retain their platform at-rest protection.
 @main
 struct HermesFleetApp: App {
+    // F0: must stay the first stored property so `launch.to-paint` begins
+    // before the service graph below is built.
+    private let launchSignpost = FleetLaunchSignpostMark()
     @Environment(\.scenePhase) private var scenePhase
     @State private var environment = FleetServiceGraph.makeDefaultEnvironment()
     @State private var lockController = FleetServiceGraph.makeLockController()
@@ -65,6 +68,7 @@ struct HermesFleetApp: App {
             }
             .task {
                 HermesFleetShortcuts.updateAppShortcutParameters()
+                FleetMetricKitSubscriber.shared.register() // F0: on-device only
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)

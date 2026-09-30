@@ -100,6 +100,23 @@ Apple category that lists them.
 Third-party SDK manifests remain the SDK owners' responsibility; the app
 manifest does not substitute for a manifest inside an SDK bundle.
 
+## Performance diagnostics review (F0)
+
+The `OSSignposter` intervals (`FleetSignposts`) and the `MXMetricManager`
+subscriber (`FleetMetricKitSubscriber`) introduce no new data-collection
+category and no new required-reason API:
+
+- Signposts are local `os` trace points that carry no caller strings (closed
+  enum names, fixed literal end markers, one `privacy: .private` count).
+- MetricKit payloads are delivered by iOS to the app and reduced on the device
+  to numbers only. The subscriber makes no network call, and the summary (one
+  small JSON file under `Caches/FleetPerformance` plus memory) is never
+  uploaded. It leaves the device only inside the user-initiated, redacted
+  "Report a Problem" Copy/Share.
+- The summary file is written with `Data.write` and removed with
+  `FileManager.removeItem`; neither reads file timestamps or disk space, so
+  the audited category set is unchanged and `PrivacyInfo.xcprivacy` stays as is.
+
 ## Deterministic checks
 
 Run from the repository root:
