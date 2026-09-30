@@ -38,6 +38,19 @@ else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
 fi
 
+# --- extension-safe boundary (F3) ---------------------------------------------
+note "Module boundary: FleetClientKit and extension targets"
+if python3 scripts/extension_boundary_guard.py >/tmp/c1_extension_boundary.log 2>&1; then
+  ok "FleetClientKit/extension targets link only FleetCore + FleetSecurity + FleetClientKit"
+else
+  bad "extension-safe boundary violated:"; cat /tmp/c1_extension_boundary.log
+fi
+if bash scripts/extension_boundary_guard_test.sh >/tmp/c1_extension_boundary_test.log 2>&1; then
+  ok "extension boundary guard self-test: passing and failing fixtures behave"
+else
+  bad "extension boundary guard self-test FAILED"; cat /tmp/c1_extension_boundary_test.log
+fi
+
 # --- theme call-site audit ----------------------------------------------------
 note "Theme call-site audit"
 if bash scripts/theme_callsite_audit.sh >/tmp/c1_theme.log 2>&1; then

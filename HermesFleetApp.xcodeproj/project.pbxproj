@@ -19,6 +19,7 @@
 		0D1A4D0772071AC5C9FE0CCD /* ReadAloudViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B7DB1E86D99814851F64AF7 /* ReadAloudViewModelTests.swift */; };
 		0D1CA8D23CC11CAAE103AEEE /* KanbanInteractiveUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D3B513BA28AC33383A49F3 /* KanbanInteractiveUITests.swift */; };
 		0F2A6454E506740BE84B1739 /* AppEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 743944B9CB1507020C1B2A8C /* AppEnvironmentTests.swift */; };
+		11D3DFB7DFA6820F7EF5042A /* FleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = 93C490BE855453CB16C74879 /* FleetUI */; };
 		12262C2A67D474919998A606 /* ReasoningSliderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B17624EFC3B579B02DE5C6 /* ReasoningSliderUITests.swift */; };
 		13F3F7A725F5265CD226E34D /* HermesFleetReconnectUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07655520ABEDB2077F32D167 /* HermesFleetReconnectUITests.swift */; };
 		16D96136BF1241B597E4722D /* R9ConversationToolingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21D1C48B297C70782863ECDB /* R9ConversationToolingUITests.swift */; };
@@ -64,11 +65,11 @@
 		442E27137A9A74A01B20918E /* FleetNetworking in Frameworks */ = {isa = PBXBuildFile; productRef = 4439186D733E102F83A0BE03 /* FleetNetworking */; };
 		44D3313BD3B75361ECF04043 /* FleetSettingsAccentUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B066A503BF426E07D5165863 /* FleetSettingsAccentUITests.swift */; };
 		464FB448198ED56470CFD88D /* BridgedRoomRelayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F3736671B006443E5B22A9 /* BridgedRoomRelayTests.swift */; };
-		46C178598807B033656851F4 /* FleetPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 377914622ADB44444547314C /* FleetPersistence */; };
+		46C178598807B033656851F4 /* FleetClientKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1A97CC53C12C06B4E1C4DA44 /* FleetClientKit */; };
 		4709C62AB817CDE5D5CB5962 /* BotAvatarRendererAndControlsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 759E66BA6CE87E9995080C1D /* BotAvatarRendererAndControlsTests.swift */; };
 		48703090EBACB7FBDB05E476 /* R10MessageReactionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57784BC2C1A8BD4D890F4D33 /* R10MessageReactionsUITests.swift */; };
 		4A768B4C334F6466F161DB73 /* Issue5StreamingRichTextUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35C9E0A36254E87C0AD1A304 /* Issue5StreamingRichTextUITests.swift */; };
-		4C763BDF527C3C5EFF584006 /* FleetUI in Frameworks */ = {isa = PBXBuildFile; productRef = 93C490BE855453CB16C74879 /* FleetUI */; };
+		4C763BDF527C3C5EFF584006 /* FleetPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 377914622ADB44444547314C /* FleetPersistence */; };
 		4F757B94E834A86C50D51FE3 /* KanbanBoardSelectorViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87630C3BE4D4DB8BDDE8C7A5 /* KanbanBoardSelectorViewModelTests.swift */; };
 		504013619C0C5C1743CD1144 /* F2PairingApplyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0AFEA3FBD054A724A5F5139 /* F2PairingApplyTests.swift */; };
 		530AA02746BD1BF75369C072 /* R9ApprovalBannerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F4785CD8BD260DF07E65DF /* R9ApprovalBannerUITests.swift */; };
@@ -148,6 +149,7 @@
 		C5377CCD5DCFD49530466CE3 /* FleetDashboardFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70AC6557D0E8E55FB00F295 /* FleetDashboardFormattingTests.swift */; };
 		C56D4ED822D48F543FC80D08 /* P0_7SessionStateMachineUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20AB484DBACFFEEC06179C2 /* P0_7SessionStateMachineUITests.swift */; };
 		C6F51B49816B3F8801F18F68 /* AppLockProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A603A8D0B8049916523C335 /* AppLockProviders.swift */; };
+		C8845ACB09E71030108BC09A /* ExtensionKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B816465B1E07DB14CF6E5110 /* ExtensionKitTests.swift */; };
 		C9EBAFC1D504D352B9483088 /* FleetLaunchCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293B211BE293882FA7D04CB0 /* FleetLaunchCacheTests.swift */; };
 		CB2A546E9A4953A64976DD80 /* AttachmentStagingViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26665EB6ED4AAD8BAA2065F0 /* AttachmentStagingViewModelTests.swift */; };
 		CBAF6553CBB3340D244FEFD5 /* FleetSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = 4FD859AB5DC4007FABF3E84F /* FleetSecurity */; };
@@ -171,6 +173,7 @@
 		EADC535D428007F6C28FF432 /* ArtifactDestinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CD4CD33210AADF77605DBD7 /* ArtifactDestinationTests.swift */; };
 		EC633F89B6F3E540C837E1A2 /* RT4FormSaveFailureUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16ABB40EB8195A89AAF2A6C /* RT4FormSaveFailureUITests.swift */; };
 		EC7BD27669199B145DE0E55C /* Issue4SlashSkillUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F5C7B4AC06BE3E3829F5BE1 /* Issue4SlashSkillUITests.swift */; };
+		EECA5181D4999F097A83CC4A /* FleetSharedServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACAAD4E91BFE5028C5EF5791 /* FleetSharedServices.swift */; };
 		EF2CF38F42256207E850B8AE /* H1AppLockUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0A14C6077626C1CE583542 /* H1AppLockUITests.swift */; };
 		F076A425426056BD2643427E /* FleetUnreadStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38EA06A37B9128A58A05BBD8 /* FleetUnreadStateTests.swift */; };
 		F14069A7319C17D2D0651D4F /* RT4VoiceOverUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84817A22FDC16B5FCACA9EC9 /* RT4VoiceOverUITests.swift */; };
@@ -295,6 +298,7 @@
 		7D2FF354CD362EE530AAD730 /* PairingScannerConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingScannerConfigurationTests.swift; sourceTree = "<group>"; };
 		7D4F9B97BE138E2E91D5F991 /* L1LiveGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L1LiveGatewayUITests.swift; sourceTree = "<group>"; };
 		7F8603AE7421818EC9CFA200 /* HermesFleetAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HermesFleetAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		81666989C43CCFD8B1EBE20F /* FleetClientKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetClientKit; path = Packages/FleetClientKit; sourceTree = SOURCE_ROOT; };
 		81A1A63C6F0F29A8454980F6 /* H2HealthDashboardUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H2HealthDashboardUITests.swift; sourceTree = "<group>"; };
 		83B1156EFB5904085409E071 /* CrossGatewayRoomSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossGatewayRoomSetupTests.swift; sourceTree = "<group>"; };
 		84817A22FDC16B5FCACA9EC9 /* RT4VoiceOverUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT4VoiceOverUITests.swift; sourceTree = "<group>"; };
@@ -321,6 +325,7 @@
 		A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U7GatewayQrLockSettingsUITests.swift; sourceTree = "<group>"; };
 		AA0788C641C3AD0C32972980 /* RT2RemovalAndEndpointSanitizationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RT2RemovalAndEndpointSanitizationUITests.swift; sourceTree = "<group>"; };
 		AB9D5A666BBC20E8D5453331 /* HermesFleetAppUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HermesFleetAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		ACAAD4E91BFE5028C5EF5791 /* FleetSharedServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSharedServices.swift; sourceTree = "<group>"; };
 		AF524BB131167B4F4E65D756 /* UITestLaunchSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestLaunchSupport.swift; sourceTree = "<group>"; };
 		AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H2SurfaceDoctorDeviceTests.swift; sourceTree = "<group>"; };
 		B066A503BF426E07D5165863 /* FleetSettingsAccentUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSettingsAccentUITests.swift; sourceTree = "<group>"; };
@@ -332,6 +337,7 @@
 		B5C1B0F6CE9B280437225918 /* RoomInfoPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomInfoPresentationTests.swift; sourceTree = "<group>"; };
 		B5DFB5F90D7136805DD0FA4D /* ToolActivityGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityGroupingTests.swift; sourceTree = "<group>"; };
 		B7188482A02E39F8F27E9916 /* ConnectionLifecycleIntentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionLifecycleIntentTests.swift; sourceTree = "<group>"; };
+		B816465B1E07DB14CF6E5110 /* ExtensionKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionKitTests.swift; sourceTree = "<group>"; };
 		BB5D3EBD6F4D46D0139E63F9 /* ImageGenerationAnimationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationAnimationUITests.swift; sourceTree = "<group>"; };
 		BB6E5C03C9C964E31771BA70 /* BotsPresenceSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotsPresenceSyncUITests.swift; sourceTree = "<group>"; };
 		BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L1FixLiveGatewayUITests.swift; sourceTree = "<group>"; };
@@ -389,8 +395,9 @@
 				225FA7C42C7D6F474B3EA8AA /* FleetCore in Frameworks */,
 				442E27137A9A74A01B20918E /* FleetNetworking in Frameworks */,
 				CBAF6553CBB3340D244FEFD5 /* FleetSecurity in Frameworks */,
-				46C178598807B033656851F4 /* FleetPersistence in Frameworks */,
-				4C763BDF527C3C5EFF584006 /* FleetUI in Frameworks */,
+				46C178598807B033656851F4 /* FleetClientKit in Frameworks */,
+				4C763BDF527C3C5EFF584006 /* FleetPersistence in Frameworks */,
+				11D3DFB7DFA6820F7EF5042A /* FleetUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -400,6 +407,7 @@
 		115CCE5DFAE549D2299660EC /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				81666989C43CCFD8B1EBE20F /* FleetClientKit */,
 				0F3B4DCFA36A97723EE623AB /* FleetCore */,
 				260BB18804C7394A2D1C217E /* FleetNetworking */,
 				DE435C9B85312695131CC209 /* FleetPersistence */,
@@ -443,6 +451,7 @@
 				5C674307D70D24AE47D125FD /* CronDashboardModelTests.swift */,
 				83B1156EFB5904085409E071 /* CrossGatewayRoomSetupTests.swift */,
 				4003F6DBD81C5CCA2C563A8C /* DiagnosticsRecorderTests.swift */,
+				B816465B1E07DB14CF6E5110 /* ExtensionKitTests.swift */,
 				0EDD0C9EA5DA66D6FA4D2F1C /* F1FailureCopyTests.swift */,
 				B2707339B7AA75D01175558E /* F1LiveATSProbeTests.swift */,
 				C0AFEA3FBD054A724A5F5139 /* F2PairingApplyTests.swift */,
@@ -534,6 +543,7 @@
 				745ADDE165B902910C38E299 /* Assets.xcassets */,
 				8A08506C47F80EF97B548420 /* FleetConversationShortcuts.swift */,
 				F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */,
+				ACAAD4E91BFE5028C5EF5791 /* FleetSharedServices.swift */,
 				2380AC190371692E170A3C23 /* FleetSimulator.swift */,
 				9A05382B633430B51638CBE2 /* FleetWing.icon */,
 				EBAFAC9427FB277EA0C2D8B4 /* GatewayRoomProviders.swift */,
@@ -683,6 +693,7 @@
 				8F4470D5B9599997A86EB24D /* FleetCore */,
 				4439186D733E102F83A0BE03 /* FleetNetworking */,
 				4FD859AB5DC4007FABF3E84F /* FleetSecurity */,
+				1A97CC53C12C06B4E1C4DA44 /* FleetClientKit */,
 				377914622ADB44444547314C /* FleetPersistence */,
 				93C490BE855453CB16C74879 /* FleetUI */,
 			);
@@ -742,6 +753,7 @@
 			mainGroup = 7355D111D5347274DDD496EA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				8438F0857E5DD3DEFDE6551B /* XCLocalSwiftPackageReference "Packages/FleetClientKit" */,
 				0D2B5F56F5D38399B27FCE2C /* XCLocalSwiftPackageReference "Packages/FleetCore" */,
 				B3CC4035E359215431637EC7 /* XCLocalSwiftPackageReference "Packages/FleetNetworking" */,
 				540AFB342324F3C5BFBCE25A /* XCLocalSwiftPackageReference "Packages/FleetPersistence" */,
@@ -782,6 +794,7 @@
 				C6F51B49816B3F8801F18F68 /* AppLockProviders.swift in Sources */,
 				83B772C524755030F962DEA6 /* FleetConversationShortcuts.swift in Sources */,
 				F37E76F893963CDB1E25D544 /* FleetServiceGraph.swift in Sources */,
+				EECA5181D4999F097A83CC4A /* FleetSharedServices.swift in Sources */,
 				3F560639A03BF741A77E72F8 /* FleetSimulator.swift in Sources */,
 				700DFE4F228CE222DCF6B3F4 /* GatewayRoomProviders.swift in Sources */,
 				B9F70C648F21F01431B2BCBC /* HermesFleetApp.swift in Sources */,
@@ -826,6 +839,7 @@
 				5D62C68362398216BC65CED5 /* CronDashboardModelTests.swift in Sources */,
 				872237CA888F813111175FB7 /* CrossGatewayRoomSetupTests.swift in Sources */,
 				A15A5D33C92B2674694C05C7 /* DiagnosticsRecorderTests.swift in Sources */,
+				C8845ACB09E71030108BC09A /* ExtensionKitTests.swift in Sources */,
 				B1306E98F67503207DCCAC67 /* F1FailureCopyTests.swift in Sources */,
 				BFE06EDC671EA61D2924AD33 /* F1LiveATSProbeTests.swift in Sources */,
 				504013619C0C5C1743CD1144 /* F2PairingApplyTests.swift in Sources */,
@@ -1129,10 +1143,16 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
+				CODE_SIGN_ENTITLEMENTS = "$(FLEET_ENTITLEMENTS_$(FLEET_SHARED_GROUPS))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_PREVIEWS = YES;
+				FLEET_APP_GROUP_ID = group.com.aiowa.hermesfleet;
+				FLEET_ENTITLEMENTS_NO = "";
+				FLEET_ENTITLEMENTS_YES = Config/SharedGroups.entitlements;
+				FLEET_KEYCHAIN_GROUP = "$(AppIdentifierPrefix)com.aiowa.hermesfleet.shared";
+				FLEET_SHARED_GROUPS = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HermesFleetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Hermes Fleet";
@@ -1170,10 +1190,16 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = FleetWing;
+				CODE_SIGN_ENTITLEMENTS = "$(FLEET_ENTITLEMENTS_$(FLEET_SHARED_GROUPS))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 3JS22HX92T;
 				ENABLE_PREVIEWS = YES;
+				FLEET_APP_GROUP_ID = group.com.aiowa.hermesfleet;
+				FLEET_ENTITLEMENTS_NO = "";
+				FLEET_ENTITLEMENTS_YES = Config/SharedGroups.entitlements;
+				FLEET_KEYCHAIN_GROUP = "$(AppIdentifierPrefix)com.aiowa.hermesfleet.shared";
+				FLEET_SHARED_GROUPS = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HermesFleetApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Hermes Fleet";
@@ -1282,6 +1308,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/FleetPersistence;
 		};
+		8438F0857E5DD3DEFDE6551B /* XCLocalSwiftPackageReference "Packages/FleetClientKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/FleetClientKit;
+		};
 		B3CC4035E359215431637EC7 /* XCLocalSwiftPackageReference "Packages/FleetNetworking" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/FleetNetworking;
@@ -1289,6 +1319,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1A97CC53C12C06B4E1C4DA44 /* FleetClientKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FleetClientKit;
+		};
 		377914622ADB44444547314C /* FleetPersistence */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = FleetPersistence;

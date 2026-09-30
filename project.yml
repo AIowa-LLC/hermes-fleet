@@ -25,6 +25,8 @@ packages:
     path: Packages/FleetNetworking
   FleetSecurity:
     path: Packages/FleetSecurity
+  FleetClientKit:
+    path: Packages/FleetClientKit
   FleetPersistence:
     path: Packages/FleetPersistence
   FleetUI:
@@ -42,6 +44,7 @@ targets:
       - package: FleetCore
       - package: FleetNetworking
       - package: FleetSecurity
+      - package: FleetClientKit
       - package: FleetPersistence
       - package: FleetUI
     settings:
@@ -61,6 +64,21 @@ targets:
         # may override signing settings per invocation when appropriate.
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 3JS22HX92T
+        # F3 extension kit: App Group + shared keychain group (push key only).
+        # A SINGLE switch, OFF by default in every configuration. While it is
+        # NO no entitlements file is applied, so Debug/Release signing and the
+        # existing provisioning profiles are unchanged; FleetClientKit then
+        # falls back to the app container / app-private keychain at runtime.
+        # The maintainer flips it to YES only after registering the App Group
+        # and keychain group on the Developer portal and regenerating profiles
+        # (docs/extension-kit.md). It also drives the Info.plist key that the
+        # runtime capability check reads, so entitlements and code agree.
+        FLEET_SHARED_GROUPS: "NO"
+        FLEET_APP_GROUP_ID: group.com.aiowa.hermesfleet
+        FLEET_KEYCHAIN_GROUP: "$(AppIdentifierPrefix)com.aiowa.hermesfleet.shared"
+        FLEET_ENTITLEMENTS_YES: Config/SharedGroups.entitlements
+        FLEET_ENTITLEMENTS_NO: ""
+        CODE_SIGN_ENTITLEMENTS: "$(FLEET_ENTITLEMENTS_$(FLEET_SHARED_GROUPS))"
 
   HermesFleetAppTests:
     type: bundle.unit-test
