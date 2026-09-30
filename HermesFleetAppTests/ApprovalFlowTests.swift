@@ -338,8 +338,9 @@ final class ApprovalFlowTests: XCTestCase {
         let approvals = ScriptedApprovals()
         let vm = ApprovalViewModel(approvals: approvals, biometrics: auth)
         vm.bind(sessionID: "s-1")
-        vm.handleApprovalRequest(longRequest())
-        vm.markPendingReviewed()
+        let reviewedRequest = longRequest()
+        vm.handleApprovalRequest(reviewedRequest)
+        vm.markReviewed(reviewedRequest)
         let tap = Task { await vm.approve(scope: .once) }
         for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
         vm.handleApprovalRequest(ApprovalRequest(requestID: "req-long", sessionID: "s-1",
