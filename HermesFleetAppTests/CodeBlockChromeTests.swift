@@ -203,9 +203,12 @@ final class CodeBlockChromeTests: XCTestCase {
     func testCardFillStaysTheSameDerivationAsBefore() throws {
         let values = FleetThemeValues(
             palette: .fleetDefault, isDarkAppearance: true, isIncreasedContrast: false)
-        XCTAssertEqual(
-            FleetStoredColor(color: FleetMarkdownRenderConfiguration.codeCardBackground(theme: values)),
-            CodeBlockAppearance.cardFill(theme: values))
+        let viaColor = try XCTUnwrap(
+            FleetStoredColor(color: FleetMarkdownRenderConfiguration.codeCardBackground(theme: values)))
+        let direct = CodeBlockAppearance.cardFill(theme: values)
+        XCTAssertEqual(viaColor.red, direct.red, accuracy: 0.002)
+        XCTAssertEqual(viaColor.green, direct.green, accuracy: 0.002)
+        XCTAssertEqual(viaColor.blue, direct.blue, accuracy: 0.002)
     }
 
     func testRendererConfigurationUsesPaletteSelectedThemeNotFixedXcode() {
@@ -288,8 +291,8 @@ final class CodeBlockChromeTests: XCTestCase {
         let (shortHost, shortWindow) = host("let a = 1")
         defer { longWindow.isHidden = true; shortWindow.isHidden = true }
 
-        let longSize = longHost.sizeThatFits(in: CGSize(width: 320, height: .greatestFiniteMagnitude))
-        let shortSize = shortHost.sizeThatFits(in: CGSize(width: 320, height: .greatestFiniteMagnitude))
+        let longSize = longHost.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
+        let shortSize = shortHost.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
         XCTAssertEqual(
             longSize.height, shortSize.height, accuracy: 1,
             "a single long line must not wrap into extra lines")

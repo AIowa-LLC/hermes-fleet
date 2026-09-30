@@ -78,7 +78,12 @@ enum AssistantMarkdownSegment: Equatable {
 /// through the third-party card, restyled by `CodeBlockAppearance`.
 enum AssistantMarkdownSegmenter {
     static func split(_ markdown: String) -> [AssistantMarkdownSegment] {
-        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
+        // "\r\n" is ONE Character in Swift, so a plain "\n" split would never
+        // see a CRLF line break. Normalize first.
+        let normalized = markdown.contains("\r\n")
+            ? markdown.replacingOccurrences(of: "\r\n", with: "\n")
+            : markdown
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false)
         var segments: [AssistantMarkdownSegment] = []
         var prose: [Substring] = []
         var index = 0
