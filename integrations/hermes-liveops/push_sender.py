@@ -30,6 +30,24 @@ BACKOFF_CAP = 30.0
 RETRY_AFTER_CAP = 60.0
 SENT_MAX = 256
 SEEN_MAX = 256
+CHILDREN_MAX = 1024
+# `surface` values upstream passes to the approval hooks where a person is being
+# asked (verified against hermes-agent 30de041b01):
+#   gateway          gateway/app prompt (tools/approval.py, file_tools_write_guards.py)
+#   cli              interactive terminal prompt
+#   mcp-elicitation  MCP elicitation consent routed through the gateway prompt
+#   transport:<name> a plugin approval transport presenting to a person
+# The guardian-LLM step fires the same hooks with `surface == "smart"` and
+# decides with no human (`choice` smart_approve/smart_deny, decided_by aux_llm);
+# an ESCALATE verdict then reaches a person through one of the surfaces above,
+# which fires its own hook pair. Unknown or missing surfaces are not alerted.
+HUMAN_SURFACES = frozenset({"gateway", "cli", "mcp-elicitation"})
+TRANSPORT_PREFIX = "transport:"
+
+
+def human_decides(surface):
+    return isinstance(surface, str) and (
+        surface in HUMAN_SURFACES or surface.startswith(TRANSPORT_PREFIX))
 HTTP_TIMEOUT = 10
 MIN_EXPIRY = 60
 MAX_EXPIRY = 24 * 60 * 60 - 60
@@ -179,13 +197,20 @@ class PushSender:
         self._sent = {}  # collapse id -> {"device_ids": [...], "session_key", "digest", ...}
         self._seen = {}
         self.dropped = 0
+        self._children = {}  # delegated child session ids (bounded, insertion ordered)
+        self._children_lock = threading.Lock()
 
     # ---- hooks (hot path: O(1), no I/O, never raise, never return) ------
     @_never_raises
     def on_pre_approval_request(self, **kw):
         if not self.settings.kinds["approval"] or kw.get("coalesced"):
             return
+        # Never alert for an approval that resolves without a person (the smart-mode guardian).
+        if not human_decides(kw.get("surface")) or kw.get("decided_by"):
+            return
+        request_id = kw.get("request_id")
         self._enqueue({"type": "event", "kind": "approval", "command": str(kw.get("command") or ""),
+                       "request_id": request_id if isinstance(request_id, str) else "",
                        "session_key": str(kw.get("session_key") or ""),
                        "session_id": str(kw.get("session_id") or ""),
                        "tool_call_id": str(kw.get("tool_call_id") or ""),
@@ -193,8 +218,8 @@ class PushSender:
 
     @_never_raises
     def on_post_approval_response(self, **kw):
-        if not self.settings.kinds["approval"]:
-            return
+        if not self.settings.kinds["approval"] or not human_decides(kw.get("surface")):
+            return  # nothing was pushed for an automatic (smart) decision
         choice = kw.get("choice")
         outcome = ("approved" if choice in APPROVED_CHOICES else "denied" if choice in DENIED_CHOICES
                    else "timeout" if choice == "timeout" else "cancelled")
@@ -220,12 +245,26 @@ class PushSender:
                        "tool_call_id": str(kw.get("tool_call_id") or "")})
 
     @_never_raises
+    def on_subagent_start(self, **kw):
+        """Remember delegated child sessions (``subagent_start`` fires before the
+        child runs, so its turn end is always seen after this)."""
+        child = kw.get("child_session_id")
+        if not isinstance(child, str) or not child:
+            return
+        with self._children_lock:
+            self._children[child] = True
+            while len(self._children) > CHILDREN_MAX:
+                self._children.pop(next(iter(self._children)))
+
+    @_never_raises
     def on_session_end(self, **kw):
         kind = "cron" if kw.get("platform") == "cron" else "done"
         if not self.settings.kinds[kind] or kw.get("interrupted"):
             return
         if not (kw.get("completed") or kw.get("failed")):
             return
+        if kw.get("session_id") in self._children:
+            return  # a delegated child agent: the parent session's alert is the one that matters
         self._enqueue({"type": "event", "kind": kind, "command": "", "session_key": "",
                        "session_id": str(kw.get("session_id") or ""),
                        "turn_id": str(kw.get("turn_id") or ""),
@@ -335,7 +374,7 @@ class PushSender:
         risk = payload_lib.classify_risk(command) if kind == "approval" else "normal"
         request_id = token = None
         if kind == "approval":
-            request_id = self.lookup(job["session_key"], command)
+            request_id = job.get("request_id") or self.lookup(job["session_key"], command)
             try:
                 token = store.mint_token(session_key=job["session_key"], request_id=request_id,
                                          command_digest=digest, expires_at=now + ttl)
@@ -458,6 +497,7 @@ def register(ctx, *, store_factory=default_store, transport=None, start_thread=T
     ctx.register_hook("post_approval_response", sender.on_post_approval_response)
     ctx.register_hook("pre_tool_call", sender.on_pre_tool_call)
     ctx.register_hook("on_session_end", sender.on_session_end)
+    ctx.register_hook("subagent_start", sender.on_subagent_start)
     unload = getattr(ctx, "on_unload", None)
     if callable(unload):
         unload(sender.stop)

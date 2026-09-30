@@ -349,7 +349,7 @@ class HookBehaviorTests(SenderCase):
         ctx = FakeCtx(**{"push.enabled": True})
         sender = sender_lib.register(ctx, store_factory=lambda: self.store, start_thread=False)
         self.assertEqual(set(ctx.hooks), {"pre_approval_request", "post_approval_response",
-                                          "pre_tool_call", "on_session_end"})
+                                          "pre_tool_call", "on_session_end", "subagent_start"})
         self.assertEqual(ctx.unload, [sender.stop])
         again = FakeCtx()
         sender_lib.register(again, store_factory=lambda: self.store, start_thread=False)
@@ -649,6 +649,99 @@ class EventTests(SenderCase):
         for private_text in (secret, self.device["send_capability"], self.device["device_public_key"],
                              self.device["relay_device_id"], "stored-session", "gateway-session-key"):
             self.assertNotIn(private_text, text)
+
+
+class ApprovalSurfaceTests(SenderCase):
+    """Alert only when a person is asked. Values verified against hermes-agent 30de041b01."""
+
+    def pre(self, surface, **extra):
+        kwargs = self.approval(surface=surface, **extra)
+        if surface is None:
+            del kwargs["surface"]
+        self.sender.on_pre_approval_request(**kwargs)
+        self.sender.drain()
+
+    def test_surfaces_where_a_person_decides_are_alerted(self):
+        for surface in ("gateway", "cli", "mcp-elicitation", "transport:chat", "transport:a-b_c"):
+            with self.subTest(surface=surface):
+                self.relay.calls.clear()
+                self.pre(surface, tool_call_id="call-" + surface)
+                self.assertEqual([body["alert"]["title_key"] for body in self.sent()], ["approval"])
+
+    def test_the_smart_guardian_and_unknown_surfaces_are_never_alerted(self):
+        for surface in ("smart", "SMART", "", "unknown", "transport", "Gateway", "auto", None, 7):
+            with self.subTest(surface=surface):
+                self.pre(surface)
+        self.assertEqual(self.relay.calls, [])
+        self.assertFalse((self.root / "push-tokens.json").exists())
+
+    def test_a_decision_made_by_a_model_is_never_alerted_even_on_a_human_surface(self):
+        self.pre("gateway", decided_by="aux_llm")
+        self.assertEqual(self.relay.calls, [])
+
+    def test_smart_approve_and_deny_fire_no_alert_and_no_withdrawal(self):
+        for verdict in ("smart_approve", "smart_deny"):
+            self.pre("smart")
+            self.sender.on_post_approval_response(
+                **self.approval(surface="smart"), choice=verdict, decided_by="aux_llm")
+            self.sender.drain()
+        self.assertEqual(self.relay.calls, [])
+
+    def test_smart_escalation_alerts_once_when_it_reaches_a_person(self):
+        self.pre("smart")                     # guardian step: no human
+        self.pre("gateway")                   # ESCALATE: the prompt a person sees
+        self.assertEqual(len(self.relay.calls), 1)
+        self.sender.on_post_approval_response(**self.approval(surface="gateway"), choice="once")
+        self.sender.drain()
+        self.assertEqual(self.sent()[1]["push_type"], "background")
+
+    def test_a_transport_supplied_request_id_is_used(self):
+        self.pre("transport:chat", request_id="transport-request-1")
+        payload = open_sealed(self.sent()[0], self.private)
+        self.assertEqual(payload["request_id"], "transport-request-1")
+        record = self.store.consume_token(payload["response_token"], "transport-request-1")
+        self.assertEqual(record["request_id"], "transport-request-1")
+
+    def test_post_hook_on_an_unalerted_surface_is_ignored(self):
+        self.pre("gateway")
+        self.sender.on_post_approval_response(**self.approval(surface="smart"), choice="once")
+        self.sender.drain()
+        self.assertEqual(len(self.relay.calls), 1)  # no withdrawal from a foreign surface
+
+
+class DelegatedChildTests(SenderCase):
+    def test_child_turn_end_and_cron_alerts_are_suppressed_but_the_parent_is_not(self):
+        self.assertIsNone(self.sender.on_subagent_start(
+            parent_session_id="parent", child_session_id="child-1", child_role="leaf"))
+        self.sender.on_session_end(completed=True, session_id="child-1", turn_id="c1", platform="telegram")
+        self.sender.on_session_end(completed=True, session_id="child-1", turn_id="c2", platform="cron")
+        self.sender.on_session_end(failed=True, session_id="child-1", turn_id="c3")
+        self.sender.on_session_end(completed=True, session_id="parent", turn_id="p1", platform="telegram")
+        self.sender.drain()
+        self.assertEqual([open_sealed(body, self.private)["session_id"] for body in self.sent()], ["parent"])
+
+    def test_suppression_survives_subagent_stop_ordering_and_ignores_bad_ids(self):
+        for bad in (None, "", 5, ["x"]):
+            self.assertIsNone(self.sender.on_subagent_start(child_session_id=bad))
+        self.assertEqual(self.sender._children, {})
+        self.sender.on_subagent_start(child_session_id="child-2")
+        self.sender.on_session_end(completed=True, session_id="child-2", turn_id="t")  # stop never seen
+        self.sender.on_session_end(completed=True, session_id="other", turn_id="t")
+        self.sender.drain()
+        self.assertEqual(len(self.relay.calls), 1)
+
+    def test_child_tracking_is_bounded(self):
+        for index in range(sender_lib.CHILDREN_MAX + 10):
+            self.sender.on_subagent_start(child_session_id=f"c{index}")
+        self.assertEqual(len(self.sender._children), sender_lib.CHILDREN_MAX)
+        self.assertNotIn("c0", self.sender._children)
+        self.assertIn(f"c{sender_lib.CHILDREN_MAX + 9}", self.sender._children)
+
+    def test_child_approvals_are_still_alerted_because_a_person_must_decide(self):
+        self.sender.on_subagent_start(child_session_id="child-3")
+        self.sender.on_pre_approval_request(**self.approval(session_id="child-3"))
+        self.sender.drain()
+        self.assertEqual(len(self.relay.calls), 1)
 
 
 class DeliveryTests(SenderCase):
