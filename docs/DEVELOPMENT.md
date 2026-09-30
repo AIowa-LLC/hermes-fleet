@@ -72,6 +72,15 @@ Independent lanes can proceed concurrently; a dependent lane refreshes from
 main after its prerequisite merges. Never use a historical dogfood, recovery,
 or worker branch as the default base for new work.
 
+Worktrees isolate source and the runners' derived-data directories, but iOS
+Simulator devices are shared by every lane on one host. The C1 hosted-unit and
+UI runners select the first available iPhone by default. Coordinate local
+invocations so one lane at a time installs/runs Fleet on a given simulator.
+For concurrent Xcode validation, use separate simulator destinations and
+separate derived-data/result paths in explicit `xcodebuild` commands; a new
+worktree does not select a new simulator. Static and package-only checks can
+run independently.
+
 One CI/release integrator coordinates shared integration surfaces per batch:
 
 | Surface | Integration responsibility |

@@ -440,3 +440,42 @@ final class RoomTimelineGeometryTests: XCTestCase {
         XCTAssertTrue(value.isNull, "Do not invent a viewport before layout measures it")
     }
 }
+
+
+final class RoomLatestScrollGeometryTests: XCTestCase {
+    private let viewport = CGRect(x: 0, y: 0, width: 402, height: 874)
+    private let composer = CGRect(x: 0, y: 776, width: 402, height: 98)
+
+    func testTargetCoveredByComposerHasNotArrived() {
+        let target = CGRect(x: 16, y: 804, width: 370, height: 40)
+        XCTAssertFalse(RoomLatestScrollGeometry.isAtEnd(
+            target: target, viewport: viewport, composer: composer))
+    }
+
+    func testComposerResizeInvalidatesPreviousArrival() {
+        let target = CGRect(x: 16, y: 730, width: 370, height: 40)
+        XCTAssertTrue(RoomLatestScrollGeometry.isAtEnd(
+            target: target, viewport: viewport, composer: composer))
+        let raisedComposer = CGRect(x: 0, y: 700, width: 402, height: 174)
+        XCTAssertFalse(RoomLatestScrollGeometry.isAtEnd(
+            target: target, viewport: viewport, composer: raisedComposer))
+    }
+
+    func testAbsentComposerLeavesMeasuredViewportReadable() {
+        let target = CGRect(x: 16, y: 800, width: 370, height: 74)
+        let absentComposer = CGRect(x: 0, y: viewport.maxY, width: viewport.width, height: 0)
+        XCTAssertTrue(RoomLatestScrollGeometry.isAtEnd(
+            target: target, viewport: viewport, composer: absentComposer))
+    }
+
+    func testUnknownOrOffscreenGeometryCannotConfirmArrival() {
+        let target = CGRect(x: 16, y: 730, width: 370, height: 40)
+        XCTAssertFalse(RoomLatestScrollGeometry.isAtEnd(
+            target: target, viewport: .null, composer: composer))
+        XCTAssertFalse(RoomLatestScrollGeometry.isAtEnd(
+            target: target, viewport: viewport, composer: .null))
+        XCTAssertFalse(RoomLatestScrollGeometry.isAtEnd(
+            target: CGRect(x: 16, y: -60, width: 370, height: 40),
+            viewport: viewport, composer: composer))
+    }
+}

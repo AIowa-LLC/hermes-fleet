@@ -656,6 +656,31 @@ struct RoomScrollViewportFramePreferenceKey: PreferenceKey {
     }
 }
 
+enum RoomLatestScrollGeometry {
+    static func isAtEnd(target: CGRect, viewport: CGRect, composer: CGRect) -> Bool {
+        guard !target.isNull, !target.isEmpty,
+              !viewport.isNull, !viewport.isEmpty,
+              !composer.isNull else { return false }
+        // The outer ScrollView frame includes the bottom safe-area inset.
+        // Arrival must be above the actual composer, including keyboard and
+        // adaptive layout changes, rather than merely inside that outer frame.
+        let bottom = min(viewport.maxY, composer.minY)
+        guard bottom > viewport.minY else { return false }
+        let readable = CGRect(x: viewport.minX, y: viewport.minY,
+                              width: viewport.width, height: bottom - viewport.minY)
+        return target.intersects(readable) && target.maxY <= readable.maxY + 1
+    }
+}
+
+private struct RoomComposerFramePreferenceKey: PreferenceKey {
+    static let defaultValue = CGRect.null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isNull { value = next }
+    }
+}
+
 /// One room, generation-agnostic: hosted rooms render interactive (per
 /// capabilities), legacy rooms render observational with the "Managed by
 /// Hermes Desktop" label. Fleet visual language: dark cards, bold headers,
@@ -695,6 +720,7 @@ public struct RoomChatView: View {
     /// final row is materialized. Convergence uses the target's actual frame.
     @State private var latestScrollTargetFrame: RoomLatestScrollTargetFrame?
     @State private var scrollViewportFrame = CGRect.null
+    @State private var composerFrame = CGRect.null
     @FocusState private var composing: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
@@ -741,7 +767,17 @@ public struct RoomChatView: View {
             }
             // Reserve the composer's measured height in the scroll region so
             // scrollTo(.bottom) leaves the newest content readable above it.
-            .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                composer.background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: RoomComposerFramePreferenceKey.self,
+                            value: geometry.frame(in: .global))
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
             .background(theme.background.ignoresSafeArea())
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
@@ -826,6 +862,20 @@ public struct RoomChatView: View {
                 followLatestToken += 1
                 convergeOnLatest(proxy: proxy, target: target, token: followLatestToken)
             }
+            .onChange(of: isLatestScrollTargetAtEnd) { _, atEnd in
+                // Actual row geometry can leave the visible end before the
+                // coarse scroll-distance observer crosses its threshold.
+                if !atEnd && isUserInteractingWithScroll && !isProgrammaticFollow {
+                    followingLatest = false
+                }
+            }
+            .onChange(of: needsLatestConvergence) { _, needed in
+                // Lazy rows and keyboard/composer layout can move the target
+                // after the first apparent arrival without changing row count.
+                guard needed, let target = latestScrollTarget else { return }
+                followLatestToken += 1
+                convergeOnLatest(proxy: proxy, target: target, token: followLatestToken)
+            }
             .onAppear {
                 // Open at the LATEST content (pre-FOS-8 behavior preserved:
                 // the room opens following the latest; only an explicit
@@ -846,9 +896,7 @@ public struct RoomChatView: View {
                     - geometry.visibleRect.height <= 160
             } action: { _, atBottom in
                 isAtBottomLatest = atBottom
-                if atBottom && isLatestScrollTargetAtEnd {
-                    isProgrammaticFollow = false
-                } else if isUserInteractingWithScroll && !isProgrammaticFollow
+                if isUserInteractingWithScroll && !isProgrammaticFollow
                     && !isLatestScrollTargetAtEnd {
                     // The phase callback can run before geometry has updated
                     // isAtBottomLatest. Treat the first non-bottom geometry
@@ -924,6 +972,9 @@ public struct RoomChatView: View {
         .onPreferenceChange(RoomScrollViewportFramePreferenceKey.self) { frame in
             scrollViewportFrame = frame
         }
+        .onPreferenceChange(RoomComposerFramePreferenceKey.self) { frame in
+            composerFrame = frame
+        }
     }
 
     // MARK: Open-at-latest convergence (t_363bc529)
@@ -932,21 +983,23 @@ public struct RoomChatView: View {
         !viewModel.workIndicators.isEmpty ? "fleet.room.work.anchor" : viewModel.transcript.last?.id
     }
 
-    private var isLatestScrollTargetVisible: Bool {
-        guard let latestScrollTargetFrame,
-              latestScrollTargetFrame.id == latestScrollTarget,
-              !scrollViewportFrame.isNull else { return false }
-        return latestScrollTargetFrame.frame.intersects(scrollViewportFrame)
+    private var needsLatestConvergence: Bool {
+        followingLatest && !isProgrammaticFollow && !isUserInteractingWithScroll
+            && latestScrollTarget != nil && !isLatestScrollTargetAtEnd
     }
 
-    /// The target's bottom edge must fit within the scroll region, whose
-    /// safe-area inset reserves the actual composer height. Merely intersecting
-    /// it can happen before deep lazy history has converged. Short histories
-    /// also fit; no assumed composer height or full-viewport row height is used.
+    /// Confirm that the target ends above the measured composer. The outer
+    /// scroll frame includes its safe-area inset and cannot establish arrival.
     private var isLatestScrollTargetAtEnd: Bool {
-        guard isLatestScrollTargetVisible,
-              let targetFrame = latestScrollTargetFrame?.frame else { return false }
-        return targetFrame.maxY <= scrollViewportFrame.maxY + 1
+        guard let latestScrollTargetFrame,
+              latestScrollTargetFrame.id == latestScrollTarget else { return false }
+        return RoomLatestScrollGeometry.isAtEnd(
+            target: latestScrollTargetFrame.frame,
+            viewport: scrollViewportFrame,
+            composer: viewModel.isDisbanded
+                ? CGRect(x: scrollViewportFrame.minX, y: scrollViewportFrame.maxY,
+                         width: scrollViewportFrame.width, height: 0)
+                : composerFrame)
     }
 
     /// Re-assert scrollTo(latest) until the target reaches the visible end of
