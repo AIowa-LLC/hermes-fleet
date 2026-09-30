@@ -24,6 +24,16 @@ hygiene. Use the app's Security settings to re-enable App Lock after verificatio
 Do not run the preparation helper on a shared or personal simulator.
 
 `LaunchOverrideHygieneTests` verifies that Release mode selection ignores disable
-and reset overrides. Run that suite with both Debug and Release configurations;
-Debug scripted lock suites continue to verify the authentication UI separately.
+and reset overrides. Run the ordinary hosted suite in Debug, then the focused Release target:
+
+```sh
+xcodebuild test -project HermesFleetApp.xcodeproj -scheme HermesFleetReleaseHygiene \
+  -configuration Release -destination "platform=iOS Simulator,id=$FLEET_QA_SIMULATOR" \
+  -skipMacroValidation ENABLE_TESTABILITY=YES
+```
+
+Testability enables `@testable` access for this invocation without defining DEBUG
+or enabling launch overrides. The focused target avoids the broad hosted bundle's
+Debug-only scripted fixtures. Debug scripted lock suites verify the authentication
+UI separately.
 A successful Release build or preference preparation is not live-gateway evidence.

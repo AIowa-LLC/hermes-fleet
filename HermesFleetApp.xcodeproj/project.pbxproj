@@ -112,6 +112,7 @@
 		872237CA888F813111175FB7 /* CrossGatewayRoomSetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83B1156EFB5904085409E071 /* CrossGatewayRoomSetupTests.swift */; };
 		8B7BDB1F494E240EFD8C697F /* H2SurfaceDoctorDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */; };
 		8D5D7A4794C4F5C1DEE340BD /* RT4LogicRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */; };
+		8DE7AABDFA7FB8FC07D70A5F /* LaunchOverrideHygieneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9620FDDA804B293B62BF6A1A /* LaunchOverrideHygieneTests.swift */; };
 		8FA7DC93085A162BBD082052 /* FleetChatsPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D50BC1E3E15365C2D66ED2 /* FleetChatsPresentationTests.swift */; };
 		90B9C115EEE142503EBBF622 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 745ADDE165B902910C38E299 /* Assets.xcassets */; };
 		942AFF1208C5A16EE04CB842 /* SessionPreviewTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BFB8B62011CAC7842EF9DFE /* SessionPreviewTextTests.swift */; };
@@ -185,6 +186,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		1E80A0258C85C9EBF669FD50 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 82F931C576494708208BD587 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9A6AD1F4D6B0B207E73A83F6;
+			remoteInfo = HermesFleetApp;
+		};
 		9A46EF41D88C0A1CBA99774D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 82F931C576494708208BD587 /* Project object */;
@@ -334,6 +342,7 @@
 		B5C1B0F6CE9B280437225918 /* RoomInfoPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomInfoPresentationTests.swift; sourceTree = "<group>"; };
 		B5DFB5F90D7136805DD0FA4D /* ToolActivityGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolActivityGroupingTests.swift; sourceTree = "<group>"; };
 		B7188482A02E39F8F27E9916 /* ConnectionLifecycleIntentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionLifecycleIntentTests.swift; sourceTree = "<group>"; };
+		B84A83C0CE3D932B92F78AF6 /* HermesFleetReleaseHygieneTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HermesFleetReleaseHygieneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB5D3EBD6F4D46D0139E63F9 /* ImageGenerationAnimationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationAnimationUITests.swift; sourceTree = "<group>"; };
 		BB6E5C03C9C964E31771BA70 /* BotsPresenceSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotsPresenceSyncUITests.swift; sourceTree = "<group>"; };
 		BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L1FixLiveGatewayUITests.swift; sourceTree = "<group>"; };
@@ -526,6 +535,7 @@
 				BE9D6EB7DC0A6113FF880570 /* HermesFleetApp.app */,
 				7F8603AE7421818EC9CFA200 /* HermesFleetAppTests.xctest */,
 				AB9D5A666BBC20E8D5453331 /* HermesFleetAppUITests.xctest */,
+				B84A83C0CE3D932B92F78AF6 /* HermesFleetReleaseHygieneTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -651,6 +661,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3B861ABE68B17D169D3BBC2B /* HermesFleetReleaseHygieneTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 63F3D1D9E3434A5F5A1982A4 /* Build configuration list for PBXNativeTarget "HermesFleetReleaseHygieneTests" */;
+			buildPhases = (
+				314376BDFF19167A9C8F3499 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F32FD890A6807C061723E11F /* PBXTargetDependency */,
+			);
+			name = HermesFleetReleaseHygieneTests;
+			packageProductDependencies = (
+			);
+			productName = HermesFleetReleaseHygieneTests;
+			productReference = B84A83C0CE3D932B92F78AF6 /* HermesFleetReleaseHygieneTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		9740850ADFCED19DEA53002E /* HermesFleetAppUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = CBF86C25BFF0D18072A24651 /* Build configuration list for PBXNativeTarget "HermesFleetAppUITests" */;
@@ -720,6 +748,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					3B861ABE68B17D169D3BBC2B = {
+						DevelopmentTeam = 3JS22HX92T;
+						ProvisioningStyle = Automatic;
+					};
 					9740850ADFCED19DEA53002E = {
 						DevelopmentTeam = 3JS22HX92T;
 						ProvisioningStyle = Automatic;
@@ -759,6 +791,7 @@
 				9A6AD1F4D6B0B207E73A83F6 /* HermesFleetApp */,
 				B3003DEB5DBA7762041D9FA5 /* HermesFleetAppTests */,
 				9740850ADFCED19DEA53002E /* HermesFleetAppUITests */,
+				3B861ABE68B17D169D3BBC2B /* HermesFleetReleaseHygieneTests */,
 			);
 		};
 /* End PBXProject section */
@@ -885,6 +918,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		314376BDFF19167A9C8F3499 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8DE7AABDFA7FB8FC07D70A5F /* LaunchOverrideHygieneTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8C655FC619371AE7CD228E21 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -978,6 +1019,11 @@
 			target = 9A6AD1F4D6B0B207E73A83F6 /* HermesFleetApp */;
 			targetProxy = D8B0A719B73C4D6730AD440A /* PBXContainerItemProxy */;
 		};
+		F32FD890A6807C061723E11F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9A6AD1F4D6B0B207E73A83F6 /* HermesFleetApp */;
+			targetProxy = 1E80A0258C85C9EBF669FD50 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -1049,6 +1095,23 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		21F1811382077961BF6A2EDE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.HermesFleetReleaseHygieneTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HermesFleetApp.app/HermesFleetApp";
+			};
+			name = Release;
 		};
 		26D0ECF0F33BA6D32F1C62F5 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -1228,6 +1291,23 @@
 			};
 			name = Release;
 		};
+		F50DF7CC471D6EA28B50778D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.HermesFleetReleaseHygieneTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HermesFleetApp.app/HermesFleetApp";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1245,6 +1325,15 @@
 			buildConfigurations = (
 				7DA6329A7118C964983BF34C /* Debug */,
 				520B8CD80B486F6273D163E6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		63F3D1D9E3434A5F5A1982A4 /* Build configuration list for PBXNativeTarget "HermesFleetReleaseHygieneTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F50DF7CC471D6EA28B50778D /* Debug */,
+				21F1811382077961BF6A2EDE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

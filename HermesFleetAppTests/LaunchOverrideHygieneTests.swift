@@ -1,4 +1,6 @@
 import XCTest
+import Security
+import FleetSecurity
 import FleetUI
 import FleetPersistence
 @testable import HermesFleetApp
@@ -56,6 +58,36 @@ final class LaunchOverrideHygieneTests: XCTestCase {
         try await cache.clearCachedData()
         XCTAssertTrue(FleetServiceGraph.hasPriorInstallEvidence(cacheDirectory: directory),
                       "clearing cached rows cannot make an upgrade look like a reinstall")
+    }
+
+    func testLiveKeychainInstallDecisionsPreserveUpgradeAndPurgeReinstall() throws {
+        // Isolated service and defaults: never touches a maintainer's credentials.
+        let namespace = "com.aiowa.hermesfleet.tests.install." + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: namespace))
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: namespace,
+            kSecAttrAccount as String: "synthetic-account",
+        ]
+        defer {
+            SecItemDelete(query as CFDictionary)
+            preferences.removePersistentDomain(forName: namespace)
+        }
+        var item = query
+        item[kSecValueData as String] = Data("synthetic-value".utf8)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        XCTAssertEqual(SecItemAdd(item as CFDictionary, nil), errSecSuccess)
+        let hygiene = KeychainInstallHygiene(defaults: preferences, services: [namespace])
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: true), .adoptedExistingInstall)
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, nil), errSecSuccess,
+                       "upgrading preserves real Keychain items")
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false), .skippedMarkerPresent)
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, nil), errSecSuccess)
+        // Losing the sandbox marker models reinstall while the Keychain survives.
+        preferences.removePersistentDomain(forName: namespace)
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false), .purged(count: 1))
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, nil), errSecItemNotFound)
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false), .skippedMarkerPresent)
     }
 
     #if !DEBUG
