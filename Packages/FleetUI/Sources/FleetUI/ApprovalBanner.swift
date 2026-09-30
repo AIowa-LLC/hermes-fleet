@@ -15,7 +15,7 @@ public struct ApprovalBanner: View {
     var origin: ApprovalOrigin
     /// Deny tap owned by the parent so the banner remains presentational.
     var onDeny: () -> Void
-    @State private var showingReview = false
+    @State private var reviewingRequest: ApprovalRequest?
 
     public init(
         model: ApprovalViewModel,
@@ -67,7 +67,7 @@ public struct ApprovalBanner: View {
             ApprovalOriginHeader(origin: origin)
 
             ApprovalCommandPreviewView(command: request.command) {
-                showingReview = true
+                reviewingRequest = request
             }
 
             if let detail = request.detail, !detail.isEmpty {
@@ -121,14 +121,21 @@ public struct ApprovalBanner: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("approval.banner")
         .accessibilityLabel(accessibilitySummary(for: request))
-        .sheet(isPresented: $showingReview) {
+        .sheet(item: $reviewingRequest) { snapshot in
             ApprovalReviewSheet(
                 origin: origin,
-                command: request.command,
-                detail: request.detail,
+                command: snapshot.command,
+                detail: snapshot.detail,
                 isReviewed: model.pendingIsReviewed
             ) {
-                model.markReviewed(request)
+                model.markReviewed(snapshot)
+            }
+        }
+        .onChange(of: model.pending) { _, current in
+            guard let snapshot = reviewingRequest else { return }
+            if current?.requestID != snapshot.requestID || current?.sessionID != snapshot.sessionID
+                || current?.command != snapshot.command {
+                reviewingRequest = nil
             }
         }
     }
