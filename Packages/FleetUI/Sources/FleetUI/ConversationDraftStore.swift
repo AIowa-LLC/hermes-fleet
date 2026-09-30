@@ -36,7 +36,7 @@ public final class ConversationDraftStore: @unchecked Sendable {
     public static let maxEntries = 50
     public static let maxCharacters = 20_000
     public static let retentionInterval: TimeInterval = 30 * 24 * 3600
-    public static let defaultDebounce: TimeInterval = 0.5
+    public static let defaultDebounce: TimeInterval = 0.3
 
     private struct Pending {
         let gatewayIDRaw: String

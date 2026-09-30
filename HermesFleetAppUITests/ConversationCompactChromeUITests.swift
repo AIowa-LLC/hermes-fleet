@@ -414,6 +414,31 @@ final class ConversationCompactChromeUITests: XCTestCase {
 
     // MARK: - Helpers (same shapes as the U6 suite)
 
+    /// P0.4a: unsent composer text survives leaving and re-opening the same
+    /// conversation (the view is torn down on back-navigation).
+    func testComposerDraftSurvivesLeavingAndReopeningConversation() throws {
+        let app = launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("unsent draft probe")
+
+        tap(firstMatch(in: app, identifier: "fleet.conversation.back"))
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
+            "back must return to bot detail")
+
+        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
+        let restored = app.textFields["fleet.conversation.composer"]
+        XCTAssertTrue(restored.waitForExistence(timeout: 10), "conversation should reopen")
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "unsent draft probe"), object: restored)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 10), .completed,
+                       "composer should restore the unsent draft (got: \(restored.value as? String ?? "nil"))")
+    }
+
     private func tap(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "element \(element) should appear")
         element.tap()
