@@ -42,7 +42,7 @@ the v0.1 document deferred or excluded.
 
 ## Historical milestone files
 
-Files with names such as `M*`, `U*`, `R*`, `H*`, `L*`, `F*`, `T*`, and `X*` are retained as stable historical references because source comments, old links, or external discussions may still point to those paths.
+Files with names such as `M*`, `U*`, `R*`, `H*`, `L*`, `F*`, `T*`, and `X*` now live in [`archive/`](archive/README.md) (along with the milestone screenshots, `screenshots-r9/`, and the R11 plan). They are retained as historical references. Five files that source comments or scripts still cite (`L1-fix.md`, `L1-live-dogfood.md`, `M0-foundation.md`, `R10-pocket-parity-ii.md`, `U4-dogfood.md`) keep one-line redirect stubs at their old `docs/` paths.
 
 They are **not current release notes, QA dashboards, visual specifications, or distribution status**. Detailed internal execution logs have been removed from the public documentation surface. Use the current source, this documentation index, and the ADRs for present behavior.
 
