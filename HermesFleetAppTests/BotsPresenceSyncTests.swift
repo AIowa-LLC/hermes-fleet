@@ -559,9 +559,17 @@ final class BotsPresenceSyncTests: XCTestCase {
             archOutcome: .loaded(profileCount: 0), bots: [bot]))
         let (environment, _) = await makeEnvironment(roster: roster)
 
+        // Establish the loaded outcome before starting the connection watch.
+        // Otherwise the watch and explicit connect can both request initial
+        // repair work, whose trailing refresh is unrelated to appearance.
+        await environment.refreshRoster()
+        let beforeConnect = roster.refreshCount
         await environment.connect(to: workstation)
-        let reachable = await waitUntil { environment.botPresence(for: bot.route) == .reachable }
-        XCTAssertTrue(reachable)
+        let settled = await waitUntil {
+            roster.refreshCount == beforeConnect + 1 && !environment.isRefreshing
+                && environment.botPresence(for: bot.route) == .reachable
+        }
+        XCTAssertTrue(settled, "The initial connection refresh must settle before testing appearance")
         let refreshesBeforeAppearance = roster.refreshCount
 
         environment.refreshRosterIfStaleForVisibleBot(on: workstation)
