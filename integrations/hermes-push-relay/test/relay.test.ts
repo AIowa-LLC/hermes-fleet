@@ -11,6 +11,7 @@ async function registered(h: Awaited<ReturnType<typeof makeHarness>>) {
     id: res.json.relay_device_id as string,
     cap: res.json.send_capability as string,
     deviceToken: res.deviceToken,
+    keyId: res.keyId,
   };
 }
 
@@ -29,6 +30,8 @@ describe("register / unregister", () => {
     expect((await h.register({ environment: "staging" })).status).toBe(400);
     expect((await h.register({ device_token: "zz" })).status).toBe(400);
     expect((await h.register({ relay_key_id: "bad key!" })).status).toBe(400);
+    // Short key ids are refused: the id is part of the registration identity.
+    expect((await h.register({ relay_key_id: "key-1" })).status).toBe(400);
     expect((await h.register({ extra: "x" })).json.error).toBe("unknown_field");
     const other = await h.register({ bundle_id: "com.example.other" });
     expect(other.status).toBe(400);
@@ -47,7 +50,10 @@ describe("register / unregister", () => {
     const h = await makeHarness();
     const first = await registered(h);
     const putsAfterFirst = h.kv.puts;
-    const again = await h.register({ device_token: first.deviceToken }, auth(first.cap));
+    const again = await h.register(
+      { device_token: first.deviceToken, relay_key_id: first.keyId },
+      auth(first.cap),
+    );
     expect(again.status).toBe(200);
     expect(again.json.relay_device_id).toBe(first.id);
     expect(again.json.send_capability).toBeUndefined();
@@ -58,16 +64,19 @@ describe("register / unregister", () => {
     const h = await makeHarness();
     const first = await registered(h);
     h.clock.ms += 35 * 24 * 3600 * 1000;
-    const again = await h.register({ device_token: first.deviceToken }, auth(first.cap));
+    const again = await h.register(
+      { device_token: first.deviceToken, relay_key_id: first.keyId },
+      auth(first.cap),
+    );
     expect(again.status).toBe(200);
     expect(again.json.expires_at).toBe(1_800_000_000 + (35 + 60) * 24 * 3600);
     expect(again.json.send_capability).toBeUndefined();
   });
 
-  it("rotates the capability when the same token registers without proof", async () => {
+  it("rotates the capability only for the same token AND key id without proof", async () => {
     const h = await makeHarness();
     const first = await registered(h);
-    const second = await h.register({ device_token: first.deviceToken });
+    const second = await h.register({ device_token: first.deviceToken, relay_key_id: first.keyId });
     expect(second.status).toBe(201);
     expect(second.json.relay_device_id).toBe(first.id);
     expect(second.json.send_capability).not.toBe(first.cap);
@@ -75,6 +84,35 @@ describe("register / unregister", () => {
     expect(oldCap.status).toBe(401);
     const newCap = await h.call("POST", "/v1/send", sendBody(first.id), auth(second.json.send_capability));
     expect(newCap.status).toBe(200);
+  });
+
+  it("does not let someone who only knows the device token disturb an existing registration", async () => {
+    const h = await makeHarness();
+    const legit = await registered(h);
+    // Attacker knows the token but not the registration's key id.
+    const attacker = await h.register({ device_token: legit.deviceToken });
+    expect(attacker.status).toBe(201);
+    expect(attacker.json.relay_device_id).not.toBe(legit.id);
+    // The legitimate capability keeps working and is not rotated.
+    const res = await h.call("POST", "/v1/send", sendBody(legit.id), auth(legit.cap));
+    expect(res.status).toBe(200);
+    // Capabilities are per registration: the attacker's does not open the legit one.
+    const cross = await h.call("POST", "/v1/send", sendBody(legit.id), auth(attacker.json.send_capability));
+    expect(cross.status).toBe(401);
+  });
+
+  it("keeps registrations for the same device token independent per gateway", async () => {
+    const h = await makeHarness();
+    const token = randomHex(32);
+    const gwA = await h.register({ device_token: token });
+    const gwB = await h.register({ device_token: token });
+    expect(gwA.json.relay_device_id).not.toBe(gwB.json.relay_device_id);
+    expect((await h.call("DELETE", `/v1/register/${gwA.json.relay_device_id}`, undefined, auth(gwA.json.send_capability))).status).toBe(204);
+    // Removing gateway A leaves gateway B's registration working.
+    const res = await h.call("POST", "/v1/send", sendBody(gwB.json.relay_device_id), auth(gwB.json.send_capability));
+    expect(res.status).toBe(200);
+    expect(h.apns.calls[0]!.url.endsWith(`/3/device/${token}`)).toBe(true);
+    expect((await h.call("POST", "/v1/send", sendBody(gwA.json.relay_device_id), auth(gwA.json.send_capability))).status).toBe(404);
   });
 
   it("unregisters with the capability and is idempotent afterwards", async () => {
@@ -222,6 +260,48 @@ describe("send", () => {
     expect(JSON.parse(call.body).aps).toEqual({ "content-available": 1 });
     expect((await send({ collapse_id: "x".repeat(65) })).status).toBe(400);
     expect((await send({ ciphertext: "not base64url!" })).status).toBe(400);
+  });
+
+  it("supports a sealed background withdrawal that reuses the alert's collapse id", async () => {
+    const h = await makeHarness();
+    const r = await registered(h);
+    const collapse = "req-7f3a9c21";
+    const alert = await h.call("POST", "/v1/send", sendBody(r.id, { collapse_id: collapse }), auth(r.cap));
+    expect(alert.status).toBe(200);
+    const withdrawCt = randomB64(96);
+    const withdraw = await h.call(
+      "POST",
+      "/v1/send",
+      sendBody(r.id, {
+        push_type: "background",
+        priority: 5,
+        alert: undefined,
+        collapse_id: collapse,
+        ciphertext: withdrawCt,
+      }),
+      auth(r.cap),
+    );
+    expect(withdraw.status).toBe(200);
+    const [alertCall, withdrawCall] = h.apns.calls as [(typeof h.apns.calls)[0], (typeof h.apns.calls)[0]];
+    expect(withdrawCall.url).toBe(alertCall.url); // same device token
+    expect(withdrawCall.headers["apns-collapse-id"]).toBe(collapse);
+    expect(withdrawCall.headers["apns-collapse-id"]).toBe(alertCall.headers["apns-collapse-id"]);
+    expect(withdrawCall.headers["apns-push-type"]).toBe("background");
+    expect(withdrawCall.headers["apns-priority"]).toBe("5");
+    expect(withdrawCall.headers["apns-topic"]).toBe(TOPIC);
+    expect(JSON.parse(withdrawCall.body)).toEqual({
+      aps: { "content-available": 1 },
+      hf: { v: 1, ct: withdrawCt },
+    });
+    // APNs rules: a background push may not claim priority 10, and carries no visible alert.
+    const hot = await h.call(
+      "POST",
+      "/v1/send",
+      sendBody(r.id, { push_type: "background", priority: 10, alert: undefined, collapse_id: collapse }),
+      auth(r.cap),
+    );
+    expect(hot.status).toBe(400);
+    expect(h.apns.calls).toHaveLength(2);
   });
 
   it("removes the registration on 410 Unregistered and returns a typed error", async () => {
@@ -489,13 +569,14 @@ describe("content-blindness", () => {
     const r = await registered(h);
     const keys = [...h.kv.data.keys()];
     expect(keys.some((k) => k.startsWith("t:") && !k.includes(r.deviceToken))).toBe(true);
+    expect(h.kv.dump()).not.toContain(r.keyId); // key id is sealed, not stored in clear
     const record = JSON.parse(h.kv.data.get(`d:${r.id}`)!.value);
     expect(Object.keys(record).sort()).toEqual(
-      ["bundleId", "capHash", "environment", "expiresAt", "relayKeyId", "sealed", "v"].sort(),
+      ["bundleId", "capHash", "environment", "expiresAt", "sealed", "v"].sort(),
     );
     // A different storage key produces different index keys (salted).
     const h2 = await makeHarness();
-    await h2.register({ device_token: r.deviceToken });
+    await h2.register({ device_token: r.deviceToken, relay_key_id: r.keyId });
     const idx1 = keys.find((k) => k.startsWith("t:"));
     const idx2 = [...h2.kv.data.keys()].find((k) => k.startsWith("t:"));
     expect(idx1).not.toBe(idx2);

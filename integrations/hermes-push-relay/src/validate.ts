@@ -68,11 +68,15 @@ export function parseRegister(text: string): RegisterBody {
   if (environment !== "sandbox" && environment !== "production") {
     throw bad("invalid_field", "Invalid field: environment.");
   }
+  const relayKeyId = str(o, "relay_key_id", KEY_ID, 64) as string;
+  // The key id is part of the registration identity and doubles as a
+  // possession check, so it must carry at least 128 bits (22 base64url chars).
+  if (relayKeyId.length < 22) throw bad("invalid_field", "Invalid field: relay_key_id.");
   return {
     deviceToken: deviceToken.toLowerCase(),
     environment,
     bundleId: str(o, "bundle_id", BUNDLE, 155) as string,
-    relayKeyId: str(o, "relay_key_id", KEY_ID, 64) as string,
+    relayKeyId: relayKeyId,
   };
 }
 

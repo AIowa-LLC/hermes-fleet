@@ -37,7 +37,8 @@ the [checklist](#maintainer-only-deployment-checklist)).
 
 Persisted per registration: a keyed hash of the device token (for idempotent
 upsert), the device token sealed with AES-256-GCM, a keyed hash of the send
-capability, environment, bundle id, an opaque key id, and an expiry. All
+capability, environment, bundle id, the registration's key id (sealed together
+with the token), and an expiry. All
 entries carry a TTL and can be deleted by the device.
 
 ## API
@@ -67,14 +68,55 @@ Design points that matter to integrators:
 - **Typed cleanup.** APNs `410` deletes the registration and returns
   `410 unregistered` so the sender stops. A live-activity `410` drops only that
   token (`activity_unregistered`).
-- **Idempotent register.** Presenting the current capability with the same
-  token performs no KV write until half the TTL has elapsed. Re-registering the
-  same token *without* the capability rotates it (fresh install path).
+- **Idempotent register.** A registration's identity is (environment, bundle
+  id, device token, `relay_key_id`). Presenting the current capability with the
+  same identity performs no KV write until half the TTL has elapsed. The same
+  identity *without* the capability rotates it (lost-capability recovery).
+- **One registration per gateway.** `relay_key_id` must be a random value of at
+  least 128 bits (22+ base64url characters) chosen by the device, one per
+  gateway (or a hash of the per-gateway push public key). Each gateway
+  therefore gets its own `relay_device_id` and capability, and removing one
+  gateway never affects another. A short or guessable key id is rejected.
+- **Relay URL is per registration.** The app chooses which relay to register
+  with and passes the relay base URL, `relay_device_id`, and capability to that
+  gateway's plugin at registration. The plugin has no global relay setting; one
+  device can use different relays for different gateways.
+- **De-registration.** When a gateway is removed or de-registered, the gateway
+  plugin should call `DELETE /v1/register/{relay_device_id}` with the
+  capability it holds. The call is idempotent (`204` even if already gone), so
+  the app may also issue it (for example from a panic switch) without
+  coordination.
 - **A push is never authoritative.** The foreground gateway connection remains
   the source of truth; the relay is best effort delivery.
 - Live-activity `start`/`update`/`end` forwarding is provisional until its
   consumer lands; the sealed `content-state` is `{"ct": ...}` and no visible
   copy other than `title_key` is ever added.
+
+## Withdrawing a notification answered elsewhere
+
+When an approval or question is answered on another device (or at the
+gateway), the gateway can retract the notification that is already on this
+device:
+
+1. The original alert was sent with `collapse_id: "<opaque id>"`.
+2. The gateway sends a second `POST /v1/send` with `push_type: "background"`,
+   `priority: 5`, **no** `alert`, the **same** `collapse_id`, a future
+   `expiry`, and a `ciphertext` that seals a withdraw instruction (for example
+   the request id) for the device.
+3. The relay forwards it as a silent push (`content-available: 1`, APNs
+   `apns-push-type: background`, `apns-priority: 5`, same `apns-collapse-id`).
+   It cannot tell a withdrawal from any other background push, so the feature
+   adds no metadata beyond what a background push already reveals.
+4. The app wakes, opens the sealed payload, and removes the delivered
+   notification whose identifier equals the collapse id. APNs may also
+   coalesce a still-pending alert that shares the collapse id, but that is an
+   optimisation, not a guarantee.
+
+APNs requires background pushes to use priority 5; the relay rejects priority
+10 for them. Delivery is best effort: iOS throttles background pushes and does
+not wake an app the user force-quit, so the notification may remain. That is
+safe by design: the gateway stays authoritative, and a stale approval is
+refused when the app opens or when its sealed single-use token is presented.
 
 ## Free-tier budget
 
@@ -216,10 +258,19 @@ gateway compromise is out of scope for the relay.
 - *Stolen capability*: it authorizes pushing generic alerts to one device.
   It does not expose content. The device rotates it by re-registering without
   presenting the old one, or revokes it with `DELETE /v1/register/{id}`.
-- *Stolen device token*: not sufficient to send. It does allow an attacker to
-  re-register that token without the capability, which rotates the capability
-  and breaks the legitimate sender until the app re-registers and redistributes
-  it. This is a denial-of-service and spam risk, not a content risk.
+- *Stolen device token*: not sufficient to send, and not sufficient to touch an
+  existing registration. The registration identity includes the unguessable,
+  sealed `relay_key_id`, so a party that knows only the token cannot rotate or
+  hijack a registration (this closes the earlier rotate-by-re-register denial
+  of service). It can, however, create a *separate* registration of its own and
+  then push generic alerts to that device. Open registration is the residual
+  spam exposure: the relay has no account or device attestation, so anyone who
+  learns a device token can do this. Mitigations are the per-IP registration
+  limit, fixed copy, and sealed payloads the device will not open; App Attest
+  or a device-signed registration proof is a possible future hardening.
+- *Leaked `relay_key_id`*: the holder of a token and key id can rotate that one
+  registration's capability. Treat the key id like a secret shared only with the
+  intended gateway.
 
 ### Spam and abuse
 

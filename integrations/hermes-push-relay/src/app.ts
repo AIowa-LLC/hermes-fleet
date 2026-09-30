@@ -119,34 +119,46 @@ export function createHandler(overrides: Partial<Deps> = {}): Handler {
     const registry = new Registry(env.REGISTRY, await storageKeys(env), deps);
     const ttl = ttlSeconds(env);
     const expiresAt = nowSec() + ttl;
-    const existing = await registry.findByToken(body.environment, body.bundleId, body.deviceToken);
+    // Identity is (environment, bundle, token, relay_key_id). relay_key_id is an
+    // unguessable per-registration value (validated to >= 128 bits of text), so
+    // a party that only learns the device token cannot address - and therefore
+    // cannot rotate or hijack - an existing registration. Each gateway uses its
+    // own relay_key_id and therefore has an independent capability.
+    const existing = await registry.findByToken(
+      body.environment,
+      body.bundleId,
+      body.deviceToken,
+      body.relayKeyId,
+    );
 
     if (existing) {
       const presented = bearerOptional(request);
       if (presented && (await registry.verifyCapability(existing.record, presented))) {
         // Idempotent upsert: skip the KV write unless the record needs renewing.
         const remaining = existing.record.expiresAt - nowSec();
-        if (remaining >= ttl / 2 && existing.record.relayKeyId === body.relayKeyId) {
+        if (remaining >= ttl / 2) {
           return json(200, { relay_device_id: existing.id, expires_at: existing.record.expiresAt });
         }
-        const renewed: StoredRegistration = { ...existing.record, relayKeyId: body.relayKeyId, expiresAt };
-        await registry.create(existing.id, renewed, body.deviceToken);
+        const renewed: StoredRegistration = { ...existing.record, expiresAt };
+        await registry.create(existing.id, renewed, body.deviceToken, body.relayKeyId);
         return json(200, { relay_device_id: existing.id, expires_at: expiresAt });
       }
-      // Same token without proof of the current capability: this is a fresh
-      // install (or someone who learned the token). Rotate the capability so
-      // any previously issued sender can no longer push to this device.
+      // Same token AND same relay_key_id, but no proof of the current
+      // capability: the holder of the key id lost the capability (for example a
+      // partially restored Keychain). Rotate it so the old capability stops working.
       const capability = registry.newCapability();
       const rotated: StoredRegistration = {
         v: 1,
         environment: body.environment,
         bundleId: body.bundleId,
-        relayKeyId: body.relayKeyId,
         capHash: await registry.capabilityHash(capability),
-        sealed: await registry.sealSecrets(existing.id, { deviceToken: body.deviceToken }),
+        sealed: await registry.sealSecrets(existing.id, {
+          deviceToken: body.deviceToken,
+          relayKeyId: body.relayKeyId,
+        }),
         expiresAt,
       };
-      await registry.create(existing.id, rotated, body.deviceToken);
+      await registry.create(existing.id, rotated, body.deviceToken, body.relayKeyId);
       return json(201, { relay_device_id: existing.id, expires_at: expiresAt, send_capability: capability });
     }
 
@@ -156,12 +168,11 @@ export function createHandler(overrides: Partial<Deps> = {}): Handler {
       v: 1,
       environment: body.environment,
       bundleId: body.bundleId,
-      relayKeyId: body.relayKeyId,
       capHash: await registry.capabilityHash(capability),
-      sealed: await registry.sealSecrets(id, { deviceToken: body.deviceToken }),
+      sealed: await registry.sealSecrets(id, { deviceToken: body.deviceToken, relayKeyId: body.relayKeyId }),
       expiresAt,
     };
-    await registry.create(id, record, body.deviceToken);
+    await registry.create(id, record, body.deviceToken, body.relayKeyId);
     return json(201, { relay_device_id: id, expires_at: expiresAt, send_capability: capability });
   }
 

@@ -21,7 +21,6 @@ export interface StoredRegistration {
   v: 1;
   environment: ApnsEnvironment;
   bundleId: string;
-  relayKeyId: string;
   /** base64url HMAC(capability). */
   capHash: string;
   /** base64url iv||AES-GCM(JSON of TokenSecrets), AAD = relay_device_id. */
@@ -32,6 +31,8 @@ export interface StoredRegistration {
 
 export interface TokenSecrets {
   deviceToken: string;
+  /** Per-registration key id; with the token it forms the upsert identity. */
+  relayKeyId: string;
   startToken?: string;
   activityTokens?: Array<{ id: string; token: string }>;
 }
@@ -67,8 +68,17 @@ export class Registry {
     return record !== null && equal;
   }
 
-  private async indexKey(environment: ApnsEnvironment, bundleId: string, deviceToken: string) {
-    const h = await keyedHash(this.keys, "token-index", `${environment}\u0000${bundleId}\u0000${deviceToken}`);
+  private async indexKey(
+    environment: ApnsEnvironment,
+    bundleId: string,
+    deviceToken: string,
+    relayKeyId: string,
+  ) {
+    const h = await keyedHash(
+      this.keys,
+      "token-index",
+      `${environment}\u0000${bundleId}\u0000${deviceToken}\u0000${relayKeyId}`,
+    );
     return `t:${toHex(h)}`;
   }
 
@@ -103,18 +113,24 @@ export class Registry {
     environment: ApnsEnvironment,
     bundleId: string,
     deviceToken: string,
+    relayKeyId: string,
   ): Promise<{ id: string; record: StoredRegistration } | null> {
-    const id = await this.kv.get(await this.indexKey(environment, bundleId, deviceToken));
+    const id = await this.kv.get(await this.indexKey(environment, bundleId, deviceToken, relayKeyId));
     if (!id) return null;
     const record = await this.get(id);
     return record ? { id, record } : null;
   }
 
   /** Writes the record and (re)writes the salted token-hash index entry. */
-  async create(id: string, record: StoredRegistration, deviceToken: string): Promise<void> {
+  async create(
+    id: string,
+    record: StoredRegistration,
+    deviceToken: string,
+    relayKeyId: string,
+  ): Promise<void> {
     const ttl = this.ttlFor(record.expiresAt);
     await this.kv.put(recordKey(id), JSON.stringify(record), { expirationTtl: ttl });
-    await this.kv.put(await this.indexKey(record.environment, record.bundleId, deviceToken), id, {
+    await this.kv.put(await this.indexKey(record.environment, record.bundleId, deviceToken, relayKeyId), id, {
       expirationTtl: ttl,
     });
   }
@@ -126,8 +142,8 @@ export class Registry {
 
   async remove(id: string, record: StoredRegistration): Promise<void> {
     try {
-      const { deviceToken } = await this.openSecrets(id, record);
-      await this.kv.delete(await this.indexKey(record.environment, record.bundleId, deviceToken));
+      const { deviceToken, relayKeyId } = await this.openSecrets(id, record);
+      await this.kv.delete(await this.indexKey(record.environment, record.bundleId, deviceToken, relayKeyId));
     } catch {
       // A record that cannot be opened still gets deleted below; its index
       // entry expires with its TTL.

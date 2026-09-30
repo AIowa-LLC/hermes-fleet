@@ -8,7 +8,7 @@ your own so that no third party's relay ever sees your device token or
 notification timing.
 
 Status: this document describes the relay side, which exists in this
-repository. The gateway plugin setting and the app setting that point at a
+repository. The plugin registration fields and the app setting that select a
 custom relay URL are delivered with the sender and device-registration work;
 until they ship, the relay can be deployed and exercised directly through its
 [OpenAPI](../integrations/hermes-push-relay/openapi.yaml) contract.
@@ -63,17 +63,25 @@ ID, your worker hostname, or any secret to a public fork.
 
 ## Point the gateway and the app at your relay
 
-Both sides need the same relay base URL (HTTPS only):
+The relay URL is a **per-registration** value, not a plugin-wide setting:
 
-- **Gateway sender plugin.** Set the plugin's relay URL to your Worker's URL
-  (the plugin's configuration key is defined with the sender work). The plugin
-  receives a per-device send capability during pairing; it never needs your
-  APNs key.
-- **App.** Set the relay URL in the app's notification settings (defined with
-  the device-registration work). A self-built app registers its device token
-  with your relay and hands the returned send capability to each gateway.
+- **App.** The app chooses the relay (its default, or a custom URL you set in
+  the app's notification settings, defined with the device-registration work).
+  For each gateway it generates a fresh random `relay_key_id`, registers the
+  device token with that relay (`POST /v1/register`), and receives a
+  `relay_device_id` and a send capability.
+- **Gateway sender plugin.** The app hands the plugin, at registration, the
+  relay base URL (HTTPS only), `relay_device_id`, and capability together with
+  the device's public key. The plugin stores them per registration and sends
+  to exactly that relay. It never needs your APNs key, and two devices (or two
+  gateways) can use different relays side by side.
+- **De-registration.** When a gateway is removed or the plugin de-registers a
+  device, the plugin should call `DELETE /v1/register/{relay_device_id}` on
+  that registration's relay with its capability. The call is idempotent. The
+  app can also issue it, for example when the user removes a gateway or uses a
+  panic switch.
 
-Never paste your relay URL together with a send capability into a public issue.
+Never paste your relay URL together with a capability into a public issue.
 
 ## Alternatives that need no relay
 
@@ -87,9 +95,10 @@ Never paste your relay URL together with a send capability into a public issue.
 - The relay stores a sealed device token, a token hash index, and a capability
   hash, all with a TTL, and logs only route names and status codes. See the
   relay README's threat model.
-- To stop pushes to a device, delete its registration
-  (`DELETE /v1/register/{relay_device_id}`; the app does this when a gateway
-  is removed) or rotate the capability by re-registering.
+- To stop pushes to a registration, delete it
+  (`DELETE /v1/register/{relay_device_id}`, issued by the gateway plugin on
+  de-registration or by the app). Registrations are per gateway, so removing
+  one gateway leaves the others working.
 - To rotate the APNs key, `wrangler secret put` the new key and key ID and
   redeploy. Rotating `RELAY_STORAGE_KEY` invalidates all registrations; devices
   re-register on next launch.

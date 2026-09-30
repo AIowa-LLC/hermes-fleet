@@ -98,6 +98,7 @@ export interface Harness {
     status: number;
     json: any;
     deviceToken: string;
+    keyId: string;
   }>;
 }
 
@@ -151,6 +152,7 @@ export async function makeHarness(
     },
     async register(overrides = {}, headers = {}) {
       const deviceToken = (overrides.device_token as string | undefined) ?? randomHex(32);
+      const keyId = (overrides.relay_key_id as string | undefined) ?? randomB64(16);
       const res = await h.call(
         "POST",
         "/v1/register",
@@ -158,12 +160,12 @@ export async function makeHarness(
           device_token: deviceToken,
           environment: "sandbox",
           bundle_id: TOPIC,
-          relay_key_id: "key-1",
           ...overrides,
+          relay_key_id: keyId,
         },
         headers,
       );
-      return { ...res, deviceToken };
+      return { ...res, deviceToken, keyId };
     },
   };
   return h;

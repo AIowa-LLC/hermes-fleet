@@ -88,4 +88,18 @@ describe("documentation", () => {
     expect(text).toMatch(/## Threat model/);
     for (const topic of [/relay compromise/i, /replay/i, /spam/i]) expect(text).toMatch(topic);
   });
+
+  it("documents withdrawal, per-registration relay URL, and de-registration", () => {
+    const readme = read(relayReadme);
+    expect(readme).toMatch(/## Withdrawing a notification answered elsewhere/);
+    expect(readme).toMatch(/same\*\* `collapse_id`/);
+    expect(readme).toMatch(/Relay URL is per registration/);
+    const selfHostText = read(selfHost);
+    expect(selfHostText).toMatch(/\*\*per-registration\*\* value, not a plugin-wide setting/);
+    expect(selfHostText).not.toMatch(/plugin's configuration key/);
+    for (const text of [readme, selfHostText]) {
+      expect(text).toMatch(/DELETE \/v1\/register\/\{relay_device_id\}/);
+    }
+    expect(read(join(relayDir, "openapi.yaml"))).toMatch(/\*\*Withdrawal\.\*\*/);
+  });
 });
