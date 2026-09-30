@@ -2390,6 +2390,9 @@ public final class AppEnvironment {
         // no read path may serve them again (7-day TTL is not a bound on
         // "removed": the store is pruned on removal, per the FOS-4 precedent).
         try? await launchCache.removeLaunchCache(for: id)
+        // P0.3b: the persisted transcript/watermark/epoch/health/Learning/
+        // Projects rows, room drafts and bridged rooms of the removed gateway.
+        await purgeLocalData(forRemovedGateway: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
         let removedRoutes = sessionRoutes(on: id)
@@ -2400,6 +2403,51 @@ public final class AppEnvironment {
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
         await reloadGateways()
+    }
+
+    /// P0.3b: delete the device-local data a removed gateway leaves behind that
+    /// the registry does not own — cached transcripts and per-gateway SwiftData
+    /// rows, per-room composer drafts, and phone-bridged rooms with a member on
+    /// that gateway. Best-effort by design: a failure is recorded (redacted,
+    /// no error payload) in diagnostics and never blocks or reverses the
+    /// removal that already happened in the registry.
+    private func purgeLocalData(forRemovedGateway id: GatewayID) async {
+        let name = gateways.first { $0.id == id }?.displayName ?? "Removed gateway"
+        do {
+            try await cache.purgeGateway(id)
+        } catch {
+            diagnosticsRecorder.record(
+                category: "Gateway removal",
+                detail: "\(name): cached data purge failed (\(Self.purgeFailureSummary(error)))")
+        }
+        cachedWatermarkCount = (try? await cache.loadWatermarks())?.count ?? 0
+
+        RoomDraftStore.clearAll(
+            forGateway: id, otherGatewayIDs: gateways.map(\.id).filter { $0 != id })
+
+        // Bridged rooms live in a device-local store under their own scope, not
+        // on any gateway, but a room with a member on this gateway carries that
+        // member's replies and can no longer be sent to.
+        do {
+            let removedRoomKeys = try await bridgedStore.removeRooms(involvingGateway: id)
+            for key in removedRoomKeys {
+                let roomID = FleetRoomID(provenance: .hosted, gatewayID: BridgedRooms.gatewayScope, key: key)
+                RoomDraftStore.clear(for: roomID)
+                continueIndex.remove(id: FleetContinueIndexStore.roomID(roomID))
+            }
+            if !removedRoomKeys.isEmpty { await loadBridgedRooms() }
+        } catch {
+            diagnosticsRecorder.record(
+                category: "Gateway removal",
+                detail: "\(name): bridged room cleanup failed (\(Self.purgeFailureSummary(error)))")
+        }
+    }
+
+    /// Non-sensitive failure label: the seam's own message for `CacheStoreError`
+    /// (which never carries secrets), otherwise only the error's type.
+    private static func purgeFailureSummary(_ error: Error) -> String {
+        if let cacheError = error as? CacheStoreError { return cacheError.localizedDescription }
+        return String(describing: type(of: error))
     }
 
     // MARK: FOS-4 — Continue open recording (SPEC §7/§17)

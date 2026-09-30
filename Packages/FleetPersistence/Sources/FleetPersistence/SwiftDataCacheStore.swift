@@ -190,6 +190,30 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
         try ctx.save()
     }
 
+    /// Delete every gateway-keyed cache row for exactly one gateway (exact
+    /// `gatewayID` match, never a prefix): transcript rows, watermarks, replay
+    /// epoch, health stats, Learning/Projects snapshots and the ADR-0012 launch
+    /// cache rows that share this container. Other gateways' rows and the
+    /// saved-gateway record (`CachedGatewayRow`, owned by the registry) are
+    /// untouched. Everything commits in one `save()`; deleting rows does not
+    /// shrink the SQLite file or its `-wal`/`-shm` sidecars immediately.
+    public func purgeGateway(_ id: GatewayID) async throws {
+        let key = id.rawValue
+        let ctx = ModelContext(container)
+        try ctx.delete(model: CachedMessageRow.self, where: #Predicate { $0.gatewayID == key })
+        try ctx.delete(model: CachedWatermarkRow.self, where: #Predicate { $0.gatewayID == key })
+        try ctx.delete(model: CachedReplayEpochRow.self, where: #Predicate { $0.gatewayID == key })
+        try ctx.delete(model: CachedHealthStatsRow.self, where: #Predicate { $0.gatewayID == key })
+        try ctx.delete(model: LearningGraphSnapshotRow.self, where: #Predicate { $0.gatewayID == key })
+        try ctx.delete(model: ProjectsSnapshotRow.self, where: #Predicate { $0.gatewayID == key })
+        try ctx.delete(model: LaunchRosterRow.self, where: #Predicate { $0.gatewayID == key })
+        for row in try ctx.fetch(FetchDescriptor<LaunchSessionListRow>())
+        where SwiftDataLaunchCacheStore.routeKey(row.routeKey, belongsToGateway: key) {
+            ctx.delete(row)
+        }
+        try ctx.save()
+    }
+
     /// Delete all privacy-bearing cached content but keep the saved gateway
     /// records intact. Credentials are not in this store and remain in the
     /// Keychain until the user removes a gateway.

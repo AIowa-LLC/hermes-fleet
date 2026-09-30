@@ -72,6 +72,29 @@ final class BridgedRoomsTests: XCTestCase {
         XCTAssertEqual(read?.disbandedAt, 3)
     }
 
+    func testRemoveRoomsInvolvingGatewayMatchesExactGatewayAndPersists() async throws {
+        func member(_ gateway: String) -> BridgedRooms.MemberRef {
+            BridgedRooms.MemberRef(
+                gatewayID: gateway, profile: "default", displayName: "Bot", routeID: "\(gateway)#default")
+        }
+        let store = BridgedRooms.Store(url: storeURL)
+        try await store.upsert(BridgedRooms.RoomRecord(
+            roomKey: "a-room", name: "A", members: [member("gw-a"), member("gw-b")], createdAt: 1))
+        try await store.upsert(BridgedRooms.RoomRecord(
+            roomKey: "lookalike", name: "L", members: [member("gw-a:8080")], createdAt: 1))
+        try await store.upsert(BridgedRooms.RoomRecord(
+            roomKey: "b-room", name: "B", members: [member("gw-b")], createdAt: 1))
+
+        let removed = try await store.removeRooms(involvingGateway: GatewayID(rawValue: "gw-a"))
+
+        XCTAssertEqual(removed, ["a-room"])
+        let reloaded = BridgedRooms.Store(url: storeURL)
+        let keys = await reloaded.roomsSnapshot().map(\.roomKey).sorted()
+        XCTAssertEqual(keys, ["b-room", "lookalike"])
+        let none = try await store.removeRooms(involvingGateway: GatewayID(rawValue: "gw-a"))
+        XCTAssertTrue(none.isEmpty)
+    }
+
     func testUnreadableStoreIsQuarantinedInsteadOfBeingOverwritten() async throws {
         // A present-but-undecodable file must never read as "no rooms": every
         // later mutation persists the in-memory snapshot with `.atomic`, so

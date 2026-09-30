@@ -163,7 +163,7 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
 
     /// Whether a canonical route key (`<gateway>#<slug>`) belongs to the
     /// gateway. Gateway ids cannot contain the `#` separator (M9).
-    private static func routeKey(_ routeKey: String, belongsToGateway id: String) -> Bool {
+    static func routeKey(_ routeKey: String, belongsToGateway id: String) -> Bool {
         gatewayKey(ofRouteKey: routeKey) == id
     }
 

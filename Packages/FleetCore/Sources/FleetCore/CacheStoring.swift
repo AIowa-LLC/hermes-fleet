@@ -51,10 +51,22 @@ public protocol CacheStoring: Sendable {
     /// saved gateway registry and Keychain credentials. Stores that do not
     /// support this operation may surface `.unsupported`.
     func clearCachedData() async throws
+
+    /// Delete every cached row that belongs to exactly one gateway (matched on
+    /// the exact `GatewayID`, never a prefix): transcripts, watermarks, replay
+    /// epoch, health stats, Learning/Projects snapshots, and launch-cache rows.
+    /// Other gateways' rows and the saved-gateway record are untouched. Called
+    /// when a gateway is removed. Stores that do not support this operation may
+    /// surface `.unsupported`.
+    func purgeGateway(_ id: GatewayID) async throws
 }
 
 public extension CacheStoring {
     func clearCachedData() async throws {
+        throw CacheStoreError.unsupported
+    }
+
+    func purgeGateway(_ id: GatewayID) async throws {
         throw CacheStoreError.unsupported
     }
 }

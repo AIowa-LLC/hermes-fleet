@@ -40,7 +40,10 @@ host's own terms and privacy policies apply to those visits.
 Local cached fleet and conversation data remains on the device until it is
 expired by the app's bounded cache policy or removed by the user through the
 app's cache controls when available. Removing a saved gateway removes its
-stored credential and gateway-local cached data. Deleting the app removes its
+stored credential and gateway-local cached data (cached conversation
+transcripts, connection health history, saved drafts, and phone-bridged group
+rooms that include that gateway's bots). Conversations you pinned remain as a
+title and preview shortcut until you unpin them. Deleting the app removes its
 local data subject to iOS backup and device-management behavior. Data already
 sent to a gateway is controlled by that gateway's operator and must be deleted
 through the gateway's own controls.
@@ -58,7 +61,7 @@ You control the data Hermes Fleet handles. You can revoke consent and
 request deletion at any time by:
 
 - Removing a gateway in the app (deletes its stored credential and
-  gateway-local cached data immediately).
+  gateway-local cached data immediately, as described above).
 - Using Settings → Data & Storage → Delete Local Cache (removes cached
   conversations, roster snapshots, health history, and recent destinations;
   saved gateways and Keychain credentials are kept).
