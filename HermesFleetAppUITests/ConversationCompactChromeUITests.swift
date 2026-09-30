@@ -426,17 +426,30 @@ final class ConversationCompactChromeUITests: XCTestCase {
         composer.typeText("unsent draft probe")
 
         tap(firstMatch(in: app, identifier: "fleet.conversation.back"))
-        XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.bot-detail.header").waitForExistence(timeout: 10),
-            "back must return to bot detail")
 
-        tap(firstMatch(in: app, identifier: "fleet.bot-detail.sessions.row.workstation.default.s1"))
+        // The conversation is pushed onto the Chats stack (opening a session
+        // from Bot detail lands there), so back returns to the Chats list, not
+        // Bot detail. The Bots-tab rows stay mounted but hidden and are NOT
+        // hittable. Wait for the visible Chats bar and the Chats row.
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 10),
+                      "back must return to the Chats list")
+        let chatRow = firstMatch(
+            in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1")
+        XCTAssertTrue(chatRow.waitForExistence(timeout: 10), "the session row should be listed in Chats")
+        XCTAssertTrue(waitUntilHittable(chatRow, timeout: 10), "the Chats row must be hittable")
+        chatRow.tap()
         let restored = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(restored.waitForExistence(timeout: 10), "conversation should reopen")
         let expectation = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "unsent draft probe"), object: restored)
         XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 10), .completed,
                        "composer should restore the unsent draft (got: \(restored.value as? String ?? "nil"))")
+    }
+
+    private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let hittable = NSPredicate(format: "exists == true AND isHittable == true")
+        let expectation = XCTNSPredicateExpectation(predicate: hittable, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private func tap(_ element: XCUIElement) {
