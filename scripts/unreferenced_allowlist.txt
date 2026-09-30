@@ -1,0 +1,17 @@
+# Top-level scripts intentionally not referenced by any workflow, Makefile
+# target, doc, or other script (checked by scripts/unreferenced_scripts_guard.sh).
+# Format: <basename>   # reason. Keep this list short; prefer wiring a script
+# into a doc/workflow, or moving it to scripts/archive/.
+#
+# Maintained manual live-gateway / device tools (run by hand, never in CI):
+botmode_live_check.sh             # live Bot Mode gateway contract check
+pet_live_check.sh                 # live pet.* gateway contract smoke test
+c1_ipad_smoke.sh                  # manual iPad simulator smoke
+reviewer_preflight.sh             # reviewer-environment preflight
+png_corner_probe.py               # icon corner-transparency probe
+fleet_device_parse_check.py       # negative tests for fleet_device.sh's JSON parser
+device_install_preflight_test.py  # tests for device_install_preflight.py
+# Cited by glob (scripts/l1_live_contract*.sh) in L1LiveGatewayUITests.swift:
+l1_live_contract.sh
+l1_live_contract2.sh
+l1_live_contract3_lean.sh
