@@ -21,12 +21,19 @@ let package = Package(
         // the tag commit is the reproducible v0.7.0 equivalent pin. The
         // Fleet-owned wrapper is the only API surface used by the rest of
         // the app.
-        .package(url: "https://github.com/microsoft/SwiftStreamingMarkdown.git", revision: "5f7c04e0558df6146f90d482edb62cb456986bda")
+        .package(url: "https://github.com/microsoft/SwiftStreamingMarkdown.git", revision: "5f7c04e0558df6146f90d482edb62cb456986bda"),
+        // Issue #109 (D6): Fleet draws its own code card and highlights with
+        // the SAME HighlightSwift revision SwiftStreamingMarkdown already pins
+        // (99c431b), so no new code enters the build and the resolved graph is
+        // unchanged. Declared directly only because SwiftPM does not expose a
+        // transitive product to FleetUI.
+        .package(url: "https://github.com/appstefan/highlightswift", revision: "99c431b38a1444a5fd6a4978307fbbefe3a7af53")
     ],
     targets: [
         .target(name: "FleetUI", dependencies: [
             "FleetCore",
             .product(name: "SwiftStreamingMarkdown", package: "SwiftStreamingMarkdown"),
+            .product(name: "HighlightSwift", package: "highlightswift"),
             // FleetSecurity and FleetPersistence are declared now to pin the
             // intended dependency direction; M0 does not yet consume them.
             //
