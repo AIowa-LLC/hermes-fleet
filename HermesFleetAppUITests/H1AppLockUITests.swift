@@ -175,6 +175,25 @@ final class H1AppLockUITests: XCTestCase {
         attachScreenshot(of: app, name: "h1-toggle-off-persisted")
     }
 
+    /// P0.3a: actual background/foreground transitions must release the cover
+    /// after scripted re-authentication instead of leaving an opaque window.
+    func testPrivacyShieldBackgroundReturnDoesNotObscureUnlockedContent() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "enabled"
+        app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
+        app.launchEnvironment["HERMES_FLEET_LOCK_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 60))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.staticTexts["Workstation"].waitForExistence(timeout: 30))
+        let restored = app.staticTexts["Workstation"]
+        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: restored)
+        wait(for: [hittable], timeout: 10)
+        XCTAssertFalse(app.descendants(matching: .any)["fleet.privacy-shield"].exists)
+    }
+
     // MARK: - Helpers
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {

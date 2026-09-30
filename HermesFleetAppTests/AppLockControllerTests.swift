@@ -259,6 +259,18 @@ final class AppLockControllerTests: XCTestCase {
         XCTAssertFalse(controller.isPrivacyShieldVisible)
     }
 
+    func testPrivacyWindowTracksInactiveCoverAndActiveDismissal() async throws {
+        let controller = await makeUnlockedController()
+        let window = PrivacyShieldWindow()
+        controller.handleScenePhase(.inactive)
+        window.setVisible(controller.isPrivacyShieldVisible)
+        XCTAssertTrue(window.isShowing, "the scene window appears synchronously for the snapshot")
+        controller.handleScenePhase(.active)
+        window.setVisible(controller.isPrivacyShieldVisible)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(window.isShowing, "returning active removes the window and releases accessibility")
+    }
+
     func testDisabledModeNeverShowsShield() async {
         let controller = await makeUnlockedController(mode: .disabled)
         controller.handleScenePhase(.inactive)
