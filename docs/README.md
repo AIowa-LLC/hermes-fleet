@@ -38,6 +38,7 @@ the v0.1 document deferred or excluded.
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue
+- [`upstream-proposals/`](upstream-proposals/README.md) - draft upstream Hermes proposals (app-scheme OAuth redirect, signed approvals, pairing tokens, push observer hooks); drafts only, nothing is filed upstream
 - [`adr/`](adr/) - architectural decision records
 
 ## Historical milestone files
