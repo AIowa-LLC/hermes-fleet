@@ -23,6 +23,14 @@ import FleetUI
 /// simulator. Release builds use the real production graph
 /// (`FleetServiceGraph.makeProductionEnvironment`).
 extension FleetServiceGraph {
+    /// R8: hermetic defaults for the local-notification opt-in (simulator
+    /// fixture only). Cleared on every launch.
+    static func scriptedNotificationDefaults() -> UserDefaults {
+        let suite = "com.aiowa.hermesfleet.ui-test.notifications"
+        UserDefaults().removePersistentDomain(forName: suite)
+        return UserDefaults(suiteName: suite) ?? .standard
+    }
+
     /// UI-test knob: force fleet-wide Group creation through the device-local
     /// bridge so creation, navigation, send, and relaunch can be exercised
     /// without changing the default hosted fixture.
@@ -159,7 +167,11 @@ extension FleetServiceGraph {
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
             // authorization gate and transcript review are walkable
             // deterministically in the simulator + UI tests — no live speech.
-            voiceEngineFactory: { ScriptedVoiceEngine.shared }
+            voiceEngineFactory: { ScriptedVoiceEngine.shared },
+            // R8: scripted notifier + an isolated defaults suite, wiped at
+            // every launch, so the opt-in never leaks between UI tests.
+            localNotifier: ScriptedLocalNotifier(),
+            notificationDefaults: FleetServiceGraph.scriptedNotificationDefaults()
         )
         // Card D: `HERMES_FLEET_ARTIFACT_FIXTURE=1` seeds a deterministic
         // observed-artifact library (gateway + source conversation) so the

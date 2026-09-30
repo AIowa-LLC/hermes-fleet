@@ -23,6 +23,12 @@ struct HermesFleetApp: App {
     @State private var appearanceController = FleetAppearanceController.shared
     @State private var themeController = FleetThemeController.shared
 
+    init() {
+        // R8: receive notification taps (incl. a cold-launch tap). Installing
+        // the delegate never asks for permission.
+        FleetNotificationRouter.shared.install()
+    }
+
     var body: some Scene {
         WindowGroup {
             FleetThemeRoot(controller: themeController) {
@@ -65,6 +71,19 @@ struct HermesFleetApp: App {
             }
             .task {
                 HermesFleetShortcuts.updateAppShortcutParameters()
+                // R8: App Lock redaction + notification-tap routing. A tap
+                // reuses the validated conversation deep-link path.
+                environment.attachAppLock(lockController)
+                FleetNotificationRouter.shared.attach { url in
+                    guard let target = FleetConversationDeepLink.target(from: url) else { return }
+                    environment.openConversationFromShortcut(
+                        route: target.route,
+                        sessionID: target.sessionID,
+                        canonical: target.canonical)
+                }
+                // Query only (never prompts): the Settings row reflects the
+                // current system permission.
+                await environment.localNotifications.refreshAuthorization()
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
@@ -78,6 +97,8 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
+            // R8: notification gating + background grace window.
+            environment.handleScenePhase(phase)
             if phase == .active && !lockController.isLocked {
                 Task {
                     await environment.restoreIntendedConnections()

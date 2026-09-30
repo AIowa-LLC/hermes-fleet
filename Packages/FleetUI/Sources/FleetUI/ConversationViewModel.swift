@@ -400,6 +400,27 @@ public final class ConversationViewModel {
     /// AVSpeechSynthesizer reports that the utterance has finished.
     nonisolated(unsafe) private var readAloudCompletionTask: Task<Void, Never>?
 
+    // MARK: Local notification hooks (R8)
+
+    /// Stable identity of this conversation screen for the notification layer
+    /// (is THIS conversation the one on screen).
+    public let notificationToken = UUID()
+    /// R8: reports each APPLIED event (after the continuity gate dropped
+    /// duplicates) with whether its turn was started from this device and
+    /// whether it is being re-applied by gap recovery. Installed by the
+    /// composition; nil in tests that do not care.
+    @ObservationIgnored public var onAttentionEvent: (@MainActor (_ event: ConversationEvent, _ turnStartedHere: Bool, _ isReplay: Bool) -> Void)?
+    /// R8: ids of requests that stopped being pending (answered / withdrawn).
+    @ObservationIgnored public var onRequestsResolved: (@MainActor ([String]) -> Void)?
+    /// R8: the conversation screen appeared (true) or disappeared (false).
+    @ObservationIgnored public var onScreenVisibilityChanged: (@MainActor (Bool) -> Void)?
+    @ObservationIgnored private var isApplyingReplay = false
+
+    /// R8: the view reports whether this conversation is on screen.
+    public func setOnScreen(_ onScreen: Bool) {
+        onScreenVisibilityChanged?(onScreen)
+    }
+
     // MARK: Internal state
 
     private var openedSessionID: String?
@@ -2044,6 +2065,7 @@ public final class ConversationViewModel {
                     initialYolo: nil
                 )
                 vm.bind(sessionID: opened.sessionID)
+                vm.onRequestResolved = { [weak self] ids in self?.onRequestsResolved?(ids) }
                 approvalViewModel = vm
             }
         } else {
@@ -2056,6 +2078,7 @@ public final class ConversationViewModel {
             if let capable = session as? ServerPromptCapable {
                 let vm = ServerPromptViewModel(prompts: capable.serverPrompts, biometrics: biometrics)
                 vm.bind(sessionID: opened.sessionID)
+                vm.onRequestResolved = { [weak self] ids in self?.onRequestsResolved?(ids) }
                 serverPromptViewModel = vm
             }
         } else {
@@ -2171,7 +2194,12 @@ public final class ConversationViewModel {
         if let seq = event.seq, event.sessionID == openedSessionID {
             lastAppliedEventID = max(lastAppliedEventID ?? 0, seq)
         }
+        // R8: `turnStartedAt` is set only by a prompt submitted from this
+        // device, so it is read BEFORE `render` clears it on the terminal
+        // frame.
+        let turnStartedHere = turnStartedAt != nil
         render(event)
+        onAttentionEvent?(event, turnStartedHere, isApplyingReplay)
     }
 
     /// t_8401d3c3 — gap recovery: fetch the missed tail from the gateway's
@@ -2196,6 +2224,8 @@ public final class ConversationViewModel {
             guard isCurrent(token) else { return }
             // Re-apply in seq order, cursor-gated: replayed overlap drops,
             // the missed events + triggering event apply contiguously.
+            isApplyingReplay = true
+            defer { isApplyingReplay = false }
             for event in missed {
                 await apply(event)
             }

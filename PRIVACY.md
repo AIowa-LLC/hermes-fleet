@@ -1,6 +1,6 @@
 # Hermes Fleet Privacy Policy
 
-Last updated: 2026-09-19
+Last updated: 2026-09-30
 
 Hermes Fleet is an iOS client for Hermes Agent gateways that the person using
 the app selects and controls. This policy describes the behavior of the
@@ -21,6 +21,13 @@ retention rules.
   access. Speech recognition is required to run on the device; recognized text
   is submitted to the gateway only when the user sends it as a conversation
   prompt. Audio is not intentionally uploaded by Hermes Fleet.
+- If local notifications are turned on in Settings, the app asks iOS for
+  notification permission at that time (never at launch) and posts
+  notifications generated on the device only while the app was recently open.
+  They do not use a push service or any server. Their text is generic and never
+  includes commands, secrets, sudo prompts, or message content; with App Lock on
+  it also omits the bot name. iOS handles delivered notifications, and Fleet
+  removes them when the request is resolved.
 - Attachments and message content are sent to the gateway selected by the user
   when the user explicitly submits them. Hermes Fleet does not sell this data
   or use it for advertising.

@@ -130,16 +130,22 @@ enum FleetConversationDeepLink {
     private static let host = "conversation"
 
     static func url(for entity: FleetConversationShortcutEntity) -> URL {
+        url(route: entity.route, sessionID: entity.sessionID, canonical: entity.canonical)
+    }
+
+    /// Shared by the App Intent and local-notification taps (R8). Callers pass
+    /// an already-validated route/session; the consumer re-validates in
+    /// `target(from:)`.
+    static func url(route: Route, sessionID: String, canonical: Bool) -> URL {
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
         components.queryItems = [
-            URLQueryItem(name: "gateway", value: entity.route.gatewayID.rawValue),
-            URLQueryItem(name: "profile", value: entity.route.profileSlug.rawValue),
-            URLQueryItem(name: "session", value: entity.sessionID),
-            URLQueryItem(name: "canonical", value: entity.canonical ? "1" : "0"),
+            URLQueryItem(name: "gateway", value: route.gatewayID.rawValue),
+            URLQueryItem(name: "profile", value: route.profileSlug.rawValue),
+            URLQueryItem(name: "session", value: sessionID),
+            URLQueryItem(name: "canonical", value: canonical ? "1" : "0"),
         ]
-        // All entity values were validated by the query provider.
         return components.url!
     }
 
