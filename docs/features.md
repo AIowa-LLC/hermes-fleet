@@ -46,6 +46,19 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
 - preserve cached conversation history for cold-start presentation
 - show device-local unread indicators in Chats and drawer Recents; existing sessions are baselined on first observation and opening a conversation marks its gateway timestamp as read
 - approvals and per-session control surfaces
+- approval card integrity: the card header names the gateway, bot, working
+  folder, and session the request came from (built from the client's own
+  conversation context, never the wire payload; unknown values read
+  "unknown"). The inline command preview shows at most 4 lines / 240
+  characters with an explicit "N more lines" marker and no middle truncation.
+  A longer command keeps Approve disabled until the user has opened the
+  "Review full command" sheet (full redacted text, monospaced, selectable,
+  scrollable, wrap toggle) and finished the review by reaching the end or
+  tapping "I reviewed the full command". Deny is never gated. Gateway-supplied
+  reason text is shown in a block labelled "Reason given by gateway (untrusted
+  text)". Fleet Home Live Ops approval rows use the same header, preview, and
+  review rule (Live Ops does not carry the bot or working folder, so those
+  read "unknown" there).
 - agent prompts raised as server-to-client requests: dangerous-command
   approvals (Deny is one tap; Approve stays Face ID gated and offers only the
   scopes the gateway supplied), clarify questions (single, multi-select and

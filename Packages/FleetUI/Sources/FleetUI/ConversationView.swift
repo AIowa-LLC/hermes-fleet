@@ -317,7 +317,13 @@ public struct ConversationView: View {
             // R9-T1: the mid-session approval banner (danger surface) sits
             // above the transcript; nil model → nothing renders.
             if let approvalModel = model.approvalViewModel {
-                ApprovalBanner(model: approvalModel) {
+                ApprovalBanner(
+                    model: approvalModel,
+                    origin: model.approvalOrigin(
+                        gatewayLabel: environment.gateway(for: route.gatewayID)?.displayName
+                            ?? route.gatewayID.rawValue,
+                        botLabel: environment.bot(for: route)?.displayName)
+                ) {
                     Task { await approvalModel.deny() }
                 }
             }

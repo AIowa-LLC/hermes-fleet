@@ -265,6 +265,17 @@ public final class ConversationViewModel {
     /// Lazily built once the session opens; nil when the concrete session
     /// exposes no approvals seam (fail-soft feature detection).
     public private(set) var approvalViewModel: ApprovalViewModel?
+    /// P0.2a — the origin header for approval cards, assembled from this
+    /// conversation's own context (never the wire payload). Unknown values
+    /// stay unknown and render as such.
+    public func approvalOrigin(gatewayLabel: String?, botLabel: String?) -> ApprovalOrigin {
+        ApprovalOrigin(
+            gateway: gatewayLabel,
+            bot: botLabel ?? route.profileSlug.rawValue,
+            cwd: sessionCWD,
+            session: ApprovalOrigin.sessionLabel(title: sessionTitle, id: resolvedSessionID))
+    }
+
     /// P0.1 — clarify / sudo / secret prompts raised as server→client
     /// requests. Built with the approval VM when the session exposes the
     /// server-prompt seam; nil otherwise.

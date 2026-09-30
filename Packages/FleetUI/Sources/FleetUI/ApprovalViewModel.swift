@@ -38,9 +38,44 @@ public final class ApprovalViewModel {
         case biometricUnavailable
         case respondFailed(String)
         case confirmYolo
+        /// P0.2a: Approve was attempted before the full-command review for a
+        /// long command. Nothing was sent.
+        case reviewRequired
     }
 
     public private(set) var state: BannerState = .idle
+
+    /// P0.2a — which long commands the user has reviewed in full.
+    private var reviewTracker = ApprovalReviewTracker()
+
+    /// True when the pending command is longer than the inline preview and
+    /// must be reviewed in full before Approve is allowed.
+    public var pendingRequiresReview: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.requiresReview(request)
+    }
+
+    /// True once the pending long command has been reviewed in full (always
+    /// false when there is no pending request).
+    public var pendingIsReviewed: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.isReviewed(request)
+    }
+
+    /// Whether Approve is currently allowed for the pending request. Deny is
+    /// never gated and does not consult this.
+    public var canApprove: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.canApprove(request)
+    }
+
+    /// The user opened the full-command review and finished it (scrolled to
+    /// the end or confirmed). Only the CURRENT pending request is affected.
+    public func markPendingReviewed() {
+        guard let request = pending else { return }
+        reviewTracker.markReviewed(request)
+        if state == .reviewRequired { state = .pending }
+    }
 
     /// Effective YOLO state for THIS session (session.info readback +
     /// optimistic local flip confirmed by the server result).
@@ -134,6 +169,7 @@ public final class ApprovalViewModel {
     }
 
     private func promoteNext() {
+        reviewTracker.retain(requestIDs: Set(queued.map(\.requestID)))
         if !queued.isEmpty {
             pending = queued.removeFirst()
             state = .pending
@@ -192,6 +228,13 @@ public final class ApprovalViewModel {
     /// (presented only when the gateway offered it in `choices`).
     public func approve(scope: ApprovalChoice) async {
         guard let request = pending else { return }
+        // P0.2a: a long command must be reviewed in full first. This sits
+        // before the biometric prompt so an unreviewed approval never even
+        // asks for Face ID, and never reaches the wire.
+        guard reviewTracker.canApprove(request) else {
+            state = .reviewRequired
+            return
+        }
         // The FaceID gate comes BEFORE any wire call — a failed scan must
         // never send an approval.
         switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {

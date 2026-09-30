@@ -79,6 +79,13 @@ public final class LiveOpsStore {
     /// Non-secret, display-safe message from the last failed approve/deny,
     /// keyed by requestID.
     public private(set) var actionErrors: [String: String] = [:]
+    /// P0.2a: long commands the user has reviewed in full. Home applies the
+    /// same rule as the conversation banner — Approve stays blocked until the
+    /// review sheet has been completed — so the guard cannot be bypassed here.
+    public private(set) var reviewTracker = ApprovalReviewTracker()
+
+    /// Message returned by `approve` when a long command has not been reviewed.
+    public static let reviewRequiredMessage = "Review the full command before approving"
 
     /// Per-operation "live since you opened" timeline, populated only while
     /// that operation's Operation Detail is an active poll context (bounded
@@ -287,7 +294,18 @@ public final class LiveOpsStore {
                 let pending = operation.observationOnly ? nil
                     : try? await seam.approvals.pendingApprovals(sessionID: operation.id.runtimeSessionID)
                 guard cycle == self.cycle else { return }
-                items.append(LiveOpsAttentionItem(operation: operation, pendingApproval: pending?.first))
+                // Client-side redaction pass (the gateway also redacts); the
+                // review sheet and inline preview both render this text.
+                let redacted = pending?.first.map { request in
+                    ApprovalRequest(
+                        requestID: request.requestID,
+                        sessionID: request.sessionID,
+                        command: Redaction.commandPreview(request.command),
+                        detail: request.detail,
+                        choices: request.choices,
+                        serverRequestID: request.serverRequestID)
+                }
+                items.append(LiveOpsAttentionItem(operation: operation, pendingApproval: redacted))
             }
         }
         // Key by gateway+operation (one row per waiting operation) — a
@@ -301,6 +319,7 @@ public final class LiveOpsStore {
         let stillPendingIDs = Set(items.compactMap(\.pendingApproval?.requestID))
         resolvingRequestIDs.formIntersection(stillPendingIDs)
         actionErrors = actionErrors.filter { stillPendingIDs.contains($0.key) }
+        reviewTracker.retain(requestIDs: stillPendingIDs)
     }
 
     /// Lightweight diff of the previous vs. new snapshot for every operation
@@ -406,6 +425,12 @@ public final class LiveOpsStore {
     public func approve(_ item: LiveOpsAttentionItem, choice: ApprovalChoice = .once) async -> String? {
         guard let approval = item.pendingApproval else { return "no pending approval" }
         guard let seam = seams[item.operation.id.gatewayID] else { return "gateway not reachable" }
+        // P0.2a: same review gate as the conversation banner, checked before
+        // the biometric prompt. Deny is never gated.
+        guard reviewTracker.canApprove(approval) else {
+            actionErrors[approval.requestID] = Self.reviewRequiredMessage
+            return Self.reviewRequiredMessage
+        }
         guard !resolvingRequestIDs.contains(approval.requestID) else { return nil }
         resolvingRequestIDs.insert(approval.requestID)
         defer { resolvingRequestIDs.remove(approval.requestID) }
@@ -429,6 +454,34 @@ public final class LiveOpsStore {
             actionErrors[approval.requestID] = message
             return message
         }
+    }
+
+    /// Whether Approve is allowed for this row right now (short command, or the
+    /// long command has been reviewed in full).
+    public func canApprove(_ item: LiveOpsAttentionItem) -> Bool {
+        guard let approval = item.pendingApproval else { return false }
+        return reviewTracker.canApprove(approval)
+    }
+
+    /// The user finished reviewing this row's full command.
+    public func markReviewed(_ item: LiveOpsAttentionItem) {
+        guard let approval = item.pendingApproval else { return }
+        reviewTracker.markReviewed(approval)
+        if actionErrors[approval.requestID] == Self.reviewRequiredMessage {
+            actionErrors[approval.requestID] = nil
+        }
+    }
+
+    /// The header for a Home approval row. Live Ops carries the gateway and
+    /// session title but not the bot or working folder, so those honestly
+    /// read "unknown" here instead of being left out.
+    public func origin(for item: LiveOpsAttentionItem, gatewayLabel: String?) -> ApprovalOrigin {
+        ApprovalOrigin(
+            gateway: gatewayLabel,
+            bot: nil,
+            cwd: nil,
+            session: ApprovalOrigin.sessionLabel(
+                title: item.operation.title, id: item.operation.id.runtimeSessionID))
     }
 
     /// DENY — friction-free, no biometrics (matches the conversation banner
