@@ -38,6 +38,15 @@ else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
 fi
 
+# --- cache failure-policy guard (P0.4b) ---------------------------------------
+note "Cache failure policy: no force-try in FleetServiceGraph.swift"
+HITS=$(grep -nE '\btry!' HermesFleetApp/FleetServiceGraph.swift 2>/dev/null || true)
+if [ -z "$HITS" ]; then
+  ok "FleetServiceGraph.swift has 0 'try!' (cache open recovers instead of trapping)"
+else
+  bad "FleetServiceGraph.swift uses force-try:"; echo "$HITS"
+fi
+
 # --- theme call-site audit ----------------------------------------------------
 note "Theme call-site audit"
 if bash scripts/theme_callsite_audit.sh >/tmp/c1_theme.log 2>&1; then

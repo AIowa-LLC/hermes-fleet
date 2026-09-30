@@ -199,6 +199,12 @@ public final class AppEnvironment {
     /// again at render time; nothing here is persisted.
     public let diagnosticsRecorder: DiagnosticsRecorder
 
+    /// P0.4b: non-blocking notices from a local-cache recovery at launch (the
+    /// store could not be opened and was quarantined/rebuilt, or the session
+    /// runs without a persistent cache). Empty on a normal launch. Session
+    /// state only: the next launch opens the rebuilt store normally.
+    public private(set) var localCacheNotices: [LocalCacheRecoveryReport.Notice] = []
+
     /// Per-gateway connection-test result, observable (§13 reachable /
     /// unreachable probe). Set only after `testConnection` completes; a
     /// gateway with no entry has never been tested this session.
@@ -626,6 +632,7 @@ public final class AppEnvironment {
         conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
+        localCacheRecovery: LocalCacheRecoveryReport? = nil,
         recoveryTiming: ConnectionRecoveryTiming = .standard
     ) {
         self.registry = registry
@@ -657,6 +664,12 @@ public final class AppEnvironment {
         self.conversationPinStore = conversationPinStore
         self.launchCache = launchCache ?? InMemoryLaunchCache()
         self.diagnosticsRecorder = diagnosticsRecorder
+        if let localCacheRecovery {
+            // Type-only detail (no paths, hostnames or names); every recovery
+            // path leaves a diagnostics line.
+            diagnosticsRecorder.record(category: "persistence", detail: localCacheRecovery.diagnosticsDetail)
+            self.localCacheNotices = localCacheRecovery.notices
+        }
         self.recoveryTiming = recoveryTiming
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
@@ -1900,6 +1913,14 @@ public final class AppEnvironment {
                 category: "Gateway connection", gateway: gateway,
                 status: .offline, detail: nil)
         }
+    }
+
+    /// P0.4b: dismiss the one-time "saved gateways couldn't be restored" notice.
+    /// The persistent "running without local cache" notice cannot be dismissed
+    /// while it is true.
+    public func dismissLocalCacheNotice(_ notice: LocalCacheRecoveryReport.Notice) {
+        guard notice != .runningWithoutLocalCache else { return }
+        localCacheNotices.removeAll { $0 == notice }
     }
 
     /// P0-A: record ONE short, non-secret fault line for the diagnostics

@@ -41,6 +41,36 @@ critical smoke. Broad shared-layer changes retain broader validation; the full
 nightly/manual suite is not an unconditional lock on every narrow change.
 See [dev-loop.md](dev-loop.md) for exact commands and limitations.
 
+## Local cache schema versioning
+
+The on-device SwiftData store (`FleetPersistence`) is built through
+`FleetMigrationPlan`, whose current and only schema is `FleetSchemaV1`
+(1.0.0). It lists exactly the models that shipped before versioning, so
+existing stores open in place.
+
+**Every `@Model` change requires a new schema version.** That covers adding,
+removing or renaming a model or stored property, changing a property type, and
+changing a uniqueness constraint. Checklist:
+
+1. Freeze the current shape: move the previous models into the old
+   `VersionedSchema` as nested `@Model` copies (V1 references the live
+   top-level classes only while they are unchanged).
+2. Add `FleetSchemaVN` with the next `versionIdentifier` and the new model list.
+3. Append it to `FleetMigrationPlan.schemas` and add a `MigrationStage`
+   (lightweight when the change is additive, custom otherwise).
+4. Add a test that creates a store with the previous version's models, opens it
+   through the plan, and asserts the rows survive.
+5. Keep `CachedGatewayRow` readable: the saved-gateway registry lives in this
+   store and recovery salvages it (`CacheStoreRecovery.swift`).
+
+If the store still cannot be opened, the app quarantines the old files into
+`HermesFleetCache/Quarantine/<timestamp>/` (one generation, file-protected and
+backup-excluded), rebuilds an empty store, re-inserts the salvaged gateway rows,
+and records a type-only `persistence` diagnostics entry. If no file-backed store
+can be created it runs in memory and shows a persistent notice. The
+`HermesFleetCache` directory itself is never removed or renamed. Tests simulate
+failures with `CacheOpenFaultInjection`.
+
 ## Release provenance and catch-up
 
 Every TestFlight build maps to an exact commit and immutable tag recorded in

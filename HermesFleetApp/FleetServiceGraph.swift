@@ -160,7 +160,7 @@ enum FleetServiceGraph {
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
         // user-added gateway is persisted on Add and restored on launch.
-        let cacheStore = makeFileBackedCache()
+        let (cacheStore, cacheRecovery) = makeFileBackedCache()
 
         let registry: any GatewayRegistryManaging = GatewayRegistryService(
             credentials: credentialStore,
@@ -235,7 +235,8 @@ enum FleetServiceGraph {
             },
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
-            launchCache: launchCache
+            launchCache: launchCache,
+            localCacheRecovery: cacheRecovery
         )
     }
 
@@ -819,18 +820,40 @@ enum FleetServiceGraph {
         }
     }
 
-    /// File-backed SwiftData cache in Application Support, with the store's
-    /// NSFileProtectionComplete + backup-exclusion (synthesis §12). Falls back
-    /// to in-memory only if the container cannot be created (cache is
-    /// non-critical for U1). Also serves as the H2 health-stats store.
-    private static func makeFileBackedCache() -> SwiftDataCacheStore {
+    /// Where the file-backed cache store lives. The `HermesFleetCache`
+    /// directory must keep existing (fresh-install detection relies on it);
+    /// recovery moves files inside it and never touches the directory itself.
+    static func defaultCacheStoreURL() -> URL {
         let directory = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
-        let storeURL = directory
+        return directory
             .appendingPathComponent("HermesFleetCache", isDirectory: true)
             .appendingPathComponent("cache.store")
-        return (try? SwiftDataCacheStore.makeFileBacked(storeURL: storeURL))
-            ?? (try! SwiftDataCacheStore.makeInMemory())
+    }
+
+    /// File-backed SwiftData cache in Application Support, with the store's
+    /// NSFileProtectionComplete + backup-exclusion (synthesis §12). Also
+    /// serves as the H2 health-stats store and the durable gateway registry.
+    ///
+    /// P0.4b failure policy: if the store cannot be opened, the old files are
+    /// quarantined, the saved-gateway rows are salvaged into a fresh store,
+    /// and only if no file-backed store can be created does the session run
+    /// in memory. The returned report (nil on a normal launch) feeds the
+    /// diagnostics ring and the non-blocking UI notices.
+    static func makeFileBackedCache(
+        storeURL: URL = defaultCacheStoreURL(),
+        faults: CacheOpenFaultInjection = []
+    ) -> (store: SwiftDataCacheStore, recovery: LocalCacheRecoveryReport?) {
+        do {
+            let opened = try SwiftDataCacheStore.openWithRecovery(storeURL: storeURL, faults: faults)
+            return (opened.store, opened.recovery)
+        } catch {
+            // Not even an in-memory container could be built for the compiled
+            // schema. That is a programmer error every in-memory unit test
+            // would already have caught, not a runtime condition, so there is
+            // no store left to degrade to.
+            preconditionFailure("The cache schema cannot build an in-memory container.")
+        }
     }
 }
