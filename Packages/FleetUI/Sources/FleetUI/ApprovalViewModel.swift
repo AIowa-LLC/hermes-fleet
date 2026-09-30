@@ -194,7 +194,10 @@ public final class ApprovalViewModel {
         guard let request = pending else { return }
         // The FaceID gate comes BEFORE any wire call — a failed scan must
         // never send an approval.
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
+        let auth = await biometrics.evaluateBiometrics(reason: "Approve a dangerous command")
+        // A withdrawal or a denial during authentication invalidates this tap.
+        guard let current = pending, current.requestID == request.requestID else { return }
+        switch auth {
         case .success:
             break
         case .failure:
@@ -205,7 +208,7 @@ public final class ApprovalViewModel {
             return
         }
         do {
-            _ = try await approvals.respond(to: request, choice: scope, all: false)
+            _ = try await approvals.respond(to: current, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))

@@ -334,7 +334,7 @@ final class ServerPromptFlowTests: XCTestCase {
         }
         func cancelClarify(requestID: String) async throws {}
         func answerValue(requestID: String, value: String) async throws {
-            if fail { throw ConversationError.notConnected }
+            if fail { throw ConversationError.rpcFailed("Rejected value: \(value)") }
         }
     }
 
@@ -507,4 +507,42 @@ final class ServerPromptFlowTests: XCTestCase {
         await model.deny()
         XCTAssertEqual(approvals.paths, [.serverRequest(id: "srq-a1", choice: .deny)])
     }
+    private actor SuspendedBiometrics: AppLockBiometricAuth {
+        nonisolated let started: AsyncStream<Void>
+        nonisolated let start: AsyncStream<Void>.Continuation
+        private var continuation: CheckedContinuation<AppLockAuthResult, Never>?
+        init() { (started, start) = AsyncStream.makeStream() }
+        nonisolated func canEvaluateBiometrics() -> Bool { true }
+        func evaluateBiometrics(reason: String) async -> AppLockAuthResult {
+            await withCheckedContinuation {
+                continuation = $0
+                start.yield(())
+            }
+        }
+        func evaluateDevicePasscode(reason: String) async -> Bool { false }
+        func finish(_ result: AppLockAuthResult) {
+            continuation?.resume(returning: result)
+            continuation = nil
+        }
+    }
+
+    func testApprovalWithdrawnDuringAuthenticationNeverSendsOrChangesNextBanner() async {
+        for outcome: AppLockAuthResult in [.success, .failure, .unavailable] {
+            let auth = SuspendedBiometrics()
+            let approvals = ScriptedApprovals()
+            let model = ApprovalViewModel(approvals: approvals, biometrics: auth)
+            model.handleApprovalRequest(ApprovalRequest(requestID: "a1", sessionID: "s-1", command: "fixture", serverRequestID: "srq-a1"))
+            model.handleApprovalRequest(ApprovalRequest(requestID: "a2", sessionID: "s-1", command: "next fixture", serverRequestID: "srq-a2"))
+            let approving = Task { await model.approve(scope: .once) }
+            var starts = auth.started.makeAsyncIterator()
+            _ = await starts.next()
+            model.cancelServerRequest(id: "srq-a1")
+            await auth.finish(outcome)
+            await approving.value
+            XCTAssertTrue(approvals.paths.isEmpty)
+            XCTAssertEqual(model.pending?.requestID, "a2")
+            XCTAssertEqual(model.state, .pending)
+        }
+    }
+
 }

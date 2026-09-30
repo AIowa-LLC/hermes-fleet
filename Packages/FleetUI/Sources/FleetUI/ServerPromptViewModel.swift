@@ -197,7 +197,7 @@ public final class ServerPromptViewModel {
     public func submitValue(_ value: String) async {
         guard let request = pending, Self.isValuePrompt(request), isInputUnlocked,
               !value.isEmpty, state != .sending else { return }
-        await send(for: request) {
+        await send(for: request, failureMessage: "The value could not be sent. Reconnect and try again.") {
             try await self.prompts.answerValue(requestID: request.id, value: value)
         }
     }
@@ -244,14 +244,19 @@ public final class ServerPromptViewModel {
 
     /// Run one wire answer for `request`; dismiss on success, surface a
     /// non-secret failure otherwise (the prompt stays so the user can retry).
-    private func send(for request: ServerRequest, _ action: () async throws -> Void) async {
+    private func send(
+        for request: ServerRequest, failureMessage: String? = nil,
+        _ action: () async throws -> Void
+    ) async {
         state = .sending
         do {
             try await action()
             if pending?.id == request.id { promoteNext() }
         } catch {
             guard pending?.id == request.id else { return }
-            state = .failed(Self.nonSecret(error))
+            // A value-path error is untrusted and may echo the submitted
+            // secret. Keep only fixed copy, never arbitrary error details.
+            state = .failed(failureMessage ?? Self.nonSecret(error))
         }
     }
 

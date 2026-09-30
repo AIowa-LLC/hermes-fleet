@@ -873,5 +873,121 @@ final class GatewayServerRequestTests: XCTestCase {
         } catch let error as ConversationError {
             guard case .rpcFailed = error else { return XCTFail("unexpected \(error)") }
         }
+        try await transport.connect()
+        do {
+            try await client.answerValue(requestID: "srq-not-open", value: "synthetic-value")
+            XCTFail("an unregistered request cannot receive a secret")
+        } catch {}
+        XCTAssertTrue(recorder.responses(toID: "srq-not-open").isEmpty)
+        await transport.disconnect()
     }
+    /// A socket whose response send is explicitly suspended, so actor
+    /// reentrancy is exercised rather than relying on real socket timing.
+    private actor SuspendedReplySession: WebSocketSession {
+        nonisolated let inbound: AsyncStream<WebSocketMessage>
+        nonisolated let input: AsyncStream<WebSocketMessage>.Continuation
+        nonisolated let started: AsyncStream<Void>
+        nonisolated let start: AsyncStream<Void>.Continuation
+        nonisolated var lastCloseCode: Int? { nil }
+        private var replies: [CheckedContinuation<Void, any Error>] = []
+        private(set) var sendCount = 0
+
+        init() {
+            (inbound, input) = AsyncStream.makeStream()
+            (started, start) = AsyncStream.makeStream()
+        }
+        func open() async throws {
+            input.yield(.text(GatewayServerRequestTests.ready()))
+            input.yield(.text(GatewayServerRequestTests.requestFrame(
+                id: "srq-suspended", method: "sudo",
+                params: ["session_id": "abc12345", "command": "fixture operation"])))
+        }
+        func receive() async throws -> WebSocketMessage {
+            var iterator = inbound.makeAsyncIterator()
+            guard let message = await iterator.next() else { throw TransportError.requestTimeout }
+            return message
+        }
+        func send(_ message: WebSocketMessage) async throws {
+            sendCount += 1
+            start.yield(())
+            try await withCheckedThrowingContinuation { replies.append($0) }
+        }
+        func finish(error: TransportError? = nil) {
+            let waiting = replies
+            replies = []
+            for reply in waiting {
+                if let error { reply.resume(throwing: error) } else { reply.resume() }
+            }
+        }
+        func close(code: Int, reason: String?) async {
+            input.finish()
+            finish(error: .connectionClosed(.normalClosure))
+        }
+    }
+
+    private struct SuspendedReplyFactory: WebSocketSessionFactory {
+        let session: SuspendedReplySession
+        func makeSession(url: URL) -> any WebSocketSession { session }
+    }
+
+    func testConcurrentAnswersShareOneSuspendedSendAndItsFailure() async throws {
+        let socket = SuspendedReplySession()
+        let transport = GatewayWebSocketTransport(
+            baseURL: URL(string: "http://127.0.0.1:1")!,
+            ticketMinter: StaticTicketMinter(ticket: WSTicket(token: "fixture-ticket", ttlSeconds: 30)),
+            sessionFactory: SuspendedReplyFactory(session: socket))
+        let stream = transport.subscribeToServerRequests()
+        try await transport.connect()
+        let request = try await expectNext(stream)
+        let first = Task { try await transport.respondToServerRequest(id: request.id, result: .object(["value": .string("")])) }
+        var starts = socket.started.makeAsyncIterator()
+        _ = await starts.next()
+        let second = Task { try await transport.respondToServerRequest(id: request.id, result: .object(["value": .string("")])) }
+        try await Task.sleep(for: .milliseconds(100))
+        let sends = await socket.sendCount
+        XCTAssertEqual(sends, 1, "a send suspended at await must not admit another answer")
+        await socket.finish(error: .requestTimeout)
+        for task in [first, second] {
+            do { try await task.value; XCTFail("both callers must see the failed send") } catch {}
+        }
+        XCTAssertEqual(transport.openServerRequestCount, 1, "failure keeps the request retryable")
+        let retry = Task { try await transport.respondToServerRequest(id: request.id, result: .object(["value": .string("")])) }
+        let deadline = Date().addingTimeInterval(3)
+        while await socket.sendCount == sends, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await socket.finish()
+        try await retry.value
+        XCTAssertEqual(transport.openServerRequestCount, 0)
+        await transport.disconnect()
+    }
+
+    func testConversationStreamPreservesRequestCancellationOrder() async throws {
+        let recorder = FrameRecorder()
+        var frames = [Self.ready()]
+        for index in 0..<20 {
+            let id = "srq-order-\(index)"
+            frames.append(Self.requestFrame(id: id, method: "sudo", params: ["session_id": sid, "command": "fixture"]))
+            frames.append(Self.eventFrame(type: "request.cancel", sessionID: sid, payload: ["id": id, "method": "sudo", "reason": "interrupted"]))
+        }
+        let server = try await startServer(onOpen: frames, recorder: recorder)
+        defer { server.stop() }
+        let transport = makeTransport(serverPort: server.listeningPort)
+        let stream = GatewayConversationClient(gatewayID: GatewayID(rawValue: "fixture"), transport: transport).events
+        try await transport.connect()
+        var iterator = stream.makeAsyncIterator()
+        for index in 0..<20 {
+            let requestEvent = await iterator.next()
+            let cancelEvent = await iterator.next()
+            guard case .serverRequest(let request)? = requestEvent,
+                  case .requestCancelled(_, let cancelledID, _, _, _)? = cancelEvent else {
+                await transport.disconnect()
+                return XCTFail("a withdrawal must follow its request on the conversation stream")
+            }
+            XCTAssertEqual(request.id, "srq-order-\(index)")
+            XCTAssertEqual(cancelledID, request.id)
+        }
+        await transport.disconnect()
+    }
+
 }
