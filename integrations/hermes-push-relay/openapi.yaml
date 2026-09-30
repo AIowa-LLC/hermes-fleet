@@ -42,13 +42,21 @@ paths:
       tags: [registration]
       summary: Register or refresh a device (idempotent upsert)
       description: |
-        Stores a salted hash of the device token and the token itself sealed at
-        rest, with a TTL. Repeating the request while presenting the current
-        send capability (`Authorization: Bearer`) refreshes the TTL without
-        issuing a new capability and without a write until half the lifetime
-        has elapsed. Registering the same token without the current capability
-        rotates the capability (the previous one stops working) and returns a
-        new `send_capability`.
+        Stores a salted hash of the registration identity and the device token
+        sealed at rest, with a TTL. The identity is the tuple (environment,
+        bundle id, device token, `relay_key_id`). Use a distinct, random
+        `relay_key_id` per gateway: each gateway then gets its own relay device
+        id and send capability, and removing one gateway does not affect another.
+
+        Repeating the request with the same identity while presenting the
+        current send capability (`Authorization: Bearer`) refreshes the TTL
+        without issuing a new capability, and without a write until half the
+        lifetime has elapsed. Repeating it with the same identity but without
+        the capability rotates the capability (the previous one stops working)
+        and returns a new `send_capability`. Because `relay_key_id` must be
+        unguessable, a party that only knows the device token cannot do this to
+        an existing registration; it can only create a separate registration of
+        its own.
       operationId: register
       security:
         - {}
@@ -86,7 +94,11 @@ paths:
     delete:
       tags: [registration]
       summary: Unregister a device
-      description: Deletes the registration and its token index. Idempotent.
+      description: |
+        Deletes the registration and its token index. Idempotent. The party
+        that holds the capability (the gateway plugin, on de-registration or
+        gateway removal, or the app) should call this when it stops using the
+        registration.
       operationId: unregister
       security:
         - sendCapability: []
@@ -111,6 +123,17 @@ paths:
         serialized APNs payload may not exceed 3.5 KB. `expiry` must be in the
         future and at most 24 hours ahead, which bounds replay of a captured
         request.
+
+        **Withdrawal.** To retract a notification whose request was answered
+        elsewhere, send a second request with `push_type: background`,
+        `priority: 5` (required for background), no `alert`, the same
+        `collapse_id` as the original alert, and a `ciphertext` that seals a
+        withdraw instruction for the device. The relay cannot distinguish it
+        from any other background push. APNs may coalesce a still-pending alert
+        with the same collapse id; removing an already delivered alert is done
+        by the app after it opens the sealed payload. Delivery is best effort
+        (iOS throttles background pushes and does not wake a force-quit app),
+        so the app must still treat the gateway as authoritative on open.
       operationId: send
       security:
         - sendCapability: []
@@ -275,9 +298,13 @@ components:
           type: string
           maxLength: 64
           pattern: "^[A-Za-z0-9._:-]+$"
+          minLength: 22
           description: |
-            Opaque identifier of the device push-key generation that senders
-            seal to. Stored as metadata; never used for routing.
+            Per-registration identifier chosen by the device, at least 128 bits
+            of entropy (for example 16 random bytes, or a hash of the per-gateway
+            push public key, base64url). Part of the registration identity and
+            effectively a possession check; share it only with the intended
+            gateway. Stored sealed, never in clear.
     RegisterResponse:
       type: object
       required: [relay_device_id, expires_at]
@@ -307,7 +334,9 @@ components:
           type: string
           maxLength: 64
           pattern: "^[A-Za-z0-9._:-]+$"
-          description: Forwarded as `apns-collapse-id`. Use an opaque value.
+          description: |
+            Forwarded as `apns-collapse-id`. Use an opaque value. Reuse the same
+            value on a background withdrawal push to retract the original alert.
         push_type:
           type: string
           enum: [alert, liveactivity, background]
