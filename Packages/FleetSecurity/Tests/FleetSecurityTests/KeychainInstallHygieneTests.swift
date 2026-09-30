@@ -207,6 +207,33 @@ final class KeychainInstallHygieneTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
     }
 
+    func testFailedInstallPurgeCannotAcceptNewCredentialsBeforeRetrySucceeds() async throws {
+        let keychain = InMemoryKeychainFake()
+        try await seedStores(keychain)
+        keychain.forceDeleteStatus(errSecInteractionNotAllowed)
+        let hygiene = KeychainInstallHygiene(keychain: keychain, defaults: defaults)
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false),
+                       .purgeFailed(status: errSecInteractionNotAllowed))
+        let session = InstallReconciledKeychainSession(
+            keychain: keychain, defaults: defaults, hasPriorInstallEvidence: false)
+        let credentials = KeychainCredentialStore(keychain: session)
+        let newID = GatewayID(rawValue: "new-gateway")
+        do {
+            try await credentials.saveCredential(GatewayCredential(rawValue: "synthetic-new"), for: newID)
+            XCTFail("failed install reconciliation must not accept credentials that its retry will erase")
+        } catch {
+            XCTAssertEqual(error as? CredentialStoreError, .unexpectedStatus(Int(errSecInteractionNotAllowed)))
+        }
+        XCTAssertEqual(keychain.totalCount, 4)
+        keychain.forceDeleteStatus(nil)
+        try await credentials.saveCredential(GatewayCredential(rawValue: "synthetic-new"), for: newID)
+        let restored = try await credentials.loadCredential(for: newID)
+        XCTAssertEqual(restored?.rawValue, "synthetic-new")
+        XCTAssertEqual(keychain.totalCount, 1, "old install items are gone before the new credential is accepted")
+        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
+        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
+    }
+
     func testPurgeOnlyTouchesAppNamespaces() async throws {
         let keychain = InMemoryKeychainFake()
         try await seedStores(keychain)

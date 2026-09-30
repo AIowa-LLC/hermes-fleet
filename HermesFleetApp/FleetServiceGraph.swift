@@ -178,16 +178,16 @@ enum FleetServiceGraph {
         // P0.3d: reconcile the Keychain with this install BEFORE any store is
         // built or the registry hydrates, so a reinstall never inherits the
         // deleted install's credentials, tokens, pins or approvals.
-        runFirstLaunchKeychainHygiene()
+        let keychain = runFirstLaunchKeychainHygiene()
 
         // The U2 UI writes credentials here (saveCredential → KeychainCredentialStore)
         // and every authenticator reads from THIS SAME store, so a credential
         // entered in the UI reaches the live gateway (L1 fix: store split).
-        let credentialStore = KeychainCredentialStore()
+        let credentialStore = KeychainCredentialStore(keychain: keychain)
         // T3: per-gateway TLS pin store (TOFU SPKI pinning). Shared by every
         // transport the graph builds so all four connection surfaces (probe,
         // roster, lifecycle, conversation) enforce the SAME pin per gateway.
-        let pinStore = KeychainPinStore()
+        let pinStore = KeychainPinStore(keychain: keychain)
 
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
@@ -296,13 +296,15 @@ enum FleetServiceGraph {
     /// the fresh-install vs upgrade decision. DEBUG-only escape hatch:
     /// `HERMES_FLEET_SKIP_KEYCHAIN_PURGE=1` lets device UI suites that seed
     /// the Keychain ahead of the first launch keep their fixtures.
-    static func runFirstLaunchKeychainHygiene() {
+    static func runFirstLaunchKeychainHygiene() -> any KeychainSession {
         #if DEBUG
         if ProcessInfo.processInfo.environment["HERMES_FLEET_SKIP_KEYCHAIN_PURGE"] == "1" {
-            return
+            return LiveKeychainSession()
         }
         #endif
-        KeychainInstallHygiene().runIfNeeded(hasPriorInstallEvidence: hasPriorInstallEvidence())
+        let session = InstallReconciledKeychainSession(hasPriorInstallEvidence: hasPriorInstallEvidence())
+        session.reconcile()
+        return session
     }
 
     /// Approval-gate biometrics. The gate must be REAL on any device build

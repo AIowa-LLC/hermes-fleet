@@ -145,3 +145,56 @@ public struct KeychainInstallHygiene {
         }
     }
 }
+
+/// Keeps a failed first-launch purge from accepting new credentials that the
+/// next purge would erase. Every store in the production graph shares this
+/// session; the first operation after Keychain becomes available retries the
+/// reconciliation before reading or writing. The lock also prevents another
+/// store from adding an item between namespace deletion and marker creation.
+public final class InstallReconciledKeychainSession: KeychainSession, @unchecked Sendable {
+    private let keychain: any KeychainSession
+    private let hygiene: KeychainInstallHygiene
+    private let hasPriorInstallEvidence: Bool
+    private let lock = NSLock()
+
+    public init(
+        keychain: any KeychainSession = LiveKeychainSession(),
+        defaults: UserDefaults = .standard,
+        hasPriorInstallEvidence: Bool
+    ) {
+        self.keychain = keychain
+        self.hygiene = KeychainInstallHygiene(keychain: keychain, defaults: defaults)
+        self.hasPriorInstallEvidence = hasPriorInstallEvidence
+    }
+
+    @discardableResult
+    public func reconcile() -> KeychainInstallHygiene.Outcome {
+        lock.withLock { hygiene.runIfNeeded(hasPriorInstallEvidence: hasPriorInstallEvidence) }
+    }
+
+    private func access(_ operation: () -> OSStatus) -> OSStatus {
+        lock.withLock {
+            if case .purgeFailed(let status) = hygiene.runIfNeeded(hasPriorInstallEvidence: hasPriorInstallEvidence) {
+                return status
+            }
+            return operation()
+        }
+    }
+
+    public func add(_ query: CFDictionary) -> OSStatus {
+        access { keychain.add(query) }
+    }
+
+    public func update(_ query: CFDictionary, _ attributesToUpdate: CFDictionary) -> OSStatus {
+        access { keychain.update(query, attributesToUpdate) }
+    }
+
+    public func delete(_ query: CFDictionary) -> OSStatus {
+        access { keychain.delete(query) }
+    }
+
+    public func copyMatching(_ query: CFDictionary, _ result: inout CFTypeRef?) -> OSStatus {
+        result = nil
+        return access { keychain.copyMatching(query, &result) }
+    }
+}

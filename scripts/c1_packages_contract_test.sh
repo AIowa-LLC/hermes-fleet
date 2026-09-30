@@ -22,7 +22,7 @@ case "$package" in
   FleetCore) expected=652 ;;
   FleetNetworking) expected=582 ;;
   FleetPersistence) expected=40 ;;
-  FleetSecurity) expected=45 ;;
+  FleetSecurity) expected=46 ;;
   *) echo "unexpected package: $package" >&2; exit 65 ;;
 esac
 
