@@ -434,14 +434,12 @@ public final class LiveOpsStore {
         guard !resolvingRequestIDs.contains(approval.requestID) else { return nil }
         resolvingRequestIDs.insert(approval.requestID)
         defer { resolvingRequestIDs.remove(approval.requestID) }
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
-        case .success: break
-        case .failure:
-            actionErrors[approval.requestID] = "Biometric check failed"
-            return "Biometric check failed"
-        case .unavailable:
-            actionErrors[approval.requestID] = "Biometric authentication unavailable"
-            return "Biometric authentication unavailable"
+        // Same presence gate + passcode fallback as the conversation banner.
+        guard let action = PresenceAction(approvalChoice: choice) else { return "deny is not gated" }
+        let presence = await biometrics.verifyPresence(action)
+        if let message = PresenceFeedback.message(for: presence, action: action) {
+            actionErrors[approval.requestID] = message
+            return message
         }
         do {
             _ = try await seam.approvals.respond(

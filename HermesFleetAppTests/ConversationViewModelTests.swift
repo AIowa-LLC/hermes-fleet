@@ -764,7 +764,7 @@ final class ConversationViewModelTests: XCTestCase {
         await prompts.unlockInput()
         await prompts.submitValue("typed-without-unlock")
 
-        XCTAssertEqual(prompts.state, .biometricUnavailable)
+        XCTAssertEqual(prompts.state, .biometricFailed)
         XCTAssertFalse(prompts.isInputUnlocked)
         XCTAssertTrue(scripted.serverPromptsBox.calls.isEmpty)
     }

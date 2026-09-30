@@ -34,8 +34,13 @@ public final class ApprovalViewModel {
     public enum BannerState: Equatable, Sendable {
         case idle
         case pending
+        /// Presence check did not match. Nothing was sent.
         case biometricFailed
-        case biometricUnavailable
+        /// P0.2b: the user cancelled the presence prompt. Nothing was sent.
+        case authCancelled
+        /// P0.2b: the device has no passcode, so no presence check is
+        /// possible. Nothing was sent; the UI explains how to fix it.
+        case passcodeNotSet
         case respondFailed(String)
         case confirmYolo
         /// P0.2a: Approve was attempted before the full-command review for a
@@ -76,6 +81,20 @@ public final class ApprovalViewModel {
         reviewTracker.markReviewed(request)
         if state == .reviewRequired { state = .pending }
     }
+
+    /// P0.2b: which privilege-expanding action the current banner feedback
+    /// (`biometricFailed` / `authCancelled` / `passcodeNotSet`) is about.
+    public private(set) var lastPresenceAction: PresenceAction = .approveOnce
+
+    /// P0.2b: inline feedback for a failed/cancelled YOLO-enable presence
+    /// check. Kept apart from `state` so it never clobbers a pending banner.
+    public private(set) var yoloNotice: String?
+
+    /// True while a presence prompt is up; a second tap must not stack a
+    /// second prompt or a second wire call.
+    public private(set) var isVerifyingPresence = false
+
+    public func dismissYoloNotice() { yoloNotice = nil }
 
     /// Effective YOLO state for THIS session (session.info readback +
     /// optimistic local flip confirmed by the server result).
@@ -235,18 +254,29 @@ public final class ApprovalViewModel {
             state = .reviewRequired
             return
         }
-        // The FaceID gate comes BEFORE any wire call — a failed scan must
-        // never send an approval.
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
-        case .success:
+        // The user-presence gate (biometrics, device-passcode fallback) comes
+        // BEFORE any wire call — a failed/cancelled check never sends an
+        // approval. Approve once / session / Always each check exactly once.
+        guard let action = PresenceAction(approvalChoice: scope), !isVerifyingPresence else { return }
+        isVerifyingPresence = true
+        let result = await biometrics.verifyPresence(action)
+        isVerifyingPresence = false
+        lastPresenceAction = action
+        switch result {
+        case .verified:
             break
-        case .failure:
+        case .failed:
             state = .biometricFailed
             return
-        case .unavailable:
-            state = .biometricUnavailable
+        case .cancelled:
+            state = .authCancelled
+            return
+        case .passcodeNotSet:
+            state = .passcodeNotSet
             return
         }
+        // The request may have been withdrawn/answered while the prompt was up.
+        guard pending?.requestID == request.requestID else { return }
         do {
             _ = try await approvals.respond(to: request, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
@@ -269,9 +299,23 @@ public final class ApprovalViewModel {
 
     /// Confirmed enable → `config.set yolo=1 scope=session`. Optimistic
     /// local flip; on failure the state reverts (honest, never silent).
+    ///
+    /// P0.2b: the confirmation alone is not enough — a fresh user-presence
+    /// check (biometrics, passcode fallback) must verify first. On cancel or
+    /// failure YOLO stays off, nothing is sent, and `yoloNotice` says why.
     public func confirmYoloEnable() async {
         guard let sid = boundSessionID else {
             state = .respondFailed("no session open")
+            return
+        }
+        guard !isVerifyingPresence else { return }
+        if state == .confirmYolo { state = pending != nil ? .pending : .idle }
+        yoloNotice = nil
+        isVerifyingPresence = true
+        let result = await biometrics.verifyPresence(.enableYolo)
+        isVerifyingPresence = false
+        guard result == .verified else {
+            yoloNotice = PresenceFeedback.message(for: result, action: .enableYolo)
             return
         }
         do {

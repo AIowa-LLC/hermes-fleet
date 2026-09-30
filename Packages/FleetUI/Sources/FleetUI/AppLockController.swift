@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftUI
+import FleetCore
 
 // MARK: - Biometric authentication seam (H1 app lock)
 
@@ -25,7 +26,7 @@ public enum AppLockAuthResult: Equatable, Sendable {
 ///   passcode fallback).
 /// - DEBUG test-automation providers driven by `HERMES_FLEET_APP_LOCK` /
 ///   `HERMES_FLEET_LOCK_BIOMETRIC` launch environment.
-public protocol AppLockBiometricAuth: Sendable {
+public protocol AppLockBiometricAuth: PresenceEvaluating {
     /// Whether biometrics are enrolled/available on this device.
     func canEvaluateBiometrics() -> Bool
     /// Attempt biometric verification. `.failure` / `.unavailable` → the
@@ -34,6 +35,34 @@ public protocol AppLockBiometricAuth: Sendable {
     /// Attempt device passcode verification (system UI). Returns true only
     /// on success; false on cancel/failure/absent passcode.
     func evaluateDevicePasscode(reason: String) async -> Bool
+}
+
+// MARK: - User-presence gate (P0.2b)
+
+extension AppLockBiometricAuth {
+    /// Default platform evaluation built from the legacy two-method seam so
+    /// existing providers keep working. The production
+    /// `LocalAuthenticationBiometricAuth` overrides this with real `LAError`
+    /// mapping (cancel / lockout / no passcode).
+    public func evaluate(policy: PresencePolicy, reason: String) async -> PresenceOutcome {
+        switch policy {
+        case .biometricsOnly:
+            switch await evaluateBiometrics(reason: reason) {
+            case .success: return .success
+            case .failure: return .failed
+            case .unavailable: return .biometricsUnavailable
+            }
+        case .deviceOwner:
+            return await evaluateDevicePasscode(reason: reason) ? .success : .failed
+        }
+    }
+
+    /// The single user-presence check for privilege-expanding actions:
+    /// biometrics first, device passcode when biometrics cannot run. Fails
+    /// closed; see `UserPresenceGate`.
+    public func verifyPresence(_ action: PresenceAction) async -> PresenceResult {
+        await UserPresenceGate(evaluator: self).verify(action)
+    }
 }
 
 // MARK: - AppLockController
@@ -127,7 +156,8 @@ public final class AppLockController {
 
     // MARK: Setting
 
-    /// Update the persisted in-app toggle. Turning it OFF unlocks immediately
+    /// Update the persisted in-app toggle WITHOUT a presence check. User-facing
+    /// callers turning App Lock off must use `requestSetEnabled(_:)`. Turning it OFF unlocks immediately
     /// (and stops re-locking); turning it ON locks the next time the app is
     /// foregrounded while locked.
     public func setEnabled(_ enabled: Bool) {
@@ -142,6 +172,22 @@ public final class AppLockController {
             state = .unlocked
             hasAuthenticatedThisSession = false
         }
+    }
+
+    /// P0.2b — the Settings entry point. Turning App Lock ON needs no check;
+    /// turning it OFF requires a fresh user-presence check and changes nothing
+    /// unless it is verified. Returns `.verified` when the change was applied
+    /// (or was already in effect).
+    public func requestSetEnabled(_ enabled: Bool) async -> PresenceResult {
+        guard isEnabled != enabled else { return .verified }
+        if !enabled {
+            let result = await auth.verifyPresence(.turnOffAppLock)
+            guard result == .verified else { return result }
+            // State may have changed while the prompt was up.
+            guard isEnabled else { return .verified }
+        }
+        setEnabled(enabled)
+        return .verified
     }
 
     // MARK: Scene phase

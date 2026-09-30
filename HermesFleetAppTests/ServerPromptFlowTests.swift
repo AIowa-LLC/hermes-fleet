@@ -287,7 +287,9 @@ final class ServerPromptFlowTests: XCTestCase {
             model.handle(sudo())
             await model.unlockInput()
             XCTAssertFalse(model.isInputUnlocked)
-            XCTAssertEqual(model.state, result == .failure ? .biometricFailed : .biometricUnavailable)
+            // P0.2b: unavailable biometrics fall back to the passcode, which
+            // the scripted provider fails: still blocked, never silent.
+            XCTAssertEqual(model.state, .biometricFailed)
             await model.submitValue("typed-anyway")
             XCTAssertTrue(prompts.calls.isEmpty)
             XCTAssertNotNil(model.pending, "the request stays open")

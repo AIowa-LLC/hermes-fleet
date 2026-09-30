@@ -80,9 +80,17 @@ final class ApprovalFlowTests: XCTestCase {
     /// approval without explicit biometric success).
     private struct ScriptedBiometrics: AppLockBiometricAuth {
         let result: AppLockAuthResult
+        var passcode = false
         func canEvaluateBiometrics() -> Bool { result != .unavailable }
         func evaluateBiometrics(reason: String) async -> AppLockAuthResult { result }
-        func evaluateDevicePasscode(reason: String) async -> Bool { false }
+        func evaluateDevicePasscode(reason: String) async -> Bool { passcode }
+    }
+
+    private func makeViewModel(presence: ScriptedPresence, yolo: Bool? = nil) -> (ScriptedApprovals, ApprovalViewModel) {
+        let approvals = ScriptedApprovals()
+        let vm = ApprovalViewModel(approvals: approvals, biometrics: presence, initialYolo: yolo)
+        vm.bind(sessionID: "s-1")
+        return (approvals, vm)
     }
 
     private let request: ApprovalRequest = {
@@ -179,14 +187,148 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(vm.state, .biometricFailed)
     }
 
-    func testApproveBlockedWhenBiometricsUnavailable() async {
+    func testApproveBlockedWhenBiometricsUnavailableAndPasscodeFails() async {
+        // P0.2b: unavailable biometrics now fall back to the passcode; a
+        // failing passcode stays blocked (never a silent dead end).
         let (approvals, vm) = makeViewModel(biometrics: .unavailable)
         vm.handleApprovalRequest(request)
 
         await vm.approve(scope: .once)
 
         XCTAssertTrue(approvals.respondCalls.isEmpty)
-        XCTAssertEqual(vm.state, .biometricUnavailable)
+        XCTAssertEqual(vm.state, .biometricFailed)
+    }
+
+    func testApproveFallsBackToPasscodeWhenBiometricsUnavailable() async {
+        let approvals = ScriptedApprovals()
+        let vm = ApprovalViewModel(
+            approvals: approvals,
+            biometrics: ScriptedBiometrics(result: .unavailable, passcode: true),
+            initialYolo: nil)
+        vm.bind(sessionID: "s-1")
+        vm.handleApprovalRequest(request)
+
+        await vm.approve(scope: .once)
+
+        XCTAssertEqual(approvals.respondCalls.map(\.choice), [.once])
+        XCTAssertNil(vm.pending)
+    }
+
+    // MARK: - P0.2b presence gate
+
+    func testApproveCancelledSendsNothingAndShowsCancelledState() async {
+        let presence = ScriptedPresence(biometrics: .cancelled, passcode: .success)
+        let (approvals, vm) = makeViewModel(presence: presence)
+        vm.handleApprovalRequest(request)
+
+        await vm.approve(scope: .once)
+
+        XCTAssertTrue(approvals.respondCalls.isEmpty)
+        XCTAssertEqual(vm.state, .authCancelled)
+        XCTAssertNotNil(vm.pending)
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(presence.policies, [.biometricsOnly], "cancel never loops into the passcode prompt")
+    }
+
+    func testApproveWithNoPasscodeExplainsStateAndSendsNothing() async {
+        let presence = ScriptedPresence(biometrics: .passcodeNotSet)
+        let (approvals, vm) = makeViewModel(presence: presence)
+        vm.handleApprovalRequest(request)
+
+        await vm.approve(scope: .once)
+
+        XCTAssertTrue(approvals.respondCalls.isEmpty)
+        XCTAssertEqual(vm.state, .passcodeNotSet)
+        XCTAssertNotNil(PresenceFeedback.message(for: .passcodeNotSet, action: .approveOnce))
+    }
+
+    func testApproveLockoutThenPasscodeSuccessSends() async {
+        let presence = ScriptedPresence(biometrics: .biometricsUnavailable, passcode: .success)
+        let (approvals, vm) = makeViewModel(presence: presence)
+        vm.handleApprovalRequest(request)
+
+        await vm.approve(scope: .once)
+
+        XCTAssertEqual(approvals.respondCalls.count, 1)
+        XCTAssertEqual(presence.policies, [.biometricsOnly, .deviceOwner])
+    }
+
+    func testApproveSessionAndAlwaysEachCheckPresenceExactlyOnceWithSpecificReason() async {
+        for (scope, reason) in [(ApprovalChoice.session, "Approve a command for this session"),
+                                (.always, "Save an always-allow rule")] {
+            let presence = ScriptedPresence.success
+            let (approvals, vm) = makeViewModel(presence: presence)
+            vm.handleApprovalRequest(request)
+            await vm.approve(scope: scope)
+            XCTAssertEqual(presence.presenceChecks, 1)
+            XCTAssertEqual(presence.reasons, [reason])
+            XCTAssertEqual(approvals.respondCalls.map(\.choice), [scope])
+        }
+    }
+
+    func testApproveAlwaysFailedOrCancelledSendsNothing() async {
+        for outcome in [PresenceOutcome.failed, .cancelled, .passcodeNotSet] {
+            let presence = ScriptedPresence(biometrics: outcome)
+            let (approvals, vm) = makeViewModel(presence: presence)
+            vm.handleApprovalRequest(request)
+            await vm.approve(scope: .always)
+            XCTAssertTrue(approvals.respondCalls.isEmpty, "\(outcome)")
+            XCTAssertNotNil(vm.pending)
+            XCTAssertEqual(vm.lastPresenceAction, .approveAlways)
+            XCTAssertEqual(presence.presenceChecks, 1)
+        }
+    }
+
+    func testYoloEnableRequiresPresenceExactlyOnce() async {
+        let presence = ScriptedPresence.success
+        let (approvals, vm) = makeViewModel(presence: presence, yolo: false)
+        vm.requestYoloEnable()
+        XCTAssertEqual(presence.presenceChecks, 0, "the confirmation dialog alone checks nothing")
+
+        await vm.confirmYoloEnable()
+
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(presence.reasons, ["Enable YOLO for this session"])
+        XCTAssertEqual(approvals.yoloCalls.count, 1)
+        XCTAssertTrue(vm.isYoloEnabled)
+        XCTAssertNil(vm.yoloNotice)
+    }
+
+    func testYoloEnableFailedOrCancelledChangesNothingAndShowsNotice() async {
+        for outcome in [PresenceOutcome.failed, .cancelled, .passcodeNotSet] {
+            let presence = ScriptedPresence(biometrics: outcome)
+            let (approvals, vm) = makeViewModel(presence: presence, yolo: false)
+            vm.requestYoloEnable()
+            await vm.confirmYoloEnable()
+            XCTAssertFalse(vm.isYoloEnabled, "\(outcome)")
+            XCTAssertTrue(approvals.yoloCalls.isEmpty, "nothing on the wire: \(outcome)")
+            XCTAssertNotNil(vm.yoloNotice, "never silent: \(outcome)")
+            XCTAssertNotEqual(vm.state, .confirmYolo)
+            vm.dismissYoloNotice()
+            XCTAssertNil(vm.yoloNotice)
+        }
+    }
+
+    func testYoloPasscodeFallbackEnables() async {
+        let presence = ScriptedPresence(biometrics: .biometricsUnavailable, passcode: .success)
+        let (approvals, vm) = makeViewModel(presence: presence, yolo: false)
+        vm.requestYoloEnable()
+        await vm.confirmYoloEnable()
+        XCTAssertTrue(vm.isYoloEnabled)
+        XCTAssertEqual(approvals.yoloCalls.count, 1)
+    }
+
+    func testDenyAndYoloDisableNeverInvokePresenceCheck() async {
+        let presence = ScriptedPresence(biometrics: .failed)
+        let (approvals, vm) = makeViewModel(presence: presence, yolo: true)
+        vm.handleApprovalRequest(request)
+
+        await vm.deny()
+        await vm.disableYolo()
+
+        XCTAssertEqual(presence.presenceChecks, 0)
+        XCTAssertEqual(approvals.respondCalls.map(\.choice), [.deny])
+        XCTAssertEqual(approvals.yoloCalls.map(\.enabled), [false])
     }
 
     // MARK: - Respond failure keeps the banner honest
@@ -210,7 +352,7 @@ final class ApprovalFlowTests: XCTestCase {
     // MARK: - YOLO toggle
 
     func testYoloEnableRequiresConfirmationBeforeWire() async {
-        let (approvals, vm) = makeViewModel(yolo: false)
+        let (approvals, vm) = makeViewModel(biometrics: .success, yolo: false)
         XCTAssertFalse(vm.isYoloEnabled)
 
         // First tap only asks for confirmation — nothing on the wire yet.

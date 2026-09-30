@@ -105,9 +105,11 @@ public struct ServerPromptCard: View {
     private var statusHint: some View {
         switch model.state {
         case .biometricFailed:
-            hint("Face ID did not match. Nothing was sent — skip or try again.")
-        case .biometricUnavailable:
-            hint("Face ID unavailable. Nothing can be entered until it can be verified.")
+            hint(PresenceFeedback.message(for: .failed, action: model.pendingPresenceAction) ?? "")
+        case .authCancelled:
+            hint(PresenceFeedback.message(for: .cancelled, action: model.pendingPresenceAction) ?? "")
+        case .passcodeNotSet:
+            hint(PresenceFeedback.message(for: .passcodeNotSet, action: model.pendingPresenceAction) ?? "")
         case .failed(let message):
             hint(message)
         case .idle, .pending, .sending:

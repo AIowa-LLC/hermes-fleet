@@ -1,5 +1,6 @@
 import Foundation
 import LocalAuthentication
+import FleetCore
 import FleetUI
 
 // MARK: - Real LocalAuthentication provider (production)
@@ -45,6 +46,51 @@ public struct LocalAuthenticationBiometricAuth: AppLockBiometricAuth {
             return false
         }
     }
+
+    // MARK: P0.2b user-presence evaluation
+
+    /// One fresh-`LAContext` evaluation for the presence gate. A context is
+    /// NEVER reused across actions and no reuse duration is set, so each
+    /// privilege-expanding action prompts again. `LAError` codes are mapped so
+    /// the gate can tell a user cancel from "biometrics unavailable/locked
+    /// out" (passcode fallback) from "no passcode set" (fail closed).
+    public func evaluate(policy: PresencePolicy, reason: String) async -> PresenceOutcome {
+        let context = LAContext()
+        let laPolicy: LAPolicy = policy == .biometricsOnly
+            ? .deviceOwnerAuthenticationWithBiometrics
+            : .deviceOwnerAuthentication
+        if policy == .biometricsOnly {
+            context.localizedFallbackTitle = "Use Passcode"
+        }
+        var error: NSError?
+        guard context.canEvaluatePolicy(laPolicy, error: &error) else {
+            return Self.outcome(for: error, policy: policy)
+        }
+        do {
+            let ok = try await context.evaluatePolicy(laPolicy, localizedReason: reason)
+            return ok ? .success : .failed
+        } catch {
+            return Self.outcome(for: error, policy: policy)
+        }
+    }
+
+    static func outcome(for error: Error?, policy: PresencePolicy) -> PresenceOutcome {
+        guard let code = (error as? LAError)?.code else {
+            return policy == .biometricsOnly ? .biometricsUnavailable : .failed
+        }
+        switch code {
+        case .userCancel, .appCancel, .systemCancel:
+            return .cancelled
+        case .passcodeNotSet:
+            return .passcodeNotSet
+        case .userFallback, .biometryLockout, .biometryNotAvailable, .biometryNotEnrolled:
+            return policy == .biometricsOnly ? .biometricsUnavailable : .failed
+        case .authenticationFailed:
+            return .failed
+        default:
+            return policy == .biometricsOnly ? .biometricsUnavailable : .failed
+        }
+    }
 }
 
 // MARK: - Scripted providers (UI-test automation via launch environment)
@@ -71,5 +117,21 @@ public struct ScriptedLockAuth: AppLockBiometricAuth {
 
     public func evaluateDevicePasscode(reason: String) async -> Bool {
         passcodeSucceeds
+    }
+
+    /// P0.2b: scripted presence evaluation. `.unavailable` biometrics with a
+    /// failing passcode models a device with no passcode set.
+    public func evaluate(policy: PresencePolicy, reason: String) async -> PresenceOutcome {
+        switch policy {
+        case .biometricsOnly:
+            switch biometricResult {
+            case .success: return .success
+            case .failure: return .failed
+            case .unavailable: return .biometricsUnavailable
+            }
+        case .deviceOwner:
+            if passcodeSucceeds { return .success }
+            return biometricResult == .unavailable ? .passcodeNotSet : .failed
+        }
     }
 }
