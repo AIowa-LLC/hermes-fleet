@@ -52,19 +52,22 @@ public extension SwiftDataCacheStore {
     /// Persist the latest graph for a gateway (replace semantics — one row
     /// per gateway).
     func saveLearningGraphSnapshot(_ graph: LearningGraph, for gatewayID: GatewayID, profile: ProfileSlug? = nil) async throws {
-        let ctx = ModelContext(container)
-        let data = try JSONEncoder().encode(graph)
-        let rows = try ctx.fetch(FetchDescriptor<LearningGraphSnapshotRow>())
-        for row in rows where row.gatewayID == gatewayID.rawValue && row.profileSlug == profile?.rawValue {
-            ctx.delete(row)
+        try writeFence.write(for: gatewayID) {
+            let ctx = ModelContext(container)
+            let data = try JSONEncoder().encode(graph)
+            let rows = try ctx.fetch(FetchDescriptor<LearningGraphSnapshotRow>())
+            for row in rows where row.gatewayID == gatewayID.rawValue && row.profileSlug == profile?.rawValue {
+                ctx.delete(row)
+            }
+            ctx.insert(LearningGraphSnapshotRow(
+                gatewayID: gatewayID.rawValue,
+                profileSlug: profile?.rawValue,
+                capturedAt: Date().timeIntervalSince1970,
+                totalCount: graph.summary.totalCount,
+                payload: data))
+            try ctx.save()
+
         }
-        ctx.insert(LearningGraphSnapshotRow(
-            gatewayID: gatewayID.rawValue,
-            profileSlug: profile?.rawValue,
-            capturedAt: Date().timeIntervalSince1970,
-            totalCount: graph.summary.totalCount,
-            payload: data))
-        try ctx.save()
     }
 
     /// Latest snapshot for a gateway (nil when never captured). Decoding is

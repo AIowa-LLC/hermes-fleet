@@ -594,10 +594,15 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
     }
 }
 
+@MainActor
 enum RoomDraftStore {
+    private static var removedGateways: Set<GatewayID> = []
+    private static var removedRooms: Set<FleetRoomID> = []
     private static let prefix = "fleet.room.draft.v1."
 
     static func resetForUITests(defaults: UserDefaults = .standard) {
+        removedGateways.removeAll()
+        removedRooms.removeAll()
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
             defaults.removeObject(forKey: key)
         }
@@ -608,12 +613,18 @@ enum RoomDraftStore {
     }
 
     static func save(_ draft: String, for id: FleetRoomID) {
+        guard !removedGateways.contains(id.gatewayID), !removedRooms.contains(id) else { return }
         let key = key(for: id)
         if draft.isEmpty {
             UserDefaults.standard.removeObject(forKey: key)
         } else {
             UserDefaults.standard.set(draft, forKey: key)
         }
+    }
+
+    static func purge(for id: FleetRoomID) {
+        removedRooms.insert(id)
+        clear(for: id)
     }
 
     static func clear(for id: FleetRoomID) {
@@ -631,6 +642,7 @@ enum RoomDraftStore {
         otherGatewayIDs: [GatewayID],
         defaults: UserDefaults = .standard
     ) {
+        removedGateways.insert(gatewayID)
         let own = [RoomProvenance.hosted, .desktopLegacy].map {
             prefix + "\($0.rawValue):\(gatewayID.rawValue):"
         }
@@ -643,6 +655,10 @@ enum RoomDraftStore {
         where own.contains(where: key.hasPrefix) && !others.contains(where: key.hasPrefix) {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    static func allowWrites(forGateway id: GatewayID) {
+        removedGateways.remove(id)
     }
 
     private static func key(for id: FleetRoomID) -> String {

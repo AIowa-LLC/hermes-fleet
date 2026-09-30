@@ -183,12 +183,7 @@ enum FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         // ADR-0012: the launch cache rides the SAME container (non-secret
         // posture + file protection) with its own row models.
-        let launchCache: any FleetLaunchCaching
-        if let persistentCache {
-            launchCache = SwiftDataLaunchCacheStore(container: persistentCache.container)
-        } else {
-            launchCache = InMemoryLaunchCache()
-        }
+        let launchCache = makeLaunchCache(for: persistentCache)
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
@@ -835,6 +830,14 @@ enum FleetServiceGraph {
         return directory
             .appendingPathComponent("HermesFleetCache", isDirectory: true)
             .appendingPathComponent("cache.store")
+    }
+
+    /// Keep the launch store on the cache's removal fence in every graph mode.
+    static func makeLaunchCache(for cache: SwiftDataCacheStore?) -> any FleetLaunchCaching {
+        if let cache {
+            return SwiftDataLaunchCacheStore(container: cache.container, writeFence: cache.writeFence)
+        }
+        return EmergencyCacheStore()
     }
 
     /// File-backed SwiftData cache in Application Support, with the store's

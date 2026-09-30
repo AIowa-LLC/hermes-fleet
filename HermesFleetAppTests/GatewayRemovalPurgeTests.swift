@@ -81,7 +81,7 @@ final class GatewayRemovalPurgeTests: XCTestCase {
         }
         func clearCachedData() async throws { try await base.clearCachedData() }
         func purgeGateway(_ id: GatewayID) async throws {
-            throw CacheStoreError.storeUnavailable("synthetic purge failure")
+            throw CacheStoreError.storeUnavailable("synthetic-sensitive-error-payload")
         }
     }
 
@@ -109,6 +109,8 @@ final class GatewayRemovalPurgeTests: XCTestCase {
         let registry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { gateway, _ in Connection(gatewayID: gateway.id) })
+        RoomDraftStore.allowWrites(forGateway: removed)
+        RoomDraftStore.allowWrites(forGateway: kept)
         let seeds = [removed, kept].map {
             GatewayRegistration(
                 id: $0, displayName: "Gateway \($0.rawValue)",
@@ -206,6 +208,9 @@ final class GatewayRemovalPurgeTests: XCTestCase {
                        "a gateway whose id extends the removed id is not the removed gateway")
 
         // And through the real removal path.
+        RoomDraftStore.save("delayed write", for: removedRoom)
+        XCTAssertEqual(RoomDraftStore.load(for: removedRoom), "")
+        RoomDraftStore.allowWrites(forGateway: removed)
         RoomDraftStore.save("again", for: removedRoom)
         try await environment.removeGateway(removed)
         XCTAssertEqual(RoomDraftStore.load(for: removedRoom), "")
@@ -240,6 +245,8 @@ final class GatewayRemovalPurgeTests: XCTestCase {
         let remaining = await BridgedRooms.Store(url: url).roomsSnapshot().map(\.roomKey)
         XCTAssertEqual(remaining, ["kept-only"])
         XCTAssertEqual(RoomDraftStore.load(for: mixedID), "")
+        RoomDraftStore.save("late bridged draft", for: mixedID)
+        XCTAssertEqual(RoomDraftStore.load(for: mixedID), "")
     }
 
     func testFailedPurgeIsRecordedAndDoesNotBlockRemoval() async throws {
@@ -257,6 +264,7 @@ final class GatewayRemovalPurgeTests: XCTestCase {
         XCTAssertEqual(entries.first?.category, "Gateway removal")
         XCTAssertTrue(entries.first?.detail.contains("purge failed") == true)
         XCTAssertFalse(entries.first?.detail.contains("127.0.0.1") == true)
+        XCTAssertFalse(entries.first?.detail.contains("synthetic-sensitive-error-payload") == true)
     }
 
     func testStoreWithoutPurgeSupportStillRemovesAndRecords() async throws {

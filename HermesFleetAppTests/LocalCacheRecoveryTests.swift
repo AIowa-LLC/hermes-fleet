@@ -159,6 +159,32 @@ final class LocalCacheRecoveryTests: XCTestCase {
         XCTAssertTrue(records.isEmpty)
     }
 
+    func testGraphLaunchCacheDoesNotRecreateRemovedGatewayOnDelayedWrite() async throws {
+        let modes: [CacheOpenFaultInjection] = [
+            [], [.unreadablePrimaryStore, .freshFileBackedStore],
+            [.unreadablePrimaryStore, .freshFileBackedStore, .inMemoryStore]
+        ]
+        for (index, faults) in modes.enumerated() {
+            let (store, persistentCache, _) = FleetServiceGraph.makeFileBackedCache(
+                storeURL: storeURL.appendingPathExtension("mode-\(index)"), faults: faults)
+            let id = GatewayID(rawValue: "gw-late.example.invalid")
+            let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
+            try await store.saveGatewayRecord(gateway(id.rawValue, name: "Synthetic"))
+            let launch = FleetServiceGraph.makeLaunchCache(for: persistentCache)
+            try await launch.saveRosterCache(CachedGatewayRoster(gatewayID: id, bots: []))
+            try await launch.saveSessionListCache(CachedSessionList(route: route, sessions: []))
+            try await launch.removeLaunchCache(for: id)
+            try await store.purgeGateway(id)
+            // A read that was already running settles after gateway removal.
+            try? await launch.saveRosterCache(CachedGatewayRoster(gatewayID: id, bots: []))
+            try? await launch.saveSessionListCache(CachedSessionList(route: route, sessions: []))
+            let rosters = try await launch.loadRosterCache()
+            let sessions = try await launch.loadSessionListCache()
+            XCTAssertTrue(rosters.isEmpty, "Removed gateway roster recreated in mode \(index)")
+            XCTAssertTrue(sessions.isEmpty, "Removed gateway session list recreated in mode \(index)")
+        }
+    }
+
     // MARK: Diagnostics + notices
 
     func testRecoveryIsRecordedInDiagnosticsWithoutPathsAndSurfacesNotices() throws {

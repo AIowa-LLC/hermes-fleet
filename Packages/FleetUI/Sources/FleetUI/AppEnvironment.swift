@@ -2307,6 +2307,7 @@ public final class AppEnvironment {
 
     public func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        RoomDraftStore.allowWrites(forGateway: gateway.id)
         await reloadGateways()
         return gateway
     }
@@ -2321,6 +2322,7 @@ public final class AppEnvironment {
         confirmsTLSFirstUse: Bool = false
     ) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        RoomDraftStore.allowWrites(forGateway: gateway.id)
         if confirmsTLSFirstUse {
             try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
         }
@@ -2453,7 +2455,7 @@ public final class AppEnvironment {
             let removedRoomKeys = try await bridgedStore.removeRooms(involvingGateway: id)
             for key in removedRoomKeys {
                 let roomID = FleetRoomID(provenance: .hosted, gatewayID: BridgedRooms.gatewayScope, key: key)
-                RoomDraftStore.clear(for: roomID)
+                RoomDraftStore.purge(for: roomID)
                 continueIndex.remove(id: FleetContinueIndexStore.roomID(roomID))
             }
             if !removedRoomKeys.isEmpty { await loadBridgedRooms() }
@@ -2464,10 +2466,8 @@ public final class AppEnvironment {
         }
     }
 
-    /// Non-sensitive failure label: the seam's own message for `CacheStoreError`
-    /// (which never carries secrets), otherwise only the error's type.
+    /// Error payloads can contain paths or sensitive values; retain only a type.
     private static func purgeFailureSummary(_ error: Error) -> String {
-        if let cacheError = error as? CacheStoreError { return cacheError.localizedDescription }
         return String(describing: type(of: error))
     }
 

@@ -52,19 +52,22 @@ public extension SwiftDataCacheStore {
     /// Persist the latest tree for a gateway (replace semantics — one
     /// row per gateway; the `LearningGraphSnapshotRow` discipline).
     func saveProjectsSnapshot(_ tree: ProjectsTree, for gatewayID: GatewayID, profile: ProfileSlug? = nil) async throws {
-        let ctx = ModelContext(container)
-        let data = try JSONEncoder().encode(tree)
-        let rows = try ctx.fetch(FetchDescriptor<ProjectsSnapshotRow>())
-        for row in rows where row.gatewayID == gatewayID.rawValue && row.profileSlug == profile?.rawValue {
-            ctx.delete(row)
+        try writeFence.write(for: gatewayID) {
+            let ctx = ModelContext(container)
+            let data = try JSONEncoder().encode(tree)
+            let rows = try ctx.fetch(FetchDescriptor<ProjectsSnapshotRow>())
+            for row in rows where row.gatewayID == gatewayID.rawValue && row.profileSlug == profile?.rawValue {
+                ctx.delete(row)
+            }
+            ctx.insert(ProjectsSnapshotRow(
+                gatewayID: gatewayID.rawValue,
+                profileSlug: profile?.rawValue,
+                capturedAt: Date().timeIntervalSince1970,
+                projectCount: tree.projects.count,
+                payload: data))
+            try ctx.save()
+
         }
-        ctx.insert(ProjectsSnapshotRow(
-            gatewayID: gatewayID.rawValue,
-            profileSlug: profile?.rawValue,
-            capturedAt: Date().timeIntervalSince1970,
-            projectCount: tree.projects.count,
-            payload: data))
-        try ctx.save()
     }
 
     /// Latest snapshot for a gateway (nil when never captured). Decoding

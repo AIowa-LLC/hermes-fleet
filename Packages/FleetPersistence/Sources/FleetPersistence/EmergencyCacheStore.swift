@@ -2,8 +2,8 @@ import FleetCore
 
 /// Final fallback when SwiftData cannot create even an in-memory container.
 /// Keeps new gateway registrations and health only for this process. Transcript
-/// and replay caching stay disabled, so reconnect reads authoritative state.
-public actor EmergencyCacheStore: CacheStoring, GatewayRecordStoring, HealthStatsStoring {
+/// and replay/launch caching stay disabled, so reconnect reads authoritative state.
+public actor EmergencyCacheStore: CacheStoring, GatewayRecordStoring, HealthStatsStoring, FleetLaunchCaching {
     private var records: [String: StoredGatewayRecord] = [:]
     private var health: [GatewayID: GatewayHealthStats] = [:]
     private var removedGateways: Set<GatewayID> = []
@@ -38,4 +38,14 @@ public actor EmergencyCacheStore: CacheStoring, GatewayRecordStoring, HealthStat
     public func saveReplayEpoch(_ epoch: String?, for gatewayID: GatewayID) async throws {}
     public func loadReplayEpoch(for gatewayID: GatewayID) async throws -> String? { nil }
     public func resetForReplayEpochChange(gatewayID: GatewayID) async throws {}
+
+    // Launch-cache writes are disabled in the no-container recovery mode too:
+    // a delayed roster/session read must not recreate removed-gateway data.
+    public func loadRosterCache() async throws -> [CachedGatewayRoster] { [] }
+    public func loadSessionListCache() async throws -> [CachedSessionList] { [] }
+    public func saveRosterCache(_ entry: CachedGatewayRoster) async throws {}
+    public func saveSessionListCache(_ entry: CachedSessionList) async throws {}
+    public func removeLaunchCache(for gatewayID: GatewayID) async throws {}
+    public func prune(keeping gatewayIDs: Set<GatewayID>) async throws {}
+    public func clearLaunchCache() async throws {}
 }
