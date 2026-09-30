@@ -246,9 +246,64 @@ final class ConversationDraftStoreTests: XCTestCase {
         XCTAssertEqual(store(url).draft(route: route(ws, "default"), sessionID: "s1"), "new")
     }
 
-    func testKeyMatchesContinueIndexConversationIdentity() {
-        let r = route(ws, "default")
-        XCTAssertEqual(ConversationDraftStore.key(route: r, sessionID: "s1"),
-                       FleetContinueIndexStore.conversationID(route: r, sessionID: "s1"))
+    func testIdentitySeparatorsCannotAliasDifferentProfilesAndSessions() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let s = store(url)
+        let first = route(ws, "alpha|beta")
+        let second = route(ws, "alpha")
+        s.scheduleSave("first", route: first, sessionID: "gamma")
+        s.scheduleSave("second", route: second, sessionID: "beta|gamma")
+        s.flush()
+        XCTAssertEqual(s.draft(route: first, sessionID: "gamma"), "first")
+        XCTAssertEqual(s.draft(route: second, sessionID: "beta|gamma"), "second")
+    }
+
+    func testUnreadableFileRetainsPendingWritesUntilItCanBeLoaded() throws {
+        let url = tempURL()
+        let parked = url.appendingPathExtension("parked")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: parked)
+        }
+        let first = store(url)
+        first.scheduleSave("old", route: route(ws, "default"), sessionID: "old")
+        first.flush()
+        try FileManager.default.moveItem(at: url, to: parked)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        let s = store(url)
+        s.scheduleSave("new", route: route(ws, "default"), sessionID: "new")
+        s.flush()
+        XCTAssertEqual(s.draft(route: route(ws, "default"), sessionID: "new"), "new")
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: parked, to: url)
+        s.flush()
+        let restored = store(url)
+        XCTAssertEqual(restored.draft(route: route(ws, "default"), sessionID: "old"), "old")
+        XCTAssertEqual(restored.draft(route: route(ws, "default"), sessionID: "new"), "new")
+    }
+
+    func testRemovedGatewayRejectsLateWritesAndUnreadableFileIsPrunedOnRecovery() throws {
+        let url = tempURL()
+        let parked = url.appendingPathExtension("parked")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: parked)
+        }
+        let first = store(url)
+        first.scheduleSave("keep", route: route(ws, "default"), sessionID: "s1")
+        first.scheduleSave("remove", route: route(lab, "default"), sessionID: "s1")
+        first.flush()
+        try FileManager.default.moveItem(at: url, to: parked)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        let s = store(url)
+        s.prune(gatewayID: lab)
+        s.scheduleSave("late", route: route(lab, "default"), sessionID: "s2")
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: parked, to: url)
+        s.flush()
+        XCTAssertEqual(s.draft(route: route(lab, "default"), sessionID: "s1"), "")
+        XCTAssertEqual(s.draft(route: route(lab, "default"), sessionID: "s2"), "")
+        XCTAssertEqual(s.draft(route: route(ws, "default"), sessionID: "s1"), "keep")
     }
 }

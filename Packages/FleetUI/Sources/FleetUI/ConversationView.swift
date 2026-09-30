@@ -301,7 +301,8 @@ public struct ConversationView: View {
         // P0.4a: App Lock / backgrounding can tear the view down before the
         // debounce fires — write pending draft text out first.
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { environment.conversationDrafts.flush() }
+            // Active also retries a protected-file write deferred while locked.
+            environment.conversationDrafts.flush()
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .background(theme.background.ignoresSafeArea())

@@ -8,7 +8,7 @@ import FleetPersistence
 /// changes; without this store a half-written message is silently lost.
 ///
 /// Contract:
-/// - Keys are source-qualified: `gateway#profile` route plus the durable
+/// - Keys are source-qualified: separately escaped gateway/profile components plus the durable
 ///   session id (canonical Bot Chat sessions are ordinary session ids and are
 ///   covered identically). A same-named session on another gateway/profile is
 ///   a different draft.
@@ -51,6 +51,10 @@ public final class ConversationDraftStore: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
     private var loaded = false
+    private var needsPersist = false
+    private var removedGatewayRaws: Set<String> = []
+    private var deletedKeys: Set<String> = []
+    private var registeredGatewayRaws: Set<String>?
     private var pending: [String: Pending] = [:]
     private var nextToken: UInt64 = 0
 
@@ -77,7 +81,11 @@ public final class ConversationDraftStore: @unchecked Sendable {
 
     /// Source-qualified identity for one conversation.
     public static func key(route: Route, sessionID: String) -> String {
-        "conv|\(route.gatewayID.rawValue)#\(route.profileSlug.rawValue)|\(sessionID)"
+        // Encode components separately: profile/session ids can contain `|`.
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        return [route.gatewayID.rawValue, route.profileSlug.rawValue, sessionID]
+            .map { $0.addingPercentEncoding(withAllowedCharacters: allowed)! }
+            .joined(separator: "|")
     }
 
     // MARK: reads
@@ -117,6 +125,8 @@ public final class ConversationDraftStore: @unchecked Sendable {
     public func scheduleSave(_ text: String, route: Route, sessionID: String) {
         let key = Self.key(route: route, sessionID: sessionID)
         lock.lock(); defer { lock.unlock() }
+        guard !removedGatewayRaws.contains(route.gatewayID.rawValue),
+              registeredGatewayRaws?.contains(route.gatewayID.rawValue) != false else { return }
         pending[key]?.task.cancel()
         nextToken &+= 1
         let token = nextToken
@@ -127,14 +137,16 @@ public final class ConversationDraftStore: @unchecked Sendable {
             self?.commit(key: key, token: token)
         }
         pending[key] = Pending(
-            gatewayIDRaw: route.gatewayID.rawValue, text: text, token: token, task: task)
+            gatewayIDRaw: route.gatewayID.rawValue, text: String(text.prefix(Self.maxCharacters)), token: token, task: task)
     }
 
     /// Write every pending draft now (call on scene-phase change and when the
     /// conversation disappears; the debounce timer may not get to run).
     public func flush() {
         lock.lock(); defer { lock.unlock() }
-        guard !pending.isEmpty else { return }
+        // An unreadable protected file must not consume pending text. Retry
+        // both loading and any failed write when the caller flushes again.
+        guard loadLocked() else { return }
         let drained = pending
         pending = [:]
         for (key, item) in drained {
@@ -151,7 +163,9 @@ public final class ConversationDraftStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         pending[key]?.task.cancel()
         pending[key] = nil
-        guard loadLocked(), entries.removeValue(forKey: key) != nil else { return }
+        deletedKeys.insert(key)
+        needsPersist = true
+        guard loadLocked() else { return }
         persistLocked()
     }
 
@@ -159,6 +173,8 @@ public final class ConversationDraftStore: @unchecked Sendable {
     public func prune(gatewayID: GatewayID) {
         let raw = gatewayID.rawValue
         lock.lock(); defer { lock.unlock() }
+        removedGatewayRaws.insert(raw)
+        needsPersist = true
         for (key, item) in pending where item.gatewayIDRaw == raw {
             item.task.cancel()
             pending[key] = nil
@@ -168,9 +184,18 @@ public final class ConversationDraftStore: @unchecked Sendable {
         persistLocked()
     }
 
+    /// A successful re-registration permits new drafts for this gateway.
+    public func allowWrites(gatewayID: GatewayID) {
+        lock.lock(); defer { lock.unlock() }
+        removedGatewayRaws.remove(gatewayID.rawValue)
+        registeredGatewayRaws?.insert(gatewayID.rawValue)
+    }
+
     /// Drop drafts whose owning gateway is no longer registered.
     public func pruneToRegisteredGateways(_ rawIDs: Set<String>) {
         lock.lock(); defer { lock.unlock() }
+        registeredGatewayRaws = rawIDs
+        needsPersist = true
         for (key, item) in pending where !rawIDs.contains(item.gatewayIDRaw) {
             item.task.cancel()
             pending[key] = nil
@@ -187,14 +212,21 @@ public final class ConversationDraftStore: @unchecked Sendable {
         pending = [:]
         entries = [:]
         loaded = true
-        try? FileManager.default.removeItem(at: url)
+        deletedKeys.removeAll()
+        needsPersist = true
+        do {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            needsPersist = false
+        } catch {
+            // The next flush retries removal as an empty protected snapshot.
+        }
     }
 
     // MARK: internals
 
     private func commit(key: String, token: UInt64) {
         lock.lock(); defer { lock.unlock() }
-        guard let item = pending[key], item.token == token else { return }
+        guard let item = pending[key], item.token == token, loadLocked() else { return }
         pending[key] = nil
         applyLocked(key: key, gatewayIDRaw: item.gatewayIDRaw, text: item.text)
         persistLocked()
@@ -202,6 +234,7 @@ public final class ConversationDraftStore: @unchecked Sendable {
 
     private func applyLocked(key: String, gatewayIDRaw: String, text: String) {
         guard loadLocked() else { return }
+        needsPersist = true
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             entries[key] = nil
         } else {
@@ -216,14 +249,19 @@ public final class ConversationDraftStore: @unchecked Sendable {
     /// (nothing must be persisted over it). A missing or corrupt file loads as
     /// empty.
     private func loadLocked() -> Bool {
-        if loaded { return true }
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        if !loaded {
+            if FileManager.default.fileExists(atPath: url.path) {
+                guard let data = try? Data(contentsOf: url) else { return false }
+                entries = (try? JSONDecoder().decode([String: Entry].self, from: data)) ?? [:]
+            }
             loaded = true
-            return true
         }
-        guard let data = try? Data(contentsOf: url) else { return false }
-        entries = (try? JSONDecoder().decode([String: Entry].self, from: data)) ?? [:]
-        loaded = true
+        // Apply removals that arrived while the protected file was unreadable.
+        entries = entries.filter {
+            !deletedKeys.contains($0.key) && !removedGatewayRaws.contains($0.value.gatewayIDRaw)
+                && registeredGatewayRaws?.contains($0.value.gatewayIDRaw) != false
+        }
+        deletedKeys.removeAll()
         return true
     }
 
@@ -238,7 +276,7 @@ public final class ConversationDraftStore: @unchecked Sendable {
     }
 
     private func persistLocked() {
-        guard loaded else { return }
+        guard loaded, needsPersist else { return }
         pruneExpiredAndCapLocked()
         guard let data = try? JSONEncoder().encode(entries) else { return }
         do {
@@ -246,6 +284,7 @@ public final class ConversationDraftStore: @unchecked Sendable {
             // Atomic replace creates a new inode, so re-assert backup
             // exclusion (and protection class) after every write.
             try CacheStoreProtection.apply(to: url)
+            needsPersist = false
         } catch {
             // Best-effort: the in-memory copy stays authoritative and the next
             // save retries (e.g. a `.complete` write while the device is locked).

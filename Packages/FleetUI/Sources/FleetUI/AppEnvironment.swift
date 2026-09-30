@@ -2297,6 +2297,7 @@ public final class AppEnvironment {
 
     public func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        conversationDrafts.allowWrites(gatewayID: gateway.id)
         await reloadGateways()
         return gateway
     }
@@ -2311,6 +2312,7 @@ public final class AppEnvironment {
         confirmsTLSFirstUse: Bool = false
     ) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        conversationDrafts.allowWrites(gatewayID: gateway.id)
         if confirmsTLSFirstUse {
             try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
         }
