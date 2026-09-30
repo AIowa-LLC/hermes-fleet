@@ -134,6 +134,7 @@ python3 scripts/c1_ui_runner_contract_test.py
 python3 scripts/c1_xcresult_parse_test.py
 bash scripts/c1_packages_contract_test.sh
 python3 scripts/c1_units_contract_test.py
+bash scripts/font_style_audit_test.sh
 python3 scripts/lane_simulator_contract_test.py
 ```
 
