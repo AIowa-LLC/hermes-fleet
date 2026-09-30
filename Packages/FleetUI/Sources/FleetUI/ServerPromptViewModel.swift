@@ -172,8 +172,13 @@ public final class ServerPromptViewModel {
 
     /// Face ID gate for entering a sudo password or secret. Nothing is on the
     /// wire; on success the entry field becomes available for THIS request.
+    public private(set) var isVerifyingInput = false
+
     public func unlockInput() async {
-        guard let request = pending, Self.isValuePrompt(request), state != .sending else { return }
+        guard let request = pending, Self.isValuePrompt(request), state != .sending,
+              !isInputUnlocked, !isVerifyingInput else { return }
+        isVerifyingInput = true
+        defer { isVerifyingInput = false }
         let action = Self.presenceAction(for: request)
         let result = await biometrics.verifyPresence(action)
         guard pending?.id == request.id else { return }

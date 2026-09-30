@@ -130,6 +130,8 @@ public final class AppLockController {
     private let defaults: UserDefaults
     private let mode: Mode
     private let defaultsKey: String
+    private var settingIntent = 0
+    public private(set) var isVerifyingSetting = false
     private var hasAuthenticatedThisSession = false
 
     public init(
@@ -161,6 +163,7 @@ public final class AppLockController {
     /// (and stops re-locking); turning it ON locks the next time the app is
     /// foregrounded while locked.
     public func setEnabled(_ enabled: Bool) {
+        settingIntent += 1
         guard isEnabled != enabled else { return }
         isEnabled = enabled
         defaults.set(enabled, forKey: defaultsKey)
@@ -179,14 +182,20 @@ public final class AppLockController {
     /// unless it is verified. Returns `.verified` when the change was applied
     /// (or was already in effect).
     public func requestSetEnabled(_ enabled: Bool) async -> PresenceResult {
-        guard isEnabled != enabled else { return .verified }
-        if !enabled {
-            let result = await auth.verifyPresence(.turnOffAppLock)
-            guard result == .verified else { return result }
-            // State may have changed while the prompt was up.
-            guard isEnabled else { return .verified }
+        if enabled {
+            // Even an already-on safe choice invalidates an older off prompt.
+            setEnabled(true)
+            return .verified
         }
-        setEnabled(enabled)
+        guard isEnabled else { return .verified }
+        guard !isVerifyingSetting else { return .cancelled }
+        isVerifyingSetting = true
+        defer { isVerifyingSetting = false }
+        let intent = settingIntent
+        let result = await auth.verifyPresence(.turnOffAppLock)
+        guard settingIntent == intent else { return .cancelled }
+        guard result == .verified else { return result }
+        setEnabled(false)
         return .verified
     }
 

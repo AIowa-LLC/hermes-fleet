@@ -40,3 +40,23 @@ final class ScriptedPresence: AppLockBiometricAuth, @unchecked Sendable {
     func evaluateBiometrics(reason: String) async -> AppLockAuthResult { .failure }
     func evaluateDevicePasscode(reason: String) async -> Bool { false }
 }
+
+/// Suspends a real async boundary so tests can exercise changes during a prompt.
+final class SuspendedPresence: AppLockBiometricAuth, @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiting: [CheckedContinuation<PresenceOutcome, Never>] = []
+    private var calls = 0
+    var checks: Int { lock.withLock { calls } }
+    func evaluate(policy: PresencePolicy, reason: String) async -> PresenceOutcome {
+        await withCheckedContinuation { continuation in
+            lock.withLock { calls += 1; waiting.append(continuation) }
+        }
+    }
+    func complete() {
+        let pending = lock.withLock { let result = waiting; waiting.removeAll(); return result }
+        pending.forEach { $0.resume(returning: .success) }
+    }
+    func canEvaluateBiometrics() -> Bool { true }
+    func evaluateBiometrics(reason: String) async -> AppLockAuthResult { .failure }
+    func evaluateDevicePasscode(reason: String) async -> Bool { false }
+}

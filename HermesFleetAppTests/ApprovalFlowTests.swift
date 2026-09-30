@@ -279,6 +279,39 @@ final class ApprovalFlowTests: XCTestCase {
         }
     }
 
+    func testChangedApprovalWhilePresenceRunsDoesNotSendPriorRequest() async {
+        let auth = SuspendedPresence()
+        let approvals = ScriptedApprovals()
+        let vm = ApprovalViewModel(approvals: approvals, biometrics: auth)
+        vm.bind(sessionID: "s-1")
+        vm.handleApprovalRequest(longRequest())
+        vm.markPendingReviewed()
+        let tap = Task { await vm.approve(scope: .once) }
+        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        vm.handleApprovalRequest(ApprovalRequest(requestID: "req-long", sessionID: "s-1",
+            command: Self.longCommand + "\necho changed", choices: ["once"], serverRequestID: "new-wire"))
+        auth.complete()
+        await tap.value
+        XCTAssertTrue(approvals.respondCalls.isEmpty)
+        XCTAssertFalse(vm.canApprove)
+    }
+
+    func testYoloDisableDuringPresencePreventsLateEnable() async {
+        let auth = SuspendedPresence()
+        let approvals = ScriptedApprovals()
+        let vm = ApprovalViewModel(approvals: approvals, biometrics: auth, initialYolo: false)
+        vm.bind(sessionID: "s-1")
+        vm.requestYoloEnable()
+        let enable = Task { await vm.confirmYoloEnable() }
+        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        XCTAssertEqual(auth.checks, 1)
+        await vm.disableYolo()
+        auth.complete()
+        await enable.value
+        XCTAssertEqual(approvals.yoloCalls.map(\.enabled), [false])
+        XCTAssertFalse(vm.isYoloEnabled)
+    }
+
     func testYoloEnableRequiresPresenceExactlyOnce() async {
         let presence = ScriptedPresence.success
         let (approvals, vm) = makeViewModel(presence: presence, yolo: false)
@@ -365,7 +398,11 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertFalse(vm.isYoloEnabled)
         XCTAssertTrue(approvals.yoloCalls.isEmpty)
 
-        // Confirm sends the session-scoped enable.
+        // A cancelled confirmation cannot be reused.
+        await vm.confirmYoloEnable()
+        XCTAssertTrue(approvals.yoloCalls.isEmpty)
+        // Reopen and confirm sends the session-scoped enable.
+        vm.requestYoloEnable()
         await vm.confirmYoloEnable()
         XCTAssertEqual(approvals.yoloCalls.count, 1)
         XCTAssertEqual(approvals.yoloCalls.first?.enabled, true)

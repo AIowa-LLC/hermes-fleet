@@ -76,7 +76,7 @@ public struct LocalAuthenticationBiometricAuth: AppLockBiometricAuth {
 
     static func outcome(for error: Error?, policy: PresencePolicy) -> PresenceOutcome {
         guard let code = (error as? LAError)?.code else {
-            return policy == .biometricsOnly ? .biometricsUnavailable : .failed
+            return .failed
         }
         switch code {
         case .userCancel, .appCancel, .systemCancel:
@@ -88,7 +88,7 @@ public struct LocalAuthenticationBiometricAuth: AppLockBiometricAuth {
         case .authenticationFailed:
             return .failed
         default:
-            return policy == .biometricsOnly ? .biometricsUnavailable : .failed
+            return .failed
         }
     }
 }

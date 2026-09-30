@@ -196,6 +196,30 @@ final class AppLockControllerTests: XCTestCase {
         AppLockController(auth: presence, defaults: makeDefaults(), mode: .followSetting)
     }
 
+    func testKeepAppLockOnSupersedesPendingTurnOff() async {
+        let auth = SuspendedPresence()
+        let controller = AppLockController(auth: auth, defaults: makeDefaults(), mode: .followSetting)
+        let off = Task { await controller.requestSetEnabled(false) }
+        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        _ = await controller.requestSetEnabled(true)
+        auth.complete()
+        _ = await off.value
+        XCTAssertTrue(controller.isEnabled, "a completed older prompt must not undo the newer safe choice")
+    }
+
+    func testRepeatedTurnOffDoesNotStackPresencePrompts() async {
+        let auth = SuspendedPresence()
+        let controller = AppLockController(auth: auth, defaults: makeDefaults(), mode: .followSetting)
+        let first = Task { await controller.requestSetEnabled(false) }
+        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        let second = Task { await controller.requestSetEnabled(false) }
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(auth.checks, 1)
+        auth.complete()
+        _ = await first.value
+        _ = await second.value
+    }
+
     func testTurningOffRequiresPresenceExactlyOnceAndApplies() async {
         let presence = ScriptedPresence.success
         let controller = makeEnabledController(presence)

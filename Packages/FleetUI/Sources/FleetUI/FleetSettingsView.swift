@@ -265,6 +265,7 @@ public struct FleetSettingsSecurityView: View {
                     Label("App Lock", systemImage: "faceid")
                         .foregroundStyle(theme.textPrimary)
                 }
+                .disabled(controller.isVerifyingSetting)
                 .accessibilityIdentifier("fleet.settings.app-lock.toggle")
                 .accessibilityHint(controller.isEnabled
                     ? "Turning off asks for Face ID or your device passcode"

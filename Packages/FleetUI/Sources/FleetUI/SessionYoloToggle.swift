@@ -43,7 +43,7 @@ public struct SessionYoloToggle: View {
             titleVisibility: .visible
         ) {
             Button("Enable with Face ID or passcode — skip approvals this session", role: .destructive) {
-                Task { await model.confirmYoloEnable() }
+                model.beginYoloEnable()
             }
             Button("Cancel", role: .cancel) {
                 model.cancelYoloConfirmation()
