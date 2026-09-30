@@ -121,8 +121,8 @@ final class KeychainInstallHygieneTests: XCTestCase {
 
         XCTAssertEqual(outcome, .purged(count: 4))
         XCTAssertEqual(keychain.totalCount, 0)
-        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerKey))
-        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingKey))
+        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
+        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
         let credential = try await KeychainCredentialStore(keychain: keychain)
             .loadCredential(for: GatewayID(rawValue: "gw-a"))
         XCTAssertNil(credential)
@@ -131,7 +131,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
     func testMarkerPresentLeavesItemsUntouched() async throws {
         let keychain = InMemoryKeychainFake()
         try await seedStores(keychain)
-        defaults.set(true, forKey: KeychainInstallHygiene.markerKey)
+        defaults.set(true, forKey: KeychainInstallHygiene.markerFlagName)
 
         let hygiene = KeychainInstallHygiene(keychain: keychain, defaults: defaults)
         // Even with no sandbox evidence, a present marker wins.
@@ -155,7 +155,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
         XCTAssertEqual(outcome, .adoptedExistingInstall)
         XCTAssertEqual(keychain.totalCount, 4)
         XCTAssertEqual(keychain.deleteCount, 0)
-        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerKey))
+        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
 
         // Second launch: marker fast path, still untouched.
         XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: true), .skippedMarkerPresent)
@@ -182,7 +182,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
         let keychain = InMemoryKeychainFake()
         let hygiene = KeychainInstallHygiene(keychain: keychain, defaults: defaults)
         XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false), .purged(count: 0))
-        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerKey))
+        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
     }
 
     func testFailedDeleteDoesNotSetMarkerAndRetryOverridesEvidence() async throws {
@@ -194,8 +194,8 @@ final class KeychainInstallHygieneTests: XCTestCase {
         XCTAssertEqual(
             hygiene.runIfNeeded(hasPriorInstallEvidence: false),
             .purgeFailed(status: errSecInteractionNotAllowed))
-        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.markerKey))
-        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.purgePendingKey))
+        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
+        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
         XCTAssertEqual(keychain.totalCount, 4)
 
         // Next launch: the failed attempt's own launch created sandbox state,
@@ -203,8 +203,8 @@ final class KeychainInstallHygieneTests: XCTestCase {
         keychain.forceDeleteStatus(nil)
         XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: true), .purged(count: 4))
         XCTAssertEqual(keychain.totalCount, 0)
-        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerKey))
-        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingKey))
+        XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
+        XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
     }
 
     func testPurgeOnlyTouchesAppNamespaces() async throws {

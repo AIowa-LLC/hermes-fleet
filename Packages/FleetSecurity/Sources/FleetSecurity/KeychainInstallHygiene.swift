@@ -55,9 +55,9 @@ public struct KeychainInstallHygiene {
 
     /// `UserDefaults` key recording that this install has been reconciled with
     /// the Keychain. Deleted together with the app.
-    public static let markerKey = "com.aiowa.hermesfleet.keychain-install-marker.v1"
+    public static let markerFlagName = "com.aiowa.hermesfleet.keychain-install-marker.v1"
     /// Set before a purge and cleared on success; survives a failed attempt.
-    public static let purgePendingKey = "com.aiowa.hermesfleet.keychain-purge-pending.v1"
+    public static let purgePendingFlagName = "com.aiowa.hermesfleet.keychain-purge-pending.v1"
 
     private static let log = Logger(subsystem: "com.aiowa.hermesfleet", category: "keychain-hygiene")
 
@@ -84,16 +84,16 @@ public struct KeychainInstallHygiene {
     ///   local state.
     @discardableResult
     public func runIfNeeded(hasPriorInstallEvidence: Bool) -> Outcome {
-        if defaults.bool(forKey: Self.markerKey) {
+        if defaults.bool(forKey: Self.markerFlagName) {
             return .skippedMarkerPresent
         }
-        if !defaults.bool(forKey: Self.purgePendingKey), hasPriorInstallEvidence {
-            defaults.set(true, forKey: Self.markerKey)
+        if !defaults.bool(forKey: Self.purgePendingFlagName), hasPriorInstallEvidence {
+            defaults.set(true, forKey: Self.markerFlagName)
             Self.log.info("keychain hygiene: existing install adopted, no purge")
             return .adoptedExistingInstall
         }
 
-        defaults.set(true, forKey: Self.purgePendingKey)
+        defaults.set(true, forKey: Self.purgePendingFlagName)
         var removed = 0
         for service in services {
             switch purge(service: service) {
@@ -104,8 +104,8 @@ public struct KeychainInstallHygiene {
                 return .purgeFailed(status: failure.status)
             }
         }
-        defaults.set(true, forKey: Self.markerKey)
-        defaults.removeObject(forKey: Self.purgePendingKey)
+        defaults.set(true, forKey: Self.markerFlagName)
+        defaults.removeObject(forKey: Self.purgePendingFlagName)
         Self.log.info("keychain hygiene: fresh install purge removed \(removed, privacy: .public) item(s)")
         return .purged(count: removed)
     }
