@@ -1,0 +1,366 @@
+openapi: 3.0.3
+info:
+  title: Hermes push relay
+  version: 0.1.0
+  description: |
+    Content-blind APNs relay for Hermes Fleet. The relay forwards opaque
+    ciphertext with fixed, generic alert copy chosen from a server-side table.
+    It never stores content or gateway credentials. All endpoints are JSON and
+    HTTPS only. Rejections use the `Error` schema; nothing in an error response
+    echoes request data.
+  license:
+    name: MIT
+servers:
+  - url: https://relay.example.invalid
+    description: Placeholder. Use your own deployment's URL.
+tags:
+  - name: registration
+  - name: send
+  - name: liveactivity
+security: []
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      operationId: health
+      responses:
+        "200":
+          description: The Worker is configured and running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+        "500":
+          $ref: "#/components/responses/Error"
+  /v1/register:
+    post:
+      tags: [registration]
+      summary: Register or refresh a device (idempotent upsert)
+      description: |
+        Stores a salted hash of the device token and the token itself sealed at
+        rest, with a TTL. Repeating the request while presenting the current
+        send capability (`Authorization: Bearer`) refreshes the TTL without
+        issuing a new capability and without a write until half the lifetime
+        has elapsed. Registering the same token without the current capability
+        rotates the capability (the previous one stops working) and returns a
+        new `send_capability`.
+      operationId: register
+      security:
+        - {}
+        - sendCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: Existing registration confirmed or renewed. No capability is re-issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+        "201":
+          description: New or rotated registration. `send_capability` is shown only here.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Error"
+  /v1/register/{relay_device_id}:
+    delete:
+      tags: [registration]
+      summary: Unregister a device
+      description: Deletes the registration and its token index. Idempotent.
+      operationId: unregister
+      security:
+        - sendCapability: []
+      parameters:
+        - $ref: "#/components/parameters/RelayDeviceId"
+      responses:
+        "204":
+          description: Deleted (or already absent).
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/send:
+    post:
+      tags: [send]
+      summary: Forward one sealed notification to APNs
+      description: |
+        The relay builds the APNs request itself. Visible alert text comes only
+        from the fixed `title_key` table; `alert` accepts nothing else. The
+        serialized APNs payload may not exceed 3.5 KB. `expiry` must be in the
+        future and at most 24 hours ahead, which bounds replay of a captured
+        request.
+      operationId: send
+      security:
+        - sendCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendRequest"
+      responses:
+        "200":
+          description: Accepted by APNs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [accepted]
+                  apns_id:
+                    type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown relay device, or no live activity token registered (`unknown_device`, `unknown_activity`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: |
+            APNs reported the token unregistered. The registration (or only the
+            live-activity token, for `activity_unregistered`) has been deleted.
+            The sender should stop pushing to this registration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
+        "422":
+          description: APNs rejected the notification (`apns_rejected`, with the APNs `reason`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/Error"
+  /v1/liveactivity/register:
+    post:
+      tags: [liveactivity]
+      summary: Register a push-to-start or update token
+      description: |
+        Stores the token sealed alongside the device registration. Repeating an
+        identical registration performs no write. At most 8 update tokens are
+        kept per device (oldest evicted).
+      operationId: registerLiveActivity
+      security:
+        - sendCapability: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LiveActivityRegisterRequest"
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [relay_device_id, expires_at]
+                properties:
+                  relay_device_id:
+                    type: string
+                  expires_at:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+components:
+  securitySchemes:
+    sendCapability:
+      type: http
+      scheme: bearer
+      description: |
+        Per-registration random 256-bit token (base64url) returned once by
+        `POST /v1/register`. The relay stores only a keyed hash.
+  parameters:
+    RelayDeviceId:
+      name: relay_device_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{22}$"
+  responses:
+    Error:
+      description: Error. See `error` for a stable machine-readable code.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Rate limited. Honor `Retry-After`.
+      headers:
+        Retry-After:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: |
+            Stable code, for example `invalid_field`, `unknown_field`,
+            `missing_capability`, `invalid_capability`, `expired`,
+            `expiry_too_far`, `payload_too_large`, `rate_limited`,
+            `unknown_device`, `unregistered`, `apns_rejected`,
+            `apns_throttled`, `apns_unavailable`, `relay_misconfigured`.
+        message:
+          type: string
+        reason:
+          type: string
+          description: APNs `reason` string, present only for `apns_rejected`.
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [device_token, environment, bundle_id, relay_key_id]
+      properties:
+        device_token:
+          type: string
+          pattern: "^[0-9a-fA-F]{64,200}$"
+          description: Hex APNs device token.
+        environment:
+          type: string
+          enum: [sandbox, production]
+        bundle_id:
+          type: string
+          description: Must equal the relay's configured APNs topic.
+        relay_key_id:
+          type: string
+          maxLength: 64
+          pattern: "^[A-Za-z0-9._:-]+$"
+          description: |
+            Opaque identifier of the device push-key generation that senders
+            seal to. Stored as metadata; never used for routing.
+    RegisterResponse:
+      type: object
+      required: [relay_device_id, expires_at]
+      properties:
+        relay_device_id:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{22}$"
+        expires_at:
+          type: integer
+          description: Unix seconds.
+        send_capability:
+          type: string
+          description: Present only on 201. Store it in the Keychain and hand it to the sender.
+    SendRequest:
+      type: object
+      additionalProperties: false
+      required: [relay_device_id, ciphertext, push_type, priority, expiry]
+      properties:
+        relay_device_id:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{22}$"
+        ciphertext:
+          type: string
+          pattern: "^[A-Za-z0-9_-]+$"
+          description: Opaque base64url blob sealed to the device. Forwarded as `hf.ct`.
+        collapse_id:
+          type: string
+          maxLength: 64
+          pattern: "^[A-Za-z0-9._:-]+$"
+          description: Forwarded as `apns-collapse-id`. Use an opaque value.
+        push_type:
+          type: string
+          enum: [alert, liveactivity, background]
+        priority:
+          type: integer
+          enum: [5, 10]
+          description: Background pushes must use 5.
+        expiry:
+          type: integer
+          description: Unix seconds; must be in the future, at most 24 hours ahead. Forwarded as `apns-expiration`.
+        alert:
+          type: object
+          additionalProperties: false
+          required: [title_key]
+          description: Required for `alert`; required for a live activity `start`; forbidden for `background`.
+          properties:
+            title_key:
+              type: string
+              enum: [approval, clarify, done, cron]
+        liveactivity:
+          type: object
+          additionalProperties: false
+          required: [event]
+          description: Required for `liveactivity`, forbidden otherwise.
+          properties:
+            event:
+              type: string
+              enum: [start, update, end]
+            activity_id:
+              type: string
+              maxLength: 64
+              pattern: "^[A-Za-z0-9-]+$"
+              description: Required for `update` and `end`.
+            attributes_type:
+              type: string
+              maxLength: 64
+              description: Required for `start`.
+    LiveActivityRegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [relay_device_id, kind, token]
+      properties:
+        relay_device_id:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{22}$"
+        kind:
+          type: string
+          enum: [push_to_start, update]
+        token:
+          type: string
+          pattern: "^[0-9a-fA-F]{32,512}$"
+        activity_id:
+          type: string
+          maxLength: 64
+          pattern: "^[A-Za-z0-9-]+$"
+          description: Required for `update`, forbidden for `push_to_start`.
