@@ -32,6 +32,8 @@ grep -q -- '--p8-file-path "$ASC_API_KEY_PATH"' scripts/release_preflight.sh ||
   fail "Apple validation does not consume ASC_API_KEY_PATH"
 grep -q -- '-authenticationKeyPath' scripts/release_preflight.sh ||
   fail "xcodebuild authentication path is not represented"
+grep -Fq '"--entitlements", ":-"' scripts/release_artifact_inspect.py ||
+  fail "artifact inspector must request plist XML entitlements output"
 if grep -q "signed archive did not expose\|signed-by-default" scripts/release_preflight.sh; then
   fail "archive stage still treats distribution signing as a required archive property"
 fi
