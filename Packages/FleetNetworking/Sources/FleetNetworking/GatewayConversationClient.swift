@@ -265,6 +265,18 @@ public struct GatewayConversationClient: ConversationProviding {
                         seq: seq
                     )
                 }
+        case .requestCancel:
+            // P0.1: `{id, method, reason}` — the gateway withdrew an open
+            // server→client request. A payload without an id names nothing to
+            // dismiss and is dropped fail-soft.
+            guard let requestID = payload["id"]?.stringValue, !requestID.isEmpty else { return nil }
+            return .requestCancelled(
+                sessionID: event.sessionID,
+                requestID: requestID,
+                method: payload["method"]?.stringValue ?? "",
+                reason: payload["reason"]?.stringValue ?? "",
+                seq: seq
+            )
         case .messageStart:
             return .messageStart(sessionID: sid, seq: seq)
         case .messageDelta:
@@ -365,6 +377,11 @@ public struct GatewayConversationClient: ConversationProviding {
         // Register synchronously: a prompt may complete before the mapping
         // task gets scheduled. The transport stream buffers those events.
         let source = transport.subscribeToEvents()
+        // P0.1: server→client requests (approval / clarify / sudo / secret)
+        // are not gateway events; they ride the same conversation stream as
+        // `.serverRequest`. Subscribing here also replays any request that is
+        // already open (arrived early, or re-delivered by `open_requests`).
+        let requests = transport.subscribeToServerRequests()
         return AsyncStream { continuation in
             let task = Task {
                 for await event in source {
@@ -374,7 +391,15 @@ public struct GatewayConversationClient: ConversationProviding {
                 }
                 continuation.finish()
             }
-            continuation.onTermination = { _ in task.cancel() }
+            let requestTask = Task {
+                for await request in requests {
+                    continuation.yield(.serverRequest(request))
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+                requestTask.cancel()
+            }
         }
     }
 

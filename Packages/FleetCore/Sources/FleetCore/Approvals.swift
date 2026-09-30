@@ -29,19 +29,28 @@ public struct ApprovalRequest: Identifiable, Hashable, Sendable {
     public let detail: String?
     /// Offered choices in gateway order (`once|session|always|deny`).
     public let choices: [String]
+    /// P0.1: the JSON-RPC id (`srq-<hex>`) when this approval arrived as a
+    /// server→client `approval` request. Non-nil means the answer is a
+    /// JSON-RPC response to that id (`{choice, all?}`); nil means it arrived
+    /// on the legacy `approval.request` event (or `approval.pending`) and is
+    /// answered with the `approval.respond` method. `request.cancel` names
+    /// this id.
+    public let serverRequestID: String?
 
     public init(
         requestID: String,
         sessionID: String,
         command: String,
         detail: String? = nil,
-        choices: [String] = []
+        choices: [String] = [],
+        serverRequestID: String? = nil
     ) {
         self.requestID = requestID
         self.sessionID = sessionID
         self.command = command
         self.detail = detail
         self.choices = choices
+        self.serverRequestID = serverRequestID
     }
 
     /// Identifiable rides the gateway-minted request id (stable across
@@ -81,6 +90,17 @@ public protocol ApprovalsProviding: Sendable {
         all: Bool
     ) async throws -> Int
 
+    /// Respond to one pending approval, choosing the wire path from where the
+    /// request came from (P0.1): a server→client `approval` request is
+    /// answered with a JSON-RPC response to its `srq-` id; a legacy
+    /// `approval.request` event is answered with `approval.respond`. The
+    /// default implementation always uses `approval.respond`.
+    func respond(
+        to request: ApprovalRequest,
+        choice: ApprovalChoice,
+        all: Bool
+    ) async throws -> Int
+
     /// Flip this session's YOLO bypass via `config.set yolo scope=session`.
     /// NEVER touches the global `approvals.mode` — per-session only, the
     /// same contract as the desktop's Shift+Tab (server.py:14967).
@@ -93,6 +113,22 @@ public protocol ApprovalsProviding: Sendable {
     /// server-side queue stays authoritative (this is a read, not a claim).
     /// - Returns: the session's unresolved approvals (empty when none).
     func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest]
+}
+
+extension ApprovalsProviding {
+    /// Legacy path: every approval is answered with `approval.respond`.
+    public func respond(
+        to request: ApprovalRequest,
+        choice: ApprovalChoice,
+        all: Bool
+    ) async throws -> Int {
+        try await respond(
+            sessionID: request.sessionID,
+            requestID: request.requestID,
+            choice: choice,
+            all: all
+        )
+    }
 }
 
 /// Sessions whose concrete type carries an approvals seam (R9-T1).

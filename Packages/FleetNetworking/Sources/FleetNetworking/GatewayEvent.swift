@@ -32,6 +32,10 @@ public struct GatewayEvent: Sendable, Hashable {
         /// session (`methods_session.py:1427`: `{session_id, title}`). Emitted
         /// shortly after a new chat's first turn; the header adopts it live.
         case sessionTitle = "session.title"
+        /// `request.cancel {id, method, reason}` — the gateway withdrew an
+        /// open server→client request (P0.1). Clears the matching prompt
+        /// only; never a denial.
+        case requestCancel = "request.cancel"
         case error = "error"
 
         /// Unknown event types are preserved for forward compatibility and

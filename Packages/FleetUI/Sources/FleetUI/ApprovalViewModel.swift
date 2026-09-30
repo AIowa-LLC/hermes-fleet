@@ -85,12 +85,30 @@ public final class ApprovalViewModel {
             sessionID: request.sessionID,
             command: Redaction.commandPreview(request.command),
             detail: request.detail,
-            choices: request.choices
+            choices: request.choices,
+            serverRequestID: request.serverRequestID
         )
+        // The same approval seen twice (a reconnect re-delivering it through
+        // `open_requests`, or the legacy event racing the server request)
+        // never renders a second banner. If the new copy carries the
+        // server-request id, adopt it so the answer takes the JSON-RPC
+        // response path.
+        if let current = pending, current.requestID == redacted.requestID {
+            if current.serverRequestID == nil, redacted.serverRequestID != nil {
+                pending = redacted
+            }
+            return
+        }
+        if let index = queued.firstIndex(where: { $0.requestID == redacted.requestID }) {
+            if queued[index].serverRequestID == nil, redacted.serverRequestID != nil {
+                queued[index] = redacted
+            }
+            return
+        }
         if pending == nil {
             pending = redacted
             state = .pending
-        } else if pending?.requestID != redacted.requestID {
+        } else {
             queued.append(redacted)
         }
     }
@@ -99,6 +117,23 @@ public final class ApprovalViewModel {
     /// promotes the next queued one if present.
     public func clearApproval(requestID: String) {
         guard pending?.requestID == requestID else { return }
+        promoteNext()
+    }
+
+    /// P0.1 — `request.cancel {id}`: the gateway withdrew the server→client
+    /// request (timeout, interrupt, answered from another surface). Dismiss
+    /// the matching banner ONLY. A withdrawal is never a denial: nothing is
+    /// sent, no `respond` call is made, and the queued approval behind it (if
+    /// any) is promoted.
+    public func cancelServerRequest(id: String) {
+        if pending?.serverRequestID == id {
+            promoteNext()
+        } else {
+            queued.removeAll { $0.serverRequestID == id }
+        }
+    }
+
+    private func promoteNext() {
         if !queued.isEmpty {
             pending = queued.removeFirst()
             state = .pending
@@ -144,12 +179,7 @@ public final class ApprovalViewModel {
     public func deny() async {
         guard let request = pending else { return }
         do {
-            _ = try await approvals.respond(
-                sessionID: request.sessionID,
-                requestID: request.requestID,
-                choice: .deny,
-                all: false
-            )
+            _ = try await approvals.respond(to: request, choice: .deny, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))
@@ -175,12 +205,7 @@ public final class ApprovalViewModel {
             return
         }
         do {
-            _ = try await approvals.respond(
-                sessionID: request.sessionID,
-                requestID: request.requestID,
-                choice: scope,
-                all: false
-            )
+            _ = try await approvals.respond(to: request, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))
