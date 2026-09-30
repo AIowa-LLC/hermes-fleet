@@ -42,6 +42,7 @@ the v0.1 document deferred or excluded.
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`connection-recovery.md`](connection-recovery.md) - reconnect backoff, history-refetch rules and known limitations
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue
+- [`upstream-proposals/`](upstream-proposals/README.md) - draft upstream Hermes proposals (app-scheme OAuth redirect, signed approvals, pairing tokens, push observer hooks); drafts only, nothing is filed upstream
 - [`adr/`](adr/) - architectural decision records
 
 ## Historical milestone files
