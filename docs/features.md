@@ -50,7 +50,7 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
   folder, and session the request came from (built from the client's own
   conversation context, never the wire payload; unknown values read
   "unknown"). The inline command preview shows at most 4 lines / 240
-  characters with an explicit "N more lines" marker and no middle truncation.
+  characters from the command tail with an explicit "N more lines" marker and no middle truncation.
   A longer command keeps Approve disabled until the user has opened the
   "Review full command" sheet (full redacted text, monospaced, selectable,
   scrollable, wrap toggle) and finished the review by reaching the end or

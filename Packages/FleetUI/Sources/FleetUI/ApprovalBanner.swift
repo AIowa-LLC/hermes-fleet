@@ -128,7 +128,7 @@ public struct ApprovalBanner: View {
                 detail: request.detail,
                 isReviewed: model.pendingIsReviewed
             ) {
-                model.markPendingReviewed()
+                model.markReviewed(request)
             }
         }
     }

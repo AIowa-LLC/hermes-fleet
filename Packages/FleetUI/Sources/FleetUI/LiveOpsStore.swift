@@ -75,14 +75,18 @@ public final class LiveOpsStore {
     public private(set) var attentionItems: [LiveOpsAttentionItem] = []
     /// requestIDs currently being answered (approve/deny in flight) so the
     /// row can show a disabled/"Working…" affordance instead of double-firing.
-    public private(set) var resolvingRequestIDs: Set<String> = []
+    private struct ApprovalActionID: Hashable {
+        let operationID: LiveOperationID
+        let requestID: String
+    }
+    private var resolvingRequestIDs: Set<ApprovalActionID> = []
     /// Non-secret, display-safe message from the last failed approve/deny,
     /// keyed by requestID.
-    public private(set) var actionErrors: [String: String] = [:]
+    private var actionErrors: [ApprovalActionID: String] = [:]
     /// P0.2a: long commands the user has reviewed in full. Home applies the
     /// same rule as the conversation banner — Approve stays blocked until the
     /// review sheet has been completed — so the guard cannot be bypassed here.
-    public private(set) var reviewTracker = ApprovalReviewTracker()
+    private var reviewTrackers: [GatewayID: ApprovalReviewTracker] = [:]
 
     /// Message returned by `approve` when a long command has not been reviewed.
     public static let reviewRequiredMessage = "Review the full command before approving"
@@ -316,10 +320,14 @@ public final class LiveOpsStore {
         // An item resolved elsewhere (approved/denied outside Fleet) simply
         // will not reappear here on the next refresh; clear any stale
         // resolving/error bookkeeping for requestIDs no longer pending.
-        let stillPendingIDs = Set(items.compactMap(\.pendingApproval?.requestID))
+        let stillPendingIDs = Set(items.compactMap(actionID))
         resolvingRequestIDs.formIntersection(stillPendingIDs)
         actionErrors = actionErrors.filter { stillPendingIDs.contains($0.key) }
-        reviewTracker.retain(requestIDs: stillPendingIDs)
+        for gatewayID in Array(reviewTrackers.keys) {
+            let ids = Set(items.filter { $0.operation.id.gatewayID == gatewayID }.compactMap(\.pendingApproval?.requestID))
+            reviewTrackers[gatewayID]?.retain(requestIDs: ids)
+            if ids.isEmpty { reviewTrackers[gatewayID] = nil }
+        }
     }
 
     /// Lightweight diff of the previous vs. new snapshot for every operation
@@ -423,52 +431,75 @@ public final class LiveOpsStore {
     /// optimistically before that.
     @discardableResult
     public func approve(_ item: LiveOpsAttentionItem, choice: ApprovalChoice = .once) async -> String? {
-        guard let approval = item.pendingApproval else { return "no pending approval" }
+        guard let approval = currentApproval(for: item), let id = actionID(item) else { return "no pending approval" }
         guard let seam = seams[item.operation.id.gatewayID] else { return "gateway not reachable" }
         // P0.2a: same review gate as the conversation banner, checked before
         // the biometric prompt. Deny is never gated.
-        guard reviewTracker.canApprove(approval) else {
-            actionErrors[approval.requestID] = Self.reviewRequiredMessage
+        guard canApprove(item) else {
+            actionErrors[id] = Self.reviewRequiredMessage
             return Self.reviewRequiredMessage
         }
-        guard !resolvingRequestIDs.contains(approval.requestID) else { return nil }
-        resolvingRequestIDs.insert(approval.requestID)
-        defer { resolvingRequestIDs.remove(approval.requestID) }
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
+        guard !resolvingRequestIDs.contains(id) else { return nil }
+        resolvingRequestIDs.insert(id)
+        defer { resolvingRequestIDs.remove(id) }
+        let auth = await biometrics.evaluateBiometrics(reason: "Approve a dangerous command")
+        guard let current = currentApproval(for: item), canApprove(item) else { return "Approval changed; review it again" }
+        switch auth {
         case .success: break
         case .failure:
-            actionErrors[approval.requestID] = "Biometric check failed"
+            actionErrors[id] = "Biometric check failed"
             return "Biometric check failed"
         case .unavailable:
-            actionErrors[approval.requestID] = "Biometric authentication unavailable"
+            actionErrors[id] = "Biometric authentication unavailable"
             return "Biometric authentication unavailable"
         }
         do {
-            _ = try await seam.approvals.respond(
-                sessionID: approval.sessionID, requestID: approval.requestID, choice: choice, all: false)
-            attentionItems.removeAll { $0.pendingApproval?.requestID == approval.requestID }
-            actionErrors[approval.requestID] = nil
+            _ = try await seam.approvals.respond(to: current, choice: choice, all: false)
+            attentionItems.removeAll { actionID($0) == id }
+            actionErrors[id] = nil
             return nil
         } catch {
             let message = Redaction.safeErrorDescription(error)
-            actionErrors[approval.requestID] = message
+            actionErrors[id] = message
             return message
         }
+    }
+
+    private func actionID(_ item: LiveOpsAttentionItem) -> ApprovalActionID? {
+        item.pendingApproval.map { ApprovalActionID(operationID: item.operation.id, requestID: $0.requestID) }
+    }
+
+    private func currentApproval(for item: LiveOpsAttentionItem) -> ApprovalRequest? {
+        guard let expected = item.pendingApproval,
+              let current = attentionItems.first(where: { $0.operation.id == item.operation.id })?.pendingApproval,
+              current.requestID == expected.requestID, current.sessionID == expected.sessionID,
+              current.command == expected.command else { return nil }
+        return current
+    }
+
+    public func isResolving(_ item: LiveOpsAttentionItem) -> Bool {
+        guard let id = actionID(item) else { return false }
+        return resolvingRequestIDs.contains(id)
+    }
+
+    public func actionError(for item: LiveOpsAttentionItem) -> String? {
+        guard let id = actionID(item) else { return nil }
+        return actionErrors[id]
     }
 
     /// Whether Approve is allowed for this row right now (short command, or the
     /// long command has been reviewed in full).
     public func canApprove(_ item: LiveOpsAttentionItem) -> Bool {
-        guard let approval = item.pendingApproval else { return false }
-        return reviewTracker.canApprove(approval)
+        guard let approval = currentApproval(for: item) else { return false }
+        return (reviewTrackers[item.operation.id.gatewayID] ?? ApprovalReviewTracker()).canApprove(approval)
     }
 
     /// The user finished reviewing this row's full command.
     public func markReviewed(_ item: LiveOpsAttentionItem) {
-        guard let approval = item.pendingApproval else { return }
-        reviewTracker.markReviewed(approval)
-        if actionErrors[approval.requestID] == Self.reviewRequiredMessage {
-            actionErrors[approval.requestID] = nil
+        guard let approval = currentApproval(for: item), let id = actionID(item) else { return }
+        reviewTrackers[item.operation.id.gatewayID, default: ApprovalReviewTracker()].markReviewed(approval)
+        if actionErrors[id] == Self.reviewRequiredMessage {
+            actionErrors[id] = nil
         }
     }
 
@@ -481,27 +512,27 @@ public final class LiveOpsStore {
             bot: nil,
             cwd: nil,
             session: ApprovalOrigin.sessionLabel(
-                title: item.operation.title, id: item.operation.id.runtimeSessionID))
+                title: item.operation.title, id: item.operation.id.runtimeSessionID),
+            gatewayID: item.operation.id.gatewayID)
     }
 
     /// DENY — friction-free, no biometrics (matches the conversation banner
     /// security posture: the safe answer is always the easy one).
     @discardableResult
     public func deny(_ item: LiveOpsAttentionItem) async -> String? {
-        guard let approval = item.pendingApproval else { return "no pending approval" }
+        guard let approval = currentApproval(for: item), let id = actionID(item) else { return "no pending approval" }
         guard let seam = seams[item.operation.id.gatewayID] else { return "gateway not reachable" }
-        guard !resolvingRequestIDs.contains(approval.requestID) else { return nil }
-        resolvingRequestIDs.insert(approval.requestID)
-        defer { resolvingRequestIDs.remove(approval.requestID) }
+        guard !resolvingRequestIDs.contains(id) else { return nil }
+        resolvingRequestIDs.insert(id)
+        defer { resolvingRequestIDs.remove(id) }
         do {
-            _ = try await seam.approvals.respond(
-                sessionID: approval.sessionID, requestID: approval.requestID, choice: .deny, all: false)
-            attentionItems.removeAll { $0.pendingApproval?.requestID == approval.requestID }
-            actionErrors[approval.requestID] = nil
+            _ = try await seam.approvals.respond(to: approval, choice: .deny, all: false)
+            attentionItems.removeAll { actionID($0) == id }
+            actionErrors[id] = nil
             return nil
         } catch {
             let message = Redaction.safeErrorDescription(error)
-            actionErrors[approval.requestID] = message
+            actionErrors[id] = message
             return message
         }
     }

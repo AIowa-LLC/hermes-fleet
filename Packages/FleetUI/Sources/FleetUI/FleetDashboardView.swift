@@ -317,7 +317,7 @@ public struct FleetDashboardView: View {
                             ApprovalCommandPreviewView(command: approval.command) {
                                 reviewingItem = item
                             }
-                            if let message = environment.liveOps.actionErrors[approval.requestID] {
+                            if let message = environment.liveOps.actionError(for: item) {
                                 Text(message)
                                     .font(FleetTheme.secondaryFont)
                                     .foregroundStyle(FleetTheme.statusDegraded)
@@ -327,7 +327,7 @@ public struct FleetDashboardView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    let busy = environment.liveOps.resolvingRequestIDs.contains(approval.requestID)
+                    let busy = environment.liveOps.isResolving(item)
                     HStack(spacing: FleetTheme.spacingSm) {
                         Spacer(minLength: 0)
                         Button("Deny") { Task { await environment.liveOps.deny(item) } }

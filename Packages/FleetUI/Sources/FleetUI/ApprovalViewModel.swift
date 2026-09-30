@@ -71,9 +71,10 @@ public final class ApprovalViewModel {
 
     /// The user opened the full-command review and finished it (scrolled to
     /// the end or confirmed). Only the CURRENT pending request is affected.
-    public func markPendingReviewed() {
-        guard let request = pending else { return }
-        reviewTracker.markReviewed(request)
+    public func markReviewed(_ request: ApprovalRequest) {
+        guard let current = pending, current.requestID == request.requestID,
+              current.sessionID == request.sessionID, current.command == request.command else { return }
+        reviewTracker.markReviewed(current)
         if state == .reviewRequired { state = .pending }
     }
 
@@ -129,15 +130,11 @@ public final class ApprovalViewModel {
         // server-request id, adopt it so the answer takes the JSON-RPC
         // response path.
         if let current = pending, current.requestID == redacted.requestID {
-            if current.serverRequestID == nil, redacted.serverRequestID != nil {
-                pending = redacted
-            }
+            pending = adopting(redacted, preservingWireID: current.serverRequestID)
             return
         }
         if let index = queued.firstIndex(where: { $0.requestID == redacted.requestID }) {
-            if queued[index].serverRequestID == nil, redacted.serverRequestID != nil {
-                queued[index] = redacted
-            }
+            queued[index] = adopting(redacted, preservingWireID: queued[index].serverRequestID)
             return
         }
         if pending == nil {
@@ -146,6 +143,12 @@ public final class ApprovalViewModel {
         } else {
             queued.append(redacted)
         }
+    }
+
+    private func adopting(_ request: ApprovalRequest, preservingWireID oldID: String?) -> ApprovalRequest {
+        ApprovalRequest(requestID: request.requestID, sessionID: request.sessionID,
+                        command: request.command, detail: request.detail, choices: request.choices,
+                        serverRequestID: request.serverRequestID ?? oldID)
     }
 
     /// Clear a resolved approval (e.g. resolved elsewhere / timed out);
@@ -237,7 +240,11 @@ public final class ApprovalViewModel {
         }
         // The FaceID gate comes BEFORE any wire call — a failed scan must
         // never send an approval.
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
+        let auth = await biometrics.evaluateBiometrics(reason: "Approve a dangerous command")
+        guard let current = pending, current.requestID == request.requestID,
+              current.sessionID == request.sessionID, current.command == request.command,
+              reviewTracker.canApprove(current) else { return }
+        switch auth {
         case .success:
             break
         case .failure:
@@ -248,7 +255,7 @@ public final class ApprovalViewModel {
             return
         }
         do {
-            _ = try await approvals.respond(to: request, choice: scope, all: false)
+            _ = try await approvals.respond(to: current, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))

@@ -273,7 +273,8 @@ public final class ConversationViewModel {
             gateway: gatewayLabel,
             bot: botLabel ?? route.profileSlug.rawValue,
             cwd: sessionCWD,
-            session: ApprovalOrigin.sessionLabel(title: sessionTitle, id: resolvedSessionID))
+            session: ApprovalOrigin.sessionLabel(title: sessionTitle, id: resolvedSessionID),
+            gatewayID: route.gatewayID)
     }
 
     /// P0.1 — clarify / sudo / secret prompts raised as server→client
