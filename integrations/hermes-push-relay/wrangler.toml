@@ -1,0 +1,51 @@
+# Hermes push relay - Cloudflare Worker configuration.
+#
+# This file intentionally contains NO secrets, NO account IDs, NO KV namespace
+# IDs, NO routes/hostnames and NO Apple key material. See README.md for the
+# maintainer-only deployment checklist.
+#
+# Secrets (set with `wrangler secret put`, never committed):
+#   APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC, RELAY_STORAGE_KEY
+
+name = "hermes-push-relay"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+# Invocation logs record request URLs (the unregister path carries the relay
+# device id). The relay is content-blind by design, so keep platform request
+# logging off; the code itself emits only route + status lines.
+[observability]
+enabled = false
+
+[observability.logs]
+invocation_logs = false
+
+# Registration store. The namespace ID is deliberately omitted: create it in
+# your own account (README, step 3) and either let wrangler auto-provision it
+# on first deploy or add an `id = "..."` line in an uncommitted
+# wrangler.local.toml. Never commit the ID.
+[[kv_namespaces]]
+binding = "REGISTRY"
+
+# Native Workers rate limiting: no KV/DO writes, so it does not consume the
+# free-tier write budget. Limits are per Cloudflare location. `namespace_id`
+# is an arbitrary integer you choose; it is not an account identifier.
+[[ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "7101"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "REGISTER_LIMITER"
+namespace_id = "7102"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "SEND_LIMITER"
+namespace_id = "7103"
+simple = { limit = 30, period = 60 }
+
+# Non-secret tunables (all optional; defaults are in src/config.ts).
+[vars]
+REGISTRATION_TTL_SECONDS = "5184000"
