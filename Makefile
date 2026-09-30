@@ -6,7 +6,13 @@
 # unconditional prerequisite to opening every focused pull request.
 # Shared-layer changes still require the broader coverage selected by policy.
 PROJECT := HermesFleetApp
-DEST := platform=iOS Simulator,name=iPhone 17 Pro,OS=latest
+# Simulator destination: HERMES_FLEET_SIM_UDID, then this worktree's lane
+# simulator when HERMES_FLEET_LANE_SIM=1, else the named default below. The
+# precedence lives in scripts/sim_destination.sh (docs/DEVELOPMENT.md). Expanded
+# lazily so targets that never build do not create a simulator. Override with
+# `make test DEST='platform=iOS Simulator,...'`.
+DEFAULT_DEST := platform=iOS Simulator,name=iPhone 17 Pro,OS=latest
+DEST = $(shell bash scripts/sim_destination.sh iphone --default-dest '$(DEFAULT_DEST)')
 DD := build/DerivedData
 # SwiftStreamingMarkdown v0.7.0 brings the reviewed Equatable macro through
 # its package graph. Headless/local xcodebuild has no approval dialog, so use

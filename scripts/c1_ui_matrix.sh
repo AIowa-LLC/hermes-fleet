@@ -267,10 +267,12 @@ if [ "$MODE" = tests ]; then
 fi
 
 # --- resolve simulator --------------------------------------------------------
-SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*//')
-[ -n "$SIM_NAME" ] || SIM_NAME="iPhone 16"
-echo "  using simulator: $SIM_NAME"
-DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
+# Destination precedence lives in scripts/sim_destination.sh: explicit UDID,
+# then the lane simulator (HERMES_FLEET_LANE_SIM=1), then first available iPhone.
+. scripts/sim_destination.sh
+resolve_sim_destination iphone || die "could not select a simulator destination"
+sim_announce
+DEST="$SIM_DEST"
 DD="$REPO/build/C1Ui"
 # SwiftStreamingMarkdown v0.7.0 transitively uses the reviewed Equatable
 # macro. Headless CI has no Xcode UI step to approve that pinned macro, so
@@ -291,6 +293,7 @@ echo "UI evidence: $RESULTS_ROOT"
   git status --short
   xcodebuild -version
   printf 'destination=%s\nmode=%s\n' "$DEST" "$MODE"
+  sim_metadata_lines
 } > "$RESULTS_ROOT/provenance.log" 2>&1
 # Build once, retain per-suite process isolation, and reuse the compiled test
 # products. Missing/failed builds are fatal, never successful empty tests.

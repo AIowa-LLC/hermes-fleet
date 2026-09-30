@@ -26,6 +26,16 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# Local runs default to this worktree's own simulator (HF-<id>) so parallel
+# lanes never share a device; CI and HERMES_FLEET_LANE_SIM=0 keep the shared
+# first-available-iPhone selection. HERMES_FLEET_SIM_UDID overrides both.
+# Exported so the focused UI preflight inherits the same choice.
+if [ -z "${HERMES_FLEET_LANE_SIM:-}" ]; then
+  if [ "${CI:-}" = true ]; then HERMES_FLEET_LANE_SIM=0; else HERMES_FLEET_LANE_SIM=1; fi
+fi
+export HERMES_FLEET_LANE_SIM
+. scripts/sim_destination.sh
+
 FAIL=0
 note() { printf '\n========== %s ==========\n' "$1"; }
 
@@ -33,12 +43,17 @@ note "1/4 static guards (xcodegen drift, boundaries, privacy, safety, gitleaks)"
 bash scripts/c1_static.sh || FAIL=1
 
 note "2/4 simulator build"
-SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*//')
-[ -n "$SIM_NAME" ] || SIM_NAME="iPhone 16"
-echo "  using simulator: $SIM_NAME"
-xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-  -destination "platform=iOS Simulator,name=$SIM_NAME,OS=latest" \
-  -derivedDataPath build/DevCheck -skipMacroValidation build || FAIL=1
+SIM_DEST=""
+resolve_sim_destination iphone || SIM_DEST=""
+if [ -n "$SIM_DEST" ]; then
+  sim_announce
+  xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
+    -destination "$SIM_DEST" \
+    -derivedDataPath build/DevCheck -skipMacroValidation build || FAIL=1
+else
+  echo "  no simulator destination could be selected" >&2
+  FAIL=1
+fi
 
 note "3/4 package tests (host swift test)"
 bash scripts/c1_packages.sh || FAIL=1
