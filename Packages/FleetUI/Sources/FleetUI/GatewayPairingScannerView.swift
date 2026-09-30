@@ -27,6 +27,7 @@ import AVFoundation
 /// re-scannable from a lingering screen.
 struct GatewayPairingScannerView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .largeTitle) private var heroGlyphSize: CGFloat = 44
     @Bindable private var draftStore: GatewayFormDraftStore
     @Environment(\.dismiss) private var dismiss
 
@@ -99,7 +100,7 @@ struct GatewayPairingScannerView: View {
                 // resolves. Brief non-spinner placeholder while TCC runs.
                 VStack(spacing: FleetTheme.spacingLg) {
                     Image(systemName: "camera.aperture")
-                        .font(.system(size: 44))
+                        .font(.system(size: min(heroGlyphSize, 88)))
                         .foregroundStyle(theme.textSecondary)
                         .accessibilityHidden(true)
                     Text("Checking camera access…")
@@ -141,7 +142,7 @@ struct GatewayPairingScannerView: View {
     private var deniedBody: some View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "video.slash")
-                .font(.system(size: 44))
+                .font(.system(size: min(heroGlyphSize, 88)))
                 .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityHidden(true)
             Text("Camera access is off.\nAllow camera access in Settings to scan pairing codes, or enter the gateway details manually below.")
@@ -213,7 +214,7 @@ struct GatewayPairingScannerView: View {
     private var fallbackBody: some View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "qrcode.viewfinder")
-                .font(.system(size: 44))
+                .font(.system(size: min(heroGlyphSize, 88)))
                 .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             Text("Live camera scanning isn't available on this device.\nUse a device with a camera, or enter the gateway details manually.")

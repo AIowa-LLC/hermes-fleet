@@ -22,7 +22,7 @@ public struct GatewayRunningBadge: View {
         if isRunning {
             HStack(spacing: 3) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.caption2.weight(.semibold))
                 Text("Own gateway")
                     .font(.caption2.weight(.semibold))
             }

@@ -143,9 +143,9 @@ struct GroupsHomeView: View {
             showingGroupCompose = true
         } label: {
             Image(systemName: "person.3")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.headline)
                 .foregroundStyle(theme.textPrimary)
-                .frame(width: 48, height: 48)
+                .frame(width: fabSide, height: fabSide)
                 .contentShape(Circle())
         }
         .buttonStyle(.fleetPressable)

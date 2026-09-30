@@ -25,6 +25,7 @@ import UIKit
 /// surface is the existing Add-Gateway form; nothing is stored here.
 public struct GatewayOnboardingView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .largeTitle) private var heroGlyphSize: CGFloat = 40
     private let environment: AppEnvironment
 
     /// What the user does after Hermes replies, per step.
@@ -134,7 +135,7 @@ public struct GatewayOnboardingView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Image(systemName: "circle.hexagongrid.fill")
-                .font(.system(size: 40))
+                .font(.system(size: min(heroGlyphSize, 80)))
                 .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             Text("Hermes Fleet")

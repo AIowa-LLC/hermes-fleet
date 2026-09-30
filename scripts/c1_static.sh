@@ -1,7 +1,7 @@
 #!/bin/bash
 # C1 static phase — repository guards that need no simulator.
 #   xcodegen generate -> drift gate -> FleetUI module boundary ->
-#   theme call-site audit -> public-safety residue guard -> gitleaks
+#   theme call-site audit -> font style audit -> public-safety residue guard -> gitleaks
 # Used standalone by CI (job: static-guards) and by c1_ci_validate.sh.
 set -u
 cd "$(dirname "$0")/.."
@@ -44,6 +44,20 @@ if bash scripts/theme_callsite_audit.sh >/tmp/c1_theme.log 2>&1; then
   ok "theme call-site audit: runtime product colors use FleetThemeValues"
 else
   bad "theme call-site audit FAILED"; cat /tmp/c1_theme.log
+fi
+
+# --- font style audit (no fixed point sizes; #104) --------------------------
+note "Font style audit"
+if bash scripts/font_style_audit.sh >/tmp/c1_font_style.log 2>&1; then
+  ok "font style audit: no fixed .system(size:) fonts outside the allowlist"
+else
+  bad "font style audit FAILED"; cat /tmp/c1_font_style.log
+fi
+
+if bash scripts/font_style_audit_test.sh >/tmp/c1_font_style_test.log 2>&1; then
+  ok "font style audit self-test: fixed sizes rejected, allowlist contract enforced"
+else
+  bad "font style audit self-test FAILED"; cat /tmp/c1_font_style_test.log
 fi
 
 # --- privacy manifest and required-reason audit -------------------------------

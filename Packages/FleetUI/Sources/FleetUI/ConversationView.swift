@@ -412,7 +412,7 @@ public struct ConversationView: View {
                 scrollPulse += 1
             } label: {
                 Image(systemName: "chevron.down.circle.fill")
-                    .font(.system(size: 30, weight: .medium))
+                    .font(.system(size: min(latestChevronSize, 60), weight: .medium))
                     .foregroundStyle(theme.highlight, theme.surface)
             }
             .buttonStyle(.fleetPressable)
@@ -485,9 +485,9 @@ public struct ConversationView: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: headerGlyphSide, height: headerGlyphSide)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
@@ -498,9 +498,9 @@ public struct ConversationView: View {
                 openDrawer?()
             } label: {
                 Image(systemName: "sidebar.leading")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: 32, height: 32)
+                    .frame(width: headerGlyphSide, height: headerGlyphSide)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
@@ -542,7 +542,7 @@ public struct ConversationView: View {
                 }
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(findActive ? theme.highlight : theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -660,7 +660,7 @@ public struct ConversationView: View {
         HStack(spacing: FleetTheme.spacingSm) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .accessibilityHidden(true)
                 TextField("Find in conversation", text: $findQuery)
@@ -690,7 +690,7 @@ public struct ConversationView: View {
                 advanceFind(direction: -1)
             } label: {
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -704,7 +704,7 @@ public struct ConversationView: View {
                 advanceFind(direction: 1)
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -718,7 +718,7 @@ public struct ConversationView: View {
                 closeFind()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.textSecondary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -1549,9 +1549,9 @@ enum ConversationHeaderChips {
                         // r6: bare glyph inside the pill (the pill is the
                         // surface; 44pt target via the frame).
                         Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: 36, height: 36)
+                            .frame(width: composerGlyphSide, height: composerGlyphSide)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
@@ -1595,9 +1595,9 @@ enum ConversationHeaderChips {
                         Task { await model.toggleMic() }
                     } label: {
                         Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary))
-                            .frame(width: 36, height: 36)
+                            .frame(width: composerGlyphSide, height: composerGlyphSide)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
@@ -1613,9 +1613,9 @@ enum ConversationHeaderChips {
                         // DESTRUCTIVE — bright red glyph on a dimmed red
                         // circle (the mic-stop pattern), not a neutral chip.
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 20, weight: .semibold))
+                            .font(.title3.weight(.semibold))
                             .foregroundStyle(FleetTheme.statusDestructive)
-                            .frame(width: Self.sendButtonSide, height: Self.sendButtonSide)
+                            .frame(width: sendButtonSide, height: sendButtonSide)
                             .background(Circle().fill(FleetTheme.statusDestructive.opacity(0.18)))
                             .overlay(Circle().strokeBorder(FleetTheme.statusDestructive.opacity(0.45), lineWidth: 1))
                     }
@@ -1634,9 +1634,9 @@ enum ConversationHeaderChips {
                         // r6: the accent ORB rides inside the pill —
                         // the single interactive accent (ChatGPT's send).
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.callout.weight(.bold))
                             .foregroundStyle(theme.onHighlight)
-                            .frame(width: 30, height: 30)
+                            .frame(width: sendGlyphSide, height: sendGlyphSide)
                             .background(Circle().fill(theme.highlight))
                     }
                     .buttonStyle(.fleetPressable)
@@ -2141,7 +2141,11 @@ enum ConversationHeaderChips {
     }
 
     /// Send/stop button side length (pt) — circular, per the hero mock.
-    private static let sendButtonSide: CGFloat = 44
+    @ScaledMetric(relativeTo: .title3) private var sendButtonSide: CGFloat = 44
+    @ScaledMetric(relativeTo: .title3) private var composerGlyphSide: CGFloat = 36
+    @ScaledMetric(relativeTo: .callout) private var sendGlyphSide: CGFloat = 30
+    @ScaledMetric(relativeTo: .callout) private var headerGlyphSide: CGFloat = 32
+    @ScaledMetric(relativeTo: .title) private var latestChevronSize: CGFloat = 30
 
     private func submit(_ model: ConversationViewModel) async {
         guard model.phase == .ready,

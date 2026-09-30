@@ -14,6 +14,7 @@ import FleetCore
 /// degrades to the honest read-only presentation (fail closed).
 public struct KanbanBoardView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .largeTitle) private var emptyGlyphSize: CGFloat = 36
     private let environment: AppEnvironment
     private let gatewayID: GatewayID
     private let initialBoard: String?
@@ -420,7 +421,7 @@ public struct KanbanBoardView: View {
     private var emptyGatewaysContent: some View {
         VStack(spacing: FleetTheme.spacingMd) {
             Image(systemName: "rectangle.stack")
-                .font(.system(size: 36, weight: .light))
+                .font(.system(size: min(emptyGlyphSize, 72), weight: .light))
                 .foregroundStyle(theme.textSecondary)
             Text("No gateways registered.")
                 .font(.body.weight(.semibold))

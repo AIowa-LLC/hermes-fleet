@@ -403,7 +403,7 @@ public struct BotRoutinesView: View {
                     .accessibilityIdentifier("routines.row.remove.\(routine.jobID)")
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.headline.weight(.medium))
                         .foregroundStyle(theme.textSecondary)
                 }
                 // FOS-6 tap-target: pad to the 44pt actionable bar (SPEC

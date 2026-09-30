@@ -9,6 +9,7 @@ extension EnvironmentValues {
 struct FleetDrawerMenu: ToolbarContent {
     @Environment(\.openFleetDrawer) private var openDrawer
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .headline) private var drawerGlyphSide: CGFloat = 34
     /// Dogfood r4: the unread aggregate (menu-button badge), supplied by
     /// the OWNING view (FleetTabView holds the AppEnvironment; there is no
     /// environment-object injection on this shell).
@@ -26,8 +27,8 @@ struct FleetDrawerMenu: ToolbarContent {
                 // which is not a valid SF Symbol name).
                 Button(action: openDrawer) {
                     Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 34, height: 34)
+                        .font(.headline)
+                        .frame(width: drawerGlyphSide, height: drawerGlyphSide)
                         .contentShape(Rectangle())
                         .overlay(alignment: .topTrailing) {
                             // Dogfood r4: unread badge (ChatGPT parity) — a
