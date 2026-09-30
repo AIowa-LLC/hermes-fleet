@@ -139,8 +139,10 @@ def inspect_ipa(
     if signed_team != expected_team:
         fail(f"exported IPA team identifier {signed_team!r}, expected {expected_team!r}")
 
+    # Xcode 27's `-` form emits a human-readable [Dict] dump; `:-` keeps
+    # the signed entitlements in plist XML for machine validation.
     entitlements_output = run(
-        ["codesign", "-d", "--entitlements", "-", str(app)],
+        ["codesign", "-d", "--entitlements", ":-", str(app)],
         label="exported app entitlements inspection",
     )
     if not entitlements_output.stdout.strip():
