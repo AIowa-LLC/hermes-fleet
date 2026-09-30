@@ -116,6 +116,10 @@ class RunnerContract(unittest.TestCase):
         (self.root / 'scripts').mkdir()
         for name in ('c1_ui_matrix.sh', 'c1_xcresult_parse.py', 'c1_critical_smoke.sh'):
             shutil.copy2(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        shutil.copy2(ROOT / 'scripts' / 'sim_destination.sh', self.root / 'scripts' / 'sim_destination.sh')
+        # Selection contract only: the real lane simulator has its own tests.
+        (self.root / 'scripts' / 'lane_simulator.sh').write_text(
+            '#!/bin/bash\n[ "$1" = ensure ] && echo 11111111-2222-3333-4444-555555555555\n')
         shutil.copytree(ROOT / 'HermesFleetAppUITests', self.root / 'HermesFleetAppUITests')
         shutil.copy2(ROOT / 'project.yml', self.root / 'project.yml')
         self.bin = self.root / 'bin'
@@ -152,6 +156,45 @@ class RunnerContract(unittest.TestCase):
         self.assertEqual(sum('test-without-building' in call for call in calls), 2)
         self.assertFalse(any('test' in call or 'build' in call for call in calls))
         self.assertTrue((self.evidence[0] / 'provenance.log').exists())
+
+    def build_destination(self, calls):
+        build = next(call for call in calls if 'build-for-testing' in call)
+        return build[build.index('-destination') + 1]
+
+    def test_default_selection_is_first_available_iphone(self):
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.build_destination(calls), 'platform=iOS Simulator,name=iPhone Contract Test,OS=latest')
+        provenance = (self.evidence[0] / 'provenance.log').read_text()
+        self.assertIn('simulator_selection=default', provenance)
+        self.assertIn('simulator_udid=unspecified', provenance)
+
+    def test_ci_true_keeps_default_selection(self):
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', CI='true')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.build_destination(calls), 'platform=iOS Simulator,name=iPhone Contract Test,OS=latest')
+
+    def test_lane_simulator_selected_when_opted_in(self):
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', HERMES_FLEET_LANE_SIM='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        udid = '11111111-2222-3333-4444-555555555555'
+        self.assertEqual(self.build_destination(calls), f'platform=iOS Simulator,id={udid}')
+        self.assertTrue(all(f'id={udid}' in call[call.index('-destination') + 1] for call in calls if '-destination' in call))
+        provenance = (self.evidence[0] / 'provenance.log').read_text()
+        self.assertIn('simulator_selection=lane', provenance)
+        self.assertIn(f'simulator_udid={udid}', provenance)
+
+    def test_explicit_udid_overrides_lane_simulator(self):
+        udid = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', HERMES_FLEET_LANE_SIM='1', HERMES_FLEET_SIM_UDID=udid)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.build_destination(calls), f'platform=iOS Simulator,id={udid}')
+
+    def test_failed_lane_simulator_fails_closed_before_xcode(self):
+        (self.root / 'scripts' / 'lane_simulator.sh').write_text('#!/bin/bash\nexit 1\n')
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', HERMES_FLEET_LANE_SIM='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [])
 
     def test_failed_build_does_not_start_tests(self):
         result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', MOCK_BUILD_FAIL='1')

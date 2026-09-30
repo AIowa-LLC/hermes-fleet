@@ -7,10 +7,12 @@ set -u
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 
-SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*//')
-[ -n "$SIM_NAME" ] || SIM_NAME="iPhone 16"
-echo "  using simulator: $SIM_NAME"
-DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
+# Destination precedence lives in scripts/sim_destination.sh: explicit UDID,
+# then the lane simulator (HERMES_FLEET_LANE_SIM=1), then first available iPhone.
+. scripts/sim_destination.sh
+resolve_sim_destination iphone || exit 1
+sim_announce
+DEST="$SIM_DEST"
 DD="$REPO/build/C1Ci"
 
 # Isolate each invocation so another worker/retry cannot overwrite evidence.
@@ -26,6 +28,7 @@ printf '  diagnostics: %s\n' "$UNIT_RESULTS"
 {
   printf 'source_sha=%s\n' "$(git rev-parse HEAD 2>/dev/null || printf unknown)"
   printf 'destination=%s\n' "$DEST"
+  sim_metadata_lines
   xcodebuild -version 2>&1 || true
 } > "$UNIT_RESULTS/metadata.txt"
 

@@ -72,14 +72,52 @@ Independent lanes can proceed concurrently; a dependent lane refreshes from
 main after its prerequisite merges. Never use a historical dogfood, recovery,
 or worker branch as the default base for new work.
 
-Worktrees isolate source and the runners' derived-data directories, but iOS
-Simulator devices are shared by every lane on one host. The C1 hosted-unit and
-UI runners select the first available iPhone by default. Coordinate local
-invocations so one lane at a time installs/runs Fleet on a given simulator.
-For concurrent Xcode validation, use separate simulator destinations and
-separate derived-data/result paths in explicit `xcodebuild` commands; a new
-worktree does not select a new simulator. Static and package-only checks can
-run independently.
+Worktrees isolate source and the runners' derived-data directories
+(`build/DevCheck`, `build/C1Ci`, `build/C1Ui`, `build/ipad-smoke`), and local
+runs also get their own iOS Simulator device. `scripts/lane_simulator.sh`
+derives a short id from the worktree path (the path is never printed or
+embedded in a name) and creates or reuses a simulator named `HF-<id>` (iPad:
+`HF-<id>-iPad`) from an iPhone device type and the newest installed iOS
+runtime. Concurrent lanes therefore install and launch Fleet on different
+devices; no "one lane at a time" coordination is needed.
+
+All runners pick their destination through `scripts/sim_destination.sh`, in
+this order:
+
+1. `HERMES_FLEET_SIM_UDID=<udid>`: explicit device, overrides everything. The
+   iPad smoke uses `HERMES_FLEET_IPAD_SIM_UDID` (or the existing
+   `HERMES_FLEET_IPAD_DESTINATION` name) instead, because an iPhone UDID is the
+   wrong device family.
+2. `HERMES_FLEET_LANE_SIM=1`: this worktree's `HF-<id>` simulator. `make
+   dev-check` (and so `scripts/dev_check.sh`) turns this on by default for
+   local runs; `CI=true` turns it off. `HERMES_FLEET_LANE_SIM=0` opts out.
+3. Otherwise the original behavior: the first available iPhone (iPad smoke: a
+   named iPad Pro). Hosted CI, and the C1 runners when invoked directly, keep
+   this selection unchanged; set `HERMES_FLEET_LANE_SIM=1` to use the lane
+   simulator with `make ci`, `make test`/`make build`, `c1_units.sh`,
+   `c1_ui_matrix.sh`, `c1_critical_smoke.sh` or `c1_ipad_smoke.sh`.
+
+The chosen simulator selection and UDID are recorded in the hosted-unit
+`metadata.txt` and the UI matrix `provenance.log` (no hostnames or paths). If a
+lane simulator cannot be prepared the run fails instead of silently falling
+back to the shared device.
+
+Manage lane simulators explicitly; nothing deletes them automatically:
+
+```sh
+bash scripts/lane_simulator.sh ensure [ipad] [--boot]  # create/reuse, print UDID
+bash scripts/lane_simulator.sh list                     # HF-* devices and owner status
+bash scripts/lane_simulator.sh shutdown                 # this worktree's devices
+bash scripts/lane_simulator.sh delete                   # this worktree's devices
+bash scripts/lane_simulator.sh gc [--dry-run]           # HF-* devices whose worktree is gone
+```
+
+`shutdown` and `delete` touch only this worktree's `HF-<id>` devices. `gc`
+removes only devices named exactly `HF-<8 hex>[-iPad]` whose id matches no
+existing worktree of this repository, so run it from any worktree after
+removing old lanes; use `--dry-run` first on hosts that also run other
+projects' `HF-*` devices. Delete the lane simulator (`delete`) when removing a
+worktree. Static and package-only checks never need a simulator.
 
 One CI/release integrator coordinates shared integration surfaces per batch:
 

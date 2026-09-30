@@ -12,6 +12,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
+LANE_UDID = "11111111-2222-3333-4444-555555555555"
+EXPLICIT_UDID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
 MOCK_XCODE = r'''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -45,6 +47,10 @@ class HostedUnitDiagnosticsContracts(unittest.TestCase):
         scripts = self.root / "scripts"
         scripts.mkdir()
         shutil.copy2(ROOT / "scripts/c1_units.sh", scripts / "c1_units.sh")
+        shutil.copy2(ROOT / "scripts/sim_destination.sh", scripts / "sim_destination.sh")
+        # Selection contract only: the real lane simulator has its own tests.
+        (scripts / "lane_simulator.sh").write_text(
+            f"#!/bin/bash\n[ \"$1\" = ensure ] && echo {LANE_UDID}\n")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         commands = {
@@ -68,8 +74,8 @@ class HostedUnitDiagnosticsContracts(unittest.TestCase):
             MOCK_ARGS=str(self.args_path),
         )
 
-    def invoke(self, mode: str = "success", *, local: bool = False):
-        env = dict(self.env, MOCK_MODE=mode)
+    def invoke(self, mode: str = "success", *, local: bool = False, **extra_env):
+        env = dict(self.env, MOCK_MODE=mode, **extra_env)
         if local:
             env.pop("GITHUB_OUTPUT", None)
         result = subprocess.run(
@@ -95,6 +101,43 @@ class HostedUnitDiagnosticsContracts(unittest.TestCase):
         self.assertIn("-skipMacroValidation", args)
         self.assertNotIn("CODE_SIGNING_ALLOWED=NO", args)
         self.assertEqual(self.output.read_text(), f"diagnostics_dir={directory}\n")
+
+    def destination(self) -> str:
+        args = json.loads(self.args_path.read_text())
+        return args[args.index("-destination") + 1]
+
+    def test_default_selection_is_first_available_iphone(self):
+        result, directory = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.destination(), "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest")
+        metadata = (directory / "metadata.txt").read_text()
+        self.assertIn("simulator_selection=default", metadata)
+        self.assertIn("simulator_udid=unspecified", metadata)
+
+    def test_ci_true_keeps_default_selection(self):
+        result, _ = self.invoke(CI="true")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.destination(), "platform=iOS Simulator,name=iPhone 17 Pro,OS=latest")
+
+    def test_lane_simulator_selected_when_opted_in(self):
+        result, directory = self.invoke(HERMES_FLEET_LANE_SIM="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.destination(), f"platform=iOS Simulator,id={LANE_UDID}")
+        metadata = (directory / "metadata.txt").read_text()
+        self.assertIn("simulator_selection=lane", metadata)
+        self.assertIn(f"simulator_udid={LANE_UDID}", metadata)
+
+    def test_explicit_udid_overrides_lane_simulator(self):
+        result, directory = self.invoke(HERMES_FLEET_LANE_SIM="1", HERMES_FLEET_SIM_UDID=EXPLICIT_UDID)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.destination(), f"platform=iOS Simulator,id={EXPLICIT_UDID}")
+        self.assertIn(f"simulator_udid={EXPLICIT_UDID}", (directory / "metadata.txt").read_text())
+
+    def test_failed_lane_simulator_fails_closed_before_xcode(self):
+        (self.root / "scripts/lane_simulator.sh").write_text("#!/bin/bash\nexit 1\n")
+        result, _ = self.invoke(HERMES_FLEET_LANE_SIM="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.args_path.exists())
 
     def test_failure_keeps_early_failed_case_visible_and_stays_failed(self):
         result, directory = self.invoke("failure")

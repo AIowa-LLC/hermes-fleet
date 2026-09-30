@@ -57,6 +57,19 @@ bash scripts/c1_critical_smoke.sh --list-tests
 bash scripts/c1_critical_smoke.sh
 ```
 
+## Local simulators for parallel lanes
+
+Local `make dev-check` gives each worktree its own simulator (`HF-<id>`, see
+`scripts/lane_simulator.sh`), so concurrent lanes no longer share a device and
+do not need to take turns. Precedence for every runner, including the focused
+preflight, hosted units, critical smoke and iPad smoke: `HERMES_FLEET_SIM_UDID`
+(explicit device) over `HERMES_FLEET_LANE_SIM=1` (lane simulator, default for
+local `dev-check`, off when `CI=true`) over the unchanged first-available-iPhone
+selection that hosted CI uses. Runners record the selection and UDID in their
+evidence metadata. Full details, the iPad variant and cleanup commands
+(`shutdown`, `delete`, `gc`) are in
+[DEVELOPMENT.md](DEVELOPMENT.md#parallel-agent-lanes).
+
 ## Execution and evidence
 
 The runner performs one `xcodebuild build-for-testing` per invocation, followed
@@ -109,6 +122,7 @@ python3 scripts/c1_ui_runner_contract_test.py
 python3 scripts/c1_xcresult_parse_test.py
 bash scripts/c1_packages_contract_test.sh
 python3 scripts/c1_units_contract_test.py
+python3 scripts/lane_simulator_contract_test.py
 ```
 
 Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
