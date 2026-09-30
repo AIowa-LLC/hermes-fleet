@@ -1,21 +1,29 @@
 """Private, expiring cross-process snapshots; mounted behind Hermes dashboard auth.
 
 Each enabled `hermes serve` backend publishes its own process-local registry.
-No session activation, tool execution, provider requests, or control RPCs.
-This plugin intentionally depends on the current Hermes TUI registry helpers;
-an incompatible backend expires rather than reporting an invented empty run.
+No session activation, tool execution, or provider requests. This plugin
+intentionally depends on the current Hermes TUI registry helpers; an
+incompatible backend expires rather than reporting an invented empty run.
+
+Push notification support (0.3.0) adds device registration and a single
+control path: `POST /push/respond` verifies a single-use response token and may
+answer one pending approval with `once` or `deny`. Nothing else is controllable.
 """
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import importlib
+import importlib.util
 import json
 import math
 import os
 from pathlib import Path
 import stat
+import sys
 import time
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
 TTL_SECONDS = 8
 MAX_BYTES = 2_000_000
@@ -27,6 +35,10 @@ SESSION_FIELDS = ("session_key", "title", "preview", "model", "started_at",
 CHILD_FIELDS = ("subagent_id", "parent_id", "depth", "goal", "model",
                 "started_at", "status", "tool_count", "last_tool")
 BOOT_ID = uuid.uuid4().hex
+# Files in the reporting directory that are not publisher snapshots.
+RESERVED_FILES = frozenset({"push.json", "push-tokens.json"})
+MAX_PUSH_REQUEST_BYTES = 8192
+PACKAGE = "fleet_liveops_pkg"
 
 
 def reporting_directory():
@@ -98,6 +110,8 @@ def aggregate(root, now):
     for path in root.glob("*.json"):
         if publishers >= MAX_PUBLISHERS:
             break
+        if path.name in RESERVED_FILES:
+            continue
         try:
             info = path.lstat()
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
@@ -178,3 +192,137 @@ async def snapshot():
     # Plugin routes inherit the dashboard's authentication and enablement
     # middleware. No extra listener or unauthenticated discovery endpoint.
     return await asyncio.to_thread(aggregate, reporting_directory(), time.time())
+
+
+# ---- Push registration and response verification ---------------------------
+
+def push_module(name):
+    """Import a plugin module as part of one package so relative imports work
+    whether Hermes loaded this file by path or a test did."""
+    if PACKAGE not in sys.modules:
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location(
+            PACKAGE, root / "__init__.py", submodule_search_locations=[str(root)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[PACKAGE] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(PACKAGE, None)
+            raise
+    return importlib.import_module(f"{PACKAGE}.{name}")
+
+
+def push_store():
+    return push_module("push_store").PushStore(reporting_directory())
+
+
+def relay_client():
+    return push_module("push_sender").RelayClient()
+
+
+def failure(code, status):
+    # Stable codes only; nothing from the request is echoed.
+    return JSONResponse({"error": code}, status_code=status)
+
+
+async def read_json_object(request):
+    declared = request.headers.get("content-length")
+    if declared and (not declared.isdigit() or int(declared) > MAX_PUSH_REQUEST_BYTES):
+        return None
+    body = await request.body()
+    if len(body) > MAX_PUSH_REQUEST_BYTES:
+        return None
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def resolve_pending_approval(record, request_id, choice):
+    """Answer one pending approval in THIS process, only if it is the request the
+    token was minted for. Returns the number resolved (0 when not pending here)."""
+    from tools import approval
+    digest = push_module("push_payload").command_digest
+    pending = [entry for entry in approval.list_gateway_approvals(record["session_key"])
+               if entry.get("request_id") == request_id]
+    if len(pending) != 1 or digest(pending[0].get("command")) != record["digest"]:
+        return 0
+    return approval.resolve_gateway_approval(record["session_key"], choice, request_id=request_id)
+
+
+@router.post("/push/register")
+async def push_register(request: Request):
+    body = await read_json_object(request)
+    if body is None:
+        return failure("invalid_field", 400)
+    module = push_module("push_store")
+    try:
+        record = module.validate_registration(body)
+        device, created = await asyncio.to_thread(push_store().add_device, record)
+    except module.StoreError as exc:
+        if exc.code == "invalid_field":
+            return failure("invalid_field", 400)
+        if exc.code in ("too_many_devices", "key_id_in_use"):
+            return failure(exc.code, 409)
+        return failure("store_unavailable", 500)
+    except ImportError:
+        return failure("crypto_unavailable", 503)
+    return JSONResponse(module.public_view(device), status_code=201 if created else 200)
+
+
+@router.get("/push/registrations")
+async def push_registrations():
+    module = push_module("push_store")
+    try:
+        devices = await asyncio.to_thread(push_store().devices)
+    except module.StoreError:
+        return failure("store_unavailable", 500)
+    return {"devices": [module.public_view(device) for device in devices],
+            "max_devices": module.MAX_DEVICES}
+
+
+@router.delete("/push/register/{registration_id}")
+async def push_unregister(registration_id: str):
+    module = push_module("push_store")
+    if not module.LOCAL_ID.fullmatch(registration_id):
+        return failure("unknown_registration", 404)
+    try:
+        removed = await asyncio.to_thread(push_store().remove_device, registration_id)
+    except module.StoreError:
+        return failure("store_unavailable", 500)
+    if removed is None:
+        return failure("unknown_registration", 404)
+    # Local removal always happens first (it stops pushes at once). Then ask the
+    # relay to drop its side; that call is idempotent, and a failure is reported
+    # so the app, which also holds the capability, can retry it.
+    try:
+        relay_unregistered = await asyncio.to_thread(
+            push_module("push_sender").unregister_at_relay, removed, relay_client())
+    except Exception:
+        relay_unregistered = False
+    return {"removed": True, "relay_unregistered": relay_unregistered}
+
+
+@router.post("/push/respond")
+async def push_respond(request: Request):
+    """Approve once or deny one pending approval with its single-use token."""
+    body = await read_json_object(request)
+    if (body is None or set(body) != {"token", "request_id", "choice"}
+            or body["choice"] not in ("once", "deny")):
+        return failure("invalid_field", 400)
+    module = push_module("push_store")
+    try:
+        record = await asyncio.to_thread(
+            push_store().consume_token, body["token"], body["request_id"])
+    except module.StoreError as exc:
+        return failure(exc.code, 401 if exc.code == "invalid_token" else 409)
+    try:
+        resolved = await asyncio.to_thread(
+            resolve_pending_approval, record, body["request_id"], body["choice"])
+    except Exception:
+        resolved = 0
+    if not resolved:
+        return failure("not_pending", 409)
+    return {"resolved": resolved}

@@ -7,9 +7,10 @@ from pathlib import Path
 import subprocess
 import zipfile
 
-VERSION = "0.2.0"
-RUNTIME_FILES = ("plugin.yaml", "__init__.py", "dashboard/manifest.json",
-                 "dashboard/plugin_api.py", "dashboard/index.js")
+VERSION = "0.3.0"
+RUNTIME_FILES = ("plugin.yaml", "__init__.py", "push_store.py", "push_payload.py",
+                 "push_sender.py", "dashboard/manifest.json", "dashboard/plugin_api.py",
+                 "dashboard/index.js")
 SETUP_FILES = ("setup.py", "Setup.command", "README.txt")
 
 

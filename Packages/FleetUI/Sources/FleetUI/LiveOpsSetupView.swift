@@ -8,7 +8,7 @@ struct LiveOpsSetupView: View {
     let gatewayID: GatewayID
     @State private var checking = false
 
-    static let downloadURL = URL(string: "https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.2.0")!
+    static let downloadURL = URL(string: "https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.3.0")!
 
     var body: some View {
         NavigationStack {
@@ -24,7 +24,7 @@ struct LiveOpsSetupView: View {
                     ShareLink(item: Self.downloadURL) {
                         Label("Share setup link", systemImage: "square.and.arrow.up")
                     }
-                    Text("Download Fleet-Live-Reporting-0.2.0.zip from the release page and extract it on your Hermes computer.")
+                    Text("Download Fleet-Live-Reporting-0.3.0.zip from the release page and extract it on your Hermes computer.")
                 }
                 Section("2. Install and choose profiles") {
                     Text("On Mac, open Setup.command. For Linux or a custom Hermes installation, follow the instructions included in the download. Other platforms use the manual instructions in the bundle.")
