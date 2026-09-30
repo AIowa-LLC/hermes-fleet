@@ -38,3 +38,18 @@ regexTarget = "line"
 regexes = [
   '''^\s*public static let storageKey = "fleet\.conversation\.pins\.v1"\s*$''',
 ]
+
+# RFC 9180 Appendix A.2 (DHKEM(X25519, HKDF-SHA256), HKDF-SHA256,
+# ChaCha20Poly1305) test-vector recipient private key, shared secret and AEAD
+# key, reused by integrations/hermes-liveops/tests/fixtures/push_hpke_vectors.json
+# so the Python sender and the iOS extension prove HPKE interoperability. They
+# are published, non-secret specification values that protect nothing; the
+# generic-api-key rule flags them by entropy alone. Value-anchored, NOT
+# path-scoped, so any other high-entropy value in that file still fails.
+[[allowlists]]
+description = "RFC 9180 A.2 published HPKE test-vector values (not secrets)"
+regexes = [
+  '''8057991eef8f1f1af18f4a9491d16a1ce333f695d4db8e38da75975c4478e0fb''',
+  '''0bbe78490412b4bbea4812666f7916932b828bba79942424abb65244930d69a7''',
+  '''ad2744de8e17f4ebba575b3f5f5a8fa1f69c2a07f6e7500bc60ca6e3e3ec1c91''',
+]

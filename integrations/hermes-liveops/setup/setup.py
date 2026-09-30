@@ -15,9 +15,10 @@ import tempfile
 import uuid
 
 NAME = "fleet-liveops"
-VERSION = "0.2.0"
-RUNTIME_FILES = ("plugin.yaml", "__init__.py", "dashboard/manifest.json",
-                 "dashboard/plugin_api.py", "dashboard/index.js")
+VERSION = "0.3.0"
+RUNTIME_FILES = ("plugin.yaml", "__init__.py", "push_store.py", "push_payload.py",
+                 "push_sender.py", "dashboard/manifest.json", "dashboard/plugin_api.py",
+                 "dashboard/index.js")
 
 
 class SetupError(Exception):

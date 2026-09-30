@@ -1,8 +1,8 @@
-Fleet Live Reporting 0.2.0
+Fleet Live Reporting 0.3.0
 
 Install this on the computer running Hermes, not on your phone.
 Download the ZIP from the official release:
-https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.2.0
+https://github.com/AIowa-LLC/hermes-fleet/releases/tag/fleet-liveops-v0.3.0
 
 1. Extract the complete ZIP. Keep setup.py, release.json, and plugin together.
 2. On Mac, open Setup.command.
@@ -35,6 +35,17 @@ Only use profile names that exist on your computer. The default gateway
 configuration is always enabled too, so Fleet can read the combined reports.
 Unselected profiles retain their settings. New profiles created later need
 setup again. The tool never disables previously enabled reporting profiles.
+
+New in 0.3.0 (security-relevant): the plugin can also send push notifications.
+This is OFF by default. Installing or updating does not enable it. When you turn
+it on and pair a phone, hooks in the agent process send end-to-end encrypted
+alerts through a relay, and the plugin stores the phone's relay send capability
+(file mode 0600) in Hermes's private fleet-liveops directory. The hooks only
+observe; they never answer or block anything. Existing 0.2.x installs must run
+this setup again to get 0.3.0; profiles keep working without push until then.
+Setup still installs no dependencies: push uses the cryptography library that
+Hermes already includes, and disables itself if that library lacks HPKE support.
+Details: the plugin README ("Push notifications").
 
 What setup changes:
 - Installs the bundled fleet-liveops plugin in the shared Hermes plugin directory.
