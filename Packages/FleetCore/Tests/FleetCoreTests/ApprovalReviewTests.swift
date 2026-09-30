@@ -19,6 +19,12 @@ final class ApprovalReviewTests: XCTestCase {
 
     // MARK: Preview
 
+    func testCollapsedPreviewPreservesCommandTail() {
+        let preview = ApprovalCommandPreview(command: Self.hiddenPipeCommand)
+        XCTAssertTrue(preview.visibleText.hasSuffix("echo step-30"), "the issue requires a tail-preserving preview")
+        XCTAssertTrue(preview.isElided)
+    }
+
     func testShortCommandShownInFullWithNoElision() {
         let preview = ApprovalCommandPreview(command: "ls -la /tmp/fixture")
         XCTAssertEqual(preview.visibleText, "ls -la /tmp/fixture")
@@ -38,7 +44,7 @@ final class ApprovalReviewTests: XCTestCase {
         let preview = ApprovalCommandPreview(command: "a\nb\nc\nd\ne")
         XCTAssertTrue(preview.isElided)
         XCTAssertTrue(preview.requiresReview)
-        XCTAssertEqual(preview.visibleText, "a\nb\nc\nd")
+        XCTAssertEqual(preview.visibleText, "b\nc\nd\ne")
         XCTAssertEqual(preview.hiddenLines, 1)
         XCTAssertEqual(preview.elisionMarker, "… 1 more line · 2 more characters not shown")
     }

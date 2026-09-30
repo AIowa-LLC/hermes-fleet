@@ -21,12 +21,14 @@ public struct ApprovalOrigin: Equatable, Hashable, Sendable {
     public static let maxLabelLength = 80
 
     public let gatewayLabel: String
+    public let gatewayIdentity: String?
     public let botLabel: String
     public let cwd: String
     public let sessionLabel: String
 
-    public init(gateway: String?, bot: String?, cwd: String?, session: String?) {
+    public init(gateway: String?, bot: String?, cwd: String?, session: String?, gatewayID: GatewayID? = nil) {
         self.gatewayLabel = Self.normalize(gateway, limit: Self.maxLabelLength)
+        self.gatewayIdentity = gatewayID.map { Self.normalize($0.rawValue, limit: nil) }
         self.botLabel = Self.normalize(bot, limit: Self.maxLabelLength)
         self.cwd = Self.normalize(cwd, limit: nil)
         self.sessionLabel = Self.normalize(session, limit: Self.maxLabelLength)
@@ -48,7 +50,12 @@ public struct ApprovalOrigin: Equatable, Hashable, Sendable {
 
     /// Spoken as one phrase so VoiceOver reads the origin before the command.
     public var accessibilityDescription: String {
-        "From gateway \(gatewayLabel), bot \(botLabel), working folder \(cwd), session \(sessionLabel)."
+        "From gateway \(qualifiedGatewayLabel), bot \(botLabel), working folder \(cwd), session \(sessionLabel)."
+    }
+
+    public var qualifiedGatewayLabel: String {
+        guard let gatewayIdentity, gatewayIdentity != gatewayLabel else { return gatewayLabel }
+        return "\(gatewayLabel) (\(gatewayIdentity))"
     }
 
     /// Collapse whitespace/control characters (a multi-line label could
@@ -70,18 +77,16 @@ public struct ApprovalOrigin: Equatable, Hashable, Sendable {
 
 // MARK: - Collapsed preview
 
-/// The collapsed card's view of a command: a bounded head of the text plus an
+/// The collapsed card's view of a command: a bounded tail of the text plus an
 /// explicit count of what is NOT shown. The elision is computed here, never
-/// left to SwiftUI's silent ellipsis, and it is always at the END of the
-/// text (no middle truncation that could hide `| sh` between two visible
-/// halves).
+/// left to SwiftUI's silent ellipsis, and it is always explicitly marked; the final command lines remain visible.
 public struct ApprovalCommandPreview: Equatable, Sendable {
     /// Maximum logical lines the collapsed card shows.
     public static let maxLines = 4
     /// Maximum characters the collapsed card shows.
     public static let maxCharacters = 240
 
-    /// Text safe to render inline (a prefix of the command).
+    /// Text safe to render inline (a suffix of the command).
     public let visibleText: String
     public let totalLines: Int
     public let totalCharacters: Int
@@ -98,20 +103,20 @@ public struct ApprovalCommandPreview: Equatable, Sendable {
         var shown: [Substring] = []
         var partial = false
         var budget = Self.maxCharacters
-        for line in lines.prefix(Self.maxLines) {
+        for line in lines.suffix(Self.maxLines).reversed() {
             if line.count <= budget {
                 shown.append(line)
                 budget -= line.count + 1  // +1 for the newline that rejoins it
             } else {
-                if budget > 0 { shown.append(line.prefix(budget)) }
+                if budget > 0 { shown.append(line.suffix(budget)) }
                 partial = true
                 budget = 0
                 break
             }
             if budget <= 0 { break }
         }
-        visibleText = shown.joined(separator: "\n")
-        // A partially shown last line still counts as shown. A trailing
+        visibleText = shown.reversed().joined(separator: "\n")
+        // A partially shown first line still counts as shown. A trailing
         // newline on otherwise fully shown text is not an elision.
         let elided = partial || lines.count > shown.count
         hiddenCharacters = elided ? max(1, command.count - visibleText.count) : 0
@@ -151,12 +156,17 @@ public struct ApprovalCommandPreview: Equatable, Sendable {
 /// AND command text: if the same request id ever re-arrives carrying different
 /// command text, the earlier review does not carry over.
 public struct ApprovalReviewTracker: Equatable, Sendable {
-    private var reviewed: Set<String> = []
+    private struct Key: Hashable, Sendable {
+        let requestID: String
+        let sessionID: String
+        let command: String
+    }
+    private var reviewed: Set<Key> = []
 
     public init() {}
 
-    private static func key(_ request: ApprovalRequest) -> String {
-        "\(request.requestID)\u{0}\(request.command)"
+    private static func key(_ request: ApprovalRequest) -> Key {
+        Key(requestID: request.requestID, sessionID: request.sessionID, command: request.command)
     }
 
     /// Whether Approve must wait for a review of this request.
@@ -179,16 +189,11 @@ public struct ApprovalReviewTracker: Equatable, Sendable {
     }
 
     public mutating func forget(requestID: String) {
-        reviewed = reviewed.filter { !$0.hasPrefix(requestID + "\u{0}") }
+        reviewed = reviewed.filter { $0.requestID != requestID }
     }
 
     /// Drop every record except those for the given live request ids.
     public mutating func retain(requestIDs: Set<String>) {
-        reviewed = reviewed.filter { entry in
-            guard let id = entry.split(separator: "\u{0}", maxSplits: 1, omittingEmptySubsequences: false).first else {
-                return false
-            }
-            return requestIDs.contains(String(id))
-        }
+        reviewed = reviewed.filter { requestIDs.contains($0.requestID) }
     }
 }

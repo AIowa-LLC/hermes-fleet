@@ -17,7 +17,7 @@ struct ApprovalOriginHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            row("Gateway", origin.gatewayLabel, id: "gateway")
+            row("Gateway", origin.qualifiedGatewayLabel, id: "gateway")
             row("Bot", origin.botLabel, id: "bot")
             row("Folder", origin.cwd, id: "cwd", mono: true)
             row("Session", origin.sessionLabel, id: "session")
@@ -44,7 +44,7 @@ struct ApprovalOriginHeader: View {
 
 // MARK: - Collapsed preview
 
-/// The inline command preview: a bounded head with an explicit, visible
+/// The inline command preview: a bounded tail with an explicit, visible
 /// elision marker and a "Review full command" action. There is no middle
 /// truncation anywhere.
 struct ApprovalCommandPreviewView: View {
@@ -123,7 +123,7 @@ struct ApprovalUntrustedDetail: View {
             Text(detail)
                 .font(.caption)
                 .foregroundStyle(theme.textSecondary)
-                .lineLimit((expanded || startsExpanded) ? nil : 2)
+                .lineLimit((expanded || startsExpanded || !isLong) ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

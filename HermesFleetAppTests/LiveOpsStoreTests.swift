@@ -419,6 +419,36 @@ final class LiveOpsStoreTests: XCTestCase {
         return (store, approvals, store.attentionItems[0])
     }
 
+    func testReviewDoesNotCarryAcrossGatewaysWithMatchingRequestIDs() async throws {
+        let a = ScriptedOps(gatewayID: gatewayA)
+        let b = ScriptedOps(gatewayID: gatewayB)
+        a.operations = [makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .waiting)]
+        b.operations = [makeOperation(gatewayID: gatewayB, runtimeID: "r1", status: .waiting)]
+        let request = ApprovalRequest(requestID: "shared-id", sessionID: "r1", command: Self.longCommand)
+        let aa = ScriptedApprovals()
+        let bb = ScriptedApprovals()
+        aa.pendingByBoolSession = ["r1": [request]]
+        bb.pendingByBoolSession = ["r1": [request]]
+        let store = makeStore(ops: [gatewayA: a, gatewayB: b], approvals: [gatewayA: aa, gatewayB: bb],
+                              gateways: [FleetGateway(id: gatewayA, displayName: "Same"),
+                                         FleetGateway(id: gatewayB, displayName: "Same")])
+        store.beginObserving(.home)
+        defer { store.endObserving(.home) }
+        for _ in 0..<50 where store.attentionItems.count < 2 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let first = try XCTUnwrap(store.attentionItems.first { $0.operation.id.gatewayID == gatewayA })
+        let second = try XCTUnwrap(store.attentionItems.first { $0.operation.id.gatewayID == gatewayB })
+        store.markReviewed(first)
+        XCTAssertTrue(store.canApprove(first))
+        XCTAssertFalse(store.canApprove(second), "reviewing one machine cannot authorize another")
+        let blocked = await store.approve(second)
+        XCTAssertEqual(blocked, LiveOpsStore.reviewRequiredMessage)
+        XCTAssertTrue(bb.respondCalls.isEmpty)
+        XCTAssertNotEqual(store.origin(for: first, gatewayLabel: "Same"),
+                          store.origin(for: second, gatewayLabel: "Same"))
+    }
+
     func testHomeApproveOfLongCommandRequiresReview() async {
         let (store, approvals, item) = await makeLongCommandStore()
         XCTAssertFalse(store.canApprove(item))
@@ -430,7 +460,7 @@ final class LiveOpsStoreTests: XCTestCase {
 
         store.markReviewed(item)
         XCTAssertTrue(store.canApprove(item))
-        XCTAssertNil(store.actionErrors["req-long"], "the review-required note clears once reviewed")
+        XCTAssertNil(store.actionError(for: item), "the review-required note clears once reviewed")
         let allowed = await store.approve(item)
         XCTAssertNil(allowed)
         XCTAssertEqual(approvals.respondCalls.map(\.choice), [.once])

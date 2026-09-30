@@ -374,33 +374,7 @@ public struct GatewayConversationClient: ConversationProviding {
     /// conversation domain, dropping non-conversation handshake events and
     /// preserving unknown conversation types.
     static func eventStream(transport: GatewayWebSocketTransport) -> AsyncStream<ConversationEvent> {
-        // Register synchronously: a prompt may complete before the mapping
-        // task gets scheduled. The transport stream buffers those events.
-        let source = transport.subscribeToEvents()
-        // P0.1: server→client requests (approval / clarify / sudo / secret)
-        // are not gateway events; they ride the same conversation stream as
-        // `.serverRequest`. Subscribing here also replays any request that is
-        // already open (arrived early, or re-delivered by `open_requests`).
-        let requests = transport.subscribeToServerRequests()
-        return AsyncStream { continuation in
-            let task = Task {
-                for await event in source {
-                    if let conversationEvent = decodeEvent(event) {
-                        continuation.yield(conversationEvent)
-                    }
-                }
-                continuation.finish()
-            }
-            let requestTask = Task {
-                for await request in requests {
-                    continuation.yield(.serverRequest(request))
-                }
-            }
-            continuation.onTermination = { _ in
-                task.cancel()
-                requestTask.cancel()
-            }
-        }
+        transport.subscribeToConversationEvents()
     }
 
     /// Compact JSON text for an optional JSON member (tool args/result), nil

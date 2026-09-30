@@ -38,6 +38,7 @@ public struct ServerPromptCard: View {
             case .sudo(let prompt):
                 ValueEntry(
                     model: model,
+                    requestID: request.id,
                     title: "The agent needs your sudo password to run:",
                     detail: prompt.command,
                     detailIsMono: true,
@@ -46,6 +47,7 @@ public struct ServerPromptCard: View {
             case .secret(let prompt):
                 ValueEntry(
                     model: model,
+                    requestID: request.id,
                     title: prompt.prompt.isEmpty
                         ? "The agent needs a value for \(prompt.envVar)."
                         : prompt.prompt,
@@ -132,6 +134,7 @@ public struct ServerPromptCard: View {
 private struct ValueEntry: View {
     @Environment(\.fleetTheme) private var theme
     @Bindable var model: ServerPromptViewModel
+    let requestID: String
     let title: String
     let detail: String
     let detailIsMono: Bool
@@ -168,7 +171,10 @@ private struct ValueEntry: View {
             }
             HStack(spacing: FleetTheme.spacingMd) {
                 Button {
-                    Task { await model.skipValue() }
+                    Task {
+                        guard model.pending?.id == requestID else { return }
+                        await model.skipValue()
+                    }
                 } label: {
                     Text("Decline")
                         .font(.body.weight(.semibold))
@@ -188,7 +194,10 @@ private struct ValueEntry: View {
                     .accessibilityIdentifier("serverprompt.send")
                 } else {
                     Button {
-                        Task { await model.unlockInput() }
+                        Task {
+                            guard model.pending?.id == requestID else { return }
+                            await model.unlockInput()
+                        }
                     } label: {
                         actionLabel("Unlock", symbol: "faceid")
                     }
@@ -205,7 +214,10 @@ private struct ValueEntry: View {
         // Hand the value over and drop it in the same step.
         let entered = value
         value = ""
-        Task { await model.submitValue(entered) }
+        Task {
+            guard model.pending?.id == requestID else { return }
+            await model.submitValue(entered)
+        }
     }
 
     private func actionLabel(_ text: String, symbol: String) -> some View {
@@ -275,7 +287,10 @@ private struct ClarifyEditor: View {
 
             HStack(spacing: FleetTheme.spacingMd) {
                 Button {
-                    Task { await model.skipClarify() }
+                    Task {
+                        guard model.pending?.id == requestID else { return }
+                        await model.skipClarify()
+                    }
                 } label: {
                     Text(prompt.isBatch ? "Skip all" : "Skip")
                         .font(.body.weight(.semibold))
@@ -368,6 +383,7 @@ private struct ClarifyEditor: View {
         typed = ""
         activeIndex = nil
         Task {
+            guard model.pending?.id == requestID else { return }
             if prompt.isBatch {
                 await model.lockClarify(questionID: qid, answer: answer)
             } else {

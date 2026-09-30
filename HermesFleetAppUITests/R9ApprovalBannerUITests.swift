@@ -100,7 +100,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
                       "the collapsed card must mark the elided lines")
         XCTAssertFalse(banner.label.contains("| sh"), "the middle of the command is not shown inline")
         let inlineCommand = firstMatch(in: app, identifier: "approval.banner.command")
-        XCTAssertTrue(inlineCommand.label.contains("echo step-4"), "the head of the command is shown: \(inlineCommand.label)")
+        XCTAssertTrue(inlineCommand.label.contains("echo step-30"), "the tail of the command is shown: \(inlineCommand.label)")
         XCTAssertFalse(inlineCommand.label.contains("…"), "no silent ellipsis inside the preview text")
         attachScreenshot(of: app, name: "p02a-collapsed-card")
         XCTAssertTrue(banner.label.contains("Command truncated"))

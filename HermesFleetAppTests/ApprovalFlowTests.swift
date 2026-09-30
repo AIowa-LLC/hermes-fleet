@@ -121,6 +121,60 @@ final class ApprovalFlowTests: XCTestCase {
         return (approvals, vm)
     }
 
+    private final class PausedBiometrics: AppLockBiometricAuth, @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedCompletion: CheckedContinuation<AppLockAuthResult, Never>?
+        var completion: CheckedContinuation<AppLockAuthResult, Never>? {
+            lock.withLock { storedCompletion }
+        }
+        func canEvaluateBiometrics() -> Bool { true }
+        func evaluateBiometrics(reason: String) async -> AppLockAuthResult {
+            await withCheckedContinuation { continuation in lock.withLock { storedCompletion = continuation } }
+        }
+        func evaluateDevicePasscode(reason: String) async -> Bool { false }
+    }
+
+    func testChangedCommandOnExistingWireIDNeedsFreshReview() throws {
+        let (_, vm) = makeViewModel()
+        let original = ApprovalRequest(requestID: "same", sessionID: "s-1", command: Self.longCommand,
+                                       choices: ["once"], serverRequestID: "wire")
+        vm.handleApprovalRequest(original)
+        vm.markReviewed(try XCTUnwrap(vm.pending))
+        vm.handleApprovalRequest(ApprovalRequest(requestID: "same", sessionID: "s-1",
+            command: Self.longCommand + "\necho changed", choices: ["once"], serverRequestID: "wire"))
+        XCTAssertFalse(vm.canApprove)
+        XCTAssertEqual(vm.pending?.serverRequestID, "wire")
+    }
+
+    func testReviewCompletionForWithdrawnSheetCannotReviewReplacement() throws {
+        let (_, vm) = makeViewModel()
+        vm.handleApprovalRequest(longRequest(id: "old"))
+        let sheetRequest = try XCTUnwrap(vm.pending)
+        vm.handleApprovalRequest(longRequest(id: "replacement"))
+        vm.clearApproval(requestID: "old")
+        vm.markReviewed(sheetRequest)
+        XCTAssertFalse(vm.canApprove)
+        XCTAssertEqual(vm.pending?.requestID, "replacement")
+    }
+
+    func testChangedCommandDuringAuthenticationCannotUsePriorReview() async {
+        let auth = PausedBiometrics()
+        let approvals = ScriptedApprovals()
+        let vm = ApprovalViewModel(approvals: approvals, biometrics: auth)
+        vm.bind(sessionID: "s-1")
+        vm.handleApprovalRequest(longRequest())
+        vm.markReviewed(vm.pending!)
+        let tap = Task { await vm.approve(scope: .once) }
+        for _ in 0..<100 where auth.completion == nil { await Task.yield() }
+        XCTAssertNotNil(auth.completion)
+        vm.handleApprovalRequest(ApprovalRequest(requestID: "req-long", sessionID: "s-1",
+            command: Self.longCommand + "\necho changed", choices: ["once"], serverRequestID: "new-wire-id"))
+        auth.completion?.resume(returning: .success)
+        await tap.value
+        XCTAssertTrue(approvals.respondCalls.isEmpty, "a review of the old text cannot approve changed text")
+        XCTAssertFalse(vm.canApprove)
+    }
+
     // MARK: - Banner state
 
     func testPushedApprovalSurfacesPendingBannerState() {
@@ -534,7 +588,7 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(vm.state, .reviewRequired)
         XCTAssertNotNil(vm.pending)
 
-        vm.markPendingReviewed()
+        vm.markReviewed(vm.pending!)
         XCTAssertTrue(vm.pendingIsReviewed)
         XCTAssertTrue(vm.canApprove)
         XCTAssertEqual(vm.state, .pending)
@@ -555,7 +609,7 @@ final class ApprovalFlowTests: XCTestCase {
     func testReviewedLongCommandStillNeedsBiometrics() async {
         let (approvals, vm) = makeViewModel(biometrics: .failure)
         vm.handleApprovalRequest(longRequest())
-        vm.markPendingReviewed()
+        vm.markReviewed(vm.pending!)
         await vm.approve(scope: .once)
         XCTAssertTrue(approvals.respondCalls.isEmpty, "the biometric gate is unchanged")
         XCTAssertEqual(vm.state, .biometricFailed)
@@ -574,7 +628,7 @@ final class ApprovalFlowTests: XCTestCase {
         let (approvals, vm) = makeViewModel(biometrics: .success)
         vm.handleApprovalRequest(longRequest(id: "req-a"))
         vm.handleApprovalRequest(longRequest(id: "req-b"))
-        vm.markPendingReviewed()
+        vm.markReviewed(vm.pending!)
         await vm.approve(scope: .once)
         XCTAssertEqual(approvals.respondCalls.map(\.requestID), ["req-a"])
         XCTAssertEqual(vm.pending?.requestID, "req-b")
@@ -584,7 +638,7 @@ final class ApprovalFlowTests: XCTestCase {
     func testRedeliveryWithServerRequestIDKeepsReview() {
         let (_, vm) = makeViewModel()
         vm.handleApprovalRequest(longRequest())
-        vm.markPendingReviewed()
+        vm.markReviewed(vm.pending!)
         // Same approval re-arriving as a server request adopts the id but is
         // the same command, so the completed review stands.
         vm.handleApprovalRequest(ApprovalRequest(
@@ -597,7 +651,7 @@ final class ApprovalFlowTests: XCTestCase {
     func testChangedCommandUnderSameRequestIDNeedsFreshReview() {
         let (_, vm) = makeViewModel()
         vm.handleApprovalRequest(longRequest())
-        vm.markPendingReviewed()
+        vm.markReviewed(vm.pending!)
         vm.handleApprovalRequest(ApprovalRequest(
             requestID: "req-long", sessionID: "s-1", command: Self.longCommand + "\nrm -rf /tmp/fixture",
             detail: nil, choices: ["once"], serverRequestID: "srq-1"))
