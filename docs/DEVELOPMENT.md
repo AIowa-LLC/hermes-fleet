@@ -69,7 +69,11 @@ backup-excluded), rebuilds an empty store, re-inserts the salvaged gateway rows,
 and records a type-only `persistence` diagnostics entry. If no file-backed store
 can be created it runs in memory and shows a persistent notice. The
 `HermesFleetCache` directory itself is never removed or renamed. Tests simulate
-failures with `CacheOpenFaultInjection`.
+failures with `CacheOpenFaultInjection`. If even the SwiftData in-memory
+container cannot be built, a final SwiftData-independent store keeps new gateway
+registrations and health for this process while transcript/replay caching and
+Learning/Projects snapshot persistence stay disabled. Recovery still surfaces
+notices and diagnostics; no cache-open failure traps the composition root.
 
 ## Release provenance and catch-up
 

@@ -160,7 +160,7 @@ enum FleetServiceGraph {
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
         // user-added gateway is persisted on Add and restored on launch.
-        let (cacheStore, cacheRecovery) = makeFileBackedCache()
+        let (cacheStore, persistentCache, cacheRecovery) = makeFileBackedCache()
 
         let registry: any GatewayRegistryManaging = GatewayRegistryService(
             credentials: credentialStore,
@@ -183,7 +183,12 @@ enum FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         // ADR-0012: the launch cache rides the SAME container (non-secret
         // posture + file protection) with its own row models.
-        let launchCache: any FleetLaunchCaching = SwiftDataLaunchCacheStore(container: cacheStore.container)
+        let launchCache: any FleetLaunchCaching
+        if let persistentCache {
+            launchCache = SwiftDataLaunchCacheStore(container: persistentCache.container)
+        } else {
+            launchCache = InMemoryLaunchCache()
+        }
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
@@ -201,9 +206,9 @@ enum FleetServiceGraph {
             cronDashboardFactory: makeCronDashboardFactory(credentialStore: credentialStore, pinStore: pinStore),
             artifactRetrievalFactory: makeArtifactRetrievalFactory(credentialStore: credentialStore, pinStore: pinStore),
             learningSeamFactory: makeLearningSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
-            learningSnapshotStore: cacheStore,
+            learningSnapshotStore: persistentCache,
             projectsSeamFactory: makeProjectsSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
-            projectsSnapshotStore: cacheStore,
+            projectsSnapshotStore: persistentCache,
             botModeChatFactory: makeBotModeChatFactory(credentialStore: credentialStore, pinStore: pinStore),
             botProfileFactory: makeBotProfileFactory(credentialStore: credentialStore, pinStore: pinStore),
             roomSourceFactory: makeRoomSourceFactory(credentialStore: credentialStore, pinStore: pinStore),
@@ -844,16 +849,20 @@ enum FleetServiceGraph {
     static func makeFileBackedCache(
         storeURL: URL = defaultCacheStoreURL(),
         faults: CacheOpenFaultInjection = []
-    ) -> (store: SwiftDataCacheStore, recovery: LocalCacheRecoveryReport?) {
+    ) -> (store: any CacheStoring & GatewayRecordStoring & HealthStatsStoring, persistentCache: SwiftDataCacheStore?, recovery: LocalCacheRecoveryReport?) {
         do {
             let opened = try SwiftDataCacheStore.openWithRecovery(storeURL: storeURL, faults: faults)
-            return (opened.store, opened.recovery)
+            return (opened.store, opened.store, opened.recovery)
         } catch {
-            // Not even an in-memory container could be built for the compiled
-            // schema. That is a programmer error every in-memory unit test
-            // would already have caught, not a runtime condition, so there is
-            // no store left to degrade to.
-            preconditionFailure("The cache schema cannot build an in-memory container.")
+            // A resource or schema failure must not trap the composition root.
+            // This final store needs no ModelContainer. Previously salvaged
+            // rows cannot be restored here; report that loss honestly.
+            let failed = (error as? CacheOpenError)?.report
+            let report = LocalCacheRecoveryReport(
+                outcome: failed?.outcome ?? .inMemoryFallback,
+                registry: failed?.registry == .nothingToRestore ? .nothingToRestore : .lost,
+                failureType: String(describing: type(of: error)))
+            return (EmergencyCacheStore(), nil, report)
         }
     }
 }

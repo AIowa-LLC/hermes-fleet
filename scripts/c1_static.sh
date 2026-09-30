@@ -40,7 +40,7 @@ fi
 
 # --- cache failure-policy guard (P0.4b) ---------------------------------------
 note "Cache failure policy: no force-try in FleetServiceGraph.swift"
-HITS=$(grep -nE '\btry!' HermesFleetApp/FleetServiceGraph.swift 2>/dev/null || true)
+HITS=$(grep -nE '\btry!|\bfatalError[[:space:]]*\(|\bpreconditionFailure[[:space:]]*\(' HermesFleetApp/FleetServiceGraph.swift 2>/dev/null || true)
 if [ -z "$HITS" ]; then
   ok "FleetServiceGraph.swift has 0 'try!' (cache open recovers instead of trapping)"
 else

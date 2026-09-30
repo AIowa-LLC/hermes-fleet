@@ -56,7 +56,7 @@ final class LocalCacheRecoveryTests: XCTestCase {
 
         // The app's own open path: no recovery may trigger for a healthy,
         // previously-shipped store.
-        let (store, recovery) = FleetServiceGraph.makeFileBackedCache(storeURL: storeURL)
+        let (store, persistentCache, recovery) = FleetServiceGraph.makeFileBackedCache(storeURL: storeURL)
 
         XCTAssertNil(recovery, "an existing store must open in place, not be rebuilt")
         let gateways = try await store.loadGatewayRecords()
@@ -74,7 +74,7 @@ final class LocalCacheRecoveryTests: XCTestCase {
     func testCorruptStoreIsQuarantinedAndGraphFactoryReturnsWorkingStore() async throws {
         try Data("not a database".utf8).write(to: storeURL)
 
-        let (store, recovery) = FleetServiceGraph.makeFileBackedCache(storeURL: storeURL)
+        let (store, persistentCache, recovery) = FleetServiceGraph.makeFileBackedCache(storeURL: storeURL)
 
         XCTAssertEqual(recovery?.outcome, .quarantinedAndRebuilt)
         try await store.saveGatewayRecord(gateway("gw-new.example.invalid", name: "New"))
@@ -112,7 +112,7 @@ final class LocalCacheRecoveryTests: XCTestCase {
             try await seeded.saveGatewayRecord(gateway("gw-b.example.invalid", name: "Beta"))
         }
 
-        let (store, recovery) = FleetServiceGraph.makeFileBackedCache(
+        let (store, persistentCache, recovery) = FleetServiceGraph.makeFileBackedCache(
             storeURL: storeURL, faults: [.unreadablePrimaryStore])
 
         XCTAssertEqual(recovery?.outcome, .quarantinedAndRebuilt)
@@ -122,15 +122,41 @@ final class LocalCacheRecoveryTests: XCTestCase {
     }
 
     func testUnrecoverableFileFailureFallsBackToInMemoryWithoutTrapping() async throws {
-        let (store, recovery) = FleetServiceGraph.makeFileBackedCache(
+        let (store, persistentCache, recovery) = FleetServiceGraph.makeFileBackedCache(
             storeURL: storeURL, faults: [.unreadablePrimaryStore, .freshFileBackedStore])
 
         XCTAssertEqual(recovery?.outcome, .inMemoryFallback)
-        XCTAssertNil(store.storeURL)
+        XCTAssertNil(persistentCache?.storeURL)
         XCTAssertTrue(recovery?.notices.contains(.runningWithoutLocalCache) == true)
         try await store.saveGatewayRecord(gateway("gw-mem.example.invalid", name: "Memory"))
         let loaded = try await store.loadGatewayRecords()
         XCTAssertEqual(loaded.count, 1, "the session still has a working store")
+    }
+
+    func testFailedInMemoryContainerStillReturnsUsableGraphStores() async throws {
+        let (store, persistentCache, recovery) = FleetServiceGraph.makeFileBackedCache(
+            storeURL: storeURL, faults: [.unreadablePrimaryStore, .freshFileBackedStore, .inMemoryStore])
+        XCTAssertNil(persistentCache)
+        XCTAssertTrue(recovery?.notices.contains(.runningWithoutLocalCache) == true)
+        try await store.saveGatewayRecord(gateway("gw-emergency.example.invalid", name: "Temporary"))
+        try await store.clearCachedData()
+        let records = try await store.loadGatewayRecords()
+        XCTAssertEqual(records.map(\.displayName), ["Temporary"])
+        let history = try await store.loadHistory(sessionID: "s1", for: GatewayID(rawValue: "gw-emergency.example.invalid"))
+        XCTAssertNil(history)
+    }
+
+    func testFailedInMemoryContainerReportsUnrestoredSalvagedGateways() async throws {
+        do {
+            let seeded = try SwiftDataCacheStore.makeFileBacked(storeURL: storeURL)
+            try await seeded.saveGatewayRecord(gateway("gw-before.example.invalid", name: "Before"))
+        }
+        let (store, _, recovery) = FleetServiceGraph.makeFileBackedCache(
+            storeURL: storeURL, faults: [.unreadablePrimaryStore, .freshFileBackedStore, .inMemoryStore])
+        XCTAssertEqual(recovery?.registry, .lost)
+        XCTAssertTrue(recovery?.notices.contains(.savedGatewaysNeedReadding) == true)
+        let records = try await store.loadGatewayRecords()
+        XCTAssertTrue(records.isEmpty)
     }
 
     // MARK: Diagnostics + notices
