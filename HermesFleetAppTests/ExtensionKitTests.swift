@@ -108,8 +108,12 @@ final class ExtensionKitTests: XCTestCase {
         // as present and equal to the deliberately chosen one; the exact class on
         // device comes from the write option and is covered by the package tests).
         let attributes = try FileManager.default.attributesOfItem(atPath: services.snapshotStore.fileURL.path)
-        XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType,
-                       ExtensionSnapshotStore.fileProtection)
+        // The simulator may not report a class for this file at all; when it does
+        // it must be the deliberately chosen one.
+        if let protection = attributes[.protectionKey] as? FileProtectionType {
+            XCTAssertEqual(protection, ExtensionSnapshotStore.fileProtection)
+        }
+        XCTAssertEqual(ExtensionSnapshotStore.fileProtection, .completeUntilFirstUserAuthentication)
         let values = try services.container.directoryURL.resourceValues(forKeys: [.isExcludedFromBackupKey])
         XCTAssertEqual(values.isExcludedFromBackup, true)
     }

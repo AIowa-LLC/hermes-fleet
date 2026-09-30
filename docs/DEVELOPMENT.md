@@ -88,6 +88,7 @@ One CI/release integrator coordinates shared integration surfaces per batch:
 | `scripts/c1_packages.sh` and its contract tests | Reconcile exact package counts with the combined test inventory; preserve failure evidence and real exit status. |
 | `scripts/c1_ui_matrix.sh`, `c1_ui_preflight.sh`, `c1_ui_partition.py`, critical smoke and their contracts | Register every new suite, deterministic/environmental classification, selection mapping, and runtime weight without dropping coverage. |
 | `project.yml` and generated Xcode project | Combine target/resources/dependency edits, generate once from the final inputs, and review drift. Never hand-edit generated output. |
+| `Config/SharedGroups.entitlements`, the `FLEET_SHARED_GROUPS` switch, extension targets and their dependencies | Keep the switch `NO` until the maintainer has registered the App Group and keychain group and regenerated profiles ([extension-kit.md](extension-kit.md)). Extension targets may link only FleetCore, FleetSecurity, and FleetClientKit; `scripts/extension_boundary_guard.py` enforces it. |
 | `.github/workflows/` and CI gate policy | Preserve required check identity, event topology, merge-candidate coverage, concurrency, and diagnostics. |
 | Version/build settings, `RELEASES.md`, release baseline pin and release tooling | Coordinate the exact release source and approved build number; preserve historical provenance and immutable tags. |
 

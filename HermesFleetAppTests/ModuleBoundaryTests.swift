@@ -731,12 +731,14 @@ final class ModuleBoundaryTests: XCTestCase {
         var section: String?
         var extensionTargets: [String: (packages: [String], sources: [String])] = [:]
         var packages: [String] = []
+        var dependsOnTarget = false
         var sources: [String] = []
         func flush() {
             if let name = targetName, ["app-extension", "extensionkit-extension"].contains(targetType) {
                 extensionTargets[name] = (packages, sources)
+                XCTAssertFalse(dependsOnTarget, "extension target \(name) depends on another target")
             }
-            packages = []; sources = []; targetType = ""; section = nil
+            packages = []; sources = []; targetType = ""; section = nil; dependsOnTarget = false
         }
         for raw in yml.split(separator: "\n", omittingEmptySubsequences: true) {
             let line = String(raw)
@@ -755,7 +757,7 @@ final class ModuleBoundaryTests: XCTestCase {
                 if section == "dependencies", item.hasPrefix("package:") {
                     packages.append(item.dropFirst("package:".count).trimmingCharacters(in: .whitespaces))
                 } else if section == "dependencies", item.hasPrefix("target:") {
-                    XCTFail("extension-capable target \(targetName ?? "?") depends on another target")
+                    dependsOnTarget = true
                 } else if section == "sources" {
                     sources.append(item.hasPrefix("path:") ? item.dropFirst(5).trimmingCharacters(in: .whitespaces) : item)
                 }

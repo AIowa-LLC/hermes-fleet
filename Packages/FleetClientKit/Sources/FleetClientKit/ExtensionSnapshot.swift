@@ -170,14 +170,20 @@ public enum ExtensionSnapshotBuilder {
                 runningCount: clamp(input.runningCount),
                 needsAttentionCount: clamp(input.needsAttentionCount),
                 onlineCount: clamp(input.onlineCount),
-                updatedAt: input.observedAt
+                updatedAt: input.observedAt.map(wholeSeconds)
             )
         }
         return ExtensionSnapshot(
-            generatedAt: now,
+            generatedAt: wholeSeconds(now),
             contentHidden: appLockEnabled,
             gateways: Array(entries)
         )
+    }
+
+    /// The on-disk format carries whole seconds (ISO 8601), so truncate here and
+    /// a written snapshot always reads back equal.
+    static func wholeSeconds(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
     }
 
     static func clamp(_ value: Int) -> Int {
