@@ -108,6 +108,36 @@ final class PurgeGatewayTests: XCTestCase {
         XCTAssertEqual(try counts(store, gateway: b), before)
     }
 
+    func testLateWritesCannotRestorePurgedDataUntilGatewayIsRegisteredAgain() async throws {
+        let store = try SwiftDataCacheStore.makeInMemory()
+        let launch = SwiftDataLaunchCacheStore(container: store.container, writeFence: store.writeFence)
+        try await seed(store, gateway: a)
+        try await store.purgeGateway(a)
+        let history = SessionHistory(sessionID: "late", count: 1, messages: [
+            SessionMessage(role: .user, text: "synthetic delayed transcript", timestamp: 1)])
+        // A disconnected view model can already have queued these writes.
+        try? await store.saveHistory(history, for: a)
+        try? await store.saveWatermark(SessionEventWatermark(sessionID: "late", lastSeenSeq: 9), for: a)
+        try? await store.saveReplayEpoch("late", for: a)
+        try? await store.saveHealthStats(GatewayHealthStats(currentState: .offline), for: a)
+        try? await store.saveLearningGraphSnapshot(LearningGraph(
+            buckets: [], summary: LearningGraphSummary(lines: [], start: "", end: "", totalCount: 0)), for: a)
+        try? await store.saveProjectsSnapshot(ProjectsTree(projects: [], activeID: nil, scopedSessionIDs: []), for: a)
+        try? await launch.saveRosterCache(CachedGatewayRoster(gatewayID: a, bots: [], cachedAt: Date()))
+        try? await launch.saveSessionListCache(CachedSessionList(
+            route: Route(gatewayID: a, profileSlug: ProfileSlug(rawValue: "default")), sessions: [], cachedAt: Date()))
+        XCTAssertEqual(try counts(store, gateway: a).total, 0,
+                       "late writes must not resurrect removed gateway data")
+        try await store.saveHistory(history, for: b)
+        XCTAssertEqual(try counts(store, gateway: b).messages, 1)
+        try await store.saveGatewayRecord(StoredGatewayRecord(
+            id: a.rawValue, displayName: "Re-added", endpoint: "https://gateway.example.invalid"))
+        try await store.saveHistory(history, for: a)
+        try await launch.saveRosterCache(CachedGatewayRoster(gatewayID: a, bots: [], cachedAt: Date()))
+        XCTAssertEqual(try counts(store, gateway: a).messages, 1)
+        XCTAssertEqual(try counts(store, gateway: a).launchRoster, 1)
+    }
+
     func testPurgeIsIdempotent() async throws {
         let store = try SwiftDataCacheStore.makeInMemory()
         try await seed(store, gateway: a)

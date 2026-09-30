@@ -183,7 +183,7 @@ enum FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         // ADR-0012: the launch cache rides the SAME container (non-secret
         // posture + file protection) with its own row models.
-        let launchCache: any FleetLaunchCaching = SwiftDataLaunchCacheStore(container: cacheStore.container)
+        let launchCache: any FleetLaunchCaching = SwiftDataLaunchCacheStore(container: cacheStore.container, writeFence: cacheStore.writeFence)
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
