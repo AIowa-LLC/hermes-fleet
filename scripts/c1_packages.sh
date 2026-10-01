@@ -1,6 +1,6 @@
 #!/bin/bash
-# C1 packages phase — host `swift test` for the four non-UIKit packages.
-#   FleetCore / FleetNetworking / FleetPersistence / FleetSecurity
+# C1 packages phase — host `swift test` for the five non-UIKit packages.
+#   FleetCore / FleetNetworking / FleetPersistence / FleetSecurity / FleetClientKit
 # FleetUI imports UIKit and cannot `swift test` on the macOS host; it is
 # validated by the module-boundary check (static phase) + hosted
 # ModuleBoundaryTests (units phase).
@@ -15,7 +15,8 @@ expected_test_count() {
     FleetCore) echo 652 ;;
     FleetNetworking) echo 582 ;;
     FleetPersistence) echo 40 ;;
-    FleetSecurity) echo 37 ;;
+    FleetSecurity) echo 47 ;;
+    FleetClientKit) echo 52 ;;
     *) return 1 ;;
   esac
 }
@@ -49,7 +50,7 @@ run_pkg() {
   count=$(printf '%s\n' "$summary" | sed -nE 's/^[[:space:]]*Executed ([0-9]+) tests?, with ([0-9]+ tests? skipped and )?0 failures([[:space:](]|$).*/\1/p')
 
   # Exact count is intentional: the current declared XCTest inventories are
-  # 652/582/40/37 (including Live Ops and ownership/cache regressions). Update
+  # 652/582/40/47/52 (including Live Ops and ownership/cache regressions). Update
   # these baselines with deliberate test additions or removals; a partial run
   # must never look green merely because its completed subset reported zero
   # failures.
@@ -70,6 +71,7 @@ run_pkg FleetCore
 run_pkg FleetNetworking
 run_pkg FleetPersistence
 run_pkg FleetSecurity
+run_pkg FleetClientKit
 
 printf '\n=====================================\n'
 printf 'C1 packages phase: FAIL=%d\n' "$FAIL"

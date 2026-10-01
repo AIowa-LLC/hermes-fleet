@@ -16,6 +16,10 @@ Owns JSON-RPC/WebSocket transport, authentication helpers, gateway clients, repl
 
 Owns Keychain-backed credential, token, and trust-pin storage. Secret persistence should not leak into UI or cache modules.
 
+### FleetClientKit
+
+The extension-safe client layer for app extensions (notification service, widgets, Live Activity, controls). Depends only on FleetCore and FleetSecurity and imports nothing else from the app: no FleetNetworking, FleetUI, FleetPersistence, UIKit, or SwiftData. It owns the shared-group configuration and container resolution (with an app-container fallback while the App Group is not enabled), the redacted extension snapshot store, and a one-shot HTTPS JSON-RPC helper with SPKI pin verification. See [`extension-kit.md`](extension-kit.md).
+
 ### FleetPersistence
 
 Owns non-secret SwiftData cache models and snapshots used for offline or cold-start presentation.
@@ -35,13 +39,16 @@ FleetCore
   ↑
   ├─ FleetNetworking
   ├─ FleetSecurity
+  │    ↑
+  │    └─ FleetClientKit
   ├─ FleetPersistence
   └─ FleetUI
 
 HermesFleetApp → all modules
+App extensions → FleetCore, FleetSecurity, FleetClientKit only
 ```
 
-The module-boundary test guards the rule that `FleetUI` does not import `FleetNetworking`.
+The module-boundary test guards the rule that `FleetUI` does not import `FleetNetworking`. `ModuleBoundaryTests` and `scripts/extension_boundary_guard.py` also guard the extension-safe allow-list for `FleetClientKit` and extension targets.
 
 ## Navigation and ownership model
 

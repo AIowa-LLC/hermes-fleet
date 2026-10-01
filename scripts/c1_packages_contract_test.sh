@@ -22,7 +22,8 @@ case "$package" in
   FleetCore) expected=652 ;;
   FleetNetworking) expected=582 ;;
   FleetPersistence) expected=40 ;;
-  FleetSecurity) expected=37 ;;
+  FleetSecurity) expected=47 ;;
+  FleetClientKit) expected=52 ;;
   *) echo "unexpected package: $package" >&2; exit 65 ;;
 esac
 
@@ -77,10 +78,10 @@ check_case() {
   fi
 
   if [ "$expected_status" -eq 0 ]; then
-    if [ "$(printf '%s\n' "$output" | grep -c '^PASS  .* swift test complete')" -eq 4 ]; then
+    if [ "$(printf '%s\n' "$output" | grep -c '^PASS  .* swift test complete')" -eq 5 ]; then
       echo "PASS  $mode"
     else
-      echo "FAIL  $mode (not all four package suites passed)"
+      echo "FAIL  $mode (not all five package suites passed)"
       echo "$output" | tail -12
       FAIL=$((FAIL+1))
     fi

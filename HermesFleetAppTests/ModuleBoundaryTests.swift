@@ -3,6 +3,7 @@ import Security
 import FleetCore
 import FleetNetworking
 import FleetSecurity
+import FleetClientKit
 import FleetPersistence
 import FleetUI
 
@@ -672,5 +673,128 @@ final class ModuleBoundaryTests: XCTestCase {
         XCTAssertEqual(restored?.lastDisconnectReason, "normal closure")
         XCTAssertEqual(restored?.pingSampleCount, 1)
         XCTAssertEqual(restored?.lastPingRTTMilliseconds, 8.0)
+    }
+
+    // MARK: F3 — extension-safe boundary (FleetClientKit + future extension targets)
+
+    private var repoRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+    }
+
+    /// Module names imported by the Swift files under `directory`.
+    private func importedModules(under directory: URL) throws -> [(file: String, module: String)] {
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil))
+        var found: [(String, String)] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for line in text.split(separator: "\n") {
+                var words = line.trimmingCharacters(in: .whitespaces).split(separator: " ").map(String.init)
+                while let first = words.first, first.hasPrefix("@") { words.removeFirst() }
+                guard words.count >= 2, words[0] == "import" else { continue }
+                found.append((url.lastPathComponent, words[1]))
+            }
+        }
+        return found
+    }
+
+    func testFleetClientKitImportsOnlyTheExtensionSafeAllowList() throws {
+        // FleetClientKit is linkable by extensions, so it may import only
+        // Foundation/Security/OSLog/CryptoKit plus FleetCore and FleetSecurity —
+        // never FleetNetworking's WebSocket stack, FleetUI/AppEnvironment,
+        // FleetPersistence (SwiftData), or UIKit/SwiftUI.
+        let allowed: Set<String> = ["Foundation", "Security", "OSLog", "CryptoKit", "FleetCore", "FleetSecurity"]
+        let imports = try importedModules(
+            under: repoRoot.appendingPathComponent("Packages/FleetClientKit/Sources"))
+        XCTAssertFalse(imports.isEmpty, "the scan must actually see FleetClientKit sources")
+        for (file, module) in imports {
+            XCTAssertTrue(allowed.contains(module), "\(file) imports '\(module)' outside the extension-safe allow-list")
+        }
+        let manifest = try String(
+            contentsOf: repoRoot.appendingPathComponent("Packages/FleetClientKit/Package.swift"), encoding: .utf8)
+        for forbidden in ["FleetNetworking", "FleetUI", "FleetPersistence"] {
+            XCTAssertFalse(manifest.contains("\"../\(forbidden)\""), "FleetClientKit must not depend on \(forbidden)")
+        }
+    }
+
+    func testExtensionTargetsLinkOnlyCoreSecurityAndClientKit() throws {
+        // Dependency allow-list for every app-extension target that project.yml
+        // will ever declare (the NSE, widgets, Live Activity arrive in later
+        // lanes): FleetCore + FleetSecurity + FleetClientKit only, and no source
+        // import of FleetNetworking / FleetUI / FleetPersistence / app code.
+        let yml = try String(contentsOf: repoRoot.appendingPathComponent("project.yml"), encoding: .utf8)
+        let allowedPackages: Set<String> = ["FleetCore", "FleetSecurity", "FleetClientKit"]
+        let forbiddenImports: Set<String> = ["FleetNetworking", "FleetUI", "FleetPersistence", "HermesFleetApp"]
+        var inTargets = false
+        var targetName: String?
+        var targetType = ""
+        var section: String?
+        var extensionTargets: [String: (packages: [String], sources: [String])] = [:]
+        var packages: [String] = []
+        var dependsOnTarget = false
+        var sources: [String] = []
+        func flush() {
+            if let name = targetName, ["app-extension", "extensionkit-extension"].contains(targetType) {
+                extensionTargets[name] = (packages, sources)
+                XCTAssertFalse(dependsOnTarget, "extension target \(name) depends on another target")
+            }
+            packages = []; sources = []; targetType = ""; section = nil; dependsOnTarget = false
+        }
+        for raw in yml.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(raw)
+            let text = line.trimmingCharacters(in: .whitespaces)
+            if text.isEmpty || text.hasPrefix("#") { continue }
+            let indent = line.prefix { $0 == " " }.count
+            if indent == 0 { flush(); targetName = nil; inTargets = text == "targets:"; continue }
+            guard inTargets else { continue }
+            if indent == 2, text.hasSuffix(":") { flush(); targetName = String(text.dropLast()); continue }
+            if indent == 4 {
+                let key = text.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
+                if key == "type" { targetType = text.split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? "" }
+                section = ["sources", "dependencies"].contains(key) ? key : nil
+            } else if let section, text.hasPrefix("- ") {
+                let item = String(text.dropFirst(2))
+                if section == "dependencies", item.hasPrefix("package:") {
+                    packages.append(item.dropFirst("package:".count).trimmingCharacters(in: .whitespaces))
+                } else if section == "dependencies", item.hasPrefix("target:") {
+                    dependsOnTarget = true
+                } else if section == "sources" {
+                    sources.append(item.hasPrefix("path:") ? item.dropFirst(5).trimmingCharacters(in: .whitespaces) : item)
+                }
+            }
+        }
+        flush()
+        for (name, target) in extensionTargets {
+            for package in target.packages {
+                XCTAssertTrue(allowedPackages.contains(package), "extension target \(name) links \(package)")
+            }
+            for source in target.sources {
+                for (file, module) in try importedModules(under: repoRoot.appendingPathComponent(source)) {
+                    XCTAssertFalse(forbiddenImports.contains(module), "extension source \(file) imports \(module)")
+                }
+            }
+        }
+        // The app target is the composition root and links FleetClientKit.
+        XCTAssertTrue(yml.contains("- package: FleetClientKit"))
+    }
+
+    func testExistingGatewaySecretStoresStayAppPrivate() {
+        // Only the push key may use a shared access group (FleetSharedKeychain,
+        // AfterFirstUnlockThisDeviceOnly). Gateway credentials, tokens and TLS
+        // pins must never carry an access group and stay WhenUnlocked.
+        let stores: [[String: Any]] = [
+            KeychainCredentialStore.baseAttributes(account: "g"),
+            KeychainTokenStore.baseAttributes(account: "g"),
+            KeychainPinStore.baseAttributes(account: "g"),
+        ]
+        for attributes in stores {
+            XCTAssertNil(attributes[kSecAttrAccessGroup as String])
+            XCTAssertEqual(attributes[kSecAttrAccessible as String] as? String,
+                           kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        }
+        let shared = FleetSharedKeychain.baseAttributes(item: .pushPrivateKey, accessGroup: "SYNTHETIC.group")
+        XCTAssertEqual(shared[kSecAttrAccessible as String] as? String,
+                       kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+        XCTAssertEqual(FleetSharedKeychainItem.allCases, [.pushPrivateKey])
     }
 }
