@@ -65,6 +65,29 @@ public struct GatewayApprovalClient: ApprovalsProviding {
         }
     }
 
+    /// P0.1: answer a server→client `approval` request with a JSON-RPC
+    /// RESPONSE to its `srq-` id (`{choice, all?}`); an approval that arrived
+    /// on the legacy `approval.request` event still uses `approval.respond`.
+    public func respond(
+        to request: ApprovalRequest,
+        choice: ApprovalChoice,
+        all: Bool
+    ) async throws -> Int {
+        guard let serverRequestID = request.serverRequestID else {
+            return try await respond(
+                sessionID: request.sessionID, requestID: request.requestID, choice: choice, all: all)
+        }
+        var result: [String: JSONValue] = ["choice": .string(choice.rawValue)]
+        if all { result["all"] = .bool(true) }
+        do {
+            try await transport.respondToServerRequest(id: serverRequestID, result: .object(result))
+        } catch let error as TransportError {
+            throw Self.mapTransportError(error)
+        }
+        Self.log.info("approval response choice=\(choice.rawValue, privacy: .public) via=server-request")
+        return 1
+    }
+
     public func setSessionYolo(_ enabled: Bool, sessionID: String) async throws -> Bool {
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")

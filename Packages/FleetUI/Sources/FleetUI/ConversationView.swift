@@ -335,6 +335,11 @@ public struct ConversationView: View {
                     Task { await approvalModel.deny() }
                 }
             }
+            // P0.1: clarify / sudo / secret prompts from server→client
+            // requests, in the same place and style as the approval banner.
+            if let promptModel = model.serverPromptViewModel {
+                ServerPromptCard(model: promptModel)
+            }
             transcriptList(model)
             composer(model)
         }

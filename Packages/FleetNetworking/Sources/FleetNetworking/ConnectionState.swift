@@ -47,6 +47,14 @@ public struct TransportConfiguration: Sendable, Equatable {
     /// connection as abnormal. Junk frames never refresh liveness, so this
     /// bounds how long a malformed/bad peer can masquerade as alive.
     public var malformedFrameLimit: Int
+    /// P0.1: whether this transport tells the gateway, once per connection
+    /// after `gateway.ready`, that its owner answers server→client requests
+    /// (`client.capabilities {server_requests: true}`). Only the conversation
+    /// transport — the one whose screen renders approval / clarify / sudo /
+    /// secret prompts — opts in. A transport that advertised without a UI
+    /// behind it would make the gateway park prompts nobody can answer
+    /// instead of failing fast.
+    public var advertisesServerRequests: Bool
 
     /// Convenience accessor for the flat inbound deadline implied by the
     /// tiered windows (the reconnect window extended for in-flight tool
@@ -60,13 +68,15 @@ public struct TransportConfiguration: Sendable, Equatable {
         livenessTiming: ConnectionLivenessTiming = .standard,
         connectTimeout: Duration = .seconds(15),
         requestTimeout: Duration = .seconds(120),
-        malformedFrameLimit: Int = 8
+        malformedFrameLimit: Int = 8,
+        advertisesServerRequests: Bool = false
     ) {
         self.pingInterval = pingInterval
         self.livenessTiming = livenessTiming
         self.connectTimeout = connectTimeout
         self.requestTimeout = requestTimeout
         self.malformedFrameLimit = malformedFrameLimit
+        self.advertisesServerRequests = advertisesServerRequests
     }
 
     /// Legacy flat-deadline init (t_a07ca37e compat): maps the pre-tiering
@@ -81,7 +91,8 @@ public struct TransportConfiguration: Sendable, Equatable {
         inboundDeadline: Duration,
         connectTimeout: Duration = .seconds(15),
         requestTimeout: Duration = .seconds(120),
-        malformedFrameLimit: Int = 8
+        malformedFrameLimit: Int = 8,
+        advertisesServerRequests: Bool = false
     ) {
         let seconds = max(0.05, Double(inboundDeadline.components.seconds)
             + Double(inboundDeadline.components.attoseconds) / 1_000_000_000_000_000_000)
@@ -95,11 +106,17 @@ public struct TransportConfiguration: Sendable, Equatable {
             ),
             connectTimeout: connectTimeout,
             requestTimeout: requestTimeout,
-            malformedFrameLimit: malformedFrameLimit
+            malformedFrameLimit: malformedFrameLimit,
+            advertisesServerRequests: advertisesServerRequests
         )
     }
 
     public static let standard = TransportConfiguration()
+
+    /// P0.1: the conversation transport — `standard` timing, and it
+    /// advertises `client.capabilities {server_requests: true}` because the
+    /// conversation screen answers approval / clarify / sudo / secret requests.
+    public static let conversation = TransportConfiguration(advertisesServerRequests: true)
 }
 
 /// Thread-safe box for the observable `TransportState` so the actor can expose

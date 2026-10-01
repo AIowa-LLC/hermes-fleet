@@ -393,7 +393,10 @@ enum FleetServiceGraph {
                 baseURL: base,
                 authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
-                configuration: .standard
+                // P0.1: the conversation transport answers server→client
+                // requests (approval / clarify / sudo / secret), so it — and
+                // only it — advertises `client.capabilities`.
+                configuration: .conversation
             )
             return GatewayConversationSession(
                 gatewayID: gateway.id,

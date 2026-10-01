@@ -265,6 +265,10 @@ public final class ConversationViewModel {
     /// Lazily built once the session opens; nil when the concrete session
     /// exposes no approvals seam (fail-soft feature detection).
     public private(set) var approvalViewModel: ApprovalViewModel?
+    /// P0.1 — clarify / sudo / secret prompts raised as server→client
+    /// requests. Built with the approval VM when the session exposes the
+    /// server-prompt seam; nil otherwise.
+    public private(set) var serverPromptViewModel: ServerPromptViewModel?
 
     /// Dogfood r8: reasoning (thinking level) VM — session-scoped
     /// config.get/set `reasoning`. nil until the session opens with a
@@ -2045,6 +2049,18 @@ public final class ConversationViewModel {
         } else {
             approvalViewModel?.bind(sessionID: opened.sessionID)
         }
+        // P0.1: clarify / sudo / secret prompts (server→client requests) —
+        // same one-cast build. Requests that arrived before this point are
+        // replayed by the transport when the event subscription starts.
+        if serverPromptViewModel == nil {
+            if let capable = session as? ServerPromptCapable {
+                let vm = ServerPromptViewModel(prompts: capable.serverPrompts, biometrics: biometrics)
+                vm.bind(sessionID: opened.sessionID)
+                serverPromptViewModel = vm
+            }
+        } else {
+            serverPromptViewModel?.bind(sessionID: opened.sessionID)
+        }
         // R9-T2/T3/T4: same one-cast build for the tooling seam (sticky
         // model pick, context meter, steer/rename/fork).
         if toolingViewModel == nil {
@@ -2424,6 +2440,25 @@ public final class ConversationViewModel {
                     choices: choices
                 )
             )
+
+        case .serverRequest(let request):
+            // P0.1: approval / clarify / sudo / secret raised as a JSON-RPC
+            // request (live, or re-delivered by `open_requests` on resume).
+            // The legacy `approval.request` event above keeps working for
+            // gateways that predate server requests.
+            switch request.kind {
+            case .approval(let approval):
+                approvalViewModel?.handleApprovalRequest(approval)
+            case .clarify, .sudo, .secret:
+                serverPromptViewModel?.handle(request)
+            }
+
+        case .requestCancelled(_, let requestID, _, _, _):
+            // P0.1: `request.cancel` — the gateway withdrew the request.
+            // Dismiss the matching prompt only; a withdrawal is never a
+            // denial, so nothing is sent.
+            approvalViewModel?.cancelServerRequest(id: requestID)
+            serverPromptViewModel?.cancel(requestID: requestID)
 
         case .error(_, let message, _):
             appendRow(.init(id: nextRowID(), kind: .error, text: message, isFailed: true))

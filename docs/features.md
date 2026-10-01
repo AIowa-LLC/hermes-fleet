@@ -53,6 +53,19 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
   backup, bounded (50 drafts, 20,000 characters each, 30 days), and removed when
   their gateway is removed or local cache is cleared
 - approvals and per-session control surfaces
+- agent prompts raised as server-to-client requests: dangerous-command
+  approvals (Deny is one tap; Approve stays Face ID gated and offers only the
+  scopes the gateway supplied), clarify questions (single, multi-select and
+  batch with per-question locks; Skip is one tap), and sudo-password / secret
+  requests. Sudo and secret entry is hidden behind Face ID, uses a secure field,
+  is marked privacy-sensitive, is never cached, persisted, logged, or placed in
+  the transcript, and Decline sends an empty value. When the gateway withdraws
+  a prompt (timeout, interrupt, answered elsewhere) the card simply disappears:
+  a withdrawal is never recorded as a denial and no answer is sent. Prompts
+  still waiting after a reconnect reappear once. Gateways that predate this
+  protocol keep working through the legacy `approval.request` event. Other
+  server-to-client requests (preview, terminal, vault, tour) are refused so the
+  agent fails fast; only the conversation connection announces this capability.
 - model selection and context information
 - steer, rename, and fork workflows where supported
 - session thinking level: a composer gauge button (right cluster, between
