@@ -31,6 +31,7 @@ public enum GatewayArtifactRetrieval {
         credentialStore: any CredentialStoring,
         pinStore: (any SynchronousPinStoring)? = nil,
         sessionStore: (any GatewayAuthenticator.GatewaySessionLeasing)? = nil,
+        nativeOAuthClient: NativeOAuthClient? = nil,
         limits: ArtifactTransferLimits = .standard,
         urlSessionConfiguration: URLSessionConfiguration = .ephemeral
     ) -> any ArtifactRetrieving {
@@ -97,6 +98,19 @@ public enum GatewayArtifactRetrieval {
                     cookie = try await login()
                 }
                 return .cookie(cookie)
+            case .oauthNative:
+                guard let nativeOAuthClient else {
+                    throw ArtifactTransportError.authenticationRequired(
+                        detail: "native sign-in is not configured for this gateway")
+                }
+                let token: String
+                do {
+                    token = try await nativeOAuthClient.validAccessToken()
+                } catch {
+                    throw ArtifactTransportError.authenticationRequired(
+                        detail: "native sign-in is unavailable or expired")
+                }
+                return .bearer(token)
             }
         }
 
