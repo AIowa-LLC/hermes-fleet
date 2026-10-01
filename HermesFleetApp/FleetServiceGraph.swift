@@ -300,7 +300,19 @@ enum FleetServiceGraph {
             launchCache: launchCache,
             localCacheRecovery: cacheRecovery,
             ownerEnrollment: ownerEnrollment,
-            pairingService: GatewayPairingClient()
+            pairingService: GatewayPairingClient(),
+            nativeOAuthSignIn: { gateway in
+                guard let client = makeNativeOAuthClient(
+                    gateway: gateway,
+                    pinStore: pinStore,
+                    browser: NativeOAuthWebAuthenticationPresenter()) else {
+                    throw NativeOAuthError.internalError("Gateway endpoint is not configured")
+                }
+                _ = try await client.authenticate()
+            },
+            nativeOAuthSignOut: { gatewayID in
+                try await KeychainOAuthTokenStore().deleteTokenPair(for: gatewayID)
+            }
         )
     }
 
@@ -446,6 +458,16 @@ enum FleetServiceGraph {
                 let cookie = try await PasswordLoginClient(baseURL: base, urlSession: urlSession).login(
                     username: username, password: credential.rawValue)
                 return .cookie(cookie)
+            case .oauthNative:
+                guard let client = makeNativeOAuthClient(
+                    gateway: gateway,
+                    pinStore: pinStore,
+                    browser: UnavailableNativeOAuthBrowser(),
+                    urlSession: urlSession) else {
+                    throw KanbanBoardError.malformedResponse("gateway endpoint is not configured")
+                }
+                let token = try await client.validAccessToken()
+                return .bearer(token)
             }
         }
     }
@@ -487,7 +509,11 @@ enum FleetServiceGraph {
                 gateway: gateway,
                 credentialStore: credentialStore,
                 pinStore: pinStore,
-                sessionStore: FleetServiceGraph.sharedSessionStore)
+                sessionStore: FleetServiceGraph.sharedSessionStore,
+                nativeOAuthClient: makeNativeOAuthClient(
+                    gateway: gateway,
+                    pinStore: pinStore,
+                    browser: UnavailableNativeOAuthBrowser()))
         }
     }
 
@@ -840,6 +866,21 @@ enum FleetServiceGraph {
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
+    nonisolated private static func makeNativeOAuthClient(
+        gateway: FleetGateway,
+        pinStore: (any SynchronousPinStoring)?,
+        browser: any NativeOAuthBrowserPresenting,
+        urlSession: URLSession? = nil
+    ) -> NativeOAuthClient? {
+        guard let base = gateway.endpoint else { return nil }
+        return NativeOAuthClient(
+            baseURL: base,
+            gatewayID: gateway.id,
+            tokenStore: KeychainOAuthTokenStore(),
+            browser: browser,
+            urlSession: urlSession ?? makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore))
+    }
+
     nonisolated private static func makeConnection(
         gateway: FleetGateway,
         credentialStore: any CredentialStoring,
@@ -955,6 +996,19 @@ enum FleetServiceGraph {
                 urlSession: urlSession,
                 sessionStore: sessionStore
             )
+        case .oauthNative:
+            let nativeOAuthClient = makeNativeOAuthClient(
+                gateway: gateway,
+                pinStore: pinStore,
+                browser: UnavailableNativeOAuthBrowser(),
+                urlSession: urlSession)
+            return GatewayAuthenticator(
+                gatewayID: gateway.id,
+                strategy: .oauthNative,
+                nativeOAuthClient: nativeOAuthClient,
+                baseURL: base,
+                urlSession: urlSession
+            )
         }
     }
 
@@ -1000,5 +1054,13 @@ enum FleetServiceGraph {
                 failureType: String(describing: type(of: error)))
             return (EmergencyCacheStore(), nil, report)
         }
+    }
+}
+
+/// Authenticator construction only refreshes an existing token pair; opening
+/// the browser is explicitly initiated from the gateway authentication UI.
+private struct UnavailableNativeOAuthBrowser: NativeOAuthBrowserPresenting {
+    func presentAuthorizeURL(_ url: URL) async throws {
+        throw NativeOAuthError.internalError("Start native sign-in from gateway settings")
     }
 }

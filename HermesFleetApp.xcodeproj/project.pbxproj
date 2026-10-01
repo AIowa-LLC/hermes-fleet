@@ -10,6 +10,7 @@
 		0098E9FDF89D44B5CE8F7285 /* P3FixLANGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA506D7F4BC4CAA5FA1860A /* P3FixLANGatewayUITests.swift */; };
 		023319986EDBAC88CE708F61 /* RoomChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B14422ADBAE78872C49B68E /* RoomChatViewModelTests.swift */; };
 		03EE5E3631FEB5019C018420 /* FleetAboutCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BDFA81C1B2253DBC85E49C2 /* FleetAboutCompositionTests.swift */; };
+		04CD188EA0D2A58A683323BA /* NativeOAuthWebAuthenticationPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11010BB24F1174D74C57C34 /* NativeOAuthWebAuthenticationPresenter.swift */; };
 		0648A50441FEDC7FB3FE592C /* BotChatTapUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE013E4BDC8AF9FA7B7A6BB /* BotChatTapUITests.swift */; };
 		077A9EE795A11B60623B846A /* ConversationBannerPriorityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28DEF009E316817FF31D22F7 /* ConversationBannerPriorityTests.swift */; };
 		09B973D09FF7C6CE6235D28D /* FOS6ComponentDensityUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB290BD0B4FDD960F068C4F2 /* FOS6ComponentDensityUITests.swift */; };
@@ -210,6 +211,7 @@
 		CE2B614CC7652368415DA8C4 /* UITabNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E486750093968F32F0092 /* UITabNavigation.swift */; };
 		CEE35FD50C2E188BB54260A7 /* SecondGenerationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */; };
 		CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */; };
+		D10998EA2FF8349AB71FD0E8 /* NativeOAuthWebAuthenticationPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11010BB24F1174D74C57C34 /* NativeOAuthWebAuthenticationPresenter.swift */; };
 		D1BF9E8DEB8B1DB09836FEC6 /* ScriptedPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 597F98D887175D8D574E4484 /* ScriptedPairing.swift */; };
 		D1E600C197F91CC57F736C98 /* ConversationToolingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA799545FCC5860AE8ABB192 /* ConversationToolingTests.swift */; };
 		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
@@ -455,6 +457,7 @@
 		9BAF2911DD7A9A273ED1D5D2 /* FleetComponentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetComponentsTests.swift; sourceTree = "<group>"; };
 		9BFB8B62011CAC7842EF9DFE /* SessionPreviewTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPreviewTextTests.swift; sourceTree = "<group>"; };
 		9D049EEAAB53A7AB714E7F2B /* FOS3FourRootShellUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS3FourRootShellUITests.swift; sourceTree = "<group>"; };
+		A11010BB24F1174D74C57C34 /* NativeOAuthWebAuthenticationPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeOAuthWebAuthenticationPresenter.swift; sourceTree = "<group>"; };
 		A3998D65A904F4FE0DAB35A4 /* ChatsSessionFreshnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatsSessionFreshnessTests.swift; sourceTree = "<group>"; };
 		A3F78604FEBB1E6CC8C79E44 /* ConversationCommandRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationCommandRoutingTests.swift; sourceTree = "<group>"; };
 		A6325589D12BB7792035231F /* P0_7LiveTailnetUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P0_7LiveTailnetUITests.swift; sourceTree = "<group>"; };
@@ -773,6 +776,7 @@
 				F3B0B8CAA8D227A38EFDDE89 /* HermesFleetApp.swift */,
 				FABC7CBF939AAF966D3C7ACD /* Info.plist */,
 				CC92C6F059D5190CD44A6FB7 /* LaunchScreen.storyboard */,
+				A11010BB24F1174D74C57C34 /* NativeOAuthWebAuthenticationPresenter.swift */,
 				D8DE26D4BAD2C7D97E451973 /* PrivacyInfo.xcprivacy */,
 				C024B36126DDABAC107D1D02 /* ScriptedCronDashboard.swift */,
 				EA8773C2A5ED25E23750675D /* ScriptedOwnerEnrollment.swift */,
@@ -1217,6 +1221,7 @@
 				B9463B4E722DD317071D7832 /* FleetWatchLink.swift in Sources */,
 				4F9A1A43635ADF04520AC3DA /* GatewayRoomProviders.swift in Sources */,
 				BBD44FDADB8329914537E47D /* HermesFleetApp.swift in Sources */,
+				D10998EA2FF8349AB71FD0E8 /* NativeOAuthWebAuthenticationPresenter.swift in Sources */,
 				C91CAB30216CF7D1EC8872E7 /* ScriptedCronDashboard.swift in Sources */,
 				0B2A466C83F8CD6B41367478 /* ScriptedOwnerEnrollment.swift in Sources */,
 				31997E9E1E73A6E9C7F16831 /* ScriptedPairing.swift in Sources */,
@@ -1241,6 +1246,7 @@
 				3F560639A03BF741A77E72F8 /* FleetSimulator.swift in Sources */,
 				700DFE4F228CE222DCF6B3F4 /* GatewayRoomProviders.swift in Sources */,
 				B9F70C648F21F01431B2BCBC /* HermesFleetApp.swift in Sources */,
+				04CD188EA0D2A58A683323BA /* NativeOAuthWebAuthenticationPresenter.swift in Sources */,
 				21BF5CEDEC822C13EF008E1F /* ScriptedCronDashboard.swift in Sources */,
 				F033846775E638CAD3A12EF0 /* ScriptedOwnerEnrollment.swift in Sources */,
 				D1BF9E8DEB8B1DB09836FEC6 /* ScriptedPairing.swift in Sources */,
