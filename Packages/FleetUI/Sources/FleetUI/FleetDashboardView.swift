@@ -35,6 +35,8 @@ public struct FleetDashboardView: View {
     private let environment: AppEnvironment
 
     @State private var now = Date()
+    /// P0.2a: the Home approval row whose full command is being reviewed.
+    @State private var reviewingItem: LiveOpsAttentionItem?
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -283,6 +285,9 @@ public struct FleetDashboardView: View {
                         .accessibilityIdentifier("fleet.dashboard.needsYou.caveat")
                 }
             }
+            .sheet(item: $reviewingItem) { item in
+                reviewSheet(for: item)
+            }
         }
     }
 
@@ -301,17 +306,18 @@ public struct FleetDashboardView: View {
                             .accessibilityHidden(true)
                             .padding(.top, 2)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("\(operationTitle(item.operation)) · \(gatewayName(item.operation.id.gatewayID))")
+                            Text("Approval needed")
                                 .font(.body.weight(.semibold))
                                 .foregroundStyle(theme.textPrimary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("Approval needed · \(approval.command)")
-                                .font(FleetTheme.secondaryFont)
-                                .foregroundStyle(theme.textSecondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if let message = environment.liveOps.actionErrors[approval.requestID] {
+                            // P0.2a: same origin header and review rule as
+                            // the conversation approval card.
+                            ApprovalOriginHeader(origin: environment.liveOps.origin(
+                                for: item,
+                                gatewayLabel: gatewayName(item.operation.id.gatewayID)))
+                            ApprovalCommandPreviewView(command: approval.command) {
+                                reviewingItem = item
+                            }
+                            if let message = environment.liveOps.actionError(for: item) {
                                 Text(message)
                                     .font(FleetTheme.secondaryFont)
                                     .foregroundStyle(FleetTheme.statusDegraded)
@@ -321,7 +327,7 @@ public struct FleetDashboardView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    let busy = environment.liveOps.resolvingRequestIDs.contains(approval.requestID)
+                    let busy = environment.liveOps.isResolving(item)
                     HStack(spacing: FleetTheme.spacingSm) {
                         Spacer(minLength: 0)
                         Button("Deny") { Task { await environment.liveOps.deny(item) } }
@@ -332,7 +338,9 @@ public struct FleetDashboardView: View {
                             .fixedSize()
                         Button("Approve") { Task { await environment.liveOps.approve(item) } }
                             .buttonStyle(.borderedProminent)
-                            .disabled(busy)
+                            .disabled(busy || !environment.liveOps.canApprove(item))
+                            .accessibilityHint(environment.liveOps.canApprove(item)
+                                ? "" : "Review the full command first")
                             .accessibilityIdentifier("\(rowID).approve")
                             .frame(minWidth: 104, minHeight: 44)
                             .fixedSize()
@@ -366,6 +374,23 @@ public struct FleetDashboardView: View {
                 }
                 .buttonStyle(.fleetPressable)
                 .accessibilityIdentifier(rowID)
+            }
+        }
+    }
+
+    /// Review sheet for a Home approval row; completing it lifts the same
+    /// Approve gate the conversation card uses.
+    @ViewBuilder
+    private func reviewSheet(for item: LiveOpsAttentionItem) -> some View {
+        if let approval = item.pendingApproval {
+            ApprovalReviewSheet(
+                origin: environment.liveOps.origin(
+                    for: item, gatewayLabel: gatewayName(item.operation.id.gatewayID)),
+                command: approval.command,
+                detail: approval.detail,
+                isReviewed: environment.liveOps.canApprove(item)
+            ) {
+                environment.liveOps.markReviewed(item)
             }
         }
     }
