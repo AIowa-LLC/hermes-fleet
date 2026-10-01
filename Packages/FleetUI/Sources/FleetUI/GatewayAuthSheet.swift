@@ -45,6 +45,7 @@ struct GatewayAuthSheet: View {
                         Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
                         Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
                         Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
+                        Text("Sign in with OAuth").tag(GatewayAuthConfiguration.Strategy.oauthNative)
                     }
                     .accessibilityIdentifier("fleet.gateways.auth.strategy")
 
@@ -87,6 +88,12 @@ struct GatewayAuthSheet: View {
                             .disabled(isBusy)
                             .accessibilityIdentifier("fleet.gateways.auth.clear-token")
                     }
+                    if strategy == .oauthNative {
+                        Text("Sign-in opens the system browser. Tokens stay in Keychain and are never shown.")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                            .accessibilityIdentifier("fleet.gateways.auth.oauth-hint")
+                    }
                 }
 
                 if let errorText {
@@ -121,7 +128,7 @@ struct GatewayAuthSheet: View {
         switch strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword: return false
+        case .usernamePassword, .oauthNative: return false
         }
     }
 

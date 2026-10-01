@@ -27,10 +27,15 @@ public struct GatewayAuthConfiguration: Hashable, Sendable, Codable {
         /// credential is the username + password pair (stored as one Keychain
         /// item).
         case usernamePassword
+        /// Gateway-brokered RFC 8252 native flow (OAuth 2.0 for Native Apps):
+        /// system browser → `/auth/native/authorize` (PKCE S256, loopback
+        /// redirect) → `/auth/native/token` → access/refresh tokens in
+        /// Keychain → `Authorization: Bearer` on WS ticket mint.
+        case oauthNative
     }
 
     public var strategy: Strategy
-    /// Whether a credential is currently stored for this gateway (Keychain).
+    /// Whether a credential/token is currently stored for this gateway (Keychain).
     public var credentialStored: Bool
 
     public init(strategy: Strategy = .none, credentialStored: Bool = false) {

@@ -32,6 +32,7 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             case .none: break
             case .sessionTokenHeader(let token): request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
             case .cookie(let cookie): request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
+            case .bearer(let token): request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
             let (data, response) = try await urlSession.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw SnapshotError.invalid }

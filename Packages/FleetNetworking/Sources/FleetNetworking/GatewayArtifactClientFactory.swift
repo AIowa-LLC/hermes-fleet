@@ -76,6 +76,9 @@ public enum GatewayArtifactRetrieval {
                     baseURL: base, urlSession: loginSession
                 ).login(username: username, password: stored.rawValue)
                 return .cookie(cookie)
+            case .oauthNative:
+                throw ArtifactTransportError.authenticationRequired(
+                    detail: "OAuth native artifact retrieval is wired by the composition root")
             }
         }
 

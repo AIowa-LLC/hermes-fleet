@@ -126,4 +126,20 @@ final class WSTicketClientTests: XCTestCase {
         XCTAssertEqual(ticket.authQueryItem.name, "ticket")
         XCTAssertEqual(ticket.authQueryItem.value, "abc123")
     }
+
+    func testMintTicketSendsAuthorizationBearerForAccessToken() async throws {
+        TicketMintURLProtocol.statusCode = 200
+        TicketMintURLProtocol.body = Data(#"{"ticket":"abc123","ttl_seconds":30}"#.utf8)
+
+        let client = WSTicketClient(
+            baseURL: URL(string: "https://gateway.example.invalid:9119")!,
+            accessToken: "oauth-access",
+            urlSession: session
+        )
+        _ = try await client.mintTicket()
+
+        let request = try XCTUnwrap(TicketMintURLProtocol.capturedRequests.first)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer oauth-access")
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Hermes-Session-Token"))
+    }
 }

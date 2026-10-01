@@ -59,10 +59,10 @@ public protocol WSTicketMinting: Sendable {
 
 /// Real REST client for `POST /api/auth/ws-ticket`.
 ///
-/// Auth modes match the SPA (`web/src/lib/api.ts`): loopback sends the
-/// `X-Hermes-Session-Token` header; gated OAuth sends the `hermes_session_at`
-/// cookie. M1 implements the header path (native clients set headers on REST
-/// calls); cookie handling is a later milestone and out of M1 scope.
+/// Auth modes match the SPA (`web/src/lib/api.ts`):
+/// - Loopback: `X-Hermes-Session-Token` header
+/// - Password login: `Cookie` header with the session cookie
+/// - Native OAuth: `Authorization: Bearer <access_token>`
 public struct WSTicketClient: WSTicketMinting {
     public let baseURL: URL
     public let sessionToken: String?
@@ -70,6 +70,8 @@ public struct WSTicketClient: WSTicketMinting {
     /// the `Cookie` header on the mint (P3 LAN-gateway username/password
     /// flow). Mutually exclusive in practice with `sessionToken`.
     public let sessionCookie: SessionCookie?
+    /// OAuth access token for the native flow (sent as `Authorization: Bearer`).
+    public let accessToken: String?
     public let urlSession: URLSession
 
     /// Non-secret diagnostics (endpoint + HTTP status only).
@@ -79,11 +81,13 @@ public struct WSTicketClient: WSTicketMinting {
         baseURL: URL,
         sessionToken: String? = nil,
         sessionCookie: SessionCookie? = nil,
+        accessToken: String? = nil,
         urlSession: URLSession = .shared
     ) {
         self.baseURL = baseURL
         self.sessionToken = sessionToken
         self.sessionCookie = sessionCookie
+        self.accessToken = accessToken
         self.urlSession = urlSession
     }
 
@@ -131,7 +135,13 @@ public struct WSTicketClient: WSTicketMinting {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/auth/ws-ticket"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let sessionToken {
+        // Auth mode selection (mutually exclusive in practice):
+        // 1. OAuth native: Authorization: Bearer <access_token>
+        // 2. Loopback/sessionToken: X-Hermes-Session-Token
+        // 3. P3 LAN-gateway: Cookie header with session cookie
+        if let accessToken {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        } else if let sessionToken {
             request.setValue(sessionToken, forHTTPHeaderField: "X-Hermes-Session-Token")
         }
         if let sessionCookie {

@@ -54,6 +54,8 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         case none
         case sessionTokenHeader(String)
         case cookie(SessionCookie)
+        /// Native OAuth access token, sent as `Authorization: Bearer`.
+        case bearer(String)
     }
 
     // MARK: State (actor-isolated)
@@ -168,6 +170,8 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
             request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
         case .cookie(let cookie):
             request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
+        case .bearer(let token):
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
     }
 
