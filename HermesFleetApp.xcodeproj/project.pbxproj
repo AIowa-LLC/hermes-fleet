@@ -53,6 +53,7 @@
 		316AD24DA48B5B359159BC3E /* ProjectsBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53074EB2159A1156DFDF11FD /* ProjectsBrowserTests.swift */; };
 		34879804AE54086055BC7960 /* RoomLinkMentionsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AF95D840A084BE9C9CAD33C /* RoomLinkMentionsUITests.swift */; };
 		36426EF83499A5696EE6B978 /* FOS5BotsGroupsChatsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA14D54A4EAB999E0168F92 /* FOS5BotsGroupsChatsUITests.swift */; };
+		3644C016D92772D3EAD871F2 /* FleetPerformanceInstrumentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0039A72CF4F5B2055778638D /* FleetPerformanceInstrumentationTests.swift */; };
 		373E555F2D1EA52A98D16E7A /* FOS8RoomLinkRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E355C0C291D253CB607D22B0 /* FOS8RoomLinkRecoveryTests.swift */; };
 		37C634EA51E8DFC3EAD43729 /* ToolActivityGroupingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5DFB5F90D7136805DD0FA4D /* ToolActivityGroupingTests.swift */; };
 		386A8D570EBDA575D4114CFB /* BotsPresenceSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02051CCBDDB3B2B3EB475B61 /* BotsPresenceSyncTests.swift */; };
@@ -157,6 +158,7 @@
 		CE2B614CC7652368415DA8C4 /* UITabNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501E486750093968F32F0092 /* UITabNavigation.swift */; };
 		CEE35FD50C2E188BB54260A7 /* SecondGenerationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */; };
 		CF341E7F76B43EEBFBB728E7 /* L1FixLiveGatewayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */; };
+		CF6C890EBAF00BE74997DDF1 /* FleetMetricKitSubscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5777E769E03D26A1AD98AF7E /* FleetMetricKitSubscriber.swift */; };
 		D1E600C197F91CC57F736C98 /* ConversationToolingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA799545FCC5860AE8ABB192 /* ConversationToolingTests.swift */; };
 		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
 		D6D26E52EB47C6C3A479A84F /* ImageGenerationAnimationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5D3EBD6F4D46D0139E63F9 /* ImageGenerationAnimationUITests.swift */; };
@@ -202,6 +204,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0039A72CF4F5B2055778638D /* FleetPerformanceInstrumentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetPerformanceInstrumentationTests.swift; sourceTree = "<group>"; };
 		02051CCBDDB3B2B3EB475B61 /* BotsPresenceSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotsPresenceSyncTests.swift; sourceTree = "<group>"; };
 		023100E301731FB65176A167 /* B1LiveBoardPickerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = B1LiveBoardPickerUITests.swift; sourceTree = "<group>"; };
 		0507B28E7DB64CC4AC0DDDF4 /* BotAvatarSourcesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatarSourcesUITests.swift; sourceTree = "<group>"; };
@@ -265,6 +268,7 @@
 		5619EE77EA96381BE0742A4A /* BotAvatarThemeDecouplingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatarThemeDecouplingTests.swift; sourceTree = "<group>"; };
 		5637DB7B24B46E1A35E0B3ED /* HermesFleetHappyPathUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesFleetHappyPathUITests.swift; sourceTree = "<group>"; };
 		56E7469CDF296C6A06FB8852 /* ConversationCompactChromeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationCompactChromeUITests.swift; sourceTree = "<group>"; };
+		5777E769E03D26A1AD98AF7E /* FleetMetricKitSubscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetMetricKitSubscriber.swift; sourceTree = "<group>"; };
 		57784BC2C1A8BD4D890F4D33 /* R10MessageReactionsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R10MessageReactionsUITests.swift; sourceTree = "<group>"; };
 		59F155E0A2BEF2BF7DA311A3 /* ArtifactsDestinationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactsDestinationUITests.swift; sourceTree = "<group>"; };
 		5A0DB1D96996A146D5EC96A8 /* ManagementPanesViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementPanesViewModelTests.swift; sourceTree = "<group>"; };
@@ -458,6 +462,7 @@
 				484982E3D802092C667BDF10 /* FleetCoreLogicTests.swift */,
 				E70AC6557D0E8E55FB00F295 /* FleetDashboardFormattingTests.swift */,
 				293B211BE293882FA7D04CB0 /* FleetLaunchCacheTests.swift */,
+				0039A72CF4F5B2055778638D /* FleetPerformanceInstrumentationTests.swift */,
 				D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */,
 				38EA06A37B9128A58A05BBD8 /* FleetUnreadStateTests.swift */,
 				611B38ADDEA10100322CB58F /* FOS2GatewayScopingTests.swift */,
@@ -536,6 +541,7 @@
 				0A603A8D0B8049916523C335 /* AppLockProviders.swift */,
 				745ADDE165B902910C38E299 /* Assets.xcassets */,
 				8A08506C47F80EF97B548420 /* FleetConversationShortcuts.swift */,
+				5777E769E03D26A1AD98AF7E /* FleetMetricKitSubscriber.swift */,
 				F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */,
 				2380AC190371692E170A3C23 /* FleetSimulator.swift */,
 				9A05382B633430B51638CBE2 /* FleetWing.icon */,
@@ -784,6 +790,7 @@
 			files = (
 				C6F51B49816B3F8801F18F68 /* AppLockProviders.swift in Sources */,
 				83B772C524755030F962DEA6 /* FleetConversationShortcuts.swift in Sources */,
+				CF6C890EBAF00BE74997DDF1 /* FleetMetricKitSubscriber.swift in Sources */,
 				F37E76F893963CDB1E25D544 /* FleetServiceGraph.swift in Sources */,
 				3F560639A03BF741A77E72F8 /* FleetSimulator.swift in Sources */,
 				700DFE4F228CE222DCF6B3F4 /* GatewayRoomProviders.swift in Sources */,
@@ -847,6 +854,7 @@
 				2C1CA3847CBD066D704AE4C8 /* FleetCoreLogicTests.swift in Sources */,
 				C5377CCD5DCFD49530466CE3 /* FleetDashboardFormattingTests.swift in Sources */,
 				C9EBAFC1D504D352B9483088 /* FleetLaunchCacheTests.swift in Sources */,
+				3644C016D92772D3EAD871F2 /* FleetPerformanceInstrumentationTests.swift in Sources */,
 				230ED173C2D04A96779776A2 /* FleetThemeTests.swift in Sources */,
 				F076A425426056BD2643427E /* FleetUnreadStateTests.swift in Sources */,
 				0C26BBF27EF90EACF7C2DB65 /* GatewayFormDraftStoreTests.swift in Sources */,

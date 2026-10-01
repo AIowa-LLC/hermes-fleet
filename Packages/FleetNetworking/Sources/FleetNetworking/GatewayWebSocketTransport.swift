@@ -165,6 +165,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     private let clock = ContinuousClock()
 
+    /// F0: performance signposts (`gateway.connect`). Tests inject a recorder.
+    private var signposts: FleetSignposts = .shared
+
+    public func setSignposts(_ signposts: FleetSignposts) {
+        self.signposts = signposts
+    }
+
     public init(
         baseURL: URL,
         authentication: any AuthenticationProviding,
@@ -247,11 +254,14 @@ public actor GatewayWebSocketTransport: HermesTransport {
         }
         connectAttemptID += 1
         let attemptID = connectAttemptID
+        let connectInterval = signposts.begin(.gatewayConnect)
         do {
             try await performConnect()
+            connectInterval.end()
             let waiters = connectWaiters.removeValue(forKey: attemptID) ?? []
             for waiter in waiters { waiter.resume() }
         } catch {
+            connectInterval.end(after: error)
             let waiters = connectWaiters.removeValue(forKey: attemptID) ?? []
             for waiter in waiters { waiter.resume(throwing: error) }
             throw error

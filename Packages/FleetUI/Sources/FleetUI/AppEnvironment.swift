@@ -198,6 +198,8 @@ public final class AppEnvironment {
     /// diagnostics report renders. Details are redacted at record time and
     /// again at render time; nothing here is persisted.
     public let diagnosticsRecorder: DiagnosticsRecorder
+    /// F0: performance signposts (tests inject a recording sink).
+    @ObservationIgnored public var signposts: FleetSignposts = .shared
 
     /// Per-gateway connection-test result, observable (§13 reachable /
     /// unreachable probe). Set only after `testConnection` completes; a
@@ -803,6 +805,10 @@ public final class AppEnvironment {
     /// `removeLaunchCache(for:)` when a gateway is removed and by
     /// `prune(keeping:)` on every settled roster write-through.
     private func hydrateFromLaunchCache() async {
+        // F0: closes `launch.to-paint` on every path (cached paint, or
+        // settled with nothing to paint).
+        var paintVariant = FleetSignpostVariant.empty
+        defer { signposts.endLaunchToPaint(variant: paintVariant) }
         guard let rosters = try? await launchCache.loadRosterCache(),
               let lists = try? await launchCache.loadSessionListCache() else { return }
         let knownIDs = Set(gateways.map(\.id))
@@ -833,6 +839,7 @@ public final class AppEnvironment {
         }
         recomputeUnreadAggregate()
         isViewingCachedFleet = true
+        paintVariant = .cached
     }
 
     /// W4: write-through after a settled refresh — one row per gateway that

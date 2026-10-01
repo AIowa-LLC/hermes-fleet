@@ -1462,6 +1462,80 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(assistant?.text, "in-order history")
     }
 
+    // MARK: - F0 transcript.open signpost
+
+    private func makeSignposts() -> (FleetSignposts, FleetSignpostRecorder) {
+        let recorder = FleetSignpostRecorder()
+        return (FleetSignposts(sink: recorder, stats: FleetPerformanceStats()), recorder)
+    }
+
+    /// Cached rows land first: the interval ends once, as `cached`; the later
+    /// authoritative swap must not end it again.
+    func testTranscriptOpenIntervalEndsOnceCached() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        let (signposts, recorder) = makeSignposts()
+        viewModel.signposts = signposts
+        try await cache.saveHistory(
+            SessionHistory(sessionID: "s-1", count: 1, messages: [
+                SessionMessage(role: .user, text: "cached", timestamp: 1, rowID: "r1"),
+            ]), for: GatewayID(rawValue: "workstation"))
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 1, messages: [
+            SessionMessage(role: .user, text: "cached", timestamp: 1, rowID: "r1"),
+        ]))
+
+        await viewModel.start()
+        await flush()
+        await viewModel.start() // re-appear: must not begin a second interval
+
+        XCTAssertEqual(recorder.beginCount(.transcriptOpen), 1)
+        XCTAssertEqual(recorder.endEvents(.transcriptOpen).map(\.variant), [.cached])
+        XCTAssertTrue(recorder.isBalanced(.transcriptOpen))
+    }
+
+    /// No cache: rows arrive from the live gateway history → `live`.
+    func testTranscriptOpenIntervalEndsOnceLive() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        let (signposts, recorder) = makeSignposts()
+        viewModel.signposts = signposts
+        scripted.historyResult = .success(SessionHistory(sessionID: "s-1", count: 1, messages: [
+            SessionMessage(role: .user, text: "wire", timestamp: 1, rowID: "r1"),
+        ]))
+
+        await viewModel.start()
+        await flush()
+
+        XCTAssertEqual(recorder.beginCount(.transcriptOpen), 1)
+        XCTAssertEqual(recorder.endEvents(.transcriptOpen).map(\.variant), [.live])
+        XCTAssertEqual(recorder.endEvents(.transcriptOpen).map(\.outcome), [.completed])
+        XCTAssertTrue(recorder.isBalanced(.transcriptOpen))
+    }
+
+    /// A new chat has no rows to render: settles as `empty` once open.
+    func testTranscriptOpenIntervalEndsEmptyForNewChat() async throws {
+        let (_, viewModel) = try await makeFixture(sessionID: nil)
+        let (signposts, recorder) = makeSignposts()
+        viewModel.signposts = signposts
+
+        await viewModel.start()
+        await flush()
+
+        XCTAssertEqual(recorder.endEvents(.transcriptOpen).map(\.variant), [.empty])
+        XCTAssertTrue(recorder.isBalanced(.transcriptOpen))
+    }
+
+    /// A failed open ends the interval as `failed`, never leaking it.
+    func testTranscriptOpenIntervalEndsFailedWhenConnectFails() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        let (signposts, recorder) = makeSignposts()
+        viewModel.signposts = signposts
+        scripted.connectError = .unreachable
+
+        await viewModel.start()
+
+        XCTAssertEqual(recorder.endEvents(.transcriptOpen).map(\.outcome), [.failed])
+        XCTAssertTrue(recorder.isBalanced(.transcriptOpen))
+    }
+
     // MARK: - H1 history hydration UX (t_01c9d411)
 
     /// H1: opening an existing session with an EMPTY cache must show the

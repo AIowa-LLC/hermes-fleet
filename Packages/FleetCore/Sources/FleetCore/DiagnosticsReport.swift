@@ -32,6 +32,9 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
     public let gateways: [DiagnosticsGatewaySection]
     /// Recent faults, oldest-first (bounded by the recorder).
     public let recentEvents: [DiagnosticsEvent]
+    /// F0: interval timings + latest MetricKit summary. Nil renders as
+    /// "no performance data supplied" (honest absence).
+    public let performance: FleetPerformanceReport?
 
     public init(
         generatedAt: Date,
@@ -42,7 +45,8 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
         deviceModel: String,
         surfaceContext: String? = nil,
         gateways: [DiagnosticsGatewaySection] = [],
-        recentEvents: [DiagnosticsEvent] = []
+        recentEvents: [DiagnosticsEvent] = [],
+        performance: FleetPerformanceReport? = nil
     ) {
         self.generatedAt = generatedAt
         self.reportID = reportID
@@ -53,6 +57,7 @@ public struct DiagnosticsReportInput: Sendable, Equatable {
         self.surfaceContext = surfaceContext
         self.gateways = gateways
         self.recentEvents = recentEvents
+        self.performance = performance
     }
 }
 
@@ -148,6 +153,10 @@ public enum DiagnosticsReport {
         lines.append("  \(context.isEmpty ? "not captured" : context)")
         lines.append("")
 
+        lines.append("PERFORMANCE")
+        lines.append(contentsOf: performanceLines(input.performance))
+        lines.append("")
+
         lines.append("GATEWAYS")
         if input.gateways.isEmpty {
             lines.append("  No gateways configured.")
@@ -178,6 +187,64 @@ public enum DiagnosticsReport {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Performance (F0)
+
+    /// The PERFORMANCE section body. Numbers and closed-vocabulary labels
+    /// only; every string still passes the report redactor.
+    static func performanceLines(_ performance: FleetPerformanceReport?) -> [String] {
+        guard let performance else { return ["  no performance data supplied"] }
+        var lines: [String] = []
+        for summary in performance.intervals {
+            let name = Redaction.safeDiagnosticReportText(summary.interval.rawValue)
+            guard summary.completedCount > 0,
+                  let low = summary.minMilliseconds,
+                  let median = summary.medianMilliseconds,
+                  let high = summary.maxMilliseconds else {
+                lines.append("  \(name): no completed samples\(outcomeSuffix(summary))")
+                continue
+            }
+            lines.append("  \(name): n=\(summary.completedCount) min \(milliseconds(low)) / median \(milliseconds(median)) / max \(milliseconds(high))\(outcomeSuffix(summary))")
+        }
+        let kit = performance.metricKit
+        if kit.isEmpty {
+            lines.append("  MetricKit: none received yet")
+        }
+        if let metrics = kit.metrics {
+            lines.append("  MetricKit metrics (received \(iso8601(metrics.receivedAt))):")
+            appendMetric(&lines, "Foreground time", metrics.foregroundSeconds, unit: "s")
+            appendMetric(&lines, "Launch to first draw (median)", metrics.medianTimeToFirstDrawMilliseconds, unit: "ms")
+            appendMetric(&lines, "Resume (median)", metrics.medianResumeTimeMilliseconds, unit: "ms")
+            appendMetric(&lines, "Hang time (median)", metrics.medianHangTimeMilliseconds, unit: "ms")
+            appendMetric(&lines, "Peak memory", metrics.peakMemoryMegabytes, unit: "MB")
+            appendMetric(&lines, "Logical writes", metrics.logicalWritesMegabytes, unit: "MB")
+        }
+        if let diagnostics = kit.diagnostics {
+            lines.append("  MetricKit diagnostics (received \(iso8601(diagnostics.receivedAt))):")
+            lines.append("    Crashes: \(max(0, diagnostics.crashCount))")
+            lines.append("    Hangs: \(max(0, diagnostics.hangCount))")
+            lines.append("    Disk-write exceptions: \(max(0, diagnostics.diskWriteExceptionCount))")
+            lines.append("    CPU exceptions: \(max(0, diagnostics.cpuExceptionCount))")
+        }
+        return lines
+    }
+
+    private static func outcomeSuffix(_ summary: FleetIntervalSummary) -> String {
+        var parts: [String] = []
+        if summary.failedCount > 0 { parts.append("\(summary.failedCount) failed") }
+        if summary.cancelledCount > 0 { parts.append("\(summary.cancelledCount) cancelled") }
+        return parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))"
+    }
+
+    private static func appendMetric(_ lines: inout [String], _ label: String, _ value: Double?, unit: String) {
+        guard let value, value.isFinite, value >= 0 else { return }
+        lines.append("    \(label): \(String(format: "%.0f", value)) \(unit)")
+    }
+
+    private static func milliseconds(_ value: Double) -> String {
+        guard value.isFinite else { return "n/a" }
+        return "\(String(format: "%.0f", max(0, value))) ms"
     }
 
     // MARK: - Free-text normalization
