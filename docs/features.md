@@ -45,6 +45,13 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
 - reconnect and recover missed events
 - preserve cached conversation history for cold-start presentation
 - show device-local unread indicators in Chats and drawer Recents; existing sessions are baselined on first observation and opening a conversation marks its gateway timestamp as read
+- unsent composer drafts persist per conversation: keyed by gateway + profile +
+  session ID (canonical Bot Chat included), restored when the conversation
+  reopens (navigation, App Lock, relaunch), and cleared only after a successful
+  send — a failed send keeps the draft. Drafts are device-local, written
+  debounced to a single file with complete file protection and excluded from
+  backup, bounded (50 drafts, 20,000 characters each, 30 days), and removed when
+  their gateway is removed or local cache is cleared
 - approvals and per-session control surfaces
 - approval card integrity: the card header names the gateway, bot, working
   folder, and session the request came from (built from the client's own
