@@ -244,6 +244,10 @@ public struct ConversationView: View {
             // tries again. `start()` below is idempotent for an
             // already-live VM (P2-3), so a retrigger after success is safe.
             guard let viewModel else { return }
+            // R8: this screen is showing (the view model reports it to the
+            // notification layer, which never notifies for the conversation
+            // the user is watching in the active app).
+            viewModel.setOnScreen(true)
             // `.task(id:)` cancellation is cooperative and `start()` has no
             // re-entrancy guard until `openedSessionID` lands, so a trigger
             // change while the first open is still awaiting would run a
@@ -294,7 +298,11 @@ public struct ConversationView: View {
                     loadBytes: { fixture })
             }
         }
+        .onAppear {
+            viewModel?.setOnScreen(true)
+        }
         .onDisappear {
+            viewModel?.setOnScreen(false)
             viewModel?.teardown()
             environment.conversationDrafts.flush()
         }
@@ -339,6 +347,13 @@ public struct ConversationView: View {
             // requests, in the same place and style as the approval banner.
             if let promptModel = model.serverPromptViewModel {
                 ServerPromptCard(model: promptModel)
+            }
+            // R8: explain-first card for interim local notifications, shown
+            // only while something is actually waiting on the user and only
+            // until the user answers it once. Never asks at launch.
+            if environment.localNotifications.isOfferPending,
+               model.approvalViewModel?.pending != nil || model.serverPromptViewModel?.pending != nil {
+                LocalNotificationOfferCard(coordinator: environment.localNotifications)
             }
             transcriptList(model)
             composer(model)

@@ -235,7 +235,12 @@ enum FleetServiceGraph {
             },
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
-            launchCache: launchCache
+            launchCache: launchCache,
+            // R8 (#95): interim local notifications + background grace
+            // window. Local only (no APNs); permission is requested only from
+            // the Settings toggle or the explain-first card, never at launch.
+            localNotifier: SystemLocalNotifier(),
+            backgroundTasks: UIKitBackgroundTasks()
         )
     }
 

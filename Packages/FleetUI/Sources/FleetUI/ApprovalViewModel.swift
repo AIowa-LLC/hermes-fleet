@@ -52,6 +52,10 @@ public final class ApprovalViewModel {
     private let biometrics: any AppLockBiometricAuth
     /// The runtime session id the banner answers for (set on open/resume).
     private var boundSessionID: String?
+    /// R8: reports every id (legacy request id + server-request id) of an
+    /// approval that stopped being pending — answered, resolved elsewhere, or
+    /// withdrawn — so a delivered local notification for it can be removed.
+    public var onRequestResolved: (@MainActor ([String]) -> Void)?
 
     public init(
         approvals: any ApprovalsProviding,
@@ -129,11 +133,19 @@ public final class ApprovalViewModel {
         if pending?.serverRequestID == id {
             promoteNext()
         } else {
+            let removed = queued.filter { $0.serverRequestID == id }
             queued.removeAll { $0.serverRequestID == id }
+            for request in removed { reportResolved(request) }
         }
     }
 
+    private func reportResolved(_ request: ApprovalRequest) {
+        onRequestResolved?([request.requestID] + [request.serverRequestID].compactMap { $0 })
+    }
+
     private func promoteNext() {
+        // `promoteNext` always retires the current pending approval.
+        if let resolved = pending { reportResolved(resolved) }
         if !queued.isEmpty {
             pending = queued.removeFirst()
             state = .pending

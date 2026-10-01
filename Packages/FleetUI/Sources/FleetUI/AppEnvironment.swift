@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import FleetCore
 
 /// Builds a single-gateway connection for a registered gateway, so the app
@@ -521,6 +522,13 @@ public final class AppEnvironment {
     /// R10-T4 — builds the shared on-device voice engine (nil ⇒ fail-closed
     /// default; mic affordances hidden).
     private let voiceEngineFactory: FleetVoiceEngineFactory?
+    /// R8 (#95): interim local notifications (best-effort, opt-in). Always
+    /// present; without a wired notifier it reports `.unavailable` and never
+    /// posts.
+    public let localNotifications: LocalNotificationCoordinator
+    /// R8: the short background grace window after backgrounding. Nil when no
+    /// background-task provider is wired (tests, previews).
+    @ObservationIgnored private var graceWindow: BackgroundGraceWindow?
     /// R10-T3: projects-tree snapshot store (offline browse). Same
     /// construction as the learning snapshot store.
     private let projectsSnapshotStore_: (any ProjectsSnapshotStoring)?
@@ -629,8 +637,14 @@ public final class AppEnvironment {
         conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
-        recoveryTiming: ConnectionRecoveryTiming = .standard
+        recoveryTiming: ConnectionRecoveryTiming = .standard,
+        localNotifier: (any FleetLocalNotifier)? = nil,
+        notificationDefaults: UserDefaults = .standard,
+        backgroundTasks: (any FleetBackgroundTaskProviding)? = nil
     ) {
+        self.localNotifications = LocalNotificationCoordinator(
+            notifier: localNotifier ?? UnavailableLocalNotifier(),
+            defaults: notificationDefaults)
         self.registry = registry
         self.roster = roster
         self.cache = cache
@@ -681,6 +695,43 @@ public final class AppEnvironment {
         liveOps.setProviders(
             gateways: { [weak self] in self?.gateways ?? [] },
             connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
+        if let backgroundTasks {
+            self.graceWindow = BackgroundGraceWindow(
+                provider: backgroundTasks,
+                hasLiveConnections: { [weak self] in self?.hasLiveConversationSessions ?? false },
+                suspend: { [weak self] in await self?.disconnectAll() })
+        }
+    }
+
+    // MARK: R8 — scene activity (local notifications + background grace)
+
+    /// Forwarded from the app root's `scenePhase`. Backgrounding keeps
+    /// already-open conversation transports alive for the OS-granted grace
+    /// window (`beginBackgroundTask` only — no background modes); on expiry
+    /// the connections are intentionally suspended (`disconnectAll()` leaves
+    /// connection INTENT untouched) and the normal foreground restore
+    /// (`restoreIntendedConnections` / `restoreConversationSessions`)
+    /// reconnects them. Returning to the foreground inside the window just
+    /// releases the task.
+    public func handleScenePhase(_ phase: ScenePhase) {
+        localNotifications.setAppActive(phase == .active)
+        if phase == .background {
+            graceWindow?.enterBackground()
+        } else {
+            graceWindow?.enterForeground()
+        }
+    }
+
+    /// Whether any conversation transport is currently reachable — the only
+    /// thing a grace window could keep alive.
+    var hasLiveConversationSessions: Bool {
+        conversationSessions.values.contains { $0.status.isReachable }
+    }
+
+    /// Wire App Lock into notification redaction: with the lock on, text is
+    /// reduced to "Approval needed" style (no bot name).
+    public func attachAppLock(_ controller: AppLockController) {
+        localNotifications.appLockEnabled = { [weak controller] in controller?.shouldLock ?? true }
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -2057,11 +2108,12 @@ public final class AppEnvironment {
 
     /// Tear down all live gateway sessions at a lifecycle boundary.
     ///
-    /// The app lock protects presentation, not already-open sockets. This
-    /// method is therefore called when the app backgrounds and before a lock
-    /// screen is shown. Conversation sessions own their own connectivity
-    /// seam, so they are explicitly disconnected in addition to the base
-    /// gateway connections.
+    /// The app lock protects presentation, not already-open sockets. Callers
+    /// are `clearLocalCache()` and the R8 background grace window's expiry
+    /// (`handleScenePhase`); it is NOT called the moment the app backgrounds
+    /// or before the lock screen is shown. Conversation sessions own their
+    /// own connectivity seam, so they are explicitly disconnected in addition
+    /// to the base gateway connections.
     public func disconnectAll() async {
         // A background/lock teardown hands recovery ownership to foreground
         // restore. Cancel observers and retry timers before the first awaited
@@ -2837,6 +2889,33 @@ public final class AppEnvironment {
                 reference,
                 sourceTitle: sourceTitle,
                 sourceSubtitle: sourceProfile)
+        }
+        // R8: interim local notifications. The closures hold the model
+        // weakly; the coordinator only ever sees generic identity (route,
+        // durable session id for the deep link, bot display name).
+        let notifications = localNotifications
+        let token = model.notificationToken
+        model.onAttentionEvent = { [weak self, weak model] event, startedHere, isReplay in
+            guard let self, let model else { return }
+            let sessionID = model.resolvedSessionID
+            notifications.observe(
+                event,
+                context: ConversationNotificationContext(
+                    token: token,
+                    route: route,
+                    sessionID: sessionID,
+                    canonical: sessionID.map { self.isCanonicalBotChat(route: route, sessionID: $0) } ?? false,
+                    botName: self.bot(for: route)?.displayName),
+                turnStartedHere: startedHere,
+                isReplay: isReplay)
+        }
+        model.onRequestsResolved = { ids in notifications.requestsResolved(ids: ids) }
+        model.onScreenVisibilityChanged = { onScreen in
+            if onScreen {
+                notifications.conversationDidAppear(token: token)
+            } else {
+                notifications.conversationDidDisappear(token: token)
+            }
         }
         return model
     }

@@ -129,6 +129,19 @@ gateway; failed writes do not appear as successful local changes.
 
 Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and the agent setup prompt. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.
 
+## Local notifications (interim, best-effort)
+
+Settings has an opt-in "Local notifications" toggle (off by default). When on, Fleet posts a **local** notification if an approval, clarify question, sudo or secret request, or the completion or failure of a turn started from this device arrives on an open conversation stream while the app is not active, or while a different conversation is on screen.
+
+- Permission is requested only from that Settings toggle or from an explain-first card shown in a conversation at the first approval-worthy moment. It is never requested at launch. "Not Now" is remembered.
+- Text is generic: "<bot> needs approval", "Question from <bot>", "<bot> needs your input", "<bot> finished", "<bot> stopped". It never includes the command, detail, question, secret, sudo text, or message body. With App Lock on, the bot name is withheld too ("Approval needed").
+- Replayed events never notify (per-session `seq` watermark, gap-recovery replays, and `open_requests` re-deliveries). One approval seen through both the legacy event and a server request notifies once. A turn outcome coalesces per conversation.
+- A delivered notification is removed when the request is answered, withdrawn by `request.cancel`, or the conversation is opened.
+- Tapping a notification opens the owning conversation through the existing `hermes-fleet://conversation` route; opening re-reads pending approvals from the gateway, so the notification is a hint and never authoritative state.
+- After the app backgrounds, Fleet holds open conversation transports for the short window iOS grants via `beginBackgroundTask` (about 30 seconds), then intentionally disconnects; foreground restore reconnects as before. No background modes are declared.
+
+This is best-effort: iOS suspends the app, and Fleet can only see sessions whose conversation transport is open in this process. It is not reliable push (APNs relay is tracked separately).
+
 ## Voice
 
 Voice input and spoken replies are implemented on the iOS device. Recognized text is submitted through the normal conversation path; the client does not invent a remote-audio gateway protocol when one is not available.

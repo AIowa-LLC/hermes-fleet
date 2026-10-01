@@ -186,6 +186,60 @@ final class FleetSettingsAccentUITests: XCTestCase {
         }
     }
 
+    // MARK: - R8 (#95) local notifications
+
+    /// The opt-in toggle renders with honest best-effort copy, flips on and
+    /// off, and exposes a VoiceOver hint. Scripted notifier: permission is
+    /// pre-authorized so no system dialog is involved.
+    func testLocalNotificationsToggleStatesBestEffortLimitationAndFlips() throws {
+        let app = launchApp()
+        UITabNavigation.openSettings(app)
+
+        let toggle = app.switches["fleet.settings.local-notifications.toggle"]
+        for _ in 0..<6 where !toggle.exists { app.swipeUp() }
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "the Local notifications toggle must render")
+        XCTAssertEqual(toggle.value as? String, "0", "notifications are opt-in: default off")
+        XCTAssertFalse(toggle.label.isEmpty, "VoiceOver label")
+
+        let footer = app.descendants(matching: .any)["fleet.settings.local-notifications.footer"]
+        XCTAssertTrue(footer.exists, "the honest footer must render")
+        XCTAssertTrue(footer.label.contains("recently open"), "copy states the best-effort limit (got \(footer.label))")
+        XCTAssertTrue(footer.label.contains("push"), "copy points at push for reliable delivery")
+
+        // Tap the switch knob: a center tap can land on the row label.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let on = NSPredicate(format: "value == %@", "1")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: on, object: toggle)], timeout: 10) == .completed,
+            "the toggle must turn on")
+
+        // Tap the switch knob: a center tap can land on the row label.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let off = NSPredicate(format: "value == %@", "0")
+        XCTAssertTrue(
+            XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: off, object: toggle)], timeout: 10) == .completed,
+            "the toggle must turn back off")
+    }
+
+    /// With system permission denied the toggle cannot turn on, and the row
+    /// says why instead of pretending.
+    func testLocalNotificationsDeniedPermissionExplainsAndStaysOff() throws {
+        let app = launchApp(environment: ["HERMES_FLEET_NOTIFICATION_AUTH": "denied"])
+        UITabNavigation.openSettings(app)
+
+        let toggle = app.switches["fleet.settings.local-notifications.toggle"]
+        for _ in 0..<6 where !toggle.exists { app.swipeUp() }
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        let denied = app.descendants(matching: .any)["fleet.settings.local-notifications.denied"]
+        XCTAssertTrue(denied.waitForExistence(timeout: 10), "denied permission is explained")
+
+        // Tap the switch knob: a center tap can land on the row label.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        // Give the (refused) request time to resolve, then confirm it stayed off.
+        _ = XCTWaiter().wait(for: [XCTestExpectation(description: "settle")], timeout: 1.0)
+        XCTAssertEqual(toggle.value as? String, "0")
+    }
+
     // MARK: - Helpers
 
     private func attachScreenshot(of app: XCUIApplication, name: String) {
@@ -196,10 +250,13 @@ final class FleetSettingsAccentUITests: XCTestCase {
         add(attachment)
     }
 
-    private func launchApp(extraArguments: [String] = []) -> XCUIApplication {
+    private func launchApp(
+        extraArguments: [String] = [], environment: [String: String] = [:]
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_LOCK_AUTH"] = "success"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        for (key, value) in environment { app.launchEnvironment[key] = value }
         if !extraArguments.isEmpty { app.launchArguments += extraArguments }
         app.launch()
         return app

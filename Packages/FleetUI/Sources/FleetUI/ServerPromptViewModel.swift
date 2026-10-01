@@ -53,6 +53,10 @@ public final class ServerPromptViewModel {
     private let biometrics: any AppLockBiometricAuth
     /// The runtime session id the card answers for (set on open/resume).
     private var boundSessionID: String?
+    /// R8: reports the id of a prompt that stopped being pending — answered,
+    /// expired, or withdrawn — so a delivered local notification for it can be
+    /// removed.
+    public var onRequestResolved: (@MainActor ([String]) -> Void)?
 
     public init(prompts: any ServerPromptResponding, biometrics: any AppLockBiometricAuth) {
         self.prompts = prompts
@@ -110,7 +114,9 @@ public final class ServerPromptViewModel {
         if pending?.id == requestID {
             promoteNext()
         } else {
+            let wasQueued = queued.contains { $0.id == requestID }
             queued.removeAll { $0.id == requestID }
+            if wasQueued { onRequestResolved?([requestID]) }
         }
     }
 
@@ -232,6 +238,8 @@ public final class ServerPromptViewModel {
     }
 
     private func promoteNext() {
+        // `promoteNext` always retires the current pending prompt.
+        if let resolved = pending { onRequestResolved?([resolved.id]) }
         if queued.isEmpty {
             pending = nil
             state = .idle

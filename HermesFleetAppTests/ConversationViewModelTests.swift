@@ -1830,3 +1830,151 @@ final class ConversationViewModelTests: XCTestCase {
         XCTAssertEqual(mergedContent.map(\.id), ["row-A", "row-B"])
     }
 }
+
+// MARK: - R8 (#95) local notification wiring
+
+/// The view model -> coordinator path, against a stub notification center:
+/// what `AppEnvironment.makeConversationViewModel` installs, exercised through
+/// real streamed events, the continuity gate, and the approval view model.
+extension ConversationViewModelTests {
+
+    private func makeNotifyingFixture(
+        appActive: Bool = false
+    ) async throws -> (ScriptedSession, ConversationViewModel, RecordingNotifier, LocalNotificationCoordinator) {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        let suite = "fleet.tests.vm-notifications.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: LocalNotificationCoordinator.enabledKey)
+        let notifier = RecordingNotifier()
+        let coordinator = LocalNotificationCoordinator(notifier: notifier, defaults: defaults)
+        coordinator.appLockEnabled = { false }
+        await coordinator.refreshAuthorization()
+        coordinator.setAppActive(appActive)
+
+        let route = viewModel.route
+        let token = viewModel.notificationToken
+        viewModel.onAttentionEvent = { [weak viewModel] event, startedHere, isReplay in
+            coordinator.observe(
+                event,
+                context: ConversationNotificationContext(
+                    token: token, route: route, sessionID: viewModel?.resolvedSessionID,
+                    canonical: false, botName: "Atlas"),
+                turnStartedHere: startedHere, isReplay: isReplay)
+        }
+        viewModel.onRequestsResolved = { ids in coordinator.requestsResolved(ids: ids) }
+        viewModel.onScreenVisibilityChanged = { onScreen in
+            if onScreen {
+                coordinator.conversationDidAppear(token: token)
+            } else {
+                coordinator.conversationDidDisappear(token: token)
+            }
+        }
+        return (scripted, viewModel, notifier, coordinator)
+    }
+
+    private func notifyApproval() -> ConversationEvent {
+        .serverRequest(ServerRequest(
+            id: "srq-n1", sessionID: "s-1",
+            kind: .approval(ApprovalRequest(
+                requestID: "req-n1", sessionID: "s-1", command: "printf 'fixture'",
+                choices: ["once", "deny"], serverRequestID: "srq-n1"))))
+    }
+
+    func testBackgroundedApprovalPostsGenericNotificationAndCancelWithdrawsIt() async throws {
+        let (scripted, viewModel, notifier, coordinator) = try await makeNotifyingFixture()
+        await viewModel.start()
+
+        scripted.push(notifyApproval())
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertEqual(notifier.posted.count, 1)
+        XCTAssertEqual(notifier.posted.first?.title, "Atlas needs approval")
+        XCTAssertFalse((notifier.posted.first?.body ?? "").contains("printf"))
+        XCTAssertEqual(notifier.posted.first?.target?.sessionID, "s-1")
+
+        scripted.push(.requestCancelled(
+            sessionID: "s-1", requestID: "srq-n1", method: "approval", reason: "timeout"))
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertEqual(notifier.withdrawn, [notifier.posted[0].id])
+    }
+
+    func testAnsweringTheApprovalInAppWithdrawsTheNotification() async throws {
+        let (scripted, viewModel, notifier, coordinator) = try await makeNotifyingFixture()
+        await viewModel.start()
+        scripted.push(notifyApproval())
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertEqual(notifier.posted.count, 1)
+
+        // What a successful answer does (the scripted seam here only fails).
+        viewModel.approvalViewModel?.clearApproval(requestID: "req-n1")
+        await coordinator.waitForIdle()
+        XCTAssertEqual(notifier.withdrawn, [notifier.posted[0].id])
+    }
+
+    func testOnScreenConversationInTheActiveAppNeverNotifies() async throws {
+        let (scripted, viewModel, notifier, coordinator) = try await makeNotifyingFixture(appActive: true)
+        await viewModel.start()
+        viewModel.setOnScreen(true)
+
+        scripted.push(notifyApproval())
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertTrue(notifier.posted.isEmpty)
+    }
+
+    func testCompletionNotifiesOnlyForATurnStartedFromThisDevice() async throws {
+        let (scripted, viewModel, notifier, coordinator) = try await makeNotifyingFixture()
+        await viewModel.start()
+
+        // A turn someone else started (no local submit): silent.
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "theirs", status: nil, error: nil, seq: 2))
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertTrue(notifier.posted.isEmpty)
+
+        // A turn submitted here.
+        let didSend = await viewModel.send("hello")
+        XCTAssertTrue(didSend)
+        scripted.push(.messageStart(sessionID: "s-1", seq: 3))
+        scripted.push(.messageComplete(sessionID: "s-1", text: "done", status: nil, error: nil, seq: 4))
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertEqual(notifier.posted.map(\.title), ["Atlas finished"])
+        XCTAssertFalse((notifier.posted.first?.body ?? "").contains("done"), "never the message body")
+    }
+
+    func testDuplicateFrameDoesNotNotifyTwice() async throws {
+        let (scripted, viewModel, notifier, coordinator) = try await makeNotifyingFixture()
+        await viewModel.start()
+
+        let legacy = ConversationEvent.approvalRequested(
+            sessionID: "s-1", requestID: "req-dup", command: "x", detail: nil, choices: [], seq: 5)
+        scripted.push(legacy)
+        scripted.push(legacy)
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertEqual(notifier.posted.count, 1)
+    }
+
+    func testEventsReappliedByGapRecoveryNeverNotify() async throws {
+        let (scripted, viewModel, notifier, coordinator) = try await makeNotifyingFixture()
+        await viewModel.start()
+        scripted.resumeEventsResult = .success([
+            .approvalRequested(sessionID: "s-1", requestID: "req-gap", command: "x", detail: nil, choices: [], seq: 2),
+        ])
+
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        // seq 2 was missed; 3 reveals the gap and triggers recovery.
+        scripted.push(.messageDelta(sessionID: "s-1", text: "x", rendered: nil, seq: 3))
+        await flush()
+        await flush()
+        await coordinator.waitForIdle()
+        XCTAssertEqual(scripted.resumeEventsRequests.count, 1, "the gap was actually recovered")
+        XCTAssertTrue(notifier.posted.isEmpty, "replayed events are history, not news")
+    }
+}

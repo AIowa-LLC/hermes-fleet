@@ -161,6 +161,12 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(theme.textSecondary)
             }
 
+            // R8: interim local notifications (best-effort, opt-in). Only
+            // with a runtime; previews pass nil and omit the section.
+            if let environment {
+                LocalNotificationsSettingsSection(coordinator: environment.localNotifications)
+            }
+
             // C2: the ALWAYS-REACHABLE door to the agent setup prompt. With
             // one or more gateways configured this is the add-another-server
             // path; the sheet itself carries the copy. The row stays
