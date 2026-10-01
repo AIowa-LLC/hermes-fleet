@@ -790,8 +790,8 @@
 			targets = (
 				9A6AD1F4D6B0B207E73A83F6 /* HermesFleetApp */,
 				B3003DEB5DBA7762041D9FA5 /* HermesFleetAppTests */,
-				9740850ADFCED19DEA53002E /* HermesFleetAppUITests */,
 				3B861ABE68B17D169D3BBC2B /* HermesFleetReleaseHygieneTests */,
+				9740850ADFCED19DEA53002E /* HermesFleetAppUITests */,
 			);
 		};
 /* End PBXProject section */
