@@ -148,6 +148,9 @@ public final class AppLockController {
     private var settingIntent = 0
     public private(set) var isVerifyingSetting = false
     private var hasAuthenticatedThisSession = false
+    private var authenticationEpoch = 0
+    private var isAuthenticationInFlight = false
+    private var currentScenePhase: ScenePhase = .active
     /// Set on `.inactive`/`.background` from `.unlocked`; cleared on `.active`,
     /// on successful unlock, and when the setting is turned off.
     private var privacyCover = PrivacyShieldPolicy()
@@ -183,6 +186,8 @@ public final class AppLockController {
     public func setEnabled(_ enabled: Bool) {
         settingIntent += 1
         guard isEnabled != enabled else { return }
+        authenticationEpoch += 1
+        hasAuthenticatedThisSession = false
         isEnabled = enabled
         defaults.set(enabled, forKey: defaultsKey)
         if enabled {
@@ -224,6 +229,7 @@ public final class AppLockController {
     /// locked-but-not-yet-authenticated app triggers authentication;
     /// `.background` re-locks an unlocked app (foreground-gating).
     public func handleScenePhase(_ phase: ScenePhase) {
+        currentScenePhase = phase
         privacyCover.handle(phase, contentUnlocked: state == .unlocked, enabled: shouldLock)
         switch phase {
         case .active:
@@ -239,7 +245,10 @@ public final class AppLockController {
         case .background:
             // Covers a `.background` that arrives without a prior `.inactive`.
             // Evaluated BEFORE the re-lock below so it sees `.unlocked`.
-            if shouldLock, state == .unlocked {
+            if shouldLock {
+                // An attempt started before background cannot authenticate
+                // the next foreground session, even if it completes later.
+                authenticationEpoch += 1
                 state = .locked
                 // Foreground must re-authenticate after a background re-lock —
                 // clear the session flag so `.active` triggers a fresh prompt.
@@ -267,10 +276,16 @@ public final class AppLockController {
     /// button).
     public func authenticate() async {
         guard shouldLock else { return }
+        guard currentScenePhase != .background, !isAuthenticationInFlight else { return }
         guard state == .locked || state == .passcodeFallback else { return }
         guard !hasAuthenticatedThisSession else { return }
+        isAuthenticationInFlight = true
+        let epoch = authenticationEpoch
+        defer { finishAuthenticationAttempt(epoch: epoch) }
         state = .authenticating
-        switch await auth.evaluateBiometrics(reason: Self.reason) {
+        let result = await auth.evaluateBiometrics(reason: Self.reason)
+        guard epoch == authenticationEpoch, shouldLock else { return }
+        switch result {
         case .success:
             state = .unlocked
             hasAuthenticatedThisSession = true
@@ -286,9 +301,15 @@ public final class AppLockController {
     /// the device passcode via LocalAuthentication.
     public func unlockWithPasscode() async {
         guard shouldLock else { return }
+        guard currentScenePhase != .background, !isAuthenticationInFlight else { return }
         guard state == .passcodeFallback || state == .locked else { return }
+        isAuthenticationInFlight = true
+        let epoch = authenticationEpoch
+        defer { finishAuthenticationAttempt(epoch: epoch) }
         state = .authenticating
-        if await auth.evaluateDevicePasscode(reason: Self.reason) {
+        let authenticated = await auth.evaluateDevicePasscode(reason: Self.reason)
+        guard epoch == authenticationEpoch, shouldLock else { return }
+        if authenticated {
             state = .unlocked
             hasAuthenticatedThisSession = true
             // The system sheet's dismissal `.inactive` may still be in
@@ -297,6 +318,16 @@ public final class AppLockController {
         } else {
             state = .passcodeFallback
         }
+    }
+
+    private func finishAuthenticationAttempt(epoch: Int) {
+        isAuthenticationInFlight = false
+        // If foreground returned while the old prompt was still pending,
+        // release that prompt before scheduling one fresh attempt. Inactive
+        // authentication sheets do not invalidate otherwise valid results.
+        guard epoch != authenticationEpoch, currentScenePhase == .active,
+              shouldLock, state == .locked, !hasAuthenticatedThisSession else { return }
+        Task { await authenticateIfNeeded() }
     }
 
     // MARK: Constants
