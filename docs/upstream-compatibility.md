@@ -53,3 +53,23 @@ with evidence as versions are actually tested; do not invent version support.
 Use explicit known-issue entries for gaps and release notes for newly distributed
 support. Monitoring cadence and automatic issue creation require a separate,
 explicitly configured workflow.
+
+## Compatibility notes
+
+Entries record what was verified and how; they do not extend support to
+versions that were not tested.
+
+### Server-to-client JSON-RPC requests (`approval`, `clarify`, `sudo`, `secret`)
+
+| Field | Record |
+| --- | --- |
+| State | Contract verified; implemented; validated against synthetic fixtures and a disposable production WebSocket gateway probe from upstream `086cbd24646f506e8c0361db238e121be5b45be9`. |
+| Upstream | `hermes-agent` commit `9f7f2f28c0` (on `main`, not in tag `v2026.9.11`) replaced the `approval.request` / `*.respond` event pairs with server-to-client JSON-RPC requests. |
+| Contract evidence | `tui_gateway/server_requests.py` (ids `srq-<12 hex>`, `request.cancel`, `open_requests`, capability gate), `tui_gateway/session_transports.py` (`_session_client_answers_requests`), and the generated OpenRPC contract `apps/shared/src/gateway-contract.openrpc.json` (`x-server-requests`, `x-notifications` `request.cancel`, `OpenRequestEntry`, `ClientCapabilitiesParams`). |
+| Enabling capability | The client sends `client.capabilities {server_requests: true}` once per connection after `gateway.ready`. A WebSocket client that never does is treated as an older build and the gateway withdraws the request (an approval is withdrawn, not denied). Fleet sends it only on the conversation transport, and re-sends it after every reconnect. |
+| Wire behavior | The gateway sends a request frame with a string id; Fleet answers with a JSON-RPC response carrying the same id: approval `{choice, all?}`, single clarify `{answer}` (`''` skips), batch clarify through `clarify.lock {request_id, question_id, answer}` (a result with no `answers` is cancel-all), sudo and secret `{value}` (`''` declines). Unknown or unsupported methods get `-32601`; supported methods with unusable params get `-32602`. |
+| Cancellation | `request.cancel {id, method, reason}` dismisses the matching prompt only. Fleet sends no response and records no denial; an id it does not know is ignored. |
+| Reconnect | `session.resume`, `session.activate`, and `session.events.since` return `open_requests`; Fleet re-surfaces each entry under its original id and de-duplicates against prompts already shown. The transport drops its copy on disconnect because the gateway keeps the request open. |
+| Older gateways | A gateway that predates the protocol keeps the legacy path: the `approval.request` event is answered with `approval.respond`. The same `request_id` de-duplicates the two paths, so one approval never renders twice. If `client.capabilities` returns an error, no request-based prompt is promised. |
+| Out of scope | Vault, preview, terminal, window, and tour requests (answered `-32601`); a minimum-gateway-version decision; the approval card redesign. |
+| Remaining evidence | The disposable probe used production WebSocket dispatch, capability negotiation, request settlement, batch locks, cancellation, and real reconnect/resume. Requests were injected through the upstream request API; no agent turn or tool executed. Allow/deny, single/multi/batch clarify, skip, sudo, secret, withdrawal, reconnect, unsupported methods, and malformed params passed. An injected legacy event reached `approval.respond`, but the handler could not resolve because the disposable environment has no AI provider configured; successful older-gateway resolution remains covered by synthetic tests. End-to-end agent/tool execution, real older-gateway acceptance, and physical-device authentication remain unverified. |

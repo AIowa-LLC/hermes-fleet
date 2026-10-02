@@ -32,7 +32,7 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 
 Fleet Home observes operations and Needs You approvals across reporting gateways.
 Operation Detail shows one operation, its subagent tree, and timeline. Approval
-actions use the biometric gate; child controls require verified session
+actions use the same presence gate (Face ID with passcode fallback); child controls require verified session
 attachment. Desktop reporting requires the optional Hermes reporting plugin;
 see [setup and coverage](../integrations/hermes-liveops/README.md).
 
@@ -47,7 +47,47 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
 - reconnect and recover missed events
 - preserve cached conversation history for cold-start presentation
 - show device-local unread indicators in Chats and drawer Recents; existing sessions are baselined on first observation and opening a conversation marks its gateway timestamp as read
+- unsent composer drafts persist per conversation: keyed by gateway + profile +
+  session ID (canonical Bot Chat included), restored when the conversation
+  reopens (navigation, App Lock, relaunch), and cleared only after a successful
+  send — a failed send keeps the draft. Drafts are device-local, written
+  debounced to a single file with complete file protection and excluded from
+  backup, bounded (50 drafts, 20,000 characters each, 30 days), and removed when
+  their gateway is removed or local cache is cleared
 - approvals and per-session control surfaces
+- approval card integrity: the card header names the gateway, bot, working
+  folder, and session the request came from (built from the client's own
+  conversation context, never the wire payload; unknown values read
+  "unknown"). The inline command preview shows at most 4 lines / 240
+  characters from the command tail with an explicit "N more lines" marker and no middle truncation.
+  A longer command keeps Approve disabled until the user has opened the
+  "Review full command" sheet (full redacted text, monospaced, selectable,
+  scrollable, wrap toggle) and finished the review by reaching the end or
+  tapping "I reviewed the full command". Deny is never gated. Gateway-supplied
+  reason text is shown in a block labelled "Reason given by gateway (untrusted
+  text)". Fleet Home Live Ops approval rows use the same header, preview, and
+  review rule (Live Ops does not carry the bot or working folder, so those
+  read "unknown" there).
+- agent prompts raised as server-to-client requests: dangerous-command
+  approvals (Deny is one tap; Approve stays Face ID gated and offers only the
+  scopes the gateway supplied), clarify questions (single, multi-select and
+  batch with per-question locks; Skip is one tap), and sudo-password / secret
+  requests. Every approval, sudo and secret entry uses one user-presence check:
+  Face ID first, then the device passcode when Face ID is unavailable, locked
+  out, or not enrolled (cancelling never loops into a second prompt). Enabling
+  YOLO for a session, choosing "Approve always", and turning App Lock off each
+  require a fresh check with their own prompt text; a cancelled or failed check
+  changes nothing and shows inline feedback. Deny, turning YOLO off, and turning
+  App Lock on never ask. A device with no passcode cannot verify, so these
+  actions stay blocked and the UI says to set a passcode. Sudo and secret entry is hidden behind that check, uses a secure field,
+  is marked privacy-sensitive, is never cached, persisted, logged, or placed in
+  the transcript, and Decline sends an empty value. When the gateway withdraws
+  a prompt (timeout, interrupt, answered elsewhere) the card simply disappears:
+  a withdrawal is never recorded as a denial and no answer is sent. Prompts
+  still waiting after a reconnect reappear once. Gateways that predate this
+  protocol keep working through the legacy `approval.request` event. Other
+  server-to-client requests (preview, terminal, vault, tour) are refused so the
+  agent fails fast; only the conversation connection announces this capability.
 - model selection and context information
 - steer, rename, and fork workflows where supported
 - session thinking level: a composer gauge button (right cluster, between
@@ -120,10 +160,15 @@ Speech-recognition behavior can vary by locale and platform capability.
 ## Security and privacy behavior
 
 - credentials and tokens use Keychain-backed storage
+- on the first launch of a fresh install (no install marker and no prior local state) the app deletes leftover Keychain items in its credential, token, and TLS-pin namespaces before the registry loads; an in-place update from a build without the marker adopts the marker and keeps its credentials
+- the App Lock launch-environment overrides (`HERMES_FLEET_APP_LOCK`, `HERMES_FLEET_LOCK_*`) exist only in DEBUG builds; Release always follows the persisted App Lock setting
+- gateway addresses, hosts, paths, and session identifiers are logged with private OSLog privacy; `scripts/security_hygiene_guard.py` (part of `scripts/c1_static.sh`) enforces this and the DEBUG-only lock override
 - gateway endpoints are normalized at the registry boundary
 - sensitive URL material is rejected or redacted
 - private infrastructure should never be embedded in fixtures or documentation
 - TLS-protected gateway endpoints are preferred
+- App Lock (Face ID / device passcode) gates the UI when the app returns from the background; the Settings > Security toggle defaults ON
+- Privacy shield: with App Lock enabled, when the app becomes inactive or enters the background, an opaque cover (theme background plus the wing mark, no content) is shown in a scene-level window so the app-switcher snapshot never captures conversation content. It is tied to App Lock, covers presented sheets, does not engage while the lock screen or a Face ID prompt is showing, and honors Reduce Motion (no fade). Disabling App Lock disables the shield. App Lock re-lock semantics are unchanged (still on background).
 
 ## Capability honesty
 

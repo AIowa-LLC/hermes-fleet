@@ -46,43 +46,32 @@ enum FleetServiceGraph {
     /// Builds the H1 app-lock controller.
     ///
     /// Provider + mode selection:
-    /// - Release (no launch env): real `LocalAuthenticationBiometricAuth`
-    ///   with `.followSetting` mode → the persisted toggle (default ON) gates
-    ///   the UI; biometrics with automatic device-passcode fallback.
+    /// - Release: real `LocalAuthenticationBiometricAuth` with
+    ///   `.followSetting` mode → the persisted toggle (default ON) gates the
+    ///   UI; biometrics with automatic device-passcode fallback. Launch
+    ///   environment can NOT change this: every lock override is compiled out
+    ///   of Release (`#if DEBUG`), so a Release process cannot be launched
+    ///   with App Lock disabled.
     /// - DEBUG: scripted auth driven by `HERMES_FLEET_APP_LOCK` /
     ///   `HERMES_FLEET_LOCK_AUTH` launch env so the deterministic UI suites
     ///   stay green and the H1 UI tests can force lock states deterministically.
     ///
-    /// Launch-env overrides (honored in all configs so Release-only live
-    /// suites can opt out):
+    /// DEBUG-only launch-env overrides:
     ///   `HERMES_FLEET_APP_LOCK` = `disabled`|`off` → never lock,
     ///                             `enabled`|`on` → always lock,
-    ///                             `follow` → respect the persisted toggle.
-    ///   `HERMES_FLEET_LOCK_AUTH` (DEBUG) = `success` (default), `fail`,
-    ///                                       `fail-all`.
+    ///                             `follow` → respect the persisted toggle
+    ///                             (unset behaves as disabled in DEBUG).
+    ///   `HERMES_FLEET_LOCK_AUTH` = `success` (default), `fail`, `fail-all`.
+    ///   `HERMES_FLEET_LOCK_RESET` = `1` clears the persisted toggle.
+    /// `scripts/security_hygiene_guard.py` fails CI if any of these is read
+    /// outside a DEBUG block.
     @MainActor
     static func makeLockController() -> AppLockController {
         let env = ProcessInfo.processInfo.environment
 
-        let mode: AppLockController.Mode
-        switch env["HERMES_FLEET_APP_LOCK"] {
-        case "disabled", "off", "":
-            mode = .disabled
-        case "enabled", "on":
-            mode = .enabled
-        case "follow":
-            mode = .followSetting
-        default:
-            #if DEBUG
-            // No env in DEBUG: keep the existing deterministic UI suites green
-            // (they cold-launch straight into the roster). H1 UI tests opt in
-            // via launch env; Release (below) enforces the persisted toggle.
-            mode = .disabled
-            #else
-            mode = .followSetting
-            #endif
-        }
+        let mode = lockMode(environment: env, overridesEnabled: lockOverridesEnabled)
 
+        #if DEBUG
         // H1 test hygiene: `HERMES_FLEET_LOCK_RESET=1` clears the persisted
         // toggle so the default-ON / persistence UI tests are deterministic
         // regardless of earlier runs sharing the same simulator app container.
@@ -90,6 +79,7 @@ enum FleetServiceGraph {
             let key = AppLockController.defaultsKey
             UserDefaults.standard.removeObject(forKey: key)
         }
+        #endif
 
         #if DEBUG
         let auth: any AppLockBiometricAuth = makeScriptedLockAuth(env)
@@ -98,6 +88,43 @@ enum FleetServiceGraph {
         #endif
 
         return AppLockController(auth: auth, mode: mode)
+    }
+
+    /// True only in DEBUG builds. Release always reports false, which makes
+    /// `lockMode` ignore the environment entirely.
+    nonisolated static var lockOverridesEnabled: Bool {
+        #if DEBUG
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// Pure lock-mode selection. `overridesEnabled == false` (always the case
+    /// in Release) yields `.followSetting` regardless of `environment`; the
+    /// `HERMES_FLEET_APP_LOCK` read itself only exists in DEBUG builds.
+    nonisolated static func lockMode(
+        environment: [String: String],
+        overridesEnabled: Bool
+    ) -> AppLockController.Mode {
+        #if DEBUG
+        if overridesEnabled {
+            switch environment["HERMES_FLEET_APP_LOCK"] {
+            case "disabled", "off", "":
+                return .disabled
+            case "enabled", "on":
+                return .enabled
+            case "follow":
+                return .followSetting
+            default:
+                // No env in DEBUG: keep the existing deterministic UI suites
+                // green (they cold-launch straight into the roster). H1 UI
+                // tests opt in via launch env.
+                return .disabled
+            }
+        }
+        #endif
+        return .followSetting
     }
 
     #if DEBUG
@@ -148,14 +175,19 @@ enum FleetServiceGraph {
     // MARK: Production — real stores + live transports
 
     static func makeProductionEnvironment() -> AppEnvironment {
+        // P0.3d: reconcile the Keychain with this install BEFORE any store is
+        // built or the registry hydrates, so a reinstall never inherits the
+        // deleted install's credentials, tokens, pins or approvals.
+        let keychain = runFirstLaunchKeychainHygiene()
+
         // The U2 UI writes credentials here (saveCredential → KeychainCredentialStore)
         // and every authenticator reads from THIS SAME store, so a credential
         // entered in the UI reaches the live gateway (L1 fix: store split).
-        let credentialStore = KeychainCredentialStore()
+        let credentialStore = KeychainCredentialStore(keychain: keychain)
         // T3: per-gateway TLS pin store (TOFU SPKI pinning). Shared by every
         // transport the graph builds so all four connection surfaces (probe,
         // roster, lifecycle, conversation) enforce the SAME pin per gateway.
-        let pinStore = KeychainPinStore()
+        let pinStore = KeychainPinStore(keychain: keychain)
 
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
@@ -238,6 +270,42 @@ enum FleetServiceGraph {
             launchCache: launchCache,
             localCacheRecovery: cacheRecovery
         )
+    }
+
+    /// Sandbox location of the file-backed cache. Shared by
+    /// `makeFileBackedCache` and the first-launch evidence check so they can
+    /// never disagree about where "this app has launched before" is recorded.
+    private static func cacheDirectoryURL() -> URL {
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("HermesFleetCache", isDirectory: true)
+    }
+
+    /// True when an earlier launch of this app already created its cache
+    /// directory in the sandbox. `makeFileBackedCache` creates it eagerly on
+    /// every production launch, so every build that ever ran the production
+    /// graph (including the shipped build that predates the Keychain purge)
+    /// leaves it behind, while a fresh install or reinstall starts without it
+    /// (the sandbox is deleted with the app; the Keychain is not). MUST be
+    /// evaluated before `makeFileBackedCache` runs in this launch.
+    static func hasPriorInstallEvidence(cacheDirectory: URL? = nil) -> Bool {
+        FileManager.default.fileExists(atPath: (cacheDirectory ?? cacheDirectoryURL()).path)
+    }
+
+    /// P0.3d first-launch Keychain purge; see `KeychainInstallHygiene` for
+    /// the fresh-install vs upgrade decision. DEBUG-only escape hatch:
+    /// `HERMES_FLEET_SKIP_KEYCHAIN_PURGE=1` lets device UI suites that seed
+    /// the Keychain ahead of the first launch keep their fixtures.
+    static func runFirstLaunchKeychainHygiene() -> any KeychainSession {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_SKIP_KEYCHAIN_PURGE"] == "1" {
+            return LiveKeychainSession()
+        }
+        #endif
+        let session = InstallReconciledKeychainSession(hasPriorInstallEvidence: hasPriorInstallEvidence())
+        session.reconcile()
+        return session
     }
 
     /// Approval-gate biometrics. The gate must be REAL on any device build
@@ -394,7 +462,10 @@ enum FleetServiceGraph {
                 baseURL: base,
                 authentication: makeAuthenticator(gateway: gateway, credentialStore: credentialStore, pinStore: pinStore),
                 sessionFactory: makeSessionFactory(gateway: gateway, pinStore: pinStore),
-                configuration: .standard
+                // P0.1: the conversation transport answers server→client
+                // requests (approval / clarify / sudo / secret), so it — and
+                // only it — advertises `client.capabilities`.
+                configuration: .conversation
             )
             return GatewayConversationSession(
                 gatewayID: gateway.id,
@@ -824,12 +895,7 @@ enum FleetServiceGraph {
     /// directory must keep existing (fresh-install detection relies on it);
     /// recovery moves files inside it and never touches the directory itself.
     static func defaultCacheStoreURL() -> URL {
-        let directory = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first ?? FileManager.default.temporaryDirectory
-        return directory
-            .appendingPathComponent("HermesFleetCache", isDirectory: true)
-            .appendingPathComponent("cache.store")
+        cacheDirectoryURL().appendingPathComponent("cache.store")
     }
 
     /// Keep the launch store on the cache's removal fence in every graph mode.

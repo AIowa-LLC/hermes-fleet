@@ -62,7 +62,8 @@ final class B1LiveBoardPickerUITests: XCTestCase {
 
     func testLivePickerSwitchPersistenceRoundTrip() throws {
         let app = XCUIApplication()
-        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        // Release uses the persisted App Lock preference. Prepare the
+        // dedicated QA install as documented in docs/release-live-ui.md.
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 

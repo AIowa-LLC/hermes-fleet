@@ -261,6 +261,9 @@ public final class AppEnvironment {
     /// Records opens ONLY after a real destination resolved; ≤50 refs,
     /// 30-day retention, pruned when a gateway is removed. No secrets.
     public private(set) var continueIndex: FleetContinueIndexStore
+    /// P0.4a: device-local unsent 1:1 composer drafts (file-protected,
+    /// backup-excluded, bounded, pruned on gateway removal).
+    public private(set) var conversationDrafts: ConversationDraftStore
     /// Local conversation pins (drawer Pinned section). Local-only UserDefaults
     /// store — no server pinning contract; loaded during `load()`.
     public private(set) var pinnedConversations: [FleetConversationPin] = []
@@ -679,6 +682,7 @@ public final class AppEnvironment {
         // store via `attachContinueIndex(_:)`; production uses the default
         // Application Support location. (Assigned BEFORE any self capture.)
         self.continueIndex = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL())
+        self.conversationDrafts = ConversationDraftStore(url: ConversationDraftStore.defaultURL())
         self.botManagement = BotManagementController(factory: botProfileFactory)
         // Live Ops v1: nil factory ⇒ an empty seam map — the store still
         // exists (callers never optional-chain `environment.liveOps`), it
@@ -695,6 +699,11 @@ public final class AppEnvironment {
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
     public func attachContinueIndex(_ store: FleetContinueIndexStore) {
         continueIndex = store
+    }
+
+    /// P0.4a: swap the conversation draft store (tests inject a hermetic one).
+    public func attachConversationDrafts(_ store: ConversationDraftStore) {
+        conversationDrafts = store
     }
 
     /// Card D: swap the artifact library store (tests inject a hermetic one).
@@ -747,6 +756,7 @@ public final class AppEnvironment {
             UserDefaultsConversationPinStore.resetForUITests()
             await bridgedStore.resetForUITests()
             RoomDraftStore.resetForUITests()
+            conversationDrafts.removeAll()
         }
         #endif
         // P0-4: FIRST rebuild the registry from the durable record store so a
@@ -1849,6 +1859,7 @@ public final class AppEnvironment {
         connectionStates.removeAll()
         cancelAllConnectionRecovery()
         continueIndex.removeAll()
+        conversationDrafts.removeAll()
         // Card D: local-data clear also drops observed artifacts + retrieved bytes.
         artifactLibrary.removeAll()
         artifactRetrievers.removeAll()
@@ -2308,6 +2319,7 @@ public final class AppEnvironment {
     public func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
+        conversationDrafts.allowWrites(gatewayID: gateway.id)
         await reloadGateways()
         return gateway
     }
@@ -2323,6 +2335,7 @@ public final class AppEnvironment {
     ) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
+        conversationDrafts.allowWrites(gatewayID: gateway.id)
         if confirmsTLSFirstUse {
             try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
         }
@@ -2402,6 +2415,7 @@ public final class AppEnvironment {
         // entries must not resolve to another gateway — prune the Continue
         // index and the observed room attention for this gateway.
         continueIndex.prune(gatewayID: id)
+        conversationDrafts.prune(gatewayID: id)
         // Card D: the removed gateway's observed artifacts and any retrieved
         // bytes must not outlive it (a saved row must never resolve to
         // another gateway).

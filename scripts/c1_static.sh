@@ -82,6 +82,20 @@ else
   bad "required-reason scanner tests FAILED"; cat /tmp/c1_privacy_reason_test.log
 fi
 
+# --- launch-override + OSLog privacy source guard (P0.3d) ----------------------
+note "Security hygiene source guard"
+if python3 scripts/security_hygiene_guard.py >/tmp/c1_security_hygiene.log 2>&1; then
+  ok "security hygiene: lock override DEBUG-only; no sensitive 'privacy: .public' log interpolations"
+else
+  bad "security hygiene guard FAILED"; cat /tmp/c1_security_hygiene.log
+fi
+
+if python3 scripts/security_hygiene_guard_test.py >/tmp/c1_security_hygiene_test.log 2>&1; then
+  ok "security hygiene guard fixtures: unguarded reads and public URL logs rejected"
+else
+  bad "security hygiene guard fixture tests FAILED"; cat /tmp/c1_security_hygiene_test.log
+fi
+
 # --- release preflight contract ----------------------------------------------
 note "Release preflight contract"
 if bash scripts/release_preflight_contract_test.sh >/tmp/c1_release_preflight.log 2>&1; then

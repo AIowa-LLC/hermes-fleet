@@ -63,8 +63,9 @@ final class T2FixTailnetGatewayUITests: XCTestCase {
 
     func testTailnetGatewayConnectedPlusTurn() throws {
         let app = XCUIApplication()
-        // H1 (R4): app lock defaults ON in Release; opt out for this live suite.
-        app.launchEnvironment["HERMES_FLEET_APP_LOCK"] = "disabled"
+        // Release verification uses the normal App Lock setting.
+        // Release uses the persisted App Lock preference. Prepare the
+        // dedicated QA install as documented in docs/release-live-ui.md.
         app.launch()
 
         UITabNavigation.openGatewaysTab(app)
