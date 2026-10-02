@@ -195,6 +195,9 @@ final class GatewayRemovalPurgeTests: XCTestCase {
         // Shares the removed id as a `:`-delimited prefix; must survive.
         let lookalike = GatewayID(rawValue: "\(removed.rawValue):8080")
         let lookalikeRoom = room(lookalike, "r1")
+        let ambiguousRemovedRoom = room(removed, "8080:r1")
+        XCTAssertEqual(ambiguousRemovedRoom.storageKey, lookalikeRoom.storageKey,
+                       "the existing format cannot distinguish these room identities")
         let all = [removedRoom, removedLegacy, keptRoom, lookalikeRoom]
         addTeardownBlock { all.forEach { RoomDraftStore.clear(for: $0) } }
         all.forEach { RoomDraftStore.save("draft \($0.storageKey)", for: $0) }
@@ -206,6 +209,12 @@ final class GatewayRemovalPurgeTests: XCTestCase {
         XCTAssertFalse(RoomDraftStore.load(for: keptRoom).isEmpty)
         XCTAssertFalse(RoomDraftStore.load(for: lookalikeRoom).isEmpty,
                        "a gateway whose id extends the removed id is not the removed gateway")
+        let retainedDraft = RoomDraftStore.load(for: ambiguousRemovedRoom)
+        XCTAssertFalse(retainedDraft.isEmpty,
+                       "retain an ambiguous draft rather than delete another gateway's text")
+        RoomDraftStore.save("late write from removed gateway", for: ambiguousRemovedRoom)
+        XCTAssertEqual(RoomDraftStore.load(for: lookalikeRoom), retainedDraft,
+                       "retention must not reopen writes from the removed gateway")
 
         // And through the real removal path.
         RoomDraftStore.save("delayed write", for: removedRoom)

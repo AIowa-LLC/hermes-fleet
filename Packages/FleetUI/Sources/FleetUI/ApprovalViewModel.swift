@@ -34,13 +34,68 @@ public final class ApprovalViewModel {
     public enum BannerState: Equatable, Sendable {
         case idle
         case pending
+        /// Presence check did not match. Nothing was sent.
         case biometricFailed
-        case biometricUnavailable
+        /// P0.2b: the user cancelled the presence prompt. Nothing was sent.
+        case authCancelled
+        /// P0.2b: the device has no passcode, so no presence check is
+        /// possible. Nothing was sent; the UI explains how to fix it.
+        case passcodeNotSet
         case respondFailed(String)
         case confirmYolo
+        /// P0.2a: Approve was attempted before the full-command review for a
+        /// long command. Nothing was sent.
+        case reviewRequired
     }
 
     public private(set) var state: BannerState = .idle
+
+    /// P0.2a — which long commands the user has reviewed in full.
+    private var reviewTracker = ApprovalReviewTracker()
+
+    /// True when the pending command is longer than the inline preview and
+    /// must be reviewed in full before Approve is allowed.
+    public var pendingRequiresReview: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.requiresReview(request)
+    }
+
+    /// True once the pending long command has been reviewed in full (always
+    /// false when there is no pending request).
+    public var pendingIsReviewed: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.isReviewed(request)
+    }
+
+    /// Whether Approve is currently allowed for the pending request. Deny is
+    /// never gated and does not consult this.
+    public var canApprove: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.canApprove(request)
+    }
+
+    /// The user opened the full-command review and finished it (scrolled to
+    /// the end or confirmed). Only the CURRENT pending request is affected.
+    public func markReviewed(_ request: ApprovalRequest) {
+        guard let current = pending, current.requestID == request.requestID,
+              current.sessionID == request.sessionID, current.command == request.command else { return }
+        reviewTracker.markReviewed(current)
+        if state == .reviewRequired { state = .pending }
+    }
+
+    /// P0.2b: which privilege-expanding action the current banner feedback
+    /// (`biometricFailed` / `authCancelled` / `passcodeNotSet`) is about.
+    public private(set) var lastPresenceAction: PresenceAction = .approveOnce
+
+    /// P0.2b: inline feedback for a failed/cancelled YOLO-enable presence
+    /// check. Kept apart from `state` so it never clobbers a pending banner.
+    public private(set) var yoloNotice: String?
+
+    /// True while a presence prompt is up; a second tap must not stack a
+    /// second prompt or a second wire call.
+    public private(set) var isVerifyingPresence = false
+
+    public func dismissYoloNotice() { yoloNotice = nil }
 
     /// Effective YOLO state for THIS session (session.info readback +
     /// optimistic local flip confirmed by the server result).
@@ -52,6 +107,7 @@ public final class ApprovalViewModel {
     private let biometrics: any AppLockBiometricAuth
     /// The runtime session id the banner answers for (set on open/resume).
     private var boundSessionID: String?
+    private var yoloIntent = 0
 
     public init(
         approvals: any ApprovalsProviding,
@@ -68,6 +124,7 @@ public final class ApprovalViewModel {
     /// Bind to the open runtime session (approvals for other sessions are
     /// ignored — the transport fans out every session's events).
     public func bind(sessionID: String?) {
+        if boundSessionID != sessionID { yoloIntent += 1 }
         boundSessionID = sessionID
     }
 
@@ -85,20 +142,58 @@ public final class ApprovalViewModel {
             sessionID: request.sessionID,
             command: Redaction.commandPreview(request.command),
             detail: request.detail,
-            choices: request.choices
+            choices: request.choices,
+            serverRequestID: request.serverRequestID
         )
+        // The same approval seen twice (a reconnect re-delivering it through
+        // `open_requests`, or the legacy event racing the server request)
+        // never renders a second banner. If the new copy carries the
+        // server-request id, adopt it so the answer takes the JSON-RPC
+        // response path.
+        if let current = pending, current.requestID == redacted.requestID {
+            pending = adopting(redacted, preservingWireID: current.serverRequestID)
+            return
+        }
+        if let index = queued.firstIndex(where: { $0.requestID == redacted.requestID }) {
+            queued[index] = adopting(redacted, preservingWireID: queued[index].serverRequestID)
+            return
+        }
         if pending == nil {
             pending = redacted
             state = .pending
-        } else if pending?.requestID != redacted.requestID {
+        } else {
             queued.append(redacted)
         }
+    }
+
+    private func adopting(_ request: ApprovalRequest, preservingWireID oldID: String?) -> ApprovalRequest {
+        ApprovalRequest(requestID: request.requestID, sessionID: request.sessionID,
+                        command: request.command, detail: request.detail, choices: request.choices,
+                        serverRequestID: request.serverRequestID ?? oldID)
     }
 
     /// Clear a resolved approval (e.g. resolved elsewhere / timed out);
     /// promotes the next queued one if present.
     public func clearApproval(requestID: String) {
         guard pending?.requestID == requestID else { return }
+        promoteNext()
+    }
+
+    /// P0.1 — `request.cancel {id}`: the gateway withdrew the server→client
+    /// request (timeout, interrupt, answered from another surface). Dismiss
+    /// the matching banner ONLY. A withdrawal is never a denial: nothing is
+    /// sent, no `respond` call is made, and the queued approval behind it (if
+    /// any) is promoted.
+    public func cancelServerRequest(id: String) {
+        if pending?.serverRequestID == id {
+            promoteNext()
+        } else {
+            queued.removeAll { $0.serverRequestID == id }
+        }
+    }
+
+    private func promoteNext() {
+        reviewTracker.retain(requestIDs: Set(queued.map(\.requestID)))
         if !queued.isEmpty {
             pending = queued.removeFirst()
             state = .pending
@@ -144,12 +239,7 @@ public final class ApprovalViewModel {
     public func deny() async {
         guard let request = pending else { return }
         do {
-            _ = try await approvals.respond(
-                sessionID: request.sessionID,
-                requestID: request.requestID,
-                choice: .deny,
-                all: false
-            )
+            _ = try await approvals.respond(to: request, choice: .deny, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))
@@ -162,25 +252,41 @@ public final class ApprovalViewModel {
     /// (presented only when the gateway offered it in `choices`).
     public func approve(scope: ApprovalChoice) async {
         guard let request = pending else { return }
-        // The FaceID gate comes BEFORE any wire call — a failed scan must
-        // never send an approval.
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
-        case .success:
-            break
-        case .failure:
-            state = .biometricFailed
-            return
-        case .unavailable:
-            state = .biometricUnavailable
+        // P0.2a: a long command must be reviewed in full first. This sits
+        // before the biometric prompt so an unreviewed approval never even
+        // asks for Face ID, and never reaches the wire.
+        guard reviewTracker.canApprove(request) else {
+            state = .reviewRequired
             return
         }
+        // The user-presence gate (biometrics, device-passcode fallback) comes
+        // BEFORE any wire call — a failed/cancelled check never sends an
+        // approval. Approve once / session / Always each check exactly once.
+        guard let action = PresenceAction(approvalChoice: scope), !isVerifyingPresence else { return }
+        isVerifyingPresence = true
+        let result = await biometrics.verifyPresence(action)
+        isVerifyingPresence = false
+        guard let current = pending, current.requestID == request.requestID,
+              current.sessionID == request.sessionID, current.command == request.command,
+              reviewTracker.canApprove(current) else { return }
+        lastPresenceAction = action
+        switch result {
+        case .verified:
+            break
+        case .failed:
+            state = .biometricFailed
+            return
+        case .cancelled:
+            state = .authCancelled
+            return
+        case .passcodeNotSet:
+            state = .passcodeNotSet
+            return
+        }
+        // The request may have been withdrawn/answered while the prompt was up.
+        guard pending?.requestID == request.requestID else { return }
         do {
-            _ = try await approvals.respond(
-                sessionID: request.sessionID,
-                requestID: request.requestID,
-                choice: scope,
-                all: false
-            )
+            _ = try await approvals.respond(to: current, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))
@@ -191,25 +297,57 @@ public final class ApprovalViewModel {
 
     /// First tap on the toggle: ask for confirmation. Nothing on the wire.
     public func requestYoloEnable() {
+        yoloIntent += 1
         state = .confirmYolo
     }
 
     public func cancelYoloConfirmation() {
         guard state == .confirmYolo else { return }
+        yoloIntent += 1
         state = pending != nil ? .pending : .idle
     }
 
     /// Confirmed enable → `config.set yolo=1 scope=session`. Optimistic
     /// local flip; on failure the state reverts (honest, never silent).
+    ///
+    /// P0.2b: the confirmation alone is not enough — a fresh user-presence
+    /// check (biometrics, passcode fallback) must verify first. On cancel or
+    /// failure YOLO stays off, nothing is sent, and `yoloNotice` says why.
     public func confirmYoloEnable() async {
-        guard let sid = boundSessionID else {
-            state = .respondFailed("no session open")
+        await beginYoloEnable()?.value
+    }
+
+    /// Capture confirmation synchronously before SwiftUI dismisses the dialog.
+    @discardableResult
+    public func beginYoloEnable() -> Task<Void, Never>? {
+        guard let sid = boundSessionID, !isVerifyingPresence, state == .confirmYolo else { return nil }
+        let intent = yoloIntent
+        state = pending != nil ? .pending : .idle
+        isVerifyingPresence = true
+        return Task { await completeYoloEnable(sessionID: sid, intent: intent) }
+    }
+
+    private func completeYoloEnable(sessionID sid: String, intent: Int) async {
+        guard yoloIntent == intent, boundSessionID == sid else {
+            isVerifyingPresence = false
+            return
+        }
+        yoloNotice = nil
+        isVerifyingPresence = true
+        let result = await biometrics.verifyPresence(.enableYolo)
+        isVerifyingPresence = false
+        guard yoloIntent == intent, boundSessionID == sid else { return }
+        guard result == .verified else {
+            yoloNotice = PresenceFeedback.message(for: result, action: .enableYolo)
             return
         }
         do {
-            isYoloEnabled = try await approvals.setSessionYolo(true, sessionID: sid)
+            let enabled = try await approvals.setSessionYolo(true, sessionID: sid)
+            guard yoloIntent == intent, boundSessionID == sid else { return }
+            isYoloEnabled = enabled
             state = pending != nil ? .pending : .idle
         } catch {
+            guard yoloIntent == intent, boundSessionID == sid else { return }
             isYoloEnabled = false
             state = .respondFailed(Self.nonSecret(error))
         }
@@ -218,13 +356,18 @@ public final class ApprovalViewModel {
     /// Disable — immediate, no confirmation (restoring safety is never
     /// gated). `config.set yolo=0 scope=session`.
     public func disableYolo() async {
+        yoloIntent += 1
         guard let sid = boundSessionID else {
             state = .respondFailed("no session open")
             return
         }
+        let intent = yoloIntent
         do {
-            isYoloEnabled = try await approvals.setSessionYolo(false, sessionID: sid)
+            let enabled = try await approvals.setSessionYolo(false, sessionID: sid)
+            guard yoloIntent == intent, boundSessionID == sid else { return }
+            isYoloEnabled = enabled
         } catch {
+            guard yoloIntent == intent, boundSessionID == sid else { return }
             state = .respondFailed(Self.nonSecret(error))
         }
     }

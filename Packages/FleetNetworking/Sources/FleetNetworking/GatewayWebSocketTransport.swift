@@ -151,6 +151,14 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// `nonisolated` subscribe call stays synchronous.
     private let eventSubscriptions: EventSubscriptionBox
 
+    /// P0.1 server→client requests (`approval`, `clarify`, `sudo`, `secret`):
+    /// open-request registry + live subscribers. See `ServerRequestBox`.
+    private let serverRequests = ServerRequestBox()
+    private var serverRequestReplies: [String: Task<Void, any Error>] = [:]
+    private var nextCapabilitiesID = 0
+    private var capabilityRequestID: JSONRPCID?
+    private var serverRequestSupportState: ServerRequestSupport = .notAdvertised
+
     /// H2 Connection health: every lifecycle observation this transport makes
     /// (connect started / connected / disconnected with reason / heartbeat
     /// ping RTT) is yielded here for the FleetCore stats accumulator. The
@@ -445,7 +453,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let frame = JSONRPCRequest(id: id, method: method, params: params)
         let line = try JSONRPCCodec.encode(.request(frame))
 
-        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<JSONValue, any Error>) in
+        let result = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<JSONValue, any Error>) in
             pendingRequests[id] = cont
             // Send on a detached task so a send failure can fail the pending
             // continuation rather than leaving it dangling.
@@ -467,7 +475,21 @@ public actor GatewayWebSocketTransport: HermesTransport {
                 await self?.failPending(id: id, error: TransportError.requestTimeout)
             }
         }
+        // P0.1 reconnect contract: `session.resume` / `session.activate` /
+        // `session.events.since` answer with `open_requests` — the server→
+        // client requests still waiting on the session. They are not events
+        // (the replay ring cannot carry "a question still waiting"), so they
+        // are re-delivered here, before the caller sees the result.
+        if Self.openRequestMethods.contains(method) {
+            await ingestOpenRequests(from: result)
+        }
+        return result
     }
+
+    /// Methods whose result carries `open_requests`.
+    private static let openRequestMethods: Set<String> = [
+        "session.resume", "session.activate", "session.events.since",
+    ]
 
     /// Remove-and-resume a pending continuation exactly once.
     ///
@@ -581,6 +603,14 @@ public actor GatewayWebSocketTransport: HermesTransport {
             guard let gatewayEvent = GatewayEvent(event: event) else { return }
             await handleEvent(gatewayEvent)
         case .response(let response):
+            if response.id == capabilityRequestID {
+                // P0.1: the gateway's `client.capabilities` answer — the
+                // request methods it may send.
+                capabilityRequestID = nil
+                let methods = response.result?["server_requests"]?.arrayValue?.compactMap(\.stringValue) ?? []
+                serverRequestSupportState = .acknowledged(methods: methods)
+                return
+            }
             // H2: a correlated heartbeat pong measures ping RTT (the ping's
             // send instant was recorded in `sendPing`). Heartbeat ids are
             // never in `pendingRequests`, so this lookup is unambiguous.
@@ -595,11 +625,22 @@ public actor GatewayWebSocketTransport: HermesTransport {
                 continuation.resume(returning: response.result ?? .null)
             }
         case .error(let error):
+            if error.id == capabilityRequestID {
+                // An older gateway (no `client.capabilities`, or no server
+                // requests): nothing is promised; the legacy event path serves.
+                capabilityRequestID = nil
+                serverRequestSupportState = .refused
+                return
+            }
             if let continuation = pendingRequests.removeValue(forKey: error.id) {
                 continuation.resume(throwing: error.error)
             }
-        case .request:
-            break // server → client requests don't occur on this seam
+        case .request(let request):
+            // P0.1: a server→client request (the gateway asks; the user
+            // answers). Only clients that advertised `server_requests` get
+            // these, and the advertisement is sent on every `gateway.ready`.
+            await handleServerRequest(
+                id: request.id, method: request.method, params: request.params, replayed: false)
         }
     }
 
@@ -633,6 +674,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
             let payload = event.ready ?? GatewayEvent.ReadyPayload(
                 skin: nil, changeEvents: false, heartbeat: false, replayEpoch: nil)
             readyContinuation.yield(payload)
+            // P0.1: tell the gateway, once per connection and only after
+            // `gateway.ready`, that this client answers server→client
+            // requests. A WebSocket client that never says so is treated as a
+            // build that predates them and every approval is withdrawn.
+            if config.advertisesServerRequests {
+                await advertiseServerRequestCapability()
+            }
         case .error:
             // Surface transport-level error events; P1 just records them.
             break
@@ -640,7 +688,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
              .messageComplete, .thinkingDelta, .reasoningDelta,
              .reasoningAvailable, .statusUpdate, .toolStart, .toolGenerating,
              .toolProgress, .toolComplete, .backgroundComplete,
-             .approvalRequest, .usageUpdate, .sessionTitle, .unknown:
+             .approvalRequest, .usageUpdate, .sessionTitle, .requestCancel, .unknown:
             // Conversation/streaming events are forwarded via the event
             // channel above; the transport itself does not interpret them.
             break
@@ -651,7 +699,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// watermark (when `advanceWatermark` is true). Replayed events and live
     /// frames both pass through here so watermarks stay monotonic.
     private func forward(_ event: GatewayEvent, advanceWatermark: Bool) {
+        // P0.1: `request.cancel {id, ...}` withdraws an open server request.
+        // Settle it here so live frames and replayed events behave the same;
+        // the event itself still reaches subscribers so the UI dismisses the
+        // matching prompt (never as a denial).
+        if event.type == .requestCancel, let id = event.payload?["id"]?.stringValue {
+            serverRequests.settle(id)
+        }
         eventSubscriptions.yield(event)
+        serverRequests.forwardConversation(event)
         if advanceWatermark, let sessionID = event.sessionID, let seq = event.seq {
             sessionWatermarks[sessionID] = max(sessionWatermarks[sessionID] ?? 0, seq)
         }
@@ -672,6 +728,158 @@ public actor GatewayWebSocketTransport: HermesTransport {
             eventSubscriptions.remove(id)
         }
         return stream
+    }
+
+    // MARK: P0.1 — server→client requests
+
+    /// Subscribe to server→client requests (`approval`, `clarify`, `sudo`,
+    /// `secret`). The stream first yields every request that is open right
+    /// now (marked `replayed`), then live ones, so a screen that subscribes
+    /// after a request arrived — or after a reconnect re-delivered it through
+    /// `open_requests` — still sees it. Each call returns a fresh stream.
+    public nonisolated func subscribeToServerRequests() -> AsyncStream<ServerRequest> {
+        let (stream, continuation) = AsyncStream<ServerRequest>.makeStream()
+        let token = serverRequests.subscribe(continuation)
+        continuation.onTermination = { [serverRequests] _ in
+            serverRequests.unsubscribe(token)
+        }
+        return stream
+    }
+
+    /// Conversation events, requests and withdrawals in transport order.
+    public nonisolated func subscribeToConversationEvents() -> AsyncStream<ConversationEvent> {
+        let (stream, continuation) = AsyncStream<ConversationEvent>.makeStream()
+        let token = serverRequests.subscribeConversation(continuation)
+        continuation.onTermination = { [serverRequests] _ in
+            serverRequests.unsubscribeConversation(token)
+        }
+        return stream
+    }
+
+    /// Number of server requests currently open on this transport.
+    public nonisolated var openServerRequestCount: Int { serverRequests.openCount }
+
+    /// Answer an open server→client request with a JSON-RPC RESPONSE carrying
+    /// its id. Idempotent per id: an id already answered or withdrawn is not
+    /// sent again (a stale card answering twice is a no-op on the wire).
+    /// Throws when the connection is down, leaving the request open so the
+    /// user can retry — a failed answer must never look like success.
+    public func respondToServerRequest(id: String, result: JSONValue) async throws {
+        guard !serverRequests.isSettled(id) else { return }
+        // Actor methods are reentrant during socket send. Concurrent taps
+        // share the same send and its failure rather than sending twice or
+        // reporting success while the first answer can still fail.
+        if let reply = serverRequestReplies[id] {
+            try await reply.value
+            return
+        }
+        let reply = Task {
+            try await self.sendServerRequestReply(id: id) { wireID in
+                .response(JSONRPCResponse(id: wireID, result: result))
+            }
+        }
+        serverRequestReplies[id] = reply
+        defer { serverRequestReplies[id] = nil }
+        try await reply.value
+        serverRequests.settle(id)
+    }
+
+    /// Mark a request settled without sending a response (the last
+    /// `clarify.lock` resolved it server-side, or the gateway said it expired).
+    public func settleServerRequest(id: String) {
+        serverRequests.settle(id)
+    }
+
+    private func sendServerRequestReply(
+        id: String, message: (JSONRPCID) -> JSONRPCMessage
+    ) async throws {
+        guard connectionState == .open, let session else {
+            throw TransportError.invalidState("server request answer from \(connectionState)")
+        }
+        // Echo the id exactly as it arrived (string or number); after a
+        // reconnect the registry is re-filled by `open_requests` with the
+        // gateway's own ids, which are strings.
+        guard !serverRequests.isSettled(id) else { return }
+        guard let wireID = serverRequests.wireID(for: id) else {
+            throw TransportError.invalidState("server request is no longer open")
+        }
+        let line = try JSONRPCCodec.encode(message(wireID))
+        do {
+            try await session.send(.text(line))
+        } catch {
+            throw TransportError.transportFailure(
+                "server request response could not be sent")
+        }
+    }
+
+    /// Route one server→client request. Methods Fleet does not implement get
+    /// JSON-RPC `-32601`, and a supported method with unusable params gets
+    /// `-32602`, so the agent fails fast instead of waiting out its deadline.
+    /// A supported request is parked in the registry and delivered to
+    /// subscribers; it is answered later by the user (or withdrawn by
+    /// `request.cancel`).
+    private func handleServerRequest(
+        id: JSONRPCID, method: String, params: JSONValue?, replayed: Bool
+    ) async {
+        switch GatewayServerRequestDecoder.decode(
+            id: id, method: method, params: params, replayed: replayed) {
+        case .failure(let error):
+            await replyWithError(id: id, error: error)
+        case .success(let request):
+            switch serverRequests.admit(.init(wireID: id, request: request)) {
+            case .admitted, .duplicate, .settled:
+                break
+            case .full:
+                await replyWithError(id: id, error: JSONRPCError(
+                    code: JSONRPCError.internalError.code,
+                    message: "too many open server requests"))
+            }
+        }
+    }
+
+    private func replyWithError(id: JSONRPCID, error: JSONRPCError) async {
+        guard let session,
+              let line = try? JSONRPCCodec.encode(
+                .error(JSONRPCErrorResponse(id: id, error: error))) else { return }
+        try? await session.send(.text(line))
+        serverRequests.settle(id.wireValue)
+    }
+
+    /// Re-deliver the `open_requests` of a resume / activate / events.since
+    /// result as if they had just arrived (ids are preserved, so a card that
+    /// survived the reconnect keeps its identity and answers the same request).
+    private func ingestOpenRequests(from result: JSONValue) async {
+        for entry in GatewayServerRequestDecoder.openRequestEntries(in: result) {
+            await handleServerRequest(
+                id: entry.id, method: entry.method, params: entry.params, replayed: true)
+        }
+    }
+
+    /// `client.capabilities {server_requests: true}` — sent once per connection
+    /// after `gateway.ready`, only when the configuration opts in. The reply
+    /// is correlated by its own id (never in `pendingRequests`) and recorded
+    /// as `serverRequestSupport()`; a `-32601` from an older gateway is not a
+    /// failure of the connection.
+    private func advertiseServerRequestCapability() async {
+        guard let session else { return }
+        nextCapabilitiesID += 1
+        let id = JSONRPCID.string("caps-\(nextCapabilitiesID)")
+        let frame = JSONRPCRequest(
+            id: id,
+            method: "client.capabilities",
+            params: .object(["server_requests": .bool(true)]))
+        guard let line = try? JSONRPCCodec.encode(.request(frame)) else { return }
+        capabilityRequestID = id
+        serverRequestSupportState = .pending
+        try? await session.send(.text(line))
+    }
+
+    /// What the gateway said about server→client requests on the current
+    /// connection. UI must not promise prompt kinds beyond an
+    /// `.acknowledged` list; `.refused` means an older gateway (the legacy
+    /// `approval.request` event path applies).
+    public func serverRequestSupport() -> ServerRequestSupport {
+        serverRequestSupportState
     }
 
     /// H2 Connection health: subscribe to the transport's lifecycle
@@ -835,6 +1043,11 @@ public actor GatewayWebSocketTransport: HermesTransport {
         // poll gate resumes immediately after a disconnect instead of
         // trusting a last-frame timestamp from a dead connection.
         lastFrameBox.clear()
+        // P0.1: the gateway keeps its open server requests and re-delivers
+        // them through `open_requests` on resume; drop this connection's copy.
+        serverRequests.clearOpen()
+        capabilityRequestID = nil
+        serverRequestSupportState = .notAdvertised
         // Fail every in-flight RPC request so awaiters never hang: a dropped
         // socket is a classification, not an endless await.
         let pending = pendingRequests

@@ -17,6 +17,10 @@ retention rules.
 - Conversation and fleet snapshots may be cached locally to make recently
   viewed screens useful during a temporary disconnect. These snapshots are
   device-local and are not sent to Hermes Fleet or an AIowa-operated service.
+- To keep conversations out of the iOS app-switcher preview, Hermes Fleet
+  covers its window with a blank branded screen when App Lock is enabled
+  and the unlocked app becomes inactive or enters the background. Disabling
+  App Lock also disables this cover. No content is captured or stored for this purpose.
 - If voice input is used, the app requests microphone and speech-recognition
   access. Speech recognition is required to run on the device; recognized text
   is submitted to the gateway only when the user sends it as a conversation
@@ -42,8 +46,10 @@ expired by the app's bounded cache policy or removed by the user through the
 app's cache controls when available. Removing a saved gateway removes its
 stored credential and gateway-local cached data (cached conversation
 transcripts, connection health history, saved drafts, and phone-bridged group
-rooms that include that gateway's bots). Conversations you pinned remain as a
-title and preview shortcut until you unpin them. Deleting the app removes its
+rooms that include that gateway's bots). If a saved room draft has an ambiguous
+storage key that also matches another saved gateway, the app retains that draft
+to avoid deleting the other gateway's unsent text. Conversations you pinned remain
+as a title and preview shortcut until you unpin them. Deleting the app removes its
 local data subject to iOS backup and device-management behavior. Data already
 sent to a gateway is controlled by that gateway's operator and must be deleted
 through the gateway's own controls.
@@ -66,6 +72,10 @@ request deletion at any time by:
   conversations, roster snapshots, health history, and recent destinations;
   saved gateways and Keychain credentials are kept).
 - Deleting the app (removes its local data, subject to iOS backup behavior).
+  iOS keeps Keychain items after an app is deleted, so on the first launch of
+  a fresh install Hermes Fleet removes any leftover gateway credentials, tokens,
+  TLS pins, and first-use approvals from its own Keychain namespaces before it
+  loads anything. Updating the app never removes them.
 - Contacting us through the support channel below to ask questions or
   request that we correct information we hold about you.
 

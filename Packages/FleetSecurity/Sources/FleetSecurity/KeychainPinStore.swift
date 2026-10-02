@@ -26,9 +26,9 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         self.keychain = LiveKeychainSession()
     }
 
-    /// Injectable `KeychainSession` (tests only — CI hermetic, no live
-    /// keychain). Production callers use `init()`.
-    init(keychain: any KeychainSession) {
+    /// The composition root supplies a shared install-reconciliation session;
+    /// tests supply a hermetic Keychain double.
+    public init(keychain: any KeychainSession) {
         self.keychain = keychain
     }
 

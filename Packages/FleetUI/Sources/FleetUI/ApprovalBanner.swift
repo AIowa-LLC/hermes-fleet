@@ -7,21 +7,46 @@ import FleetCore
 public struct ApprovalBanner: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var model: ApprovalViewModel
+    /// P0.2a: who is asking (gateway, bot, folder, session). Built by the
+    /// parent from its own conversation context, never from the wire payload.
+    var origin: ApprovalOrigin
     /// Deny tap owned by the parent so the banner remains presentational.
     var onDeny: () -> Void
+    @State private var reviewingRequest: ApprovalRequest?
 
-    public init(model: ApprovalViewModel, onDeny: @escaping () -> Void) {
+    public init(
+        model: ApprovalViewModel,
+        origin: ApprovalOrigin = .unknown,
+        onDeny: @escaping () -> Void
+    ) {
         self.model = model
+        self.origin = origin
         self.onDeny = onDeny
     }
 
     public var body: some View {
         if let request = model.pending {
-            banner(for: request)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            scrollingIfNeeded(banner(for: request))
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
         } else {
             EmptyView()
+        }
+    }
+
+    /// At accessibility text sizes the card can outgrow the screen; keep it
+    /// scrollable within a bounded height so the transcript and the Deny /
+    /// Approve buttons stay reachable.
+    @ViewBuilder
+    private func scrollingIfNeeded(_ content: some View) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            ScrollView { content }
+                .frame(maxHeight: 420)
+                .scrollBounceBehavior(.basedOnSize)
+        } else {
+            content
         }
     }
 
@@ -37,42 +62,32 @@ public struct ApprovalBanner: View {
             }
             .accessibilityIdentifier("approval.banner.title")
 
-            // Client-redacted command preview.
-            Text(request.command)
-                .font(FleetTheme.monoFont)
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(4)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, FleetTheme.spacingSm)
-                .padding(.vertical, 6)
-                .background(
-                    theme.background,
-                    in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
-                        .strokeBorder(FleetTheme.statusNeedsIntervention.opacity(0.4), lineWidth: 1)
-                )
-                .accessibilityIdentifier("approval.banner.command")
+            // P0.2a: origin first (also first for VoiceOver), then the
+            // client-redacted command preview with an explicit elision marker.
+            ApprovalOriginHeader(origin: origin)
+
+            ApprovalCommandPreviewView(command: request.command) {
+                reviewingRequest = request
+            }
 
             if let detail = request.detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(2)
+                ApprovalUntrustedDetail(detail: detail)
             }
 
             switch model.state {
             case .biometricFailed:
-                hint("Face ID did not match. The command stays blocked — deny or try again.")
-            case .biometricUnavailable:
-                hint("Face ID unavailable. The command stays blocked until it can be verified.")
+                presenceHint(.failed)
+            case .authCancelled:
+                presenceHint(.cancelled)
+            case .passcodeNotSet:
+                presenceHint(.passcodeNotSet)
             case .respondFailed(let message):
                 hint(message)
-            case .pending, .idle, .confirmYolo:
+            case .pending, .idle, .confirmYolo, .reviewRequired:
                 EmptyView()
+            }
+            if !model.canApprove {
+                hint("Approve is off until you review the full command. Deny is always available.")
             }
 
             HStack(spacing: FleetTheme.spacingMd) {
@@ -93,6 +108,7 @@ public struct ApprovalBanner: View {
                 approveMenu(for: request)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(FleetTheme.spacingMd)
         .background(
             theme.surface,
@@ -106,7 +122,38 @@ public struct ApprovalBanner: View {
         .padding(.vertical, FleetTheme.spacingSm)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("approval.banner")
-        .accessibilityLabel("Approval required. Command: \(request.command)")
+        .accessibilityLabel(accessibilitySummary(for: request))
+        .sheet(item: $reviewingRequest) { snapshot in
+            ApprovalReviewSheet(
+                origin: origin,
+                command: snapshot.command,
+                detail: snapshot.detail,
+                isReviewed: model.pendingIsReviewed
+            ) {
+                model.markReviewed(snapshot)
+            }
+        }
+        .onChange(of: model.pending) { _, current in
+            guard let snapshot = reviewingRequest else { return }
+            if current?.requestID != snapshot.requestID || current?.sessionID != snapshot.sessionID
+                || current?.command != snapshot.command {
+                reviewingRequest = nil
+            }
+        }
+    }
+
+    /// Origin first, then the (possibly truncated) command, so VoiceOver
+    /// says who is asking before what they are asking to run.
+    private func accessibilitySummary(for request: ApprovalRequest) -> String {
+        let preview = ApprovalCommandPreview(command: request.command)
+        var summary = "Approval required. \(origin.accessibilityDescription) Command: \(preview.visibleText)"
+        if let marker = preview.elisionMarker {
+            summary += ". Command truncated, \(marker.replacingOccurrences(of: "… ", with: "")). "
+            summary += model.pendingIsReviewed
+                ? "Full command reviewed."
+                : "Use Review full command before approving."
+        }
+        return summary
     }
 
     /// Tap approves once; the menu adds broader scopes only when offered by
@@ -117,6 +164,7 @@ public struct ApprovalBanner: View {
         let approveAction: (ApprovalChoice) -> Void = { choice in
             Task { await model.approve(scope: choice) }
         }
+        let allowed = model.canApprove
         if offered.contains("session") || offered.contains("always") {
             Menu {
                 Button("Approve once") { approveAction(.once) }
@@ -129,6 +177,9 @@ public struct ApprovalBanner: View {
             } label: {
                 approveLabel("Approve")
             }
+            .disabled(!allowed)
+            .opacity(allowed ? 1 : 0.45)
+            .accessibilityHint("Requires Face ID or your device passcode")
             .accessibilityIdentifier("approval.approve")
         } else {
             Button {
@@ -137,6 +188,9 @@ public struct ApprovalBanner: View {
                 approveLabel("Approve")
             }
             .buttonStyle(.fleetPressable)
+            .disabled(!allowed)
+            .opacity(allowed ? 1 : 0.45)
+            .accessibilityHint("Requires Face ID or your device passcode")
             .accessibilityIdentifier("approval.approve")
         }
     }
@@ -161,10 +215,21 @@ public struct ApprovalBanner: View {
         )
     }
 
+    /// P0.2b: inline, announced feedback for a presence check that did not
+    /// verify (worded for the action that was attempted).
+    @ViewBuilder
+    private func presenceHint(_ result: PresenceResult) -> some View {
+        if let text = PresenceFeedback.message(for: result, action: model.lastPresenceAction) {
+            hint(text)
+                .onAppear { AccessibilityNotification.Announcement(text).post() }
+        }
+    }
+
     private func hint(_ text: String) -> some View {
         Text(text)
             .font(.caption)
             .foregroundStyle(FleetTheme.statusNeedsIntervention)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("approval.banner.hint")
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftUI
+import FleetCore
 
 // MARK: - Biometric authentication seam (H1 app lock)
 
@@ -25,7 +26,7 @@ public enum AppLockAuthResult: Equatable, Sendable {
 ///   passcode fallback).
 /// - DEBUG test-automation providers driven by `HERMES_FLEET_APP_LOCK` /
 ///   `HERMES_FLEET_LOCK_BIOMETRIC` launch environment.
-public protocol AppLockBiometricAuth: Sendable {
+public protocol AppLockBiometricAuth: PresenceEvaluating {
     /// Whether biometrics are enrolled/available on this device.
     func canEvaluateBiometrics() -> Bool
     /// Attempt biometric verification. `.failure` / `.unavailable` → the
@@ -34,6 +35,34 @@ public protocol AppLockBiometricAuth: Sendable {
     /// Attempt device passcode verification (system UI). Returns true only
     /// on success; false on cancel/failure/absent passcode.
     func evaluateDevicePasscode(reason: String) async -> Bool
+}
+
+// MARK: - User-presence gate (P0.2b)
+
+extension AppLockBiometricAuth {
+    /// Default platform evaluation built from the legacy two-method seam so
+    /// existing providers keep working. The production
+    /// `LocalAuthenticationBiometricAuth` overrides this with real `LAError`
+    /// mapping (cancel / lockout / no passcode).
+    public func evaluate(policy: PresencePolicy, reason: String) async -> PresenceOutcome {
+        switch policy {
+        case .biometricsOnly:
+            switch await evaluateBiometrics(reason: reason) {
+            case .success: return .success
+            case .failure: return .failed
+            case .unavailable: return .biometricsUnavailable
+            }
+        case .deviceOwner:
+            return await evaluateDevicePasscode(reason: reason) ? .success : .failed
+        }
+    }
+
+    /// The single user-presence check for privilege-expanding actions:
+    /// biometrics first, device passcode when biometrics cannot run. Fails
+    /// closed; see `UserPresenceGate`.
+    public func verifyPresence(_ action: PresenceAction) async -> PresenceResult {
+        await UserPresenceGate(evaluator: self).verify(action)
+    }
 }
 
 // MARK: - AppLockController
@@ -56,6 +85,15 @@ public protocol AppLockBiometricAuth: Sendable {
 /// authentication when locked. A failed/unavailable biometric evaluation
 /// automatically shows the passcode fallback (`.passcodeFallback` state) —
 /// the failed-biometric acceptance path.
+///
+/// Privacy shield (P0.3a): when App Lock is enabled, `.inactive` / `.background`
+/// on an UNLOCKED app engages an opaque cover (`isPrivacyShieldVisible`) so the
+/// app-switcher snapshot never captures conversation content. The shield only
+/// engages from `.unlocked`: while the lock screen or a Face ID / passcode
+/// system sheet is up (`.locked` / `.authenticating` / `.passcodeFallback`)
+/// content is already gated, and the system sheet's own `.inactive` must not
+/// arm a cover that would flash over the unlock. `.active` (or a successful
+/// unlock) always disengages it. Lock semantics are unchanged.
 @MainActor
 @Observable
 public final class AppLockController {
@@ -95,13 +133,27 @@ public final class AppLockController {
 
     public var isLocked: Bool { state != .unlocked }
 
+    /// Whether the opaque privacy cover should currently be on screen.
+    /// `.disabled` mode (deterministic UI-test bypass) never shows it.
+    public var isPrivacyShieldVisible: Bool {
+        privacyCover.isEngaged && shouldLock
+    }
+
     // MARK: Private
 
     private let auth: any AppLockBiometricAuth
     private let defaults: UserDefaults
     private let mode: Mode
     private let defaultsKey: String
+    private var settingIntent = 0
+    public private(set) var isVerifyingSetting = false
     private var hasAuthenticatedThisSession = false
+    private var authenticationEpoch = 0
+    private var isAuthenticationInFlight = false
+    private var currentScenePhase: ScenePhase = .active
+    /// Set on `.inactive`/`.background` from `.unlocked`; cleared on `.active`,
+    /// on successful unlock, and when the setting is turned off.
+    private var privacyCover = PrivacyShieldPolicy()
 
     public init(
         auth: any AppLockBiometricAuth,
@@ -127,11 +179,15 @@ public final class AppLockController {
 
     // MARK: Setting
 
-    /// Update the persisted in-app toggle. Turning it OFF unlocks immediately
+    /// Update the persisted in-app toggle WITHOUT a presence check. User-facing
+    /// callers turning App Lock off must use `requestSetEnabled(_:)`. Turning it OFF unlocks immediately
     /// (and stops re-locking); turning it ON locks the next time the app is
     /// foregrounded while locked.
     public func setEnabled(_ enabled: Bool) {
+        settingIntent += 1
         guard isEnabled != enabled else { return }
+        authenticationEpoch += 1
+        hasAuthenticatedThisSession = false
         isEnabled = enabled
         defaults.set(enabled, forKey: defaultsKey)
         if enabled {
@@ -139,9 +195,32 @@ public final class AppLockController {
                 state = .locked
             }
         } else {
+            privacyCover.reset()
             state = .unlocked
             hasAuthenticatedThisSession = false
         }
+    }
+
+    /// P0.2b — the Settings entry point. Turning App Lock ON needs no check;
+    /// turning it OFF requires a fresh user-presence check and changes nothing
+    /// unless it is verified. Returns `.verified` when the change was applied
+    /// (or was already in effect).
+    public func requestSetEnabled(_ enabled: Bool) async -> PresenceResult {
+        if enabled {
+            // Even an already-on safe choice invalidates an older off prompt.
+            setEnabled(true)
+            return .verified
+        }
+        guard isEnabled else { return .verified }
+        guard !isVerifyingSetting else { return .cancelled }
+        isVerifyingSetting = true
+        defer { isVerifyingSetting = false }
+        let intent = settingIntent
+        let result = await auth.verifyPresence(.turnOffAppLock)
+        guard settingIntent == intent else { return .cancelled }
+        guard result == .verified else { return result }
+        setEnabled(false)
+        return .verified
     }
 
     // MARK: Scene phase
@@ -150,19 +229,32 @@ public final class AppLockController {
     /// locked-but-not-yet-authenticated app triggers authentication;
     /// `.background` re-locks an unlocked app (foreground-gating).
     public func handleScenePhase(_ phase: ScenePhase) {
+        currentScenePhase = phase
+        privacyCover.handle(phase, contentUnlocked: state == .unlocked, enabled: shouldLock)
         switch phase {
         case .active:
+            privacyCover.reset()
             if shouldLock, state == .locked {
                 Task { await authenticate() }
             }
+        case .inactive:
+            // App-switcher snapshot protection. Only from `.unlocked`: the
+            // lock screen / Face ID sheet already cover content, and their
+            // `.inactive` must not arm a cover (no flicker loop).
+            break
         case .background:
-            if shouldLock, state == .unlocked {
+            // Covers a `.background` that arrives without a prior `.inactive`.
+            // Evaluated BEFORE the re-lock below so it sees `.unlocked`.
+            if shouldLock {
+                // An attempt started before background cannot authenticate
+                // the next foreground session, even if it completes later.
+                authenticationEpoch += 1
                 state = .locked
                 // Foreground must re-authenticate after a background re-lock —
                 // clear the session flag so `.active` triggers a fresh prompt.
                 hasAuthenticatedThisSession = false
             }
-        default:
+        @unknown default:
             break
         }
     }
@@ -184,13 +276,22 @@ public final class AppLockController {
     /// button).
     public func authenticate() async {
         guard shouldLock else { return }
+        guard currentScenePhase != .background, !isAuthenticationInFlight else { return }
         guard state == .locked || state == .passcodeFallback else { return }
         guard !hasAuthenticatedThisSession else { return }
+        isAuthenticationInFlight = true
+        let epoch = authenticationEpoch
+        defer { finishAuthenticationAttempt(epoch: epoch) }
         state = .authenticating
-        switch await auth.evaluateBiometrics(reason: Self.reason) {
+        let result = await auth.evaluateBiometrics(reason: Self.reason)
+        guard epoch == authenticationEpoch, shouldLock else { return }
+        switch result {
         case .success:
             state = .unlocked
             hasAuthenticatedThisSession = true
+            // The system sheet's dismissal `.inactive` may still be in
+            // flight; never leave a cover armed over a fresh unlock.
+            privacyCover.reset()
         case .failure, .unavailable:
             state = .passcodeFallback
         }
@@ -200,14 +301,33 @@ public final class AppLockController {
     /// the device passcode via LocalAuthentication.
     public func unlockWithPasscode() async {
         guard shouldLock else { return }
+        guard currentScenePhase != .background, !isAuthenticationInFlight else { return }
         guard state == .passcodeFallback || state == .locked else { return }
+        isAuthenticationInFlight = true
+        let epoch = authenticationEpoch
+        defer { finishAuthenticationAttempt(epoch: epoch) }
         state = .authenticating
-        if await auth.evaluateDevicePasscode(reason: Self.reason) {
+        let authenticated = await auth.evaluateDevicePasscode(reason: Self.reason)
+        guard epoch == authenticationEpoch, shouldLock else { return }
+        if authenticated {
             state = .unlocked
             hasAuthenticatedThisSession = true
+            // The system sheet's dismissal `.inactive` may still be in
+            // flight; never leave a cover armed over a fresh unlock.
+            privacyCover.reset()
         } else {
             state = .passcodeFallback
         }
+    }
+
+    private func finishAuthenticationAttempt(epoch: Int) {
+        isAuthenticationInFlight = false
+        // If foreground returned while the old prompt was still pending,
+        // release that prompt before scheduling one fresh attempt. Inactive
+        // authentication sheets do not invalidate otherwise valid results.
+        guard epoch != authenticationEpoch, currentScenePhase == .active,
+              shouldLock, state == .locked, !hasAuthenticatedThisSession else { return }
+        Task { await authenticateIfNeeded() }
     }
 
     // MARK: Constants
