@@ -15,7 +15,7 @@ expected_test_count() {
     FleetCore) echo 687 ;;
     FleetNetworking) echo 611 ;;
     FleetPersistence) echo 40 ;;
-    FleetSecurity) echo 37 ;;
+    FleetSecurity) echo 46 ;;
     *) return 1 ;;
   esac
 }
@@ -49,7 +49,7 @@ run_pkg() {
   count=$(printf '%s\n' "$summary" | sed -nE 's/^[[:space:]]*Executed ([0-9]+) tests?, with ([0-9]+ tests? skipped and )?0 failures([[:space:](]|$).*/\1/p')
 
   # Exact count is intentional: the current declared XCTest inventories are
-  # 687/611/40/37 (including presence, review and server-request regressions). Update
+  # 687/611/40/46 (including presence, review, server-request and install-hygiene regressions). Update
   # these baselines with deliberate test additions or removals; a partial run
   # must never look green merely because its completed subset reported zero
   # failures.

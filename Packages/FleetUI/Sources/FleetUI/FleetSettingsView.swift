@@ -280,9 +280,11 @@ public struct FleetSettingsSecurityView: View {
             } footer: {
                 Text("Require Face ID (or your device passcode) to unlock "
                      + "Hermes Fleet when the app opens. Stored gateway "
-                     + "credentials stay protected by the Keychain.")
+                     + "credentials stay protected by the Keychain. App Lock also hides "
+                     + "app contents in the app switcher.")
                     .foregroundStyle(theme.textSecondary)
             }
+
         }
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())

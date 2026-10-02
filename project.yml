@@ -77,6 +77,20 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.aiowa.HermesFleetAppTests
         GENERATE_INFOPLIST_FILE: YES
 
+  # Compile only the security-policy suite in Release; the broad hosted bundle
+  # contains intentional Debug-only scripted fixtures.
+  HermesFleetReleaseHygieneTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: HermesFleetAppTests/LaunchOverrideHygieneTests.swift
+    dependencies:
+      - target: HermesFleetApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiowa.HermesFleetReleaseHygieneTests
+        GENERATE_INFOPLIST_FILE: YES
+
   HermesFleetAppUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -112,3 +126,12 @@ schemes:
     test:
       targets:
         - HermesFleetAppTests
+  HermesFleetReleaseHygiene:
+    build:
+      targets:
+        HermesFleetApp: all
+        HermesFleetReleaseHygieneTests: [test]
+    test:
+      config: Release
+      targets:
+        - HermesFleetReleaseHygieneTests

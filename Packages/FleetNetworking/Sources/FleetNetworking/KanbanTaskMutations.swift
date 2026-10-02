@@ -64,7 +64,7 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
                 if let detail = Self.errorDetail(from: data) {
                     throw KanbanMutationError.rejected(detail)
                 }
-                Self.mutationLog.error("kanban \(path, privacy: .public): HTTP \(http.statusCode, privacy: .public)")
+                Self.mutationLog.error("kanban \(path, privacy: .private): HTTP \(http.statusCode, privacy: .public)")
                 throw KanbanMutationError.httpStatus(http.statusCode)
             }
         }

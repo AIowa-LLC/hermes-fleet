@@ -45,6 +45,13 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
 - reconnect and recover missed events
 - preserve cached conversation history for cold-start presentation
 - show device-local unread indicators in Chats and drawer Recents; existing sessions are baselined on first observation and opening a conversation marks its gateway timestamp as read
+- unsent composer drafts persist per conversation: keyed by gateway + profile +
+  session ID (canonical Bot Chat included), restored when the conversation
+  reopens (navigation, App Lock, relaunch), and cleared only after a successful
+  send — a failed send keeps the draft. Drafts are device-local, written
+  debounced to a single file with complete file protection and excluded from
+  backup, bounded (50 drafts, 20,000 characters each, 30 days), and removed when
+  their gateway is removed or local cache is cleared
 - approvals and per-session control surfaces
 - approval card integrity: the card header names the gateway, bot, working
   folder, and session the request came from (built from the client's own
@@ -151,10 +158,15 @@ Speech-recognition behavior can vary by locale and platform capability.
 ## Security and privacy behavior
 
 - credentials and tokens use Keychain-backed storage
+- on the first launch of a fresh install (no install marker and no prior local state) the app deletes leftover Keychain items in its credential, token, and TLS-pin namespaces before the registry loads; an in-place update from a build without the marker adopts the marker and keeps its credentials
+- the App Lock launch-environment overrides (`HERMES_FLEET_APP_LOCK`, `HERMES_FLEET_LOCK_*`) exist only in DEBUG builds; Release always follows the persisted App Lock setting
+- gateway addresses, hosts, paths, and session identifiers are logged with private OSLog privacy; `scripts/security_hygiene_guard.py` (part of `scripts/c1_static.sh`) enforces this and the DEBUG-only lock override
 - gateway endpoints are normalized at the registry boundary
 - sensitive URL material is rejected or redacted
 - private infrastructure should never be embedded in fixtures or documentation
 - TLS-protected gateway endpoints are preferred
+- App Lock (Face ID / device passcode) gates the UI when the app returns from the background; the Settings > Security toggle defaults ON
+- Privacy shield: with App Lock enabled, when the app becomes inactive or enters the background, an opaque cover (theme background plus the wing mark, no content) is shown in a scene-level window so the app-switcher snapshot never captures conversation content. It is tied to App Lock, covers presented sheets, does not engage while the lock screen or a Face ID prompt is showing, and honors Reduce Motion (no fade). Disabling App Lock disables the shield. App Lock re-lock semantics are unchanged (still on background).
 
 ## Capability honesty
 
