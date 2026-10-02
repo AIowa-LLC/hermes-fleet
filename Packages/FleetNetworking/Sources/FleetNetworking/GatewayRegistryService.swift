@@ -270,7 +270,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// default endpoint legacy rows converge onto, supplied as DATA, never
     /// compiled Swift topology. Resolution order:
     /// 1. `HERMES_FLEET_DEFAULT_ENDPOINT` launch environment (explicit
-    ///    legacy-migration lane);
+    ///    legacy-migration lane; DEBUG builds only);
     /// 2. the `FleetDefaultEndpoint` key in the app's Info.plist — a PUBLIC
     ///    hostname only (not private topology, not an ATS exception).
     /// Nil/blank at both layers means "no migration target configured".
@@ -282,9 +282,13 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// gateway (Hermes Fleet explicitly supports user-owned LAN/tailnet
     /// gateways).
     nonisolated static var endpointMigrationDefault: String? {
+        #if DEBUG
+        // Launch-env override is DEBUG-only: a Release process must not be
+        // redirectable to another endpoint via its launch environment.
         let env = ProcessInfo.processInfo.environment["HERMES_FLEET_DEFAULT_ENDPOINT"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !env.isEmpty { return env }
+        #endif
         let plist = (Bundle.main.object(forInfoDictionaryKey: "FleetDefaultEndpoint")
             as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return plist.isEmpty ? nil : plist
@@ -298,8 +302,14 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// whose hosts classify as legacy private shapes are re-pointed onto
     /// `endpointMigrationDefault` via `EndpointMigration`.
     nonisolated static var legacyEndpointMigrationEnabled: Bool {
+        #if DEBUG
+        // DEBUG-only: the opt-in re-points persisted gateway rows, so it is
+        // never reachable from a Release launch environment.
         ProcessInfo.processInfo.environment["HERMES_FLEET_LEGACY_MIGRATION"]?
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "1"
+        #else
+        false
+        #endif
     }
 
     /// Rebuild the in-memory registry from the durable record store.

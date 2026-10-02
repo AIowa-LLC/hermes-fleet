@@ -279,6 +279,7 @@ public struct ConversationView: View {
                     title: screenTitle,
                     subtitle: "\(route.profileSlug.rawValue) · \(gatewayLabel)")
             }
+            #if DEBUG && targetEnvironment(simulator)
             // R10-T1 demo hook (simulator only): `HERMES_FLEET_ATTACHMENT_PICK=1`
             // stages a fixture markdown file through the seam once the session
             // is open — the deterministic UI-test stand-in for the system
@@ -293,6 +294,7 @@ public struct ConversationView: View {
                     byteCount: fixture.count,
                     loadBytes: { fixture })
             }
+            #endif
         }
         .onDisappear {
             viewModel?.teardown()

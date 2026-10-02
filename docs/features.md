@@ -151,6 +151,9 @@ Speech-recognition behavior can vary by locale and platform capability.
 ## Security and privacy behavior
 
 - credentials and tokens use Keychain-backed storage
+- on the first launch of a fresh install (no install marker and no prior local state) the app deletes leftover Keychain items in its credential, token, and TLS-pin namespaces before the registry loads; an in-place update from a build without the marker adopts the marker and keeps its credentials
+- the App Lock launch-environment overrides (`HERMES_FLEET_APP_LOCK`, `HERMES_FLEET_LOCK_*`) exist only in DEBUG builds; Release always follows the persisted App Lock setting
+- gateway addresses, hosts, paths, and session identifiers are logged with private OSLog privacy; `scripts/security_hygiene_guard.py` (part of `scripts/c1_static.sh`) enforces this and the DEBUG-only lock override
 - gateway endpoints are normalized at the registry boundary
 - sensitive URL material is rejected or redacted
 - private infrastructure should never be embedded in fixtures or documentation

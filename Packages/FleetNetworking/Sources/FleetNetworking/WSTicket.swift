@@ -154,7 +154,7 @@ public struct WSTicketClient: WSTicketMinting {
             }
             throw AuthenticationError.httpStatus(http.statusCode)
         }
-        Self.log.info("ws-ticket: minted ok (\(Redaction.redactedURL(self.baseURL), privacy: .public))")
+        Self.log.info("ws-ticket: minted ok (\(Redaction.redactedURL(self.baseURL), privacy: .private))")
         let envelope: TicketEnvelope
         do {
             envelope = try JSONDecoder().decode(TicketEnvelope.self, from: data)
