@@ -38,9 +38,45 @@ public final class ApprovalViewModel {
         case biometricUnavailable
         case respondFailed(String)
         case confirmYolo
+        /// P0.2a: Approve was attempted before the full-command review for a
+        /// long command. Nothing was sent.
+        case reviewRequired
     }
 
     public private(set) var state: BannerState = .idle
+
+    /// P0.2a — which long commands the user has reviewed in full.
+    private var reviewTracker = ApprovalReviewTracker()
+
+    /// True when the pending command is longer than the inline preview and
+    /// must be reviewed in full before Approve is allowed.
+    public var pendingRequiresReview: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.requiresReview(request)
+    }
+
+    /// True once the pending long command has been reviewed in full (always
+    /// false when there is no pending request).
+    public var pendingIsReviewed: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.isReviewed(request)
+    }
+
+    /// Whether Approve is currently allowed for the pending request. Deny is
+    /// never gated and does not consult this.
+    public var canApprove: Bool {
+        guard let request = pending else { return false }
+        return reviewTracker.canApprove(request)
+    }
+
+    /// The user opened the full-command review and finished it (scrolled to
+    /// the end or confirmed). Only the CURRENT pending request is affected.
+    public func markReviewed(_ request: ApprovalRequest) {
+        guard let current = pending, current.requestID == request.requestID,
+              current.sessionID == request.sessionID, current.command == request.command else { return }
+        reviewTracker.markReviewed(current)
+        if state == .reviewRequired { state = .pending }
+    }
 
     /// Effective YOLO state for THIS session (session.info readback +
     /// optimistic local flip confirmed by the server result).
@@ -85,20 +121,58 @@ public final class ApprovalViewModel {
             sessionID: request.sessionID,
             command: Redaction.commandPreview(request.command),
             detail: request.detail,
-            choices: request.choices
+            choices: request.choices,
+            serverRequestID: request.serverRequestID
         )
+        // The same approval seen twice (a reconnect re-delivering it through
+        // `open_requests`, or the legacy event racing the server request)
+        // never renders a second banner. If the new copy carries the
+        // server-request id, adopt it so the answer takes the JSON-RPC
+        // response path.
+        if let current = pending, current.requestID == redacted.requestID {
+            pending = adopting(redacted, preservingWireID: current.serverRequestID)
+            return
+        }
+        if let index = queued.firstIndex(where: { $0.requestID == redacted.requestID }) {
+            queued[index] = adopting(redacted, preservingWireID: queued[index].serverRequestID)
+            return
+        }
         if pending == nil {
             pending = redacted
             state = .pending
-        } else if pending?.requestID != redacted.requestID {
+        } else {
             queued.append(redacted)
         }
+    }
+
+    private func adopting(_ request: ApprovalRequest, preservingWireID oldID: String?) -> ApprovalRequest {
+        ApprovalRequest(requestID: request.requestID, sessionID: request.sessionID,
+                        command: request.command, detail: request.detail, choices: request.choices,
+                        serverRequestID: request.serverRequestID ?? oldID)
     }
 
     /// Clear a resolved approval (e.g. resolved elsewhere / timed out);
     /// promotes the next queued one if present.
     public func clearApproval(requestID: String) {
         guard pending?.requestID == requestID else { return }
+        promoteNext()
+    }
+
+    /// P0.1 — `request.cancel {id}`: the gateway withdrew the server→client
+    /// request (timeout, interrupt, answered from another surface). Dismiss
+    /// the matching banner ONLY. A withdrawal is never a denial: nothing is
+    /// sent, no `respond` call is made, and the queued approval behind it (if
+    /// any) is promoted.
+    public func cancelServerRequest(id: String) {
+        if pending?.serverRequestID == id {
+            promoteNext()
+        } else {
+            queued.removeAll { $0.serverRequestID == id }
+        }
+    }
+
+    private func promoteNext() {
+        reviewTracker.retain(requestIDs: Set(queued.map(\.requestID)))
         if !queued.isEmpty {
             pending = queued.removeFirst()
             state = .pending
@@ -144,12 +218,7 @@ public final class ApprovalViewModel {
     public func deny() async {
         guard let request = pending else { return }
         do {
-            _ = try await approvals.respond(
-                sessionID: request.sessionID,
-                requestID: request.requestID,
-                choice: .deny,
-                all: false
-            )
+            _ = try await approvals.respond(to: request, choice: .deny, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))
@@ -162,9 +231,22 @@ public final class ApprovalViewModel {
     /// (presented only when the gateway offered it in `choices`).
     public func approve(scope: ApprovalChoice) async {
         guard let request = pending else { return }
+        // P0.2a: a long command must be reviewed in full first. This sits
+        // before the biometric prompt so an unreviewed approval never even
+        // asks for Face ID, and never reaches the wire.
+        guard reviewTracker.canApprove(request) else {
+            state = .reviewRequired
+            return
+        }
         // The FaceID gate comes BEFORE any wire call — a failed scan must
         // never send an approval.
-        switch await biometrics.evaluateBiometrics(reason: "Approve a dangerous command") {
+        let auth = await biometrics.evaluateBiometrics(reason: "Approve a dangerous command")
+        // A withdrawal, changed command or denial during authentication
+        // invalidates this tap; reply only to the current registered wire id.
+        guard let current = pending, current.requestID == request.requestID,
+              current.sessionID == request.sessionID, current.command == request.command,
+              reviewTracker.canApprove(current) else { return }
+        switch auth {
         case .success:
             break
         case .failure:
@@ -175,12 +257,7 @@ public final class ApprovalViewModel {
             return
         }
         do {
-            _ = try await approvals.respond(
-                sessionID: request.sessionID,
-                requestID: request.requestID,
-                choice: scope,
-                all: false
-            )
+            _ = try await approvals.respond(to: current, choice: scope, all: false)
             clearApproval(requestID: request.requestID)
         } catch {
             state = .respondFailed(Self.nonSecret(error))

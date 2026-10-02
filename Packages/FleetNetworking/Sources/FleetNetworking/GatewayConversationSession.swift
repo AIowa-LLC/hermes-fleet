@@ -14,7 +14,7 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ServerPromptCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
     public let gatewayID: GatewayID
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
@@ -36,6 +36,10 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
     /// fail-closed by itself (throws `.notConnected` when the transport is
     /// down), matching every other seam on this session.
     public let approvals: any ApprovalsProviding
+
+    /// P0.1 server→client request answers (clarify / sudo / secret) bound to
+    /// the shared transport. Approvals answer through `approvals`.
+    public let serverPrompts: any ServerPromptResponding
 
     /// R9-T2/T3/T4 conversation-tooling client bound to the shared transport
     /// (model.options / session.usage / context_breakdown / steer / title /
@@ -79,6 +83,7 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         let history = GatewaySessionHistoryClient(gatewayID: gatewayID, transport: transport)
         self.history = history
         self.approvals = GatewayApprovalClient(gatewayID: gatewayID, transport: transport)
+        self.serverPrompts = GatewayServerPromptClient(gatewayID: gatewayID, transport: transport)
         self.tooling = GatewayConversationToolingClient(gatewayID: gatewayID, transport: transport)
         self.attachments = GatewayAttachmentClient(gatewayID: gatewayID, transport: transport)
         self.reactions = GatewayReactionClient(gatewayID: gatewayID, transport: transport)

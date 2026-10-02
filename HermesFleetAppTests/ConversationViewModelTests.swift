@@ -28,6 +28,7 @@ final class ConversationViewModelTests: XCTestCase {
         ReplayProviding,
         SessionHistoryProviding,
         ApprovalsCapable,
+        ServerPromptCapable,
         SlashCommandCapable,
         AttachmentStagingCapable,
         @unchecked Sendable
@@ -111,6 +112,9 @@ final class ConversationViewModelTests: XCTestCase {
         // MARK: ApprovalsCapable (R9-T1 rework: approval.pending restore)
         var approvals: any ApprovalsProviding { approvalsBox }
         let approvalsBox = ScriptedPendingApprovals()
+        // P0.1: clarify / sudo / secret answers
+        var serverPrompts: any ServerPromptResponding { serverPromptsBox }
+        let serverPromptsBox = ScriptedServerPrompts()
         var slashCommands: any SlashCommandProviding { slashBox }
         var attachments: any AttachmentStagingProviding { attachmentDouble }
         func reauthenticate() async throws {
@@ -253,6 +257,9 @@ final class ConversationViewModelTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }
             return _pendingCalls
         }
+        /// P0.1: false leaves `approval.pending` empty so a test can drive the
+        /// banner purely through pushed events.
+        var returnsRestoredApproval = true
         /// Delay applied inside pendingApprovals before returning, letting a
         /// test hold the restore in flight (fencing observation).
         var pendingGate: OneShotGate?
@@ -262,7 +269,19 @@ final class ConversationViewModelTests: XCTestCase {
             return pendingGate
         }
 
+        private var _respondCount = 0
+        /// P0.1: how many times anything tried to answer an approval.
+        var respondCount: Int {
+            lock.lock(); defer { lock.unlock() }
+            return _respondCount
+        }
+        private func recordRespond() {
+            lock.lock(); defer { lock.unlock() }
+            _respondCount += 1
+        }
+
         func respond(sessionID: String, requestID: String, choice: ApprovalChoice, all: Bool) async throws -> Int {
+            recordRespond()
             throw ConversationError.notConnected
         }
 
@@ -273,6 +292,7 @@ final class ConversationViewModelTests: XCTestCase {
         func pendingApprovals(sessionID: String) async throws -> [ApprovalRequest] {
             let gate = recordPendingAndTakeGate(sessionID)
             if let gate { await gate.wait() }
+            guard returnsRestoredApproval else { return [] }
             return [
                 ApprovalRequest(
                     requestID: "req-restore-1",
@@ -283,6 +303,28 @@ final class ConversationViewModelTests: XCTestCase {
                 )
             ]
         }
+    }
+
+    /// P0.1: records every attempt to answer a clarify / sudo / secret
+    /// request. A `request.cancel` must leave this empty.
+    private final class ScriptedServerPrompts: ServerPromptResponding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _calls: [String] = []
+        var calls: [String] {
+            lock.lock(); defer { lock.unlock() }
+            return _calls
+        }
+        private func record(_ call: String) {
+            lock.lock(); defer { lock.unlock() }
+            _calls.append(call)
+        }
+        func answerClarify(requestID: String, answer: String) async throws { record("answer:\(requestID)") }
+        func lockClarifyAnswer(requestID: String, questionID: String, answer: String) async throws -> ClarifyLockStatus {
+            record("lock:\(requestID)")
+            return .locked(remaining: [])
+        }
+        func cancelClarify(requestID: String) async throws { record("cancel:\(requestID)") }
+        func answerValue(requestID: String, value: String) async throws { record("value:\(requestID)") }
     }
 
     private final class ScriptedSlashCommands: SlashCommandProviding, @unchecked Sendable {
@@ -345,7 +387,8 @@ final class ConversationViewModelTests: XCTestCase {
     private var cache: SwiftDataCacheStore!
 
     private func makeFixture(
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth()
     ) async throws -> (ScriptedSession, ConversationViewModel) {
         let scripted = ScriptedSession()
         cache = try SwiftDataCacheStore.makeInMemory()
@@ -358,6 +401,7 @@ final class ConversationViewModelTests: XCTestCase {
             cache: cache,
             route: route,
             sessionID: sessionID,
+            biometrics: biometrics,
             statusInterval: .milliseconds(10)
         )
         return (scripted, viewModel)
@@ -612,6 +656,161 @@ final class ConversationViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.phase, .failed("gateway unreachable"))
     }
+
+    // MARK: - P0.1 server→client requests
+
+    private func clarifyRequest(id: String = "srq-clarify1", sessionID: String = "s-1") -> ServerRequest {
+        ServerRequest(
+            id: id, sessionID: sessionID,
+            kind: .clarify(ClarifyPrompt(
+                sessionID: sessionID,
+                questions: [ClarifyQuestion(qid: "", question: "Which branch?", choices: ["main", "dev"])],
+                isBatch: false)))
+    }
+
+    private func approvalServerRequest(
+        id: String = "srq-approval1", requestID: String = "req-a1", sessionID: String = "s-1"
+    ) -> ServerRequest {
+        ServerRequest(
+            id: id, sessionID: sessionID,
+            kind: .approval(ApprovalRequest(
+                requestID: requestID, sessionID: sessionID, command: "printf 'fixture'",
+                choices: ["once", "deny"], serverRequestID: id)))
+    }
+
+    func testServerRequestsRouteToTheApprovalAndPromptViewModels() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        await viewModel.start()
+
+        scripted.push(.serverRequest(clarifyRequest()))
+        scripted.push(.serverRequest(approvalServerRequest()))
+        await flush()
+
+        XCTAssertEqual(viewModel.serverPromptViewModel?.pending?.id, "srq-clarify1")
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.serverRequestID, "srq-approval1")
+    }
+
+    func testServerRequestForAnotherSessionIsIgnored() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+
+        scripted.push(.serverRequest(clarifyRequest(sessionID: "s-other")))
+        await flush()
+
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending)
+    }
+
+    /// A withdrawal dismisses the prompt and NEVER answers: no deny, no
+    /// empty clarify answer, no declined secret.
+    func testRequestCancelDismissesPromptsWithoutAnyAnswer() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        await viewModel.start()
+        scripted.push(.serverRequest(clarifyRequest()))
+        scripted.push(.serverRequest(approvalServerRequest()))
+        await flush()
+        XCTAssertNotNil(viewModel.serverPromptViewModel?.pending)
+        XCTAssertNotNil(viewModel.approvalViewModel?.pending)
+        let respondCountBefore = scripted.approvalsBox.respondCount
+
+        scripted.push(.requestCancelled(
+            sessionID: "s-1", requestID: "srq-clarify1", method: "clarify", reason: "timeout"))
+        scripted.push(.requestCancelled(
+            sessionID: "s-1", requestID: "srq-approval1", method: "approval", reason: "interrupted"))
+        await flush()
+
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending)
+        XCTAssertNil(viewModel.approvalViewModel?.pending)
+        XCTAssertEqual(viewModel.approvalViewModel?.state, .idle)
+        XCTAssertTrue(scripted.serverPromptsBox.calls.isEmpty, "a withdrawal is never an answer")
+        XCTAssertEqual(scripted.approvalsBox.respondCount, respondCountBefore, "a withdrawal is never a denial")
+    }
+
+    /// `request.cancel` rides the replay ring with a seq: it must keep the
+    /// continuity cursor contiguous like any other event.
+    func testRequestCancelAdvancesTheContinuityCursor() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.push(.messageStart(sessionID: "s-1", seq: 1))
+        scripted.push(.serverRequest(clarifyRequest()))
+        scripted.push(.requestCancelled(
+            sessionID: "s-1", requestID: "srq-clarify1", method: "clarify", reason: "timeout", seq: 2))
+        scripted.push(.messageDelta(sessionID: "s-1", text: "hi", rendered: nil, seq: 3))
+        await flush()
+
+        XCTAssertTrue(scripted.resumeEventsRequests.isEmpty, "seq 1,2,3 is contiguous: no gap recovery")
+        XCTAssertNil(viewModel.serverPromptViewModel?.pending)
+    }
+
+    private struct ScriptedBiometricSuccess: AppLockBiometricAuth {
+        func canEvaluateBiometrics() -> Bool { true }
+        func evaluateBiometrics(reason: String) async -> AppLockAuthResult { .success }
+        func evaluateDevicePasscode(reason: String) async -> Bool { false }
+    }
+
+    /// The Face ID gate is wired through the integrated path: with the default
+    /// (unavailable) biometrics nothing can be entered or sent.
+    func testSecretEntryStaysGatedThroughTheConversationViewModel() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        await viewModel.start()
+        scripted.push(.serverRequest(ServerRequest(
+            id: "srq-secret1", sessionID: "s-1",
+            kind: .secret(SecretPrompt(sessionID: "s-1", envVar: "FIXTURE_TOKEN", prompt: "Token?")))))
+        await flush()
+        let prompts = try XCTUnwrap(viewModel.serverPromptViewModel)
+        XCTAssertNotNil(prompts.pending)
+
+        await prompts.unlockInput()
+        await prompts.submitValue("typed-without-unlock")
+
+        XCTAssertEqual(prompts.state, .biometricUnavailable)
+        XCTAssertFalse(prompts.isInputUnlocked)
+        XCTAssertTrue(scripted.serverPromptsBox.calls.isEmpty)
+    }
+
+    /// The typed secret never reaches transcript rows or any view-model state.
+    func testSecretValueNeverEntersTranscriptOrConversationState() async throws {
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1", biometrics: ScriptedBiometricSuccess())
+        await viewModel.start()
+        scripted.push(.serverRequest(ServerRequest(
+            id: "srq-secret1", sessionID: "s-1",
+            kind: .secret(SecretPrompt(sessionID: "s-1", envVar: "FIXTURE_TOKEN", prompt: "Token?")))))
+        await flush()
+        let prompts = try XCTUnwrap(viewModel.serverPromptViewModel)
+        await prompts.unlockInput()
+        XCTAssertTrue(prompts.isInputUnlocked)
+
+        let fixtureValue = ["fixture", "conversation", "probe"].joined(separator: "-")
+        await prompts.submitValue(fixtureValue)
+        await flush()
+
+        XCTAssertEqual(scripted.serverPromptsBox.calls, ["value:srq-secret1"])
+        XCTAssertNil(prompts.pending)
+        for row in viewModel.transcript {
+            XCTAssertFalse(row.text.contains(fixtureValue))
+            XCTAssertFalse((row.detail ?? "").contains(fixtureValue))
+        }
+        var reflected = ""
+        dump(viewModel, to: &reflected)
+        XCTAssertFalse(reflected.contains(fixtureValue))
+    }
+
+    func testLegacyApprovalRequestedEventStillSurfacesTheBanner() async throws {
+        let (scripted, viewModel) = try await makeFixture(sessionID: "s-1")
+        scripted.approvalsBox.returnsRestoredApproval = false
+        await viewModel.start()
+
+        scripted.push(.approvalRequested(
+            sessionID: "s-1", requestID: "req-legacy", command: "printf 'fixture'",
+            detail: nil, choices: ["once", "deny"]))
+        await flush()
+
+        XCTAssertEqual(viewModel.approvalViewModel?.pending?.requestID, "req-legacy")
+        XCTAssertNil(viewModel.approvalViewModel?.pending?.serverRequestID)
+    }
+
 
     // MARK: - Streaming render (M5)
 

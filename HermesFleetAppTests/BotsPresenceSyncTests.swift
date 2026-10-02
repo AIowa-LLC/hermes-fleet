@@ -285,12 +285,21 @@ final class BotsPresenceSyncTests: XCTestCase {
             workstationOutcome: .loaded(profileCount: 0),
             archOutcome: .loaded(profileCount: 0)))
         let (environment, connections) = await makeEnvironment(roster: roster)
+
+        // SyncConnection is already online before connect(). Establish the
+        // loaded observation first so the connection watch cannot request a
+        // separate cold-start repair while this test measures repeated calls.
+        // In-flight repair coalescing is covered by its dedicated gated test.
+        await environment.refreshRoster()
+        let beforeConnect = roster.refreshCount
         await environment.connect(to: workstation)
-        let started = await waitUntil { roster.refreshCount >= 1 }
-        XCTAssertTrue(started)
-        let settled = await waitUntil { !environment.isRefreshing && roster.refreshCount >= 1 }
-        XCTAssertTrue(settled)
-        let refreshes = roster.refreshCount
+        let settled = await waitUntil {
+            environment.connectionStates[self.workstation] == .connected
+                && !environment.isRefreshing
+                && roster.refreshCount == beforeConnect + 1
+        }
+        XCTAssertTrue(settled, "the initial connect must settle exactly one roster refresh")
+        let refreshes = beforeConnect + 1
 
         await environment.connect(to: workstation)
         await environment.connect(to: workstation)

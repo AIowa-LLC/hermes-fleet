@@ -189,6 +189,144 @@ final class AppLockControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .unlocked, "OFF toggle never re-locks on background")
     }
 
+    // MARK: - Privacy shield (P0.3a)
+
+    /// Biometric double that suspends until released, so a test can observe
+    /// scene-phase behavior while the system Face ID sheet would be up
+    /// (`.authenticating`).
+    private final class GatedAuth: AppLockBiometricAuth, @unchecked Sendable {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private let lock = NSLock()
+        func canEvaluateBiometrics() -> Bool { true }
+        func evaluateBiometrics(reason: String) async -> AppLockAuthResult {
+            await withCheckedContinuation { c in
+                lock.lock(); continuation = c; lock.unlock()
+            }
+            return .success
+        }
+        func evaluateDevicePasscode(reason: String) async -> Bool { true }
+        func release() {
+            lock.lock(); let c = continuation; continuation = nil; lock.unlock()
+            c?.resume()
+        }
+    }
+
+    private func makeUnlockedController(
+        mode: AppLockController.Mode = .enabled,
+        defaults: UserDefaults? = nil
+    ) async -> AppLockController {
+        let controller = AppLockController(
+            auth: ScriptedAuth(biometric: .success, passcode: true),
+            defaults: defaults ?? makeDefaults(),
+            mode: mode
+        )
+        if mode != .disabled { await controller.authenticate() }
+        XCTAssertEqual(controller.state, .unlocked)
+        return controller
+    }
+
+    func testInactiveShowsShieldAndActiveRemovesIt() async {
+        let controller = await makeUnlockedController()
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+        controller.handleScenePhase(.inactive)
+        XCTAssertTrue(controller.isPrivacyShieldVisible, "inactive covers the snapshot")
+        XCTAssertEqual(controller.state, .unlocked, "inactive never locks (lock stays on background)")
+        controller.handleScenePhase(.active)
+        XCTAssertFalse(controller.isPrivacyShieldVisible, "active removes the cover")
+        XCTAssertEqual(controller.state, .unlocked)
+    }
+
+    func testShieldNeverShowsWithAppLockDisabledInFollowSetting() async {
+        let defaults = makeDefaults()
+        let controller = AppLockController(
+            auth: ScriptedAuth(biometric: .success, passcode: true),
+            defaults: defaults, mode: .followSetting)
+        controller.setEnabled(false)
+        XCTAssertEqual(controller.state, .unlocked)
+        controller.handleScenePhase(.inactive)
+        XCTAssertFalse(controller.isPrivacyShieldVisible, "App Lock off means no shield")
+        controller.handleScenePhase(.background)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+    }
+
+    func testTurningAppLockOffClearsEngagedCover() async {
+        let controller = await makeUnlockedController(mode: .followSetting)
+        controller.handleScenePhase(.inactive)
+        XCTAssertTrue(controller.isPrivacyShieldVisible)
+        controller.setEnabled(false)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+        controller.handleScenePhase(.inactive)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+    }
+
+    func testPrivacyWindowTracksInactiveCoverAndActiveDismissal() async throws {
+        let controller = await makeUnlockedController()
+        let window = PrivacyShieldWindow()
+        controller.handleScenePhase(.inactive)
+        window.setVisible(controller.isPrivacyShieldVisible)
+        XCTAssertTrue(window.isShowing, "the scene window appears synchronously for the snapshot")
+        controller.handleScenePhase(.active)
+        window.setVisible(controller.isPrivacyShieldVisible)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(window.isShowing, "returning active removes the window and releases accessibility")
+    }
+
+    func testDisabledModeNeverShowsShield() async {
+        let controller = await makeUnlockedController(mode: .disabled)
+        controller.handleScenePhase(.inactive)
+        XCTAssertFalse(controller.isPrivacyShieldVisible, "UI-test bypass mode has no cover")
+    }
+
+    func testBackgroundWithoutInactiveStillCoversAndRelocks() async {
+        let controller = await makeUnlockedController()
+        controller.handleScenePhase(.background)
+        XCTAssertTrue(controller.isPrivacyShieldVisible)
+        XCTAssertEqual(controller.state, .locked, "re-lock on background is unchanged")
+    }
+
+    func testInactiveWhileLockedDoesNotEngageShield() {
+        let controller = AppLockController(
+            auth: ScriptedAuth(biometric: .success, passcode: true),
+            defaults: makeDefaults(), mode: .enabled)
+        XCTAssertEqual(controller.state, .locked)
+        controller.handleScenePhase(.inactive)
+        XCTAssertFalse(controller.isPrivacyShieldVisible,
+                       "lock screen already covers content; no cover over it")
+    }
+
+    func testFaceIDSheetInactiveDoesNotEngageShieldOrFlicker() async throws {
+        let gated = GatedAuth()
+        let controller = AppLockController(
+            auth: gated, defaults: makeDefaults(), mode: .enabled)
+        // `.active` starts authentication (Face ID sheet shows).
+        controller.handleScenePhase(.active)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(controller.state, .authenticating)
+
+        // The system sheet backgrounds the scene: inactive, then back to active.
+        controller.handleScenePhase(.inactive)
+        XCTAssertFalse(controller.isPrivacyShieldVisible,
+                       "Face ID sheet's inactive must not arm the cover")
+        gated.release()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(controller.state, .unlocked)
+        XCTAssertFalse(controller.isPrivacyShieldVisible, "no cover over a fresh unlock")
+        controller.handleScenePhase(.active)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+        XCTAssertEqual(controller.state, .unlocked, "no re-lock loop after Face ID dismissal")
+    }
+
+    func testUnlockClearsCoverArmedByLateInactive() async throws {
+        let controller = AppLockController(
+            auth: ScriptedAuth(biometric: .success, passcode: true),
+            defaults: makeDefaults(), mode: .enabled)
+        controller.handleScenePhase(.background)   // locked already; no engage
+        controller.handleScenePhase(.inactive)
+        await controller.authenticate()
+        XCTAssertEqual(controller.state, .unlocked)
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+    }
+
     // MARK: - Keychain reads are NOT gated (structural invariant)
 
     func testLockControllerNeverTouchesKeychain() {

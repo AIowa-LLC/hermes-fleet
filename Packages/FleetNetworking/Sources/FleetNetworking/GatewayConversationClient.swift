@@ -265,6 +265,18 @@ public struct GatewayConversationClient: ConversationProviding {
                         seq: seq
                     )
                 }
+        case .requestCancel:
+            // P0.1: `{id, method, reason}` — the gateway withdrew an open
+            // server→client request. A payload without an id names nothing to
+            // dismiss and is dropped fail-soft.
+            guard let requestID = payload["id"]?.stringValue, !requestID.isEmpty else { return nil }
+            return .requestCancelled(
+                sessionID: event.sessionID,
+                requestID: requestID,
+                method: payload["method"]?.stringValue ?? "",
+                reason: payload["reason"]?.stringValue ?? "",
+                seq: seq
+            )
         case .messageStart:
             return .messageStart(sessionID: sid, seq: seq)
         case .messageDelta:
@@ -362,20 +374,7 @@ public struct GatewayConversationClient: ConversationProviding {
     /// conversation domain, dropping non-conversation handshake events and
     /// preserving unknown conversation types.
     static func eventStream(transport: GatewayWebSocketTransport) -> AsyncStream<ConversationEvent> {
-        // Register synchronously: a prompt may complete before the mapping
-        // task gets scheduled. The transport stream buffers those events.
-        let source = transport.subscribeToEvents()
-        return AsyncStream { continuation in
-            let task = Task {
-                for await event in source {
-                    if let conversationEvent = decodeEvent(event) {
-                        continuation.yield(conversationEvent)
-                    }
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        transport.subscribeToConversationEvents()
     }
 
     /// Compact JSON text for an optional JSON member (tool args/result), nil

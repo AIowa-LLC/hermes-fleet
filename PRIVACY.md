@@ -17,6 +17,10 @@ retention rules.
 - Conversation and fleet snapshots may be cached locally to make recently
   viewed screens useful during a temporary disconnect. These snapshots are
   device-local and are not sent to Hermes Fleet or an AIowa-operated service.
+- To keep conversations out of the iOS app-switcher preview, Hermes Fleet
+  covers its window with a blank branded screen when App Lock is enabled
+  and the unlocked app becomes inactive or enters the background. Disabling
+  App Lock also disables this cover. No content is captured or stored for this purpose.
 - If voice input is used, the app requests microphone and speech-recognition
   access. Speech recognition is required to run on the device; recognized text
   is submitted to the gateway only when the user sends it as a conversation

@@ -56,6 +56,15 @@ public protocol AppLockBiometricAuth: Sendable {
 /// authentication when locked. A failed/unavailable biometric evaluation
 /// automatically shows the passcode fallback (`.passcodeFallback` state) —
 /// the failed-biometric acceptance path.
+///
+/// Privacy shield (P0.3a): when App Lock is enabled, `.inactive` / `.background`
+/// on an UNLOCKED app engages an opaque cover (`isPrivacyShieldVisible`) so the
+/// app-switcher snapshot never captures conversation content. The shield only
+/// engages from `.unlocked`: while the lock screen or a Face ID / passcode
+/// system sheet is up (`.locked` / `.authenticating` / `.passcodeFallback`)
+/// content is already gated, and the system sheet's own `.inactive` must not
+/// arm a cover that would flash over the unlock. `.active` (or a successful
+/// unlock) always disengages it. Lock semantics are unchanged.
 @MainActor
 @Observable
 public final class AppLockController {
@@ -95,6 +104,12 @@ public final class AppLockController {
 
     public var isLocked: Bool { state != .unlocked }
 
+    /// Whether the opaque privacy cover should currently be on screen.
+    /// `.disabled` mode (deterministic UI-test bypass) never shows it.
+    public var isPrivacyShieldVisible: Bool {
+        isPrivacyShieldEngaged && shouldLock
+    }
+
     // MARK: Private
 
     private let auth: any AppLockBiometricAuth
@@ -102,6 +117,9 @@ public final class AppLockController {
     private let mode: Mode
     private let defaultsKey: String
     private var hasAuthenticatedThisSession = false
+    /// Set on `.inactive`/`.background` from `.unlocked`; cleared on `.active`,
+    /// on successful unlock, and when the setting is turned off.
+    private var isPrivacyShieldEngaged = false
 
     public init(
         auth: any AppLockBiometricAuth,
@@ -139,6 +157,7 @@ public final class AppLockController {
                 state = .locked
             }
         } else {
+            isPrivacyShieldEngaged = false
             state = .unlocked
             hasAuthenticatedThisSession = false
         }
@@ -152,17 +171,26 @@ public final class AppLockController {
     public func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
+            isPrivacyShieldEngaged = false
             if shouldLock, state == .locked {
                 Task { await authenticate() }
             }
+        case .inactive:
+            // App-switcher snapshot protection. Only from `.unlocked`: the
+            // lock screen / Face ID sheet already cover content, and their
+            // `.inactive` must not arm a cover (no flicker loop).
+            if state == .unlocked, shouldLock { isPrivacyShieldEngaged = true }
         case .background:
+            // Covers a `.background` that arrives without a prior `.inactive`.
+            // Evaluated BEFORE the re-lock below so it sees `.unlocked`.
+            if state == .unlocked, shouldLock { isPrivacyShieldEngaged = true }
             if shouldLock, state == .unlocked {
                 state = .locked
                 // Foreground must re-authenticate after a background re-lock —
                 // clear the session flag so `.active` triggers a fresh prompt.
                 hasAuthenticatedThisSession = false
             }
-        default:
+        @unknown default:
             break
         }
     }
@@ -191,6 +219,9 @@ public final class AppLockController {
         case .success:
             state = .unlocked
             hasAuthenticatedThisSession = true
+            // The system sheet's dismissal `.inactive` may still be in
+            // flight; never leave a cover armed over a fresh unlock.
+            isPrivacyShieldEngaged = false
         case .failure, .unavailable:
             state = .passcodeFallback
         }
@@ -205,6 +236,9 @@ public final class AppLockController {
         if await auth.evaluateDevicePasscode(reason: Self.reason) {
             state = .unlocked
             hasAuthenticatedThisSession = true
+            // The system sheet's dismissal `.inactive` may still be in
+            // flight; never leave a cover armed over a fresh unlock.
+            isPrivacyShieldEngaged = false
         } else {
             state = .passcodeFallback
         }
