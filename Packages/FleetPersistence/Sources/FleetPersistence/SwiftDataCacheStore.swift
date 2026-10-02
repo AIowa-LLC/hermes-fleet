@@ -32,6 +32,8 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     /// `nonisolated` — readable without crossing the actor boundary.
     nonisolated public let storeURL: URL?
 
+    nonisolated public let writeFence = GatewayCacheWriteFence()
+
     public init(container: ModelContainer, storeURL: URL? = nil) {
         self.container = container
         self.storeURL = storeURL
@@ -40,32 +42,35 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     // MARK: CacheStoring
 
     public func saveHistory(_ history: SessionHistory, for gatewayID: GatewayID) async throws {
-        let ctx = ModelContext(container)
-        // Replace semantics: delete any existing transcript for this pair,
-        // then insert the fresh rows in order.
-        let descriptor = FetchDescriptor<CachedMessageRow>()
-        let existing = try ctx.fetch(descriptor)
-        for row in existing where row.gatewayID == gatewayID.rawValue && row.sessionID == history.sessionID {
-            ctx.delete(row)
+        try writeFence.write(for: gatewayID) {
+            let ctx = ModelContext(container)
+            // Replace semantics: delete any existing transcript for this pair,
+            // then insert the fresh rows in order.
+            let descriptor = FetchDescriptor<CachedMessageRow>()
+            let existing = try ctx.fetch(descriptor)
+            for row in existing where row.gatewayID == gatewayID.rawValue && row.sessionID == history.sessionID {
+                ctx.delete(row)
+            }
+            for (index, message) in history.messages.enumerated() {
+                ctx.insert(CachedMessageRow(
+                    gatewayID: gatewayID.rawValue,
+                    sessionID: history.sessionID,
+                    order: index,
+                    role: message.role.wireValue,
+                    text: message.text,
+                    timestamp: message.timestamp,
+                    rowID: message.rowID,
+                    displayKind: message.displayKind,
+                    reasoning: message.reasoning,
+                    toolName: message.toolName,
+                    toolContext: message.toolContext,
+                    reactionsData: Self.encodeReactions(message.reactions),
+                    clientID: message.clientID
+                ))
+            }
+            try ctx.save()
+
         }
-        for (index, message) in history.messages.enumerated() {
-            ctx.insert(CachedMessageRow(
-                gatewayID: gatewayID.rawValue,
-                sessionID: history.sessionID,
-                order: index,
-                role: message.role.wireValue,
-                text: message.text,
-                timestamp: message.timestamp,
-                rowID: message.rowID,
-                displayKind: message.displayKind,
-                reasoning: message.reasoning,
-                toolName: message.toolName,
-                toolContext: message.toolContext,
-                reactionsData: Self.encodeReactions(message.reactions),
-                clientID: message.clientID
-            ))
-        }
-        try ctx.save()
     }
 
     public func loadHistory(sessionID: String, for gatewayID: GatewayID) async throws -> SessionHistory? {
@@ -130,17 +135,20 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     }
 
     public func saveWatermark(_ watermark: SessionEventWatermark, for gatewayID: GatewayID) async throws {
-        let ctx = ModelContext(container)
-        let rows = try ctx.fetch(FetchDescriptor<CachedWatermarkRow>())
-        for row in rows where row.gatewayID == gatewayID.rawValue && row.sessionID == watermark.sessionID {
-            ctx.delete(row)
+        try writeFence.write(for: gatewayID) {
+            let ctx = ModelContext(container)
+            let rows = try ctx.fetch(FetchDescriptor<CachedWatermarkRow>())
+            for row in rows where row.gatewayID == gatewayID.rawValue && row.sessionID == watermark.sessionID {
+                ctx.delete(row)
+            }
+            ctx.insert(CachedWatermarkRow(
+                gatewayID: gatewayID.rawValue,
+                sessionID: watermark.sessionID,
+                lastSeenSeq: watermark.lastSeenSeq
+            ))
+            try ctx.save()
+
         }
-        ctx.insert(CachedWatermarkRow(
-            gatewayID: gatewayID.rawValue,
-            sessionID: watermark.sessionID,
-            lastSeenSeq: watermark.lastSeenSeq
-        ))
-        try ctx.save()
     }
 
     public func loadWatermarks() async throws -> [SessionEventWatermark] {
@@ -158,13 +166,16 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
     }
 
     public func saveReplayEpoch(_ epoch: String?, for gatewayID: GatewayID) async throws {
-        let ctx = ModelContext(container)
-        let rows = try ctx.fetch(FetchDescriptor<CachedReplayEpochRow>())
-        for row in rows where row.gatewayID == gatewayID.rawValue {
-            ctx.delete(row)
+        try writeFence.write(for: gatewayID) {
+            let ctx = ModelContext(container)
+            let rows = try ctx.fetch(FetchDescriptor<CachedReplayEpochRow>())
+            for row in rows where row.gatewayID == gatewayID.rawValue {
+                ctx.delete(row)
+            }
+            ctx.insert(CachedReplayEpochRow(gatewayID: gatewayID.rawValue, epoch: epoch))
+            try ctx.save()
+
         }
-        ctx.insert(CachedReplayEpochRow(gatewayID: gatewayID.rawValue, epoch: epoch))
-        try ctx.save()
     }
 
     public func loadReplayEpoch(for gatewayID: GatewayID) async throws -> String? {
@@ -190,6 +201,33 @@ public actor SwiftDataCacheStore: CacheStoring, GatewayRecordStoring {
         try ctx.save()
     }
 
+    /// Delete every gateway-keyed cache row for exactly one gateway (exact
+    /// `gatewayID` match, never a prefix): transcript rows, watermarks, replay
+    /// epoch, health stats, Learning/Projects snapshots and the ADR-0012 launch
+    /// cache rows that share this container. Other gateways' rows and the
+    /// saved-gateway record (`CachedGatewayRow`, owned by the registry) are
+    /// untouched. Everything commits in one `save()`; deleting rows does not
+    /// shrink the SQLite file or its `-wal`/`-shm` sidecars immediately.
+    public func purgeGateway(_ id: GatewayID) async throws {
+        try writeFence.purge(for: id) {
+            let key = id.rawValue
+            let ctx = ModelContext(container)
+            try ctx.delete(model: CachedMessageRow.self, where: #Predicate { $0.gatewayID == key })
+            try ctx.delete(model: CachedWatermarkRow.self, where: #Predicate { $0.gatewayID == key })
+            try ctx.delete(model: CachedReplayEpochRow.self, where: #Predicate { $0.gatewayID == key })
+            try ctx.delete(model: CachedHealthStatsRow.self, where: #Predicate { $0.gatewayID == key })
+            try ctx.delete(model: LearningGraphSnapshotRow.self, where: #Predicate { $0.gatewayID == key })
+            try ctx.delete(model: ProjectsSnapshotRow.self, where: #Predicate { $0.gatewayID == key })
+            try ctx.delete(model: LaunchRosterRow.self, where: #Predicate { $0.gatewayID == key })
+            for row in try ctx.fetch(FetchDescriptor<LaunchSessionListRow>())
+            where SwiftDataLaunchCacheStore.routeKey(row.routeKey, belongsToGateway: key) {
+                ctx.delete(row)
+            }
+            try ctx.save()
+
+        }
+    }
+
     /// Delete all privacy-bearing cached content but keep the saved gateway
     /// records intact. Credentials are not in this store and remain in the
     /// Keychain until the user removes a gateway.
@@ -212,26 +250,29 @@ extension SwiftDataCacheStore: HealthStatsStoring {
     /// gateway; last writer wins — the accumulator persists after every
     /// transition, so the row is always the latest observed state).
     public func saveHealthStats(_ stats: GatewayHealthStats, for gatewayID: GatewayID) async throws {
-        let ctx = ModelContext(container)
-        let rows = try ctx.fetch(FetchDescriptor<CachedHealthStatsRow>())
-        for row in rows where row.gatewayID == gatewayID.rawValue {
-            ctx.delete(row)
+        try writeFence.write(for: gatewayID) {
+            let ctx = ModelContext(container)
+            let rows = try ctx.fetch(FetchDescriptor<CachedHealthStatsRow>())
+            for row in rows where row.gatewayID == gatewayID.rawValue {
+                ctx.delete(row)
+            }
+            ctx.insert(CachedHealthStatsRow(
+                gatewayID: gatewayID.rawValue,
+                currentStateRaw: stats.currentState.rawValue,
+                firstObservedAt: stats.firstObservedAt,
+                lastTransitionAt: stats.lastTransitionAt,
+                connectedMilliseconds: stats.connectedMilliseconds,
+                disconnectedMilliseconds: stats.disconnectedMilliseconds,
+                reconnectCount: stats.reconnectCount,
+                lastDisconnectReason: stats.lastDisconnectReason,
+                lastDisconnectAt: stats.lastDisconnectAt,
+                lastPingRTTMilliseconds: stats.lastPingRTTMilliseconds,
+                averagePingRTTMilliseconds: stats.averagePingRTTMilliseconds,
+                pingSampleCount: stats.pingSampleCount
+            ))
+            try ctx.save()
+
         }
-        ctx.insert(CachedHealthStatsRow(
-            gatewayID: gatewayID.rawValue,
-            currentStateRaw: stats.currentState.rawValue,
-            firstObservedAt: stats.firstObservedAt,
-            lastTransitionAt: stats.lastTransitionAt,
-            connectedMilliseconds: stats.connectedMilliseconds,
-            disconnectedMilliseconds: stats.disconnectedMilliseconds,
-            reconnectCount: stats.reconnectCount,
-            lastDisconnectReason: stats.lastDisconnectReason,
-            lastDisconnectAt: stats.lastDisconnectAt,
-            lastPingRTTMilliseconds: stats.lastPingRTTMilliseconds,
-            averagePingRTTMilliseconds: stats.averagePingRTTMilliseconds,
-            pingSampleCount: stats.pingSampleCount
-        ))
-        try ctx.save()
     }
 
     public func loadHealthStats(for gatewayID: GatewayID) async throws -> GatewayHealthStats? {
@@ -267,23 +308,26 @@ extension SwiftDataCacheStore: HealthStatsStoring {
     // MARK: GatewayRecordStoring (P0-4 — durable gateway roster)
 
     public func saveGatewayRecord(_ record: StoredGatewayRecord) async throws {
-        let ctx = ModelContext(container)
-        // Upsert semantics keyed by gateway id: delete-then-insert (the record
-        // is non-secret presentation data — atomicity loss on a crash between
-        // the two writes is a benign empty-slot re-add, not data corruption).
-        let rows = try ctx.fetch(FetchDescriptor<CachedGatewayRow>())
-        for row in rows where row.gatewayID == record.id {
-            ctx.delete(row)
+        try writeFence.register(id: GatewayID(rawValue: record.id)) {
+            let ctx = ModelContext(container)
+            // Upsert semantics keyed by gateway id: delete-then-insert (the record
+            // is non-secret presentation data — atomicity loss on a crash between
+            // the two writes is a benign empty-slot re-add, not data corruption).
+            let rows = try ctx.fetch(FetchDescriptor<CachedGatewayRow>())
+            for row in rows where row.gatewayID == record.id {
+                ctx.delete(row)
+            }
+            ctx.insert(CachedGatewayRow(
+                gatewayID: record.id,
+                displayName: record.displayName,
+                endpoint: record.endpoint,
+                authStrategyRaw: record.authConfiguration.strategy.rawValue,
+                credentialStored: record.authConfiguration.credentialStored,
+                authConfigured: record.authConfigured
+            ))
+            try ctx.save()
+
         }
-        ctx.insert(CachedGatewayRow(
-            gatewayID: record.id,
-            displayName: record.displayName,
-            endpoint: record.endpoint,
-            authStrategyRaw: record.authConfiguration.strategy.rawValue,
-            credentialStored: record.authConfiguration.credentialStored,
-            authConfigured: record.authConfigured
-        ))
-        try ctx.save()
     }
 
     public func deleteGatewayRecord(id: GatewayID) async throws {

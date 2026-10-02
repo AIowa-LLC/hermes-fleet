@@ -289,6 +289,27 @@ public enum BridgedRooms {
             changeHub.emit(record.roomKey)
         }
 
+        /// Delete every room (disbanded or not) that lists a member hosted on
+        /// `gatewayID`, matched on the exact gateway id, and return the removed
+        /// room keys. A bridged room's transcript carries that member's replies
+        /// and can no longer be sent to once its gateway is gone, so removing
+        /// the gateway removes the room from this device. Persist-then-publish
+        /// like every other mutation; a failed write leaves the store as it was.
+        @discardableResult
+        public func removeRooms(involvingGateway gatewayID: GatewayID) throws -> [String] {
+            loadIfNeeded()
+            let removedKeys = rooms.values
+                .filter { $0.members.contains { $0.gatewayID == gatewayID.rawValue } }
+                .map(\.roomKey)
+            guard !removedKeys.isEmpty else { return [] }
+            var snapshot = rooms
+            for key in removedKeys { snapshot[key] = nil }
+            try persist(snapshot)
+            rooms = snapshot
+            for key in removedKeys { changeHub.emit(key) }
+            return removedKeys.sorted()
+        }
+
         public func disband(roomKey: String, at timestamp: Double) throws {
             loadIfNeeded()
             guard var record = rooms[roomKey] else { return }

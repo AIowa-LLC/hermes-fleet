@@ -46,12 +46,14 @@ final public class LaunchSessionListRow {
 
 public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
     private let container: ModelContainer
+    private let writeFence: GatewayCacheWriteFence
     private let clock: @Sendable () -> Date
 
     /// Shares the app's cache-store container (same non-secret posture and
     /// file protection) or stands alone in-memory for tests/previews.
-    public init(container: ModelContainer, clock: @escaping @Sendable () -> Date = { Date() }) {
+    public init(container: ModelContainer, writeFence: GatewayCacheWriteFence = GatewayCacheWriteFence(), clock: @escaping @Sendable () -> Date = { Date() }) {
         self.container = container
+        self.writeFence = writeFence
         self.clock = clock
     }
 
@@ -85,49 +87,55 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
     }
 
     public func saveRosterCache(_ entry: CachedGatewayRoster) async throws {
-        let ctx = ModelContext(container)
-        let key = entry.gatewayID.rawValue
-        let payload = try JSONEncoder().encode(entry)
-        let existing = try ctx.fetch(FetchDescriptor<LaunchRosterRow>(
-            predicate: #Predicate { $0.gatewayID == key }
-        ))
-        if let row = existing.first {
-            row.payload = payload
-            row.cachedAt = entry.cachedAt
-        } else {
-            ctx.insert(LaunchRosterRow(gatewayID: key, payload: payload, cachedAt: entry.cachedAt))
+        try writeFence.write(for: entry.gatewayID) {
+            let ctx = ModelContext(container)
+            let key = entry.gatewayID.rawValue
+            let payload = try JSONEncoder().encode(entry)
+            let existing = try ctx.fetch(FetchDescriptor<LaunchRosterRow>(
+                predicate: #Predicate { $0.gatewayID == key }
+            ))
+            if let row = existing.first {
+                row.payload = payload
+                row.cachedAt = entry.cachedAt
+            } else {
+                ctx.insert(LaunchRosterRow(gatewayID: key, payload: payload, cachedAt: entry.cachedAt))
+            }
+            // Maintenance: prune expired rows on every write (Hermex pattern).
+            let cutoff = clock().addingTimeInterval(-Self.ttl)
+            let stale = try ctx.fetch(FetchDescriptor<LaunchRosterRow>(
+                predicate: #Predicate { $0.cachedAt < cutoff }
+            ))
+            stale.forEach { ctx.delete($0) }
+            try ctx.save()
+
         }
-        // Maintenance: prune expired rows on every write (Hermex pattern).
-        let cutoff = clock().addingTimeInterval(-Self.ttl)
-        let stale = try ctx.fetch(FetchDescriptor<LaunchRosterRow>(
-            predicate: #Predicate { $0.cachedAt < cutoff }
-        ))
-        stale.forEach { ctx.delete($0) }
-        try ctx.save()
     }
 
     public func saveSessionListCache(_ entry: CachedSessionList) async throws {
-        let ctx = ModelContext(container)
-        // Canonical route identity ("gw#slug"): components reject `#` (M9), and
-        // unlike the old "gw/slug" concatenation this cannot be collided by
-        // wire-derived slugs that carry `/` (e.g. "b/c" vs gateway "a/b").
-        let key = entry.route.id
-        let payload = try JSONEncoder().encode(entry)
-        let existing = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>(
-            predicate: #Predicate { $0.routeKey == key }
-        ))
-        if let row = existing.first {
-            row.payload = payload
-            row.cachedAt = entry.cachedAt
-        } else {
-            ctx.insert(LaunchSessionListRow(routeKey: key, payload: payload, cachedAt: entry.cachedAt))
+        try writeFence.write(for: entry.route.gatewayID) {
+            let ctx = ModelContext(container)
+            // Canonical route identity ("gw#slug"): components reject `#` (M9), and
+            // unlike the old "gw/slug" concatenation this cannot be collided by
+            // wire-derived slugs that carry `/` (e.g. "b/c" vs gateway "a/b").
+            let key = entry.route.id
+            let payload = try JSONEncoder().encode(entry)
+            let existing = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>(
+                predicate: #Predicate { $0.routeKey == key }
+            ))
+            if let row = existing.first {
+                row.payload = payload
+                row.cachedAt = entry.cachedAt
+            } else {
+                ctx.insert(LaunchSessionListRow(routeKey: key, payload: payload, cachedAt: entry.cachedAt))
+            }
+            let cutoff = clock().addingTimeInterval(-Self.ttl)
+            let stale = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>(
+                predicate: #Predicate { $0.cachedAt < cutoff }
+            ))
+            stale.forEach { ctx.delete($0) }
+            try ctx.save()
+
         }
-        let cutoff = clock().addingTimeInterval(-Self.ttl)
-        let stale = try ctx.fetch(FetchDescriptor<LaunchSessionListRow>(
-            predicate: #Predicate { $0.cachedAt < cutoff }
-        ))
-        stale.forEach { ctx.delete($0) }
-        try ctx.save()
     }
 
     public func removeLaunchCache(for gatewayID: GatewayID) async throws {
@@ -163,7 +171,7 @@ public actor SwiftDataLaunchCacheStore: FleetLaunchCaching {
 
     /// Whether a canonical route key (`<gateway>#<slug>`) belongs to the
     /// gateway. Gateway ids cannot contain the `#` separator (M9).
-    private static func routeKey(_ routeKey: String, belongsToGateway id: String) -> Bool {
+    static func routeKey(_ routeKey: String, belongsToGateway id: String) -> Bool {
         gatewayKey(ofRouteKey: routeKey) == id
     }
 

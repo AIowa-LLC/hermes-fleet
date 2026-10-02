@@ -9,6 +9,7 @@ The app has eight top-level destinations — **Bots, Chats, Groups, Scheduled, K
 ## Fleet and gateways
 
 - register, edit, test, and remove gateways
+- removing a gateway also purges its device-local data: cached transcripts, watermarks, replay epoch, health stats, Learning/Projects snapshots, launch cache, room drafts, and phone-bridged rooms with a member on it (pins are kept as unavailable shortcuts by policy); a failed purge is recorded in diagnostics and never blocks the removal
 - password/session, API key, and token authentication where supported; OAuth-only provider sign-in remains tracked in #61
 - connection lifecycle and reconnect controls
 - multi-gateway roster aggregation
