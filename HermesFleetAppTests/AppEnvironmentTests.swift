@@ -628,6 +628,31 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertNil(environment.testResults[id])
     }
 
+    /// P0.4a: a removed gateway's unsent composer drafts must not outlive it.
+    func testRemoveGatewayPrunesConversationDrafts() async throws {
+        let (environment, _) = await makeEnvironment(gateways: [
+            registration("workstation", name: "Workstation"),
+            registration("render-box", name: "Render Box"),
+        ])
+        let drafts = ConversationDraftStore(
+            url: FileManager.default.temporaryDirectory
+                .appendingPathComponent("p04a-env-drafts-\(UUID().uuidString).json"),
+            debounce: 60)
+        environment.attachConversationDrafts(drafts)
+        let removed = GatewayID(rawValue: "render-box")
+        let kept = GatewayID(rawValue: "workstation")
+        let removedRoute = Route(gatewayID: removed, profileSlug: ProfileSlug(rawValue: "default"))
+        let keptRoute = Route(gatewayID: kept, profileSlug: ProfileSlug(rawValue: "default"))
+        drafts.scheduleSave("gone", route: removedRoute, sessionID: "s1")
+        drafts.scheduleSave("stays", route: keptRoute, sessionID: "s1")
+        drafts.flush()
+
+        try await environment.removeGateway(removed)
+
+        XCTAssertEqual(drafts.draft(route: removedRoute, sessionID: "s1"), "")
+        XCTAssertEqual(drafts.draft(route: keptRoute, sessionID: "s1"), "stays")
+    }
+
     // MARK: P1-8 — removal retires session resources (disconnects the live connection)
 
     /// A connection double that records `disconnect()` invocations.

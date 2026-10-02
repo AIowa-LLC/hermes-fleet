@@ -45,7 +45,40 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
 - reconnect and recover missed events
 - preserve cached conversation history for cold-start presentation
 - show device-local unread indicators in Chats and drawer Recents; existing sessions are baselined on first observation and opening a conversation marks its gateway timestamp as read
+- unsent composer drafts persist per conversation: keyed by gateway + profile +
+  session ID (canonical Bot Chat included), restored when the conversation
+  reopens (navigation, App Lock, relaunch), and cleared only after a successful
+  send — a failed send keeps the draft. Drafts are device-local, written
+  debounced to a single file with complete file protection and excluded from
+  backup, bounded (50 drafts, 20,000 characters each, 30 days), and removed when
+  their gateway is removed or local cache is cleared
 - approvals and per-session control surfaces
+- approval card integrity: the card header names the gateway, bot, working
+  folder, and session the request came from (built from the client's own
+  conversation context, never the wire payload; unknown values read
+  "unknown"). The inline command preview shows at most 4 lines / 240
+  characters from the command tail with an explicit "N more lines" marker and no middle truncation.
+  A longer command keeps Approve disabled until the user has opened the
+  "Review full command" sheet (full redacted text, monospaced, selectable,
+  scrollable, wrap toggle) and finished the review by reaching the end or
+  tapping "I reviewed the full command". Deny is never gated. Gateway-supplied
+  reason text is shown in a block labelled "Reason given by gateway (untrusted
+  text)". Fleet Home Live Ops approval rows use the same header, preview, and
+  review rule (Live Ops does not carry the bot or working folder, so those
+  read "unknown" there).
+- agent prompts raised as server-to-client requests: dangerous-command
+  approvals (Deny is one tap; Approve stays Face ID gated and offers only the
+  scopes the gateway supplied), clarify questions (single, multi-select and
+  batch with per-question locks; Skip is one tap), and sudo-password / secret
+  requests. Sudo and secret entry is hidden behind Face ID, uses a secure field,
+  is marked privacy-sensitive, is never cached, persisted, logged, or placed in
+  the transcript, and Decline sends an empty value. When the gateway withdraws
+  a prompt (timeout, interrupt, answered elsewhere) the card simply disappears:
+  a withdrawal is never recorded as a denial and no answer is sent. Prompts
+  still waiting after a reconnect reappear once. Gateways that predate this
+  protocol keep working through the legacy `approval.request` event. Other
+  server-to-client requests (preview, terminal, vault, tour) are refused so the
+  agent fails fast; only the conversation connection announces this capability.
 - model selection and context information
 - steer, rename, and fork workflows where supported
 - session thinking level: a composer gauge button (right cluster, between

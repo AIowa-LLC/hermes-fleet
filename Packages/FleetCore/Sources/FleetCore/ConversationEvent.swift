@@ -77,6 +77,17 @@ public enum ConversationEvent: Hashable, Sendable {
     /// (`{session_id, title}`; methods_session.py:1427). Arrives shortly
     /// after a new chat's first turn; the conversation header adopts it.
     case sessionTitleUpdate(sessionID: String, title: String, seq: Int? = nil)
+    /// P0.1 — a server→client JSON-RPC request (`approval`, `clarify`,
+    /// `sudo`, `secret`) awaiting the user. Not a gateway event: it arrives
+    /// as a request frame (or via `open_requests` on resume / `events.since`)
+    /// and carries no `seq`. Answered with a JSON-RPC response to
+    /// `ServerRequest.id`.
+    case serverRequest(ServerRequest)
+    /// P0.1 — `request.cancel {id, method, reason}`: the gateway withdrew an
+    /// open server→client request (timeout, interrupt, answered from another
+    /// surface). Dismiss the matching prompt ONLY — a withdrawal is never a
+    /// denial and must not send any answer.
+    case requestCancelled(sessionID: String?, requestID: String, method: String, reason: String, seq: Int? = nil)
     /// Any event type this client does not model — preserved with its raw
     /// wire type so a newer gateway's event is never dropped (spec §5.5).
     case unknown(sessionID: String?, rawType: String, seq: Int? = nil)
@@ -104,6 +115,8 @@ extension ConversationEvent {
         case .approvalRequested(let sid, _, _, _, _, _): return sid
         case .usageUpdate(let sid, _, _): return sid
         case .sessionTitleUpdate(let sid, _, _): return sid
+        case .serverRequest(let request): return request.sessionID
+        case .requestCancelled(let sid, _, _, _, _): return sid
         case .error(let sid, _, _): return sid
         case .unknown(let sid, _, _): return sid
         }
@@ -130,10 +143,14 @@ extension ConversationEvent {
              .sessionInfo(_, _, _, _, _, _, _, _, let seq),
              .approvalRequested(_, _, _, _, _, let seq),
              .sessionTitleUpdate(_, _, let seq),
+             .requestCancelled(_, _, _, _, let seq),
              .usageUpdate(_, _, let seq),
              .error(_, _, let seq),
              .unknown(_, _, let seq):
             return seq
+        case .serverRequest:
+            // A request frame is not a gateway event: no replay-ring seq.
+            return nil
         }
     }
 
