@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import FleetCore
 import FleetUI
 
 /// H1 (R4) — AppLockController state-machine tests.
