@@ -30,7 +30,7 @@ The Fleet tab is a glance surface: a compact fact strip, Needs You, Active Now, 
 
 Fleet Home observes operations and Needs You approvals across reporting gateways.
 Operation Detail shows one operation, its subagent tree, and timeline. Approval
-actions use the biometric gate; child controls require verified session
+actions use the same presence gate (Face ID with passcode fallback); child controls require verified session
 attachment. Desktop reporting requires the optional Hermes reporting plugin;
 see [setup and coverage](../integrations/hermes-liveops/README.md).
 
@@ -70,7 +70,14 @@ see [setup and coverage](../integrations/hermes-liveops/README.md).
   approvals (Deny is one tap; Approve stays Face ID gated and offers only the
   scopes the gateway supplied), clarify questions (single, multi-select and
   batch with per-question locks; Skip is one tap), and sudo-password / secret
-  requests. Sudo and secret entry is hidden behind Face ID, uses a secure field,
+  requests. Every approval, sudo and secret entry uses one user-presence check:
+  Face ID first, then the device passcode when Face ID is unavailable, locked
+  out, or not enrolled (cancelling never loops into a second prompt). Enabling
+  YOLO for a session, choosing "Approve always", and turning App Lock off each
+  require a fresh check with their own prompt text; a cancelled or failed check
+  changes nothing and shows inline feedback. Deny, turning YOLO off, and turning
+  App Lock on never ask. A device with no passcode cannot verify, so these
+  actions stay blocked and the UI says to set a passcode. Sudo and secret entry is hidden behind that check, uses a secure field,
   is marked privacy-sensitive, is never cached, persisted, logged, or placed in
   the transcript, and Decline sends an empty value. When the gateway withdraws
   a prompt (timeout, interrupt, answered elsewhere) the card simply disappears:

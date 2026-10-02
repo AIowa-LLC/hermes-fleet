@@ -442,16 +442,15 @@ public final class LiveOpsStore {
         guard !resolvingRequestIDs.contains(id) else { return nil }
         resolvingRequestIDs.insert(id)
         defer { resolvingRequestIDs.remove(id) }
-        let auth = await biometrics.evaluateBiometrics(reason: "Approve a dangerous command")
-        guard let current = currentApproval(for: item), canApprove(item) else { return "Approval changed; review it again" }
-        switch auth {
-        case .success: break
-        case .failure:
-            actionErrors[id] = "Biometric check failed"
-            return "Biometric check failed"
-        case .unavailable:
-            actionErrors[id] = "Biometric authentication unavailable"
-            return "Biometric authentication unavailable"
+        // Use the same presence policy as the conversation, then recheck the
+        // captured gateway/session/command and its full-review requirement.
+        guard let action = PresenceAction(approvalChoice: choice) else { return "deny is not gated" }
+        let presence = await biometrics.verifyPresence(action)
+        guard let current = currentApproval(for: item), current.requestID == approval.requestID,
+              canApprove(item) else { return "Approval changed; review it again" }
+        if let message = PresenceFeedback.message(for: presence, action: action) {
+            actionErrors[id] = message
+            return message
         }
         do {
             _ = try await seam.approvals.respond(to: current, choice: choice, all: false)

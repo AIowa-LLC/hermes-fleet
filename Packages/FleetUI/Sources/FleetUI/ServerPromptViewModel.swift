@@ -33,7 +33,8 @@ public final class ServerPromptViewModel {
         case pending
         case sending
         case biometricFailed
-        case biometricUnavailable
+        case authCancelled
+        case passcodeNotSet
         case failed(String)
     }
 
@@ -171,25 +172,38 @@ public final class ServerPromptViewModel {
 
     /// Face ID gate for entering a sudo password or secret. Nothing is on the
     /// wire; on success the entry field becomes available for THIS request.
+    public private(set) var isVerifyingInput = false
+
     public func unlockInput() async {
-        guard let request = pending, Self.isValuePrompt(request), state != .sending else { return }
-        let reason: String
-        switch request.kind {
-        case .sudo: reason = "Enter your sudo password for the agent"
-        default: reason = "Enter a secret for the agent"
-        }
-        switch await biometrics.evaluateBiometrics(reason: reason) {
-        case .success:
-            guard pending?.id == request.id else { return }
+        guard let request = pending, Self.isValuePrompt(request), state != .sending,
+              !isInputUnlocked, !isVerifyingInput else { return }
+        isVerifyingInput = true
+        defer { isVerifyingInput = false }
+        let action = Self.presenceAction(for: request)
+        let result = await biometrics.verifyPresence(action)
+        guard pending?.id == request.id else { return }
+        switch result {
+        case .verified:
             isInputUnlocked = true
             state = .pending
-        case .failure:
-            guard pending?.id == request.id else { return }
+        case .failed:
             state = .biometricFailed
-        case .unavailable:
-            guard pending?.id == request.id else { return }
-            state = .biometricUnavailable
+        case .cancelled:
+            state = .authCancelled
+        case .passcodeNotSet:
+            state = .passcodeNotSet
         }
+    }
+
+    /// The presence action (and system-prompt reason) for a sudo/secret entry.
+    static func presenceAction(for request: ServerRequest) -> PresenceAction {
+        if case .sudo = request.kind { return .enterSudoPassword }
+        return .enterSecret
+    }
+
+    /// The action the current sudo/secret feedback is about.
+    var pendingPresenceAction: PresenceAction {
+        pending.map(Self.presenceAction(for:)) ?? .enterSecret
     }
 
     /// Send the typed sudo password / secret. Refused unless Face ID succeeded

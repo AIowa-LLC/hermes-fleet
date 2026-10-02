@@ -121,14 +121,15 @@ final class LiveOpsStoreTests: XCTestCase {
 
     private func makeStore(
         ops: [GatewayID: ScriptedOps], approvals: [GatewayID: ScriptedApprovals],
-        gateways: [FleetGateway], biometricResult: AppLockAuthResult = .success
+        gateways: [FleetGateway], biometricResult: AppLockAuthResult = .success,
+        presence: (any AppLockBiometricAuth)? = nil
     ) -> LiveOpsStore {
         let store = LiveOpsStore(
             factory: { gateway in
                 guard let op = ops[gateway.id], let approval = approvals[gateway.id] else { return nil }
                 return LiveOpsGatewaySeam(ops: op, approvals: approval)
             },
-            biometrics: ScriptedBiometrics(result: biometricResult)
+            biometrics: presence ?? ScriptedBiometrics(result: biometricResult)
         )
         store.setProviders(gateways: { gateways }, connectionState: { _ in .connected })
         return store
@@ -300,6 +301,69 @@ final class LiveOpsStoreTests: XCTestCase {
         let error = await store.approve(item)
         XCTAssertNotNil(error)
         XCTAssertTrue(approvals.respondCalls.isEmpty, "approve must never reach the wire without biometric success")
+        store.endObserving(.home)
+    }
+
+    // MARK: - P0.2b: Home approve shares the presence gate + passcode fallback
+
+    private func makeHomeApprovalStore(
+        presence: ScriptedPresence
+    ) async -> (LiveOpsStore, ScriptedApprovals, LiveOpsAttentionItem) {
+        let ops = ScriptedOps(gatewayID: gatewayA)
+        ops.operations = [makeOperation(gatewayID: gatewayA, runtimeID: "r1", status: .waiting)]
+        let approval = ApprovalRequest(requestID: "req-1", sessionID: "r1", command: "ls", detail: nil, choices: ["once", "always", "deny"])
+        let approvals = ScriptedApprovals()
+        approvals.pendingByBoolSession = ["r1": [approval]]
+        let store = makeStore(
+            ops: [gatewayA: ops], approvals: [gatewayA: approvals],
+            gateways: [FleetGateway(id: gatewayA, displayName: "A", endpoint: nil)],
+            presence: presence)
+        store.beginObserving(.home)
+        for _ in 0..<50 where store.attentionItems.isEmpty {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return (store, approvals, store.attentionItems[0])
+    }
+
+    func testHomeApproveFallsBackToPasscodeWhenBiometricsUnavailable() async {
+        let presence = ScriptedPresence(biometrics: .biometricsUnavailable, passcode: .success)
+        let (store, approvals, item) = await makeHomeApprovalStore(presence: presence)
+        let error = await store.approve(item)
+        XCTAssertNil(error)
+        XCTAssertEqual(approvals.respondCalls.count, 1)
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(presence.policies, [.biometricsOnly, .deviceOwner])
+        store.endObserving(.home)
+    }
+
+    func testHomeApproveCancelAndNoPasscodeSendNothingWithMessage() async {
+        for outcome in [PresenceOutcome.cancelled, .passcodeNotSet, .failed] {
+            let presence = ScriptedPresence(biometrics: outcome)
+            let (store, approvals, item) = await makeHomeApprovalStore(presence: presence)
+            let error = await store.approve(item)
+            XCTAssertNotNil(error, "\(outcome)")
+            XCTAssertTrue(approvals.respondCalls.isEmpty)
+            XCTAssertEqual(store.attentionItems.count, 1)
+            store.endObserving(.home)
+        }
+    }
+
+    func testHomeApproveAlwaysChecksPresenceOnceWithAlwaysReason() async {
+        let presence = ScriptedPresence.success
+        let (store, approvals, item) = await makeHomeApprovalStore(presence: presence)
+        _ = await store.approve(item, choice: .always)
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(presence.reasons, ["Save an always-allow rule"])
+        XCTAssertEqual(approvals.respondCalls.first?.choice, .always)
+        store.endObserving(.home)
+    }
+
+    func testHomeDenyNeverInvokesPresenceCheck() async {
+        let presence = ScriptedPresence(biometrics: .failed)
+        let (store, approvals, item) = await makeHomeApprovalStore(presence: presence)
+        _ = await store.deny(item)
+        XCTAssertEqual(presence.presenceChecks, 0)
+        XCTAssertEqual(approvals.respondCalls.first?.choice, .deny)
         store.endObserving(.home)
     }
 

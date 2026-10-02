@@ -18,9 +18,6 @@ struct HermesFleetApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var environment = FleetServiceGraph.makeDefaultEnvironment()
     @State private var lockController = FleetServiceGraph.makeLockController()
-    // P0.3a: scene-level opaque cover so the app-switcher snapshot never
-    // captures conversation content (also covers presented sheets).
-    @State private var privacyShield = PrivacyShieldWindow()
     // FOS-3 (§12): System/Light/Dark appearance preference applied at the
     // app root (nil = System — defer to the device setting).
     @State private var appearanceController = FleetAppearanceController.shared
@@ -71,6 +68,7 @@ struct HermesFleetApp: App {
             }
             // FOS-3: apply the persisted appearance override app-wide.
             .preferredColorScheme(appearanceController.selection.colorScheme)
+            .fleetPrivacyShield(lockController: lockController)
             .onOpenURL { url in
                 guard let target = FleetConversationDeepLink.target(from: url) else { return }
                 environment.openConversationFromShortcut(
@@ -81,19 +79,12 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
-            // Synchronous, same turn as the phase change: the cover must be in
-            // the render tree before the system takes the snapshot.
-            privacyShield.setVisible(lockController.isPrivacyShieldVisible)
             if phase == .active && !lockController.isLocked {
                 Task {
                     await environment.restoreIntendedConnections()
                     await environment.restoreConversationSessions()
                 }
             }
-        }
-        .onChange(of: lockController.isPrivacyShieldVisible) { _, visible in
-            // Reconciles setting changes / unlock clearing the cover.
-            privacyShield.setVisible(visible)
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
             if isLocked {

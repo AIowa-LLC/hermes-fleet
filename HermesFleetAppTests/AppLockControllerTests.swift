@@ -1,4 +1,6 @@
 import XCTest
+import UIKit
+import FleetCore
 import FleetUI
 
 /// H1 (R4) — AppLockController state-machine tests.
@@ -262,6 +264,9 @@ final class AppLockControllerTests: XCTestCase {
     func testPrivacyWindowTracksInactiveCoverAndActiveDismissal() async throws {
         let controller = await makeUnlockedController()
         let window = PrivacyShieldWindow()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        window.bind(to: scene)
+        defer { window.bind(to: nil) }
         controller.handleScenePhase(.inactive)
         window.setVisible(controller.isPrivacyShieldVisible)
         XCTAssertTrue(window.isShowing, "the scene window appears synchronously for the snapshot")
@@ -325,6 +330,86 @@ final class AppLockControllerTests: XCTestCase {
         await controller.authenticate()
         XCTAssertEqual(controller.state, .unlocked)
         XCTAssertFalse(controller.isPrivacyShieldVisible)
+    }
+
+    // MARK: - P0.2b: turning App Lock off requires presence
+
+    private func makeEnabledController(_ presence: ScriptedPresence) -> AppLockController {
+        AppLockController(auth: presence, defaults: makeDefaults(), mode: .followSetting)
+    }
+
+    func testKeepAppLockOnSupersedesPendingTurnOff() async {
+        let auth = SuspendedPresence()
+        let controller = AppLockController(auth: auth, defaults: makeDefaults(), mode: .followSetting)
+        let off = Task { await controller.requestSetEnabled(false) }
+        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        _ = await controller.requestSetEnabled(true)
+        auth.complete()
+        _ = await off.value
+        XCTAssertTrue(controller.isEnabled, "a completed older prompt must not undo the newer safe choice")
+    }
+
+    func testRepeatedTurnOffDoesNotStackPresencePrompts() async {
+        let auth = SuspendedPresence()
+        let controller = AppLockController(auth: auth, defaults: makeDefaults(), mode: .followSetting)
+        let first = Task { await controller.requestSetEnabled(false) }
+        for _ in 0..<100 where auth.checks == 0 { await Task.yield() }
+        let second = Task { await controller.requestSetEnabled(false) }
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(auth.checks, 1)
+        auth.complete()
+        _ = await first.value
+        _ = await second.value
+    }
+
+    func testTurningOffRequiresPresenceExactlyOnceAndApplies() async {
+        let presence = ScriptedPresence.success
+        let controller = makeEnabledController(presence)
+        let result = await controller.requestSetEnabled(false)
+        XCTAssertEqual(result, .verified)
+        XCTAssertFalse(controller.isEnabled)
+        XCTAssertEqual(controller.state, .unlocked)
+        XCTAssertEqual(presence.presenceChecks, 1)
+        XCTAssertEqual(presence.reasons, ["Turn off App Lock"])
+    }
+
+    func testTurningOffPasscodeFallbackApplies() async {
+        let presence = ScriptedPresence(biometrics: .biometricsUnavailable, passcode: .success)
+        let controller = makeEnabledController(presence)
+        let result = await controller.requestSetEnabled(false)
+        XCTAssertEqual(result, .verified)
+        XCTAssertFalse(controller.isEnabled)
+    }
+
+    func testTurningOffCancelledOrFailedChangesNothing() async {
+        for (outcome, expected) in [(PresenceOutcome.cancelled, PresenceResult.cancelled),
+                                    (.failed, .failed), (.passcodeNotSet, .passcodeNotSet)] {
+            let presence = ScriptedPresence(biometrics: outcome)
+            let controller = makeEnabledController(presence)
+            let result = await controller.requestSetEnabled(false)
+            XCTAssertEqual(result, expected)
+            XCTAssertTrue(controller.isEnabled, "\(outcome)")
+            XCTAssertEqual(controller.state, .locked, "state unchanged: \(outcome)")
+            XCTAssertEqual(presence.presenceChecks, 1)
+        }
+    }
+
+    func testTurningOnNeverInvokesPresence() async {
+        let presence = ScriptedPresence(biometrics: .failed)
+        let controller = makeEnabledController(presence)
+        controller.setEnabled(false)
+        let result = await controller.requestSetEnabled(true)
+        XCTAssertEqual(result, .verified)
+        XCTAssertTrue(controller.isEnabled)
+        XCTAssertEqual(presence.presenceChecks, 0)
+    }
+
+    func testTurningOffWhenAlreadyOffNeverInvokesPresence() async {
+        let presence = ScriptedPresence(biometrics: .failed)
+        let controller = makeEnabledController(presence)
+        controller.setEnabled(false)
+        _ = await controller.requestSetEnabled(false)
+        XCTAssertEqual(presence.presenceChecks, 0)
     }
 
     // MARK: - Keychain reads are NOT gated (structural invariant)

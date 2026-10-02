@@ -171,6 +171,34 @@ final class R9ApprovalBannerUITests: XCTestCase {
         attachScreenshot(of: app, name: "r9-yolo-confirmation")
     }
 
+    /// P0.2b: a failed presence check after the confirmation leaves YOLO off
+    /// and shows inline feedback (never silent).
+    func testYoloEnableFailedPresenceShowsFeedbackAndStaysOff() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_APPROVAL_BIOMETRIC"] = "fail"
+        app.launch()
+        openConversation(app)
+
+        let toggle = firstMatch(in: app, identifier: "approval.yolo.toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        toggle.tap()
+        let enableButton = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "skip approvals"))
+            .firstMatch
+        XCTAssertTrue(enableButton.waitForExistence(timeout: 10))
+        enableButton.tap()
+
+        let notice = app.alerts["YOLO not enabled"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 10),
+                      "a failed presence check must explain itself")
+        XCTAssertTrue(notice.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS %@", "YOLO stays off")).firstMatch.exists)
+        notice.buttons["OK"].tap()
+        XCTAssertEqual(toggle.label, "YOLO off")
+    }
+
     // MARK: - Helpers (same shapes as the U6 suite)
 
     private func sendPrompt(_ app: XCUIApplication, text: String) {

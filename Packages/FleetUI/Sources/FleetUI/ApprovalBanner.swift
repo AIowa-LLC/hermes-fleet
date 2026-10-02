@@ -76,9 +76,11 @@ public struct ApprovalBanner: View {
 
             switch model.state {
             case .biometricFailed:
-                hint("Face ID did not match. The command stays blocked — deny or try again.")
-            case .biometricUnavailable:
-                hint("Face ID unavailable. The command stays blocked until it can be verified.")
+                presenceHint(.failed)
+            case .authCancelled:
+                presenceHint(.cancelled)
+            case .passcodeNotSet:
+                presenceHint(.passcodeNotSet)
             case .respondFailed(let message):
                 hint(message)
             case .pending, .idle, .confirmYolo, .reviewRequired:
@@ -177,6 +179,7 @@ public struct ApprovalBanner: View {
             }
             .disabled(!allowed)
             .opacity(allowed ? 1 : 0.45)
+            .accessibilityHint("Requires Face ID or your device passcode")
             .accessibilityIdentifier("approval.approve")
         } else {
             Button {
@@ -187,6 +190,7 @@ public struct ApprovalBanner: View {
             .buttonStyle(.fleetPressable)
             .disabled(!allowed)
             .opacity(allowed ? 1 : 0.45)
+            .accessibilityHint("Requires Face ID or your device passcode")
             .accessibilityIdentifier("approval.approve")
         }
     }
@@ -209,6 +213,16 @@ public struct ApprovalBanner: View {
             RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
                 .strokeBorder(theme.highlight.opacity(0.4), lineWidth: 1)
         )
+    }
+
+    /// P0.2b: inline, announced feedback for a presence check that did not
+    /// verify (worded for the action that was attempted).
+    @ViewBuilder
+    private func presenceHint(_ result: PresenceResult) -> some View {
+        if let text = PresenceFeedback.message(for: result, action: model.lastPresenceAction) {
+            hint(text)
+                .onAppear { AccessibilityNotification.Announcement(text).post() }
+        }
     }
 
     private func hint(_ text: String) -> some View {

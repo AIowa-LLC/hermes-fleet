@@ -246,6 +246,10 @@ public struct FleetSettingsView: View {
 public struct FleetSettingsSecurityView: View {
     private let controller: AppLockController
     @Environment(\.fleetTheme) private var theme
+    /// P0.2b: inline feedback when turning App Lock off was cancelled/failed,
+    /// and a counter that forces the toggle to re-render to its real value.
+    @State private var lockNotice: String?
+    @State private var toggleRefresh = 0
 
     public init(controller: AppLockController) {
         self.controller = controller
@@ -255,13 +259,24 @@ public struct FleetSettingsSecurityView: View {
         Form {
             Section {
                 Toggle(isOn: Binding(
-                    get: { controller.isEnabled },
-                    set: { controller.setEnabled($0) }
+                    get: { _ = toggleRefresh; return controller.isEnabled },
+                    set: { newValue in Task { await applyLockToggle(newValue) } }
                 )) {
                     Label("App Lock", systemImage: "faceid")
                         .foregroundStyle(theme.textPrimary)
                 }
+                .disabled(controller.isVerifyingSetting)
                 .accessibilityIdentifier("fleet.settings.app-lock.toggle")
+                .accessibilityHint(controller.isEnabled
+                    ? "Turning off asks for Face ID or your device passcode"
+                    : "Turn on to require Face ID or your device passcode at launch")
+                if let lockNotice {
+                    Text(lockNotice)
+                        .font(.caption)
+                        .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("fleet.settings.app-lock.notice")
+                }
             } footer: {
                 Text("Require Face ID (or your device passcode) to unlock "
                      + "Hermes Fleet when the app opens. Stored gateway "
@@ -276,6 +291,19 @@ public struct FleetSettingsSecurityView: View {
         .tint(theme.highlight)
         .navigationTitle("Security")
         .accessibilityIdentifier("fleet.settings.security.screen")
+    }
+
+    /// Turning App Lock off needs a fresh presence check; a cancelled or
+    /// failed check leaves it on and says so inline.
+    @MainActor
+    private func applyLockToggle(_ enabled: Bool) async {
+        lockNotice = nil
+        let result = await controller.requestSetEnabled(enabled)
+        if let message = PresenceFeedback.message(for: result, action: .turnOffAppLock) {
+            lockNotice = message
+            AccessibilityNotification.Announcement(message).post()
+        }
+        toggleRefresh += 1
     }
 }
 

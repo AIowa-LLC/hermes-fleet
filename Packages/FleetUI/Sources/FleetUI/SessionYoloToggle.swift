@@ -7,9 +7,10 @@ import FleetCore
 /// flips this session's bypass flag, never the global `approvals.mode`,
 /// never persisted, never survives restart — honest per-session copy.
 /// Enabling shows a danger confirmation (deliberate friction); disabling is
-/// immediate (restoring safety needs no friction). No biometric gate rides
-/// the confirm action (spec requires the confirmation alert only); the
-/// FaceID gate applies to approval-banner APPROVE, not to YOLO enable.
+/// immediate (restoring safety needs no friction). P0.2b: the confirm action
+/// additionally requires a fresh user-presence check (Face ID with device
+/// passcode fallback); a cancelled/failed check leaves YOLO off and shows an
+/// inline alert.
 public struct SessionYoloToggle: View {
     @Environment(\.fleetTheme) private var theme
     @Bindable var model: ApprovalViewModel
@@ -32,15 +33,17 @@ public struct SessionYoloToggle: View {
         }
         .buttonStyle(.fleetPressable)
         .accessibilityLabel(model.isYoloEnabled ? "YOLO on" : "YOLO off")
-        .accessibilityHint("Toggle approval bypass for this session only")
+        .accessibilityHint(model.isYoloEnabled
+            ? "Turn approval bypass off for this session"
+            : "Turn approval bypass on for this session only. Asks for Face ID or your device passcode.")
         .accessibilityIdentifier("approval.yolo.toggle")
         .confirmationDialog(
             "Enable YOLO for this session?",
             isPresented: yoloBinding,
             titleVisibility: .visible
         ) {
-            Button("Enable — skip approvals this session", role: .destructive) {
-                Task { await model.confirmYoloEnable() }
+            Button("Enable with Face ID or passcode — skip approvals this session", role: .destructive) {
+                model.beginYoloEnable()
             }
             Button("Cancel", role: .cancel) {
                 model.cancelYoloConfirmation()
@@ -48,8 +51,21 @@ public struct SessionYoloToggle: View {
         } message: {
             Text("Dangerous commands will run on this session WITHOUT asking. "
                 + "This session only — it never changes your saved approval settings "
-                + "and resets when the session ends.")
+                + "and resets when the session ends. You will be asked for Face ID "
+                + "or your device passcode.")
         }
+        .alert("YOLO not enabled", isPresented: noticeBinding) {
+            Button("OK", role: .cancel) { model.dismissYoloNotice() }
+        } message: {
+            Text(model.yoloNotice ?? "")
+        }
+    }
+
+    private var noticeBinding: Binding<Bool> {
+        Binding(
+            get: { model.yoloNotice != nil },
+            set: { shown in if !shown { model.dismissYoloNotice() } }
+        )
     }
 
     /// Two-way binding: entering `.confirmYolo` presents the dialog;
