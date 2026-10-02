@@ -155,6 +155,8 @@ Speech-recognition behavior can vary by locale and platform capability.
 - sensitive URL material is rejected or redacted
 - private infrastructure should never be embedded in fixtures or documentation
 - TLS-protected gateway endpoints are preferred
+- App Lock (Face ID / device passcode) gates the UI when the app returns from the background; the Settings > Security toggle defaults ON
+- Privacy shield: with App Lock enabled, when the app becomes inactive or enters the background, an opaque cover (theme background plus the wing mark, no content) is shown in a scene-level window so the app-switcher snapshot never captures conversation content. It is tied to App Lock, covers presented sheets, does not engage while the lock screen or a Face ID prompt is showing, and honors Reduce Motion (no fade). Disabling App Lock disables the shield. App Lock re-lock semantics are unchanged (still on background).
 
 ## Capability honesty
 
