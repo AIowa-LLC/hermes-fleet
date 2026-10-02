@@ -192,7 +192,7 @@ enum FleetServiceGraph {
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
         // user-added gateway is persisted on Add and restored on launch.
-        let cacheStore = makeFileBackedCache()
+        let (cacheStore, persistentCache, cacheRecovery) = makeFileBackedCache()
 
         let registry: any GatewayRegistryManaging = GatewayRegistryService(
             credentials: credentialStore,
@@ -215,7 +215,7 @@ enum FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         // ADR-0012: the launch cache rides the SAME container (non-secret
         // posture + file protection) with its own row models.
-        let launchCache: any FleetLaunchCaching = SwiftDataLaunchCacheStore(container: cacheStore.container, writeFence: cacheStore.writeFence)
+        let launchCache = makeLaunchCache(for: persistentCache)
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
         return AppEnvironment(
@@ -233,9 +233,9 @@ enum FleetServiceGraph {
             cronDashboardFactory: makeCronDashboardFactory(credentialStore: credentialStore, pinStore: pinStore),
             artifactRetrievalFactory: makeArtifactRetrievalFactory(credentialStore: credentialStore, pinStore: pinStore),
             learningSeamFactory: makeLearningSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
-            learningSnapshotStore: cacheStore,
+            learningSnapshotStore: persistentCache,
             projectsSeamFactory: makeProjectsSeamFactory(credentialStore: credentialStore, pinStore: pinStore),
-            projectsSnapshotStore: cacheStore,
+            projectsSnapshotStore: persistentCache,
             botModeChatFactory: makeBotModeChatFactory(credentialStore: credentialStore, pinStore: pinStore),
             botProfileFactory: makeBotProfileFactory(credentialStore: credentialStore, pinStore: pinStore),
             roomSourceFactory: makeRoomSourceFactory(credentialStore: credentialStore, pinStore: pinStore),
@@ -267,7 +267,8 @@ enum FleetServiceGraph {
             },
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
-            launchCache: launchCache
+            launchCache: launchCache,
+            localCacheRecovery: cacheRecovery
         )
     }
 
@@ -890,13 +891,47 @@ enum FleetServiceGraph {
         }
     }
 
+    /// Where the file-backed cache store lives. The `HermesFleetCache`
+    /// directory must keep existing (fresh-install detection relies on it);
+    /// recovery moves files inside it and never touches the directory itself.
+    static func defaultCacheStoreURL() -> URL {
+        cacheDirectoryURL().appendingPathComponent("cache.store")
+    }
+
+    /// Keep the launch store on the cache's removal fence in every graph mode.
+    static func makeLaunchCache(for cache: SwiftDataCacheStore?) -> any FleetLaunchCaching {
+        if let cache {
+            return SwiftDataLaunchCacheStore(container: cache.container, writeFence: cache.writeFence)
+        }
+        return EmergencyCacheStore()
+    }
+
     /// File-backed SwiftData cache in Application Support, with the store's
-    /// NSFileProtectionComplete + backup-exclusion (synthesis §12). Falls back
-    /// to in-memory only if the container cannot be created (cache is
-    /// non-critical for U1). Also serves as the H2 health-stats store.
-    private static func makeFileBackedCache() -> SwiftDataCacheStore {
-        let storeURL = cacheDirectoryURL().appendingPathComponent("cache.store")
-        return (try? SwiftDataCacheStore.makeFileBacked(storeURL: storeURL))
-            ?? (try! SwiftDataCacheStore.makeInMemory())
+    /// NSFileProtectionComplete + backup-exclusion (synthesis §12). Also
+    /// serves as the H2 health-stats store and the durable gateway registry.
+    ///
+    /// P0.4b failure policy: if the store cannot be opened, the old files are
+    /// quarantined, the saved-gateway rows are salvaged into a fresh store,
+    /// and only if no file-backed store can be created does the session run
+    /// in memory. The returned report (nil on a normal launch) feeds the
+    /// diagnostics ring and the non-blocking UI notices.
+    static func makeFileBackedCache(
+        storeURL: URL = defaultCacheStoreURL(),
+        faults: CacheOpenFaultInjection = []
+    ) -> (store: any CacheStoring & GatewayRecordStoring & HealthStatsStoring, persistentCache: SwiftDataCacheStore?, recovery: LocalCacheRecoveryReport?) {
+        do {
+            let opened = try SwiftDataCacheStore.openWithRecovery(storeURL: storeURL, faults: faults)
+            return (opened.store, opened.store, opened.recovery)
+        } catch {
+            // A resource or schema failure must not trap the composition root.
+            // This final store needs no ModelContainer. Previously salvaged
+            // rows cannot be restored here; report that loss honestly.
+            let failed = (error as? CacheOpenError)?.report
+            let report = LocalCacheRecoveryReport(
+                outcome: failed?.outcome ?? .inMemoryFallback,
+                registry: failed?.registry == .nothingToRestore ? .nothingToRestore : .lost,
+                failureType: String(describing: type(of: error)))
+            return (EmergencyCacheStore(), nil, report)
+        }
     }
 }

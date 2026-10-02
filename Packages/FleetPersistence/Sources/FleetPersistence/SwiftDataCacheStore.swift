@@ -363,19 +363,11 @@ extension SwiftDataCacheStore: HealthStatsStoring {
 
 public extension SwiftDataCacheStore {
     /// In-memory store for tests / previews (no file, no protection needed).
+    /// Built through `FleetMigrationPlan` (schema V1), which also covers the
+    /// ADR-0012 launch-cache row models that share this container.
     static func makeInMemory() throws -> SwiftDataCacheStore {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try ModelContainer(
-            for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
-                 CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
-                 ProjectsSnapshotRow.self,
-                 // ADR-0012 launch cache rides THIS container (FleetServiceGraph
-                 // hands SwiftDataLaunchCacheStore(container:) the shared one),
-                 // so its row models must be in the schema or every fetch on
-                 // them throws / raises (OCR review, 2026-09-22).
-                 LaunchRosterRow.self, LaunchSessionListRow.self,
-            configurations: config
-        )
+        let container = try ModelContainer.fleetCache(configuration: config)
         return SwiftDataCacheStore(container: container)
     }
 
@@ -383,26 +375,22 @@ public extension SwiftDataCacheStore {
     /// backup-exclusion to the store file (spec §12 / synthesis §12). The
     /// parent directory is created if needed. On macOS (host package tests)
     /// file protection is not enforced, but backup exclusion is still applied
-    /// and the store round-trips normally.
+    /// and the store round-trips normally. Throws when the store cannot be
+    /// opened; the app composition root uses `openWithRecovery` instead.
     static func makeFileBacked(storeURL: URL) throws -> SwiftDataCacheStore {
-        let directory = storeURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let config = ModelConfiguration(url: storeURL)
-        let container = try ModelContainer(
-            for: CachedMessageRow.self, CachedWatermarkRow.self, CachedReplayEpochRow.self,
-                 CachedHealthStatsRow.self, CachedGatewayRow.self, LearningGraphSnapshotRow.self,
-                 ProjectsSnapshotRow.self,
-                 // ADR-0012 launch cache rides THIS container (FleetServiceGraph
-                 // hands SwiftDataLaunchCacheStore(container:) the shared one),
-                 // so its row models must be in the schema or every fetch on
-                 // them throws / raises (OCR review, 2026-09-22).
-                 LaunchRosterRow.self, LaunchSessionListRow.self,
-            configurations: config
-        )
+        let container = try openFileBackedContainer(storeURL: storeURL)
         // The store file is created eagerly at container init (verified); apply
         // the protection attributes now.
         try CacheStoreProtection.apply(to: storeURL)
         return SwiftDataCacheStore(container: container, storeURL: storeURL)
+    }
+
+    /// Opens (creating if needed) the versioned container for `storeURL`
+    /// without applying file protection.
+    internal static func openFileBackedContainer(storeURL: URL) throws -> ModelContainer {
+        let directory = storeURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return try ModelContainer.fleetCache(configuration: ModelConfiguration(url: storeURL))
     }
 }
 

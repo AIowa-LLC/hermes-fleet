@@ -61,6 +61,11 @@ public struct GatewaysView: View {
                 gatewayList
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if connectionGatewayID == nil, !environment.localCacheNotices.isEmpty {
+                localCacheNoticeBanner
+            }
+        }
         .navigationTitle(connectionGatewayID == nil ? "Gateways" : "Connection")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -740,6 +745,49 @@ private struct ConnectionStateBadge: View {
         case .authenticationRequired: return "Auth Required"
         case .offline: return "Unreachable"
         case .unsupported: return "Unsupported"
+        }
+    }
+}
+
+// MARK: - P0.4b local-cache recovery notices
+
+extension GatewaysView {
+    /// Non-blocking notices from a launch-time local-cache recovery. The
+    /// "running without local cache" line stays while true; the "saved
+    /// gateways" line is one-time and dismissible.
+    fileprivate var localCacheNoticeBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(environment.localCacheNotices, id: \.self) { notice in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .accessibilityHidden(true)
+                    Text(Self.localCacheNoticeText(notice))
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if notice == .savedGatewaysNeedReadding {
+                        Button("Dismiss") {
+                            environment.dismissLocalCacheNotice(notice)
+                        }
+                        .font(.footnote)
+                        .accessibilityIdentifier("fleet.gateways.cacheNotice.dismiss")
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("fleet.gateways.cacheNotice")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial)
+    }
+
+    fileprivate static func localCacheNoticeText(_ notice: LocalCacheRecoveryReport.Notice) -> String {
+        switch notice {
+        case .savedGatewaysNeedReadding:
+            return "Saved gateways couldn't be restored. Add them again; credentials are re-entered."
+        case .runningWithoutLocalCache:
+            return "Running without local cache. Changes made in this session won't be saved."
         }
     }
 }
