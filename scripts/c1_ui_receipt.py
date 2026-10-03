@@ -20,7 +20,7 @@ import zipfile
 
 from c1_ui_case_inventory import cases
 from c1_ui_partition import partition, runtime_weights
-from c1_xcresult_parse import case_key, matches_requested, parse, walk
+from c1_xcresult_parse import case_attempt_nodes, case_key, matches_requested, parse, single_clean_attempt, walk
 
 ROOT = Path(__file__).resolve().parent.parent
 PARTITIONS = 12
@@ -53,7 +53,8 @@ def api(repository, path, binary=False):
 
 
 def validation_changed(base):
-    paths = git("diff", "--name-only", f"{base}...HEAD").splitlines()
+    # Classify both sides of a move; rename detection otherwise hides removals.
+    paths = git("diff", "--no-renames", "--name-only", f"{base}...HEAD").splitlines()
     return any(path.startswith(VALIDATION_PATHS)
                or path.startswith("HermesFleetApp.xcodeproj/") or path == "project.yml"
                or Path(path).name in ("Package.swift", "Package.resolved")
@@ -114,12 +115,14 @@ def result_cases(results, selected):
         allowed = {"testIPadLandscapePreservesRootNavigation()"} if name == "U3TabNavigation" else set()
         verdict = parse(summary, tests, name + "UITests", allowed, expected)
         check(verdict[1:4] == (0, 1, 1), "incomplete or failed UI receipt")
+        reusable &= verdict[4] == 0
         records = {method: [] for method in expected}
         for node in walk(tests):
             if node.get("nodeType") == "Test Case" and matches_requested(node, name + "UITests"):
                 method = case_key(node, name + "UITests").split("/", 1)[1]
                 check(method in records, "unexpected UI case")
-                records[method].append(node.get("result"))
+                records[method].extend(attempt.get("result") for attempt in case_attempt_nodes(node))
+                reusable &= single_clean_attempt(node)
         # Fresh runner may explicitly report recovered retries. Retain them;
         # they never qualify as clean evidence for avoiding a candidate run.
         reusable &= all(len(attempts) == 1 for attempts in records.values())
@@ -202,7 +205,14 @@ def artifact_receipt(artifact, archive, repository_id, run_id, head, shard):
         names = bundle.namelist()
         check(names == [f"ui-receipt-{shard}.json"], "unexpected artifact contents")
         check(bundle.getinfo(names[0]).file_size <= 2_000_000, "oversized receipt")
-        return json.loads(bundle.read(names[0]))
+        receipt = json.loads(bundle.read(names[0]))
+        check(isinstance(receipt, dict), "invalid receipt object")
+        checkout = receipt.get("checkout")
+        check(isinstance(checkout, str) and re.fullmatch(r"[0-9a-f]{40}", checkout) is not None,
+              "invalid receipt checkout")
+        check(type(receipt.get("shard")) is int and receipt["shard"] == shard,
+              "receipt artifact partition mismatch")
+        return receipt
 
 
 def reuse(base, shard, requested):

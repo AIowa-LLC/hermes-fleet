@@ -29,6 +29,7 @@ ATTEMPT_KEYS = (
     "testIteration",
     "testIterationIndex",
 )
+RUN_NODE_TYPES = {"repetition", "iteration", "test run", "test case run"}
 
 
 def load_json(path: str) -> Any:
@@ -82,7 +83,32 @@ def attempt_rank(node: dict[str, Any]) -> int | None:
             return value
         if isinstance(value, str) and value.isdigit():
             return int(value)
+    identifier = node.get("nodeIdentifier")
+    if str(node.get("nodeType", "")).lower() in RUN_NODE_TYPES and isinstance(identifier, str) and identifier.isdigit():
+        return int(identifier)
     return None
+
+
+def case_attempt_nodes(node: dict[str, Any]) -> list[dict[str, Any]]:
+    """Use Xcode's nested runs instead of the aggregate case result."""
+    runs = [child for child in walk(node.get("children", []))
+            if str(child.get("nodeType", "")).lower() in RUN_NODE_TYPES]
+    return runs or [node]
+
+
+def single_clean_attempt(node: dict[str, Any]) -> bool:
+    """Ambiguous run metadata or non-pass descendants cannot authorize reuse."""
+    if case_attempt_nodes(node) != [node]:
+        return False
+    if re.search(r"\bretr(?:y|ies)\b|\brepetition\b", str(node.get("details", "")), re.IGNORECASE):
+        return False
+    for child in walk(node.get("children", [])):
+        kind = str(child.get("nodeType", "")).lower()
+        if "run" in kind or "repetition" in kind or "iteration" in kind:
+            return False
+        if "result" in child and child["result"] not in PASS_RESULTS:
+            return False
+    return True
 
 
 def parse(
@@ -101,10 +127,11 @@ def parse(
             continue
         if not matches_requested(node, requested):
             continue
-        result = str(node.get("result", ""))
         key = case_key(node, requested)
-        cases.setdefault(key, []).append((order, attempt_rank(node), result))
-        order += 1
+        for attempt in case_attempt_nodes(node):
+            result = str(attempt.get("result", ""))
+            cases.setdefault(key, []).append((order, attempt_rank(attempt), result))
+            order += 1
 
     failures = 0
     executed = 0

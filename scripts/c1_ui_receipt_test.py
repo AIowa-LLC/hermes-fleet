@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -185,7 +186,7 @@ class GitHubTrustContracts(unittest.TestCase):
 class ArtifactContracts(unittest.TestCase):
     def archive(self,name='ui-receipt-1.json',content=None):
         out=io.BytesIO()
-        with zipfile.ZipFile(out,'w') as z: z.writestr(name,json.dumps(content or {'schema':1}))
+        with zipfile.ZipFile(out,'w') as z: z.writestr(name,json.dumps(content or {'schema':1,'checkout':'e'*40,'shard':1}))
         return out.getvalue()
 
     def setUp(self):
@@ -195,7 +196,16 @@ class ArtifactContracts(unittest.TestCase):
                        'workflow_run':{'id':200,'head_sha':'a'*40,'repository_id':100,'head_repository_id':100}}
 
     def test_digest_bound_receipt_is_read_without_extracting_paths(self):
-        self.assertEqual(receipt.artifact_receipt(self.artifact,self.data,100,200,'a'*40,1),{'schema':1})
+        self.assertEqual(receipt.artifact_receipt(self.artifact,self.data,100,200,'a'*40,1),{'schema':1,'checkout':'e'*40,'shard':1})
+
+    def test_checkout_and_partition_are_bound_before_api_use(self):
+        for values in ({'checkout':'../heads/main'}, {'checkout':None}, {'checkout':'e'*39},
+                       {'shard':2}, {'shard':True}):
+            content=dict(schema=1,checkout='e'*40,shard=1);content.update(values)
+            data=self.archive(content=content)
+            artifact=dict(self.artifact,digest='sha256:'+hashlib.sha256(data).hexdigest())
+            with self.subTest(values=values),self.assertRaises(receipt.ReceiptRejected):
+                receipt.artifact_receipt(artifact,data,100,200,'a'*40,1)
 
     def test_tampered_missing_digest_foreign_expired_artifacts_are_rejected(self):
         for key,value in [('name','foreign'),('expired',True),('digest','sha256:wrong'),('workflow_run',{})]:
@@ -222,6 +232,54 @@ class CaseInventoryContracts(unittest.TestCase):
 
 
 class FreshFallbackContracts(unittest.TestCase):
+    def test_renamed_validation_and_build_files_disable_reuse(self):
+        for source in ('scripts/tool.sh','HermesFleetAppUITests/Helper.swift','Packages/Fixture/Package.swift'):
+            with self.subTest(source=source),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                def git(*args):
+                    return subprocess.check_output(['git',*args],cwd=root,stderr=subprocess.DEVNULL,text=True).strip()
+                git('init','-q');original=root/source;original.parent.mkdir(parents=True)
+                original.write_text('synthetic rename fixture\n');git('add','.')
+                git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','base')
+                base=git('rev-parse','HEAD');(root/'docs').mkdir();git('mv',source,'docs/renamed.txt')
+                git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','rename')
+                with patch.object(receipt,'ROOT',root):
+                    self.assertTrue(receipt.validation_changed(base))
+
+    def test_real_nested_retry_receipt_is_not_clean(self):
+        fixture=ROOT/'scripts/fixtures/xcresult-recovered-retry'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'HermesFleetAppUITests').mkdir()
+            (root/'HermesFleetAppUITests/RetryProbeUITests.swift').write_text(
+                'final class RetryProbeUITests {\n func testRecovered() {}\n}\n')
+            for kind in ('summary','tests'):
+                (root/f'RetryProbe.{kind}.json').write_text((fixture/f'{kind}.json').read_text())
+            with patch.object(receipt,'ROOT',root):
+                records,clean=receipt.result_cases(root,['RetryProbe'])
+            self.assertEqual(records,{'RetryProbe':{'testRecovered()':['Failed','Passed']}})
+            self.assertFalse(clean)
+
+    def test_run_children_nonpass_descendants_and_recovered_verdict_are_not_clean(self):
+        for child in ({'nodeType':'Test Case Run','result':'Passed'},
+                      {'nodeType':'Unknown Status','result':'Failed'},
+                      {'nodeType':'Unknown Status','result':'Skipped'}):
+            with self.subTest(child=child),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'HermesFleetAppUITests').mkdir()
+                (root/'HermesFleetAppUITests/ExampleUITests.swift').write_text(
+                    'final class ExampleUITests {\n func testOne() {}\n}\n')
+                (root/'Example.summary.json').write_text(json.dumps({'result':'Passed','totalTestCount':1}))
+                (root/'Example.tests.json').write_text(json.dumps({'testNodes':[{
+                    'nodeType':'Test Case','nodeIdentifier':'ExampleUITests/testOne()',
+                    'name':'testOne()','result':'Passed','children':[child]}]}))
+                with patch.object(receipt,'ROOT',root):
+                    self.assertFalse(receipt.result_cases(root,['Example'])[1])
+                # Even a parser-only recovery signal cannot be discarded.
+                (root/'Example.tests.json').write_text(json.dumps({'testNodes':[{
+                    'nodeType':'Test Case','nodeIdentifier':'ExampleUITests/testOne()',
+                    'name':'testOne()','result':'Passed'}]}))
+                with patch.object(receipt,'ROOT',root),patch.object(receipt,'parse',return_value=(1,0,1,1,1)):
+                    self.assertFalse(receipt.result_cases(root,['Example'])[1])
+
     def test_build_definition_and_validation_changes_disable_reuse(self):
         for path in ('project.yml','HermesFleetApp.xcodeproj/project.pbxproj',
                      'Package.swift','Package.resolved',
