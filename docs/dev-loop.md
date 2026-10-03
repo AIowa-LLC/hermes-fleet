@@ -109,11 +109,21 @@ python3 scripts/c1_ui_runner_contract_test.py
 python3 scripts/c1_xcresult_parse_test.py
 bash scripts/c1_packages_contract_test.sh
 python3 scripts/c1_units_contract_test.py
+bash scripts/font_style_audit_test.sh
 ```
 
 Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
 method selection, missing evidence, and the known-regression requirement.
 Real GitHub-hosted validation remains required before merging the CI change.
+
+## Font style audit
+
+`scripts/font_style_audit.sh` (run by `scripts/c1_static.sh`) fails on any
+`.system(size:` font in `Packages/FleetUI/Sources` or `HermesFleetApp`: text and
+glyphs must use text styles or `@ScaledMetric(relativeTo:)` so they follow
+Dynamic Type. Justified exceptions (decorative hero glyphs sized by a clamped
+`@ScaledMetric`) are listed one per line, each with a `# why` comment, in
+`scripts/font_style_audit_allowlist.txt`; stale entries also fail.
 
 ## Failure handling
 

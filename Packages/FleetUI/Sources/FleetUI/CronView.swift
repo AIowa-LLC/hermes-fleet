@@ -448,7 +448,7 @@ struct CronJobRow: View {
                 Task { await model.triggerJob(job.id, profile: profileScope) }
             } label: {
                 Image(systemName: "play.circle")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.headline.weight(.medium))
                     .foregroundStyle(theme.highlight)
             }
             .buttonStyle(.borderless)
@@ -462,7 +462,7 @@ struct CronJobRow: View {
                 Task { await model.setJob(job.id, enabled: !job.enabled, profile: profileScope) }
             } label: {
                 Image(systemName: job.enabled ? "pause.circle" : "arrow.up.circle")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.headline.weight(.medium))
                     .foregroundStyle(job.enabled ? theme.textSecondary : FleetTheme.statusOnline)
             }
             .buttonStyle(.borderless)

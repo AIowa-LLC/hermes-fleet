@@ -1,0 +1,10 @@
+# Justified exceptions to scripts/font_style_audit.sh.
+# Format:  <repo-relative path> :: <substring of the flagged line>  # why
+# Every entry needs a "# why" comment and must still match a line (stale
+# entries fail the audit). Allowed only for decorative hero glyphs whose
+# point size is an @ScaledMetric value clamped with min(scaled, cap), so they
+# scale with Dynamic Type without pushing content off-screen.
+Packages/FleetUI/Sources/FleetUI/ConversationView.swift :: size: min(latestChevronSize,  # jump-to-latest chevron: @ScaledMetric base 30, capped at 60
+Packages/FleetUI/Sources/FleetUI/KanbanBoardView.swift :: size: min(emptyGlyphSize,  # empty-state hero glyph: @ScaledMetric base 36, capped at 72
+Packages/FleetUI/Sources/FleetUI/GatewayOnboardingView.swift :: size: min(heroGlyphSize,  # onboarding hero glyph: @ScaledMetric base 40, capped at 80
+Packages/FleetUI/Sources/FleetUI/GatewayPairingScannerView.swift :: size: min(heroGlyphSize,  # scanner state hero glyphs: @ScaledMetric base 44, capped at 88

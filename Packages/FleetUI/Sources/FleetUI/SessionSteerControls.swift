@@ -95,7 +95,7 @@ public struct SessionSteerControls: View {
             }
         } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(theme.textSecondary)
         }
         .buttonStyle(.fleetPressable)

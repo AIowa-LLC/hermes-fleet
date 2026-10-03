@@ -1037,7 +1037,8 @@ struct RoomAvatar: View {
                     let h = geo.size.height / CGFloat(rows)
                     ForEach(Array(chips.enumerated()), id: \.offset) { i, name in
                         Text(FleetDashboardFormatting.avatarInitials(from: name))
-                            .font(.system(size: 9, weight: .bold, design: .default))
+                            .font(.caption2.weight(.bold))
+                            .dynamicTypeSize(...DynamicTypeSize.large)
                             .foregroundStyle(theme.highlight)
                             .frame(width: w, height: h)
                             .position(
