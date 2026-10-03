@@ -410,14 +410,22 @@ public struct FleetDashboardView: View {
                             .accessibilityIdentifier("\(rowID).deny")
                             .frame(minWidth: 88, minHeight: 44)
                             .fixedSize()
-                        Button("Approve") { Task { await environment.liveOps.approve(item) } }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(busy || !environment.liveOps.canApprove(item))
-                            .accessibilityHint(environment.liveOps.canApprove(item)
-                                ? "" : "Review the full command first")
-                            .accessibilityIdentifier("\(rowID).approve")
-                            .frame(minWidth: 104, minHeight: 44)
-                            .fixedSize()
+                        // The prominent fill is `theme.highlight` (white in the
+                        // dark default), so the label needs `onHighlight` ink —
+                        // the default white label vanished on the white pill.
+                        Button {
+                            Task { await environment.liveOps.approve(item) }
+                        } label: {
+                            Text("Approve")
+                                .foregroundStyle(theme.onHighlight)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(busy || !environment.liveOps.canApprove(item))
+                        .accessibilityHint(environment.liveOps.canApprove(item)
+                            ? "" : "Review the full command first")
+                        .accessibilityIdentifier("\(rowID).approve")
+                        .frame(minWidth: 104, minHeight: 44)
+                        .fixedSize()
                     }
                 }
             } else {

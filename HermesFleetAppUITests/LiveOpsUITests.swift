@@ -133,6 +133,10 @@ final class LiveOpsUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(approveButton.waitForExistence(timeout: 10),
                       "the render-box pending approval should render in Needs You")
+        // The prominent pill must carry a visible "Approve" label in both
+        // appearances (dark highlight is white; label ink is onHighlight).
+        XCTAssertEqual(approveButton.label, "Approve")
+        attachScreenshot(of: app, name: "liveops-approval-row")
         approveButton.tap()
 
         // The row disappears once the gateway acknowledges (never before).
