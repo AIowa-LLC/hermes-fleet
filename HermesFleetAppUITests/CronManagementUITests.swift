@@ -263,6 +263,9 @@ final class CronManagementUITests: XCTestCase {
         XCTAssertTrue(scrollTo(row, in: app).waitForExistence(timeout: 15))
 
         row.swipeLeft()
+        XCTAssertTrue(firstMatch(in: app, identifier: "cron.swipe.delete.script-cron-2").waitForExistence(timeout: 10))
+        sleep(1)
+        attachScreenshot(of: app, name: "cron-swipe-delete-render")
         tap(firstMatch(in: app, identifier: "cron.swipe.delete.script-cron-2"), in: app)
 
         let confirm = app.alerts.buttons["Delete"].firstMatch

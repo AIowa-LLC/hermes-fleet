@@ -216,6 +216,134 @@ final class CronDashboardModelTests: XCTestCase {
         XCTAssertEqual(model.errorMessage, "the gateway rejected the dashboard session — reconnect this gateway")
     }
 
+    // MARK: - Build 96 follow-up: cancellation / supersession
+
+    /// A list seam whose reads suspend until the test resumes them, so two
+    /// overlapping loads can finish in either order.
+    private final class GatedListDashboard: CronDashboardProviding, @unchecked Sendable {
+        private let lock = NSLock()
+        private var gates: [CheckedContinuation<[CronJobRecord], Error>] = []
+
+        func listJobs(profile: String?) async throws -> [CronJobRecord] {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                gates.append(continuation)
+                lock.unlock()
+            }
+        }
+
+        /// Yields until `count` list reads are pending.
+        func waitForReads(_ count: Int) async {
+            while pendingReads < count { await Task.yield() }
+        }
+
+        private var pendingReads: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return gates.count
+        }
+
+        func finish(_ index: Int, _ result: Result<[CronJobRecord], Error>) {
+            lock.lock()
+            let gate = gates[index]
+            lock.unlock()
+            gate.resume(with: result)
+        }
+
+        func job(id: String, profile: String?) async throws -> CronJobRecord { throw CancellationError() }
+        func createJob(_ request: CronJobCreateRequest, profile: String?) async throws -> CronJobRecord { throw CancellationError() }
+        func updateJob(id: String, patch: CronJobPatch, profile: String?) async throws -> CronJobRecord { throw CancellationError() }
+        func pauseJob(id: String, profile: String?) async throws -> CronJobRecord { throw CancellationError() }
+        func resumeJob(id: String, profile: String?) async throws -> CronJobRecord { throw CancellationError() }
+        func triggerJob(id: String, profile: String?) async throws -> CronJobRecord { throw CancellationError() }
+        func deleteJob(id: String, profile: String?) async throws { throw CancellationError() }
+        func runSessions(jobID: String, profile: String?, limit: Int) async throws -> [CronRunSession] { [] }
+        func deliveryTargets() async throws -> [CronDeliveryTarget] { [] }
+    }
+
+    private func syntheticURLError(_ code: Int) -> NSError {
+        NSError(domain: NSURLErrorDomain, code: code, userInfo: [
+            NSLocalizedDescriptionKey: code == NSURLErrorCancelled
+                ? "cancelled" : "The Internet connection appears to be offline.",
+            NSURLErrorFailingURLStringErrorKey: "https://gw.example.test:9119/api/auth/providers",
+            "_NSURLErrorRelatedURLSessionTaskErrorKey": ["LocalDataTask <SYNTHETIC-ID>.<1>"],
+        ])
+    }
+
+    func testCancelledLoadKeepsPreviousStateAndShowsNoError() async {
+        for cancel: Error in [syntheticURLError(NSURLErrorCancelled), CancellationError()] {
+            let seam = ScriptedDashboard()
+            let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+            await model.start(profile: "default")
+            XCTAssertEqual(model.jobs.count, 2)
+            seam.failNext(cancel)
+            await model.refresh(profile: "default")
+            XCTAssertNil(model.errorMessage, "a cancelled refresh is not a failure")
+            XCTAssertEqual(model.jobs.count, 2, "the last good list stays on screen")
+        }
+    }
+
+    func testRetryAfterCancellationLoadsNormally() async {
+        let seam = ScriptedDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        seam.failNext(syntheticURLError(NSURLErrorCancelled))
+        await model.start(profile: "default")
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.isLoading)
+        await model.refresh(profile: "default")
+        XCTAssertEqual(model.jobs.count, 2)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testGenuineNetworkFailureStaysVisibleAndConcise() async {
+        let seam = ScriptedDashboard()
+        seam.failNext(syntheticURLError(NSURLErrorNotConnectedToInternet))
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        await model.start(profile: "default")
+        XCTAssertEqual(model.errorMessage, "The Internet connection appears to be offline.")
+        XCTAssertFalse(model.errorMessage?.contains("gw.example.test") ?? true)
+        XCTAssertFalse(model.errorMessage?.contains("SYNTHETIC-ID") ?? true)
+    }
+
+    func testSupersededOlderLoadCannotOverwriteNewerResult() async {
+        let seam = GatedListDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        let older = Task { await model.refresh(profile: "default") }
+        await seam.waitForReads(1)
+        let newer = Task { await model.refresh(profile: "default") }
+        await seam.waitForReads(2)
+
+        let fresh = CronJobRecord(
+            id: "fresh", name: "Fresh", prompt: "p",
+            schedule: CronSchedule(kind: "cron", expr: "0 7 * * *", display: "0 7 * * *"),
+            enabled: true, state: "scheduled", deliver: "local")
+        seam.finish(1, .success([fresh]))
+        await newer.value
+        XCTAssertEqual(model.jobs.map(\.id), ["fresh"])
+
+        // The older read now fails (cancelled or genuinely): neither may touch
+        // the screen the newer read already settled.
+        seam.finish(0, .failure(syntheticURLError(NSURLErrorNotConnectedToInternet)))
+        await older.value
+        XCTAssertEqual(model.jobs.map(\.id), ["fresh"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSupersededOlderSuccessCannotOverwriteNewerFailure() async {
+        let seam = GatedListDashboard()
+        let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)
+        let older = Task { await model.refresh(profile: "default") }
+        await seam.waitForReads(1)
+        let newer = Task { await model.refresh(profile: "default") }
+        await seam.waitForReads(2)
+
+        seam.finish(1, .failure(CronDashboardError.unauthorized))
+        await newer.value
+        seam.finish(0, .success([]))
+        await older.value
+        XCTAssertEqual(model.errorMessage, "the gateway rejected the dashboard session — reconnect this gateway")
+    }
+
     func testPauseAndResumeReplaceTheServerRow() async {
         let seam = ScriptedDashboard()
         let model = CronDashboardModel(gatewayID: GatewayID(rawValue: "g1"), dashboard: seam)

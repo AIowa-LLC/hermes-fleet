@@ -361,7 +361,7 @@ struct FleetChatsView: View {
                                 systemImage: environment.isPinned(entry.pinIdentity) ? "pin.slash" : "pin"
                             )
                         }
-                        .tint(theme.highlight)
+                        .tint(theme.swipeActionTint)
                         .accessibilityIdentifier("fleet.chats.swipe.pin.\(entry.id)")
                     }
                     // Swipe left (trailing): archive + delete.
@@ -371,13 +371,14 @@ struct FleetChatsView: View {
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        .tint(theme.destructiveSwipeTint)
                         .accessibilityIdentifier("fleet.chats.swipe.delete.\(entry.id)")
                         Button {
                             archiveLocally(entry)
                         } label: {
                             Label("Archive", systemImage: "archivebox")
                         }
-                        .tint(theme.textSecondary)
+                        .tint(theme.archiveSwipeTint)
                         .accessibilityIdentifier("fleet.chats.swipe.archive.\(entry.id)")
                     }
                 }

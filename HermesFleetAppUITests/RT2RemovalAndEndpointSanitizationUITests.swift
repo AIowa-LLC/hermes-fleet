@@ -38,6 +38,11 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
 
         let remove = firstMatch(in: app, identifier: "fleet.gateways.row.workstation.remove")
         XCTAssertTrue(remove.waitForExistence(timeout: 5), "Remove action should appear after swipe")
+        sleep(1)
+        let render = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        render.name = "gateways-swipe-remove-render"
+        render.lifetime = .keepAlways
+        add(render)
         remove.tap()
 
         // A named confirmation dialog explaining credential deletion must

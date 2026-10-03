@@ -65,8 +65,14 @@ public final class CronDashboardModel {
 
     public func start(profile: String?) async {
         lastProfile = profile
+        loadsInFlight += 1
         isLoading = true
-        defer { isLoading = false }
+        // A cancelled/superseded start must not clear the spinner of the one
+        // that replaced it.
+        defer {
+            loadsInFlight -= 1
+            isLoading = loadsInFlight > 0
+        }
         await reload(profile: profile)
         if deliveryTargets.isEmpty {
             deliveryTargets = (try? await dashboard.deliveryTargets()) ?? []
@@ -78,11 +84,25 @@ public final class CronDashboardModel {
         await reload(profile: profile)
     }
 
+    /// Starts currently running (see `start`), and the newest list read's
+    /// ticket: only the newest read may write `jobs`/`errorMessage`, so an older
+    /// or cancelled request can never overwrite the current screen state.
+    private var loadsInFlight = 0
+    private var reloadGeneration = 0
+
     private func reload(profile: String?) async {
+        reloadGeneration += 1
+        let generation = reloadGeneration
         do {
-            jobs = try await dashboard.listJobs(profile: profile)
+            let loaded = try await dashboard.listJobs(profile: profile)
+            guard generation == reloadGeneration else { return }
+            jobs = loaded
             errorMessage = nil
         } catch {
+            // Cancellation (view gone, refresh superseded) is a lifecycle
+            // event, not a failure; a stale read's failure is not current.
+            guard generation == reloadGeneration, !Task.isCancelled,
+                  !Redaction.isCancellation(error) else { return }
             // A failed read supersedes the last success notice (a stale
             // "Job created." must never sit beside a fresh error); a successful
             // read leaves an in-flight notice alone.
@@ -120,6 +140,7 @@ public final class CronDashboardModel {
             detail = try await dashboard.job(id: id, profile: profile)
             detailError = nil
         } catch {
+            guard !Task.isCancelled, !Redaction.isCancellation(error) else { return }
             detailError = Self.describe(error)
         }
     }
@@ -131,6 +152,7 @@ public final class CronDashboardModel {
             detailRuns = try await dashboard.runSessions(jobID: id, profile: profile, limit: 20)
             runsError = nil
         } catch {
+            guard !Task.isCancelled, !Redaction.isCancellation(error) else { return }
             runsError = Self.describe(error)
         }
     }
@@ -293,6 +315,6 @@ public final class CronDashboardModel {
 
     /// Non-secret error description for display.
     static func describe(_ error: any Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }

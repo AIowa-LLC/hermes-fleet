@@ -70,6 +70,32 @@ public enum Redaction {
         return safeText(text)
     }
 
+    /// True when `error` only says "this request was cancelled" — structured
+    /// task cancellation or the URL loading system's `NSURLErrorCancelled`
+    /// (-999). That is a lifecycle event (a view went away, a newer load
+    /// superseded this one), never a failure worth showing the user.
+    public static func isCancellation(_ error: any Error) -> Bool {
+        if error is CancellationError { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    /// Concise, display-safe text for a failure shown to the user. Unlike
+    /// `safeErrorDescription`, a URL-loading or Cocoa `NSError` is described by
+    /// its `localizedDescription` ("The Internet connection appears to be
+    /// offline.") instead of `String(describing:)`, which dumps the whole
+    /// `userInfo` — failing URL, request identifiers — into the UI. Every other
+    /// error keeps `safeErrorDescription`'s behavior.
+    public static func userFacingErrorDescription(_ error: any Error) -> String {
+        if !(error is LocalizedError) {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain || nsError.domain == NSCocoaErrorDomain {
+                return safeText(nsError.localizedDescription)
+            }
+        }
+        return safeErrorDescription(error)
+    }
+
     /// Redact credential-shaped substrings in untrusted diagnostic text and
     /// cap its size before it reaches UI, logs, or persisted transient state.
     public static func safeText(_ text: String) -> String {

@@ -486,6 +486,7 @@ struct CronJobRow: View {
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+            .tint(theme.destructiveSwipeTint)
             .accessibilityIdentifier("cron.swipe.delete.\(job.id)")
         }
     }
