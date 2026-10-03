@@ -49,7 +49,7 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
             "conversation transcript should render before sending")
 
         waitUntilEnabled(composer, timeout: 10)
-        composer.tap()
+        focus(composer, in: app)
         composer.typeText("first visit")
         tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
         let firstAnswer = app.descendants(matching: .any)
@@ -79,7 +79,7 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         // THE P0-7 assertion: re-entered send streams a reply, and the
         // in-conversation error surface stays empty (no "connect() from open").
         waitUntilEnabled(composer, timeout: 10)
-        composer.tap()
+        focus(composer, in: app)
         composer.typeText("second visit")
         tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
         let secondAnswer = app.descendants(matching: .any)
@@ -132,7 +132,7 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
         // Usable immediately: send a prompt, receive the streamed reply
         // (session.create → prompt.submit over the scripted fleet).
         waitUntilEnabled(composer, timeout: 10)
-        composer.tap()
+        focus(composer, in: app)
         composer.typeText("brand new")
         tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
         let answer = app.descendants(matching: .any)
@@ -147,6 +147,18 @@ final class P0_7SessionStateMachineUITests: XCTestCase {
     private func tap(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "Missing element: \(element)")
         element.tap()
+    }
+
+    /// A visible, enabled composer may not yet have keyboard focus on a
+    /// hosted simulator. Confirm focus before typing, with one bounded
+    /// coordinate fallback matching the gateway-form test helpers.
+    private func focus(_ field: XCUIElement, in app: XCUIApplication) {
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 2) {
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "composer should receive keyboard focus")
     }
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
