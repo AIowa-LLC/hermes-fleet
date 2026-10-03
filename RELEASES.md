@@ -5,6 +5,32 @@ map to one source commit and one tag. The Build 90 record below retains its
 source-to-archive attestation and tag limitations rather than asserting a
 proven link that the retained evidence cannot establish.
 
+## 0.2.0 (97)
+
+- Distribution: Internal TestFlight only, through the existing `AIowa` internal group.
+  App Store Connect reports `VALID` / `IN_BETA_TESTING`; the build is not assigned to
+  external groups (`READY_FOR_BETA_SUBMISSION`), and no App Store production
+  submission was made.
+- Uploaded: 2026-10-03T01:14:17-07:00. App Store Connect Delivery UUID:
+  `e5fab067-cd7a-4a85-b257-7e1581816f57`.
+- Git SHA: `cd4e5513c6daf891bc96190719ef14159d9bfd2e` (main; metadata PR #173).
+- Tag: `testflight-0.2.0-build97`.
+- Exported IPA: 18,648,628 bytes; SHA-256
+  `b55a666cbfcd870959ee68fa63dd0f7420e7aadc7a369a5a0280e363e4dd1018`.
+- Release preflight at the exact SHA passed Release archive, signed export, IPA
+  inspection, privacy validation, and credentialed Apple validation.
+  `ITSAppUsesNonExemptEncryption` is `false` in the archive and in ASC.
+- CI: pre-metadata integration matrix `37089535218`; metadata PR checks
+  `37100572121`; protected merge-group CI `37103431248`; post-merge main CI
+  `37104437236` (successful retry after one nondeterministic cache-fixture test).
+- What to Test: scheduled-refresh cancellation/stale results; pinned drawer
+  navigation; swipe colors, confirmation, and undo; App Lock app-switcher shielding;
+  draft preservation and the 96→97 upgrade. Ambiguous legacy drafts remain retained.
+- Known limitations: #82 remains open; excluded PR #166 was not merged. #62 remains
+  open (HTTP warning copy). This is an internal-only build; physical TestFlight
+  upgrade acceptance is pending and live-gateway acceptance was not run. No external
+  RC acceptance is claimed.
+
 ## 0.2.0 (90)
 
 - Public TestFlight availability reported by Tony on 2026-09-26.
