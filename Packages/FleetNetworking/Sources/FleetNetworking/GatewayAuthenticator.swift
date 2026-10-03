@@ -14,6 +14,9 @@ import FleetCore
 ///   exchange them for a session cookie via `POST /auth/password-login`
 ///   (`PasswordLoginClient`), then mint a single-use ticket with that cookie
 ///   → `?ticket=` (P3 LAN-gateway flow).
+/// - `.oauthNative` strategy → load a stored OAuth token pair, refresh if
+///   expired via `NativeOAuthClient`, then mint a single-use WS ticket with
+///   `Authorization: Bearer` on `POST /api/auth/ws-ticket` → `?ticket=`.
 /// - `.loopbackToken` strategy → load the stored credential from
 ///   `CredentialStoring` (Keychain) and return `.loopbackToken(StoredToken)`
 ///   → `?token=`.
@@ -34,6 +37,8 @@ public struct GatewayAuthenticator: AuthenticationProviding {
     /// Loads stored credentials from Keychain (loopback + session-token
     /// strategies) — the SAME store the U2 UI writes via `saveCredential`.
     private let credentialStore: (any CredentialStoring)?
+    /// Native OAuth client (authorize / token / refresh) for `.oauthNative`.
+    private let nativeOAuthClient: NativeOAuthClient?
     /// Base URL used to build the ticket minter when none is injected.
     private let baseURL: URL?
     /// URLSession forwarded to the built `WSTicketClient` (testable injection;
@@ -56,6 +61,7 @@ public struct GatewayAuthenticator: AuthenticationProviding {
         strategy: GatewayAuthConfiguration.Strategy,
         ticketMinter: (any WSTicketMinting)? = nil,
         credentialStore: (any CredentialStoring)? = nil,
+        nativeOAuthClient: NativeOAuthClient? = nil,
         baseURL: URL? = nil,
         urlSession: URLSession = .shared,
         sessionStore: (any GatewaySessionLeasing)? = nil
@@ -64,6 +70,7 @@ public struct GatewayAuthenticator: AuthenticationProviding {
         self.strategy = strategy
         self.ticketMinter = ticketMinter
         self.credentialStore = credentialStore
+        self.nativeOAuthClient = nativeOAuthClient
         self.baseURL = baseURL
         self.urlSession = urlSession
         self.sessionStore = sessionStore
@@ -143,6 +150,15 @@ public struct GatewayAuthenticator: AuthenticationProviding {
                 }
                 return try await mint(cookie: freshCookie)
             }
+        case .oauthNative:
+            guard let minter = try await makeOAuthTicketMinter() else {
+                throw AuthenticationError.notConfigured
+            }
+            let ticket = try await minter.mintTicket()
+            guard !ticket.isExpired() else {
+                throw AuthenticationError.ticketExpired
+            }
+            return .ticket(StoredToken(rawValue: ticket.token))
         }
     }
 
@@ -156,6 +172,21 @@ public struct GatewayAuthenticator: AuthenticationProviding {
             throw AuthenticationError.missingLoopbackToken
         }
         return WSTicketClient(baseURL: baseURL, sessionToken: credential.rawValue, urlSession: urlSession)
+    }
+
+    /// Ticket minter for `.oauthNative`: a valid access token (refreshed if
+    /// needed) is sent as `Authorization: Bearer` on the mint.
+    private func makeOAuthTicketMinter() async throws -> (any WSTicketMinting)? {
+        guard let nativeOAuthClient, let baseURL else { return nil }
+        let accessToken: String
+        do {
+            accessToken = try await nativeOAuthClient.validAccessToken()
+        } catch NativeOAuthError.sessionExpired {
+            throw AuthenticationError.missingLoopbackToken
+        } catch {
+            throw AuthenticationError.storeUnavailable("oauth refresh failed")
+        }
+        return WSTicketClient(baseURL: baseURL, accessToken: accessToken, urlSession: urlSession)
     }
 }
 

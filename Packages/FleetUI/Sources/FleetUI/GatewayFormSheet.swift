@@ -150,6 +150,7 @@ struct GatewayFormSheet: View {
                         Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
                         Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
                         Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
+                        Text("Sign in with OAuth").tag(GatewayAuthConfiguration.Strategy.oauthNative)
                     }
                     .accessibilityIdentifier("fleet.gateways.form.strategy")
                     if needsTokenEntry {
@@ -274,7 +275,7 @@ struct GatewayFormSheet: View {
         switch draftStore.strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword: return false
+        case .usernamePassword, .oauthNative: return false
         }
     }
 
