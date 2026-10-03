@@ -23,7 +23,7 @@ from c1_xcresult_parse import parse
 
 ROOT = Path(__file__).resolve().parent.parent
 MOCK = r'''#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, re, sys
 args = sys.argv[1:]
 if pathlib.Path(sys.argv[0]).name == 'xcodebuild':
     with open(os.environ['MOCK_CALLS'], 'a') as log:
@@ -45,11 +45,16 @@ if pathlib.Path(sys.argv[0]).name == 'xcodebuild':
     nodes = []
     for parts in selected:
         cls = parts[1]
-        method = parts[2] if len(parts) == 3 else 'testMockCase'
-        if os.environ.get('MOCK_WRONG_METHOD'):
-            method = 'testDifferentCase'
-        result = 'Skipped' if os.environ.get('MOCK_SKIP') else 'Passed'
-        nodes.append({'nodeType':'Test Case', 'nodeIdentifier':cls + '/' + method + '()', 'name':method + '()', 'result':result})
+        methods = [parts[2]] if len(parts) == 3 else re.findall(
+            r'^[ \t]*func[ \t]+(test[A-Za-z0-9_]+)[ \t]*\(',
+            pathlib.Path('HermesFleetAppUITests', cls + '.swift').read_text(), re.M)
+        if os.environ.get('MOCK_DROP_CASE'):
+            methods = methods[:-1]
+        for method in methods:
+            if os.environ.get('MOCK_WRONG_METHOD'):
+                method = 'testDifferentCase'
+            result = 'Skipped' if os.environ.get('MOCK_SKIP') else 'Passed'
+            nodes.append({'nodeType':'Test Case', 'nodeIdentifier':cls + '/' + method + '()', 'name':method + '()', 'result':result})
     if os.environ.get('MOCK_EMPTY'):
         nodes = []
     (bundle / 'mock.json').write_text(json.dumps(nodes))
@@ -114,8 +119,12 @@ class RunnerContract(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='fleet-ui-runner-contract-')
         self.root = Path(self.tmp.name)
         (self.root / 'scripts').mkdir()
-        for name in ('c1_ui_matrix.sh', 'c1_xcresult_parse.py', 'c1_critical_smoke.sh'):
+        for name in ('c1_ui_matrix.sh', 'c1_xcresult_parse.py', 'c1_critical_smoke.sh', 'xcode_progress_watchdog.py', 'c1_ui_case_inventory.py'):
             shutil.copy2(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        shutil.copy2(ROOT / 'scripts' / 'sim_destination.sh', self.root / 'scripts' / 'sim_destination.sh')
+        # Selection contract only: the real lane simulator has its own tests.
+        (self.root / 'scripts' / 'lane_simulator.sh').write_text(
+            '#!/bin/bash\n[ "$1" = ensure ] && echo 11111111-2222-3333-4444-555555555555\n')
         shutil.copytree(ROOT / 'HermesFleetAppUITests', self.root / 'HermesFleetAppUITests')
         shutil.copy2(ROOT / 'project.yml', self.root / 'project.yml')
         self.bin = self.root / 'bin'
@@ -153,6 +162,45 @@ class RunnerContract(unittest.TestCase):
         self.assertFalse(any('test' in call or 'build' in call for call in calls))
         self.assertTrue((self.evidence[0] / 'provenance.log').exists())
 
+    def build_destination(self, calls):
+        build = next(call for call in calls if 'build-for-testing' in call)
+        return build[build.index('-destination') + 1]
+
+    def test_default_selection_is_first_available_iphone(self):
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.build_destination(calls), 'platform=iOS Simulator,name=iPhone Contract Test,OS=latest')
+        provenance = (self.evidence[0] / 'provenance.log').read_text()
+        self.assertIn('simulator_selection=default', provenance)
+        self.assertIn('simulator_udid=unspecified', provenance)
+
+    def test_ci_true_keeps_default_selection(self):
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', CI='true')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.build_destination(calls), 'platform=iOS Simulator,name=iPhone Contract Test,OS=latest')
+
+    def test_lane_simulator_selected_when_opted_in(self):
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', HERMES_FLEET_LANE_SIM='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        udid = '11111111-2222-3333-4444-555555555555'
+        self.assertEqual(self.build_destination(calls), f'platform=iOS Simulator,id={udid}')
+        self.assertTrue(all(f'id={udid}' in call[call.index('-destination') + 1] for call in calls if '-destination' in call))
+        provenance = (self.evidence[0] / 'provenance.log').read_text()
+        self.assertIn('simulator_selection=lane', provenance)
+        self.assertIn(f'simulator_udid={udid}', provenance)
+
+    def test_explicit_udid_overrides_lane_simulator(self):
+        udid = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', HERMES_FLEET_LANE_SIM='1', HERMES_FLEET_SIM_UDID=udid)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.build_destination(calls), f'platform=iOS Simulator,id={udid}')
+
+    def test_failed_lane_simulator_fails_closed_before_xcode(self):
+        (self.root / 'scripts' / 'lane_simulator.sh').write_text('#!/bin/bash\nexit 1\n')
+        result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', HERMES_FLEET_LANE_SIM='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [])
+
     def test_failed_build_does_not_start_tests(self):
         result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath', MOCK_BUILD_FAIL='1')
         self.assertNotEqual(result.returncode, 0)
@@ -167,6 +215,10 @@ class RunnerContract(unittest.TestCase):
         result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath HermesFleetReconnect', MOCK_TEST_FAIL='1')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(sum('test-without-building' in call for call in calls), 2)
+
+    def test_missing_case_from_full_class_is_blocking(self):
+        result, _ = self.run_matrix('--classes', 'U3TabNavigation', MOCK_DROP_CASE='1')
+        self.assertNotEqual(result.returncode, 0)
 
     def test_empty_report_fails(self):
         result, _ = self.run_matrix('--classes', 'HermesFleetHappyPath', MOCK_EMPTY='1')

@@ -18,8 +18,8 @@
 #   1. non-product changes (docs/, .github/, scripts/, repo meta) select nothing;
 #   2. a HermesFleetAppUITests class file maps to its own suite when the class
 #      is in the deterministic inventory; other test-support files and any
-#      product file without a more specific mapping fall back to the
-#      conservative CORE journey set;
+#      shared test-support files select the full inventory; an unmapped
+#      product file falls back to the conservative CORE journey set;
 #   3. product areas map to suites via the ordered RULES table below.
 # Every class referenced here is validated against the canonical inventory in
 # scripts/c1_ui_matrix.sh (--list-classes); a mapping that references an
@@ -27,7 +27,7 @@
 # scripts/c1_ui_preflight_test.sh.
 
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 die() { printf 'UI-PREFLIGHT FAIL: %s\n' "$1" >&2; exit 1; }
 
@@ -146,7 +146,7 @@ classify_file() {
       if has_class "$cls"; then echo "$cls"; return; fi
       echo "$CORE"; return ;;
     HermesFleetAppUITests/*)
-      echo "$CORE"; return ;;
+      echo "$KNOWN"; return ;;
   esac
   # Product-area rules, first match wins.
   while IFS= read -r line; do
@@ -218,12 +218,35 @@ echo "UI-PREFLIGHT PARTITION: $SHARD/$SHARDS"
 echo "SELECTED_CLASSES: $ORDERED"
 
 if [ "$PRINT" -eq 1 ]; then exit 0; fi
+RECEIPT=""
+if [ "${GITHUB_ACTIONS:-}" = true ] && [ "$SHARDS" -eq 12 ] && [ -n "$BASE" ]; then
+  RECEIPT="${RUNNER_TEMP:-/tmp}/ui-receipt-${SHARD}.json"
+  if [ "${GITHUB_EVENT_NAME:-}" = merge_group ] && \
+     python3 scripts/c1_ui_receipt.py reuse --base "$BASE" --shard "$SHARD" \
+       --requested "$REQUESTED_CLASSES" --output "$RECEIPT"; then
+    echo "UI-PREFLIGHT: verified identical-tree source evidence; this partition passed receipt validation."
+    exit 0
+  fi
+fi
+write_receipt() {
+  [ -n "$RECEIPT" ] || return 0
+  python3 scripts/c1_ui_receipt.py create --base "$BASE" --shard "$SHARD" \
+    --requested "$REQUESTED_CLASSES" --selected "$ORDERED" \
+    --results "${HERMES_FLEET_UI_RESULTS_ROOT:-/tmp}" --output "$RECEIPT" \
+    || die "fresh UI receipt is incomplete"
+}
 if [ -z "$ORDERED" ]; then
   echo "UI-PREFLIGHT: no UI-relevant changes in this diff; this partition has no selected suites (all requested coverage remains assigned)."
+  write_receipt
   exit 0
+fi
+if [ -n "$RECEIPT" ]; then
+  HERMES_FLEET_UI_RESULTS_ROOT=$(mktemp -d /tmp/hermes-c1-results.XXXXXX) || die "cannot allocate results"
+  export HERMES_FLEET_UI_RESULTS_ROOT
 fi
 echo "UI-PREFLIGHT: running focused suites via scripts/c1_ui_matrix.sh --classes"
 if ! bash scripts/c1_ui_matrix.sh --classes "$ORDERED" --fail-fast; then
   die "focused UI suite(s) failed"
 fi
+write_receipt
 echo "UI-PREFLIGHT: focused UI suites passed."

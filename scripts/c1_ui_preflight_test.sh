@@ -39,7 +39,7 @@ check "docs/tooling-only changes select no UI suites" "" \
 check "a test-suite class file maps to its own suite" "RoomChat" \
   "HermesFleetAppUITests/RoomChatUITests.swift"
 
-check "a test-support file falls back to CORE" "$CORE" \
+check "shared test navigation selects every deterministic suite" "$ALL" \
   "HermesFleetAppUITests/UITabNavigation.swift"
 
 check "a re-admitted canonical CI class file maps to its own suite" "H1AppLock" \

@@ -2,6 +2,9 @@ name: CI
 
 permissions:
   contents: read
+  actions: read
+  checks: read
+  pull-requests: read
 
 on:
   push:
@@ -40,6 +43,14 @@ jobs:
         run: bash scripts/c1_ui_preflight_test.sh
       - name: Runner and partition contract tests (mocked Xcode)
         run: python3 scripts/c1_ui_runner_contract_test.py
+      - name: Parallel local phase contract tests
+        run: python3 scripts/dev_check_parallel_test.py
+      - name: UI receipt provenance failure injection
+        run: python3 scripts/c1_ui_receipt_test.py
+      - name: Lane simulator isolation contract tests
+        run: python3 scripts/lane_simulator_contract_test.py
+      - name: Xcode progress watchdog failure injection
+        run: python3 scripts/xcode_progress_watchdog_test.py
       - name: xcresult parser contract tests
         run: python3 scripts/c1_xcresult_parse_test.py
       - name: Package runner fail-closed contract tests
@@ -117,8 +128,9 @@ jobs:
 
   ui-preflight:
     name: UI preflight ${{ matrix.shard }}/12 (changed area)
-    # PRs get an early changed-area check; merge candidates repeat it against
-    # the merge-group base alongside the fixed critical smoke set.
+    # Each job executes changed-area UI or validates trusted identical-tree
+    # PR evidence. Missing/mismatched proof runs fresh UI. Critical smoke
+    # always executes on the exact merge-group candidate.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: macos-latest
     timeout-minutes: 75
@@ -135,7 +147,17 @@ jobs:
           # needed for both pull requests and merge-group candidates.
           fetch-depth: 0
       - name: Run focused UI preflight (changed-area selection)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/c1_ui_preflight.sh --base "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}" --shard "${{ matrix.shard }}" --shards 12
+      - name: Upload exact-tree UI receipt
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-receipt-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui-receipt-${{ matrix.shard }}.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Upload focused UI evidence
         if: always()
         uses: actions/upload-artifact@v4

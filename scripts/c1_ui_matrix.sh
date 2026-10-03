@@ -16,7 +16,7 @@
 #    bare bundle).
 #  - The ENVIRONMENTAL live-gateway suites (real `hermes serve` / LAN /
 #    tailnet) are intentionally NOT part of CI; they run locally.
-#  - Deep shard assignment uses the release line's historical runtime weights.
+#  - Deep shard assignment uses the verified full-run runtime weights.
 #    Inventory and weights must cover every deterministic suite. Focused jobs
 #    retain the v3 coverage-preserving selector and independent partitioner.
 #  - --classes is used by the changed-area preflight, and --tests is used by
@@ -25,7 +25,7 @@
 #    SUBSET of this inventory and never forks it; the full five-shard matrix
 #    remains available in the separate manual/nightly regression lane.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO="$(pwd)"
 
 # Canonical deterministic CI suites (bare class names; UITests suffix added
@@ -82,22 +82,16 @@ UI_CLASSES=(
   LiveOps
 )
 
-# C1 elapsed-runtime weights in tenths of a minute, in the same order as
-# UI_CLASSES. Source: merge-group run 36006153435 (suite start to final
-# PASS/FAIL marker, including retry overhead); suites not started or cut off
-# by shard 5's timeout use the preceding complete matrix run with the observed
-# shard-5 slowdown applied. Failed-suite retry time is intentionally retained
-# as conservative headroom until clean runs provide better estimates.
+# C1 measured suite runtimes, rounded up to tenths of a minute. Source:
+# successful full PR run 37081588038 on source 43051f0a (60 suites, 292 cases).
+# Includes suite invocation overhead; guides balancing, not a speed promise.
+# Re-profile after harness changes rather than dropping slow suites.
 UI_WEIGHT_TENTHS_OF_MINUTE=(
-  149 101 182 104 145 40 38 41 24 91 66 105
-  53 32 157 57 58 45 47 48 45 110 51 108
-  123 38 60 82 71 76 83 92 86 55 390 120
-  75 129 94 71 90 199 46 74 108 101 41 91
-  73 60 65 47 114 150 223 55 62 43 33
-  # LiveOps (Build 91): no observed CI run yet — estimated in line with
-  # comparably-scoped scripted-fleet suites (FOS4TruthfulHome/CronManagement)
-  # pending a real measured runtime.
-  100
+  143 24 83 76 34 21 75 70 17 71 88 279
+  79 49 69 43 40 23 64 55 77 128 98 93
+  72 29 35 70 72 70 96 82 84 40 170 139
+  80 101 54 46 112 91 48 87 70 60 29 99
+  52 49 64 46 46 58 176 51 54 43 25 58
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They
@@ -250,9 +244,9 @@ for i in "${!UI_CLASSES[@]}"; do
 done
 
 if [ "$MODE" = audit ]; then
-  echo "shard mapping ($SHARDS shards, deterministic runtime-weighted LPT; historical load units are 0.1 minutes, not a new-run forecast):"
+  echo "shard mapping ($SHARDS shards, deterministic runtime-weighted LPT; measured baseline load units are 0.1 minutes, not a new-run forecast):"
   for s in $(seq 1 "$SHARDS"); do
-    printf '  shard %d (historical load %d.%d): ' "$s" \
+    printf '  shard %d (baseline load %d.%d): ' "$s" \
       "$((SHARD_TOTALS[s - 1] / 10))" "$((SHARD_TOTALS[s - 1] % 10))"
     for i in "${!UI_CLASSES[@]}"; do
       [ "$(shard_for_index "$i")" -eq "$s" ] && printf '%s ' "${UI_CLASSES[$i]}"
@@ -267,10 +261,12 @@ if [ "$MODE" = tests ]; then
 fi
 
 # --- resolve simulator --------------------------------------------------------
-SIM_NAME=$(xcrun simctl list devices available | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//; s/ \(.*//')
-[ -n "$SIM_NAME" ] || SIM_NAME="iPhone 16"
-echo "  using simulator: $SIM_NAME"
-DEST="platform=iOS Simulator,name=$SIM_NAME,OS=latest"
+# Destination precedence lives in scripts/sim_destination.sh: explicit UDID,
+# then the lane simulator (HERMES_FLEET_LANE_SIM=1), then first available iPhone.
+. scripts/sim_destination.sh
+resolve_sim_destination iphone || die "could not select a simulator destination"
+sim_announce
+DEST="$SIM_DEST"
 DD="$REPO/build/C1Ui"
 # SwiftStreamingMarkdown v0.7.0 transitively uses the reviewed Equatable
 # macro. Headless CI has no Xcode UI step to approve that pinned macro, so
@@ -284,13 +280,19 @@ RETRY=(-retry-tests-on-failure -test-iterations 2 \
 # --- run -----------------------------------------------------------------------
 # Each invocation owns its evidence directory. Never delete another worker's
 # xcresults or reuse global numbered log files.
-RESULTS_ROOT=$(mktemp -d /tmp/hermes-c1-results.XXXXXX) || die "cannot create evidence directory"
+if [ -n "${HERMES_FLEET_UI_RESULTS_ROOT:-}" ]; then
+  RESULTS_ROOT="$HERMES_FLEET_UI_RESULTS_ROOT"
+  [ -d "$RESULTS_ROOT" ] && [ -z "$(ls -A "$RESULTS_ROOT")" ] || die "results directory must exist and be empty"
+else
+  RESULTS_ROOT=$(mktemp -d /tmp/hermes-c1-results.XXXXXX) || die "cannot create evidence directory"
+fi
 echo "UI evidence: $RESULTS_ROOT"
 {
   git rev-parse HEAD
   git status --short
   xcodebuild -version
   printf 'destination=%s\nmode=%s\n' "$DEST" "$MODE"
+  sim_metadata_lines
 } > "$RESULTS_ROOT/provenance.log" 2>&1
 # Build once, retain per-suite process isolation, and reuse the compiled test
 # products. Missing/failed builds are fatal, never successful empty tests.
@@ -324,8 +326,14 @@ for cls in "${SELECTED[@]}"; do
     [ "${#only_testing[@]}" -gt 0 ] || die "no method selectors resolved for $cls"
   else
     only_testing+=("-only-testing:$full")
+    case_list=$(python3 scripts/c1_ui_case_inventory.py --class "$cls") \
+      || die "cannot resolve expected cases for $cls"
+    while IFS= read -r method; do expected_cases+=("$method"); done <<< "$case_list"
   fi
-  if ! xcodebuild "${XC[@]}" "${RETRY[@]}" -resultBundlePath "$bundle" "${only_testing[@]}" test-without-building >"$out" 2>&1; then
+  if ! python3 scripts/xcode_progress_watchdog.py --log "$out" \
+    --report "$RESULTS_ROOT/${cls}.watchdog.json" \
+    --timeout "${HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS:-600}" -- \
+    xcodebuild "${XC[@]}" "${RETRY[@]}" -resultBundlePath "$bundle" "${only_testing[@]}" test-without-building; then
     UI_FAIL=$((UI_FAIL+1)); printf 'FAIL  UI %s FAILED or incomplete\n' "$cls"
     grep -E 'error:|failed|Executed|Test Suite' "$out" | tail -20; continue
   fi
@@ -339,11 +347,9 @@ for cls in "${SELECTED[@]}"; do
     --tests "$tests_file"
     --requested "${cls}UITests"
   )
-  if [ "$MODE" = tests ]; then
-    for expected_case in "${expected_cases[@]}"; do
-      parser_args+=(--expect-case "$expected_case")
-    done
-  fi
+  for expected_case in "${expected_cases[@]}"; do
+    parser_args+=(--expect-case "$expected_case")
+  done
   # The iPad orientation smoke is intentionally skipped by the iPhone CI
   # destination. Keep that exception explicit: any other skipped test still
   # fails closed in the parser.

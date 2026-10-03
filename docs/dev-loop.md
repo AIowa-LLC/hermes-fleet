@@ -57,6 +57,19 @@ bash scripts/c1_critical_smoke.sh --list-tests
 bash scripts/c1_critical_smoke.sh
 ```
 
+## Local simulators for parallel lanes
+
+Local `make dev-check` gives each worktree its own simulator (`HF-<repo>-<id>`, see
+`scripts/lane_simulator.sh`), so concurrent lanes no longer share a device and
+do not need to take turns. Precedence for every runner, including the focused
+preflight, hosted units, critical smoke and iPad smoke: `HERMES_FLEET_SIM_UDID`
+(explicit device) over `HERMES_FLEET_LANE_SIM=1` (lane simulator, default for
+local `dev-check`, off when `CI=true`) over the unchanged first-available-iPhone
+selection that hosted CI uses. Runners record the selection and UDID in their
+evidence metadata. Full details, the iPad variant and cleanup commands
+(`shutdown`, `delete`, `gc`) are in
+[DEVELOPMENT.md](DEVELOPMENT.md#parallel-agent-lanes).
+
 ## Execution and evidence
 
 The runner performs one `xcodebuild build-for-testing` per invocation, followed
@@ -109,6 +122,7 @@ python3 scripts/c1_ui_runner_contract_test.py
 python3 scripts/c1_xcresult_parse_test.py
 bash scripts/c1_packages_contract_test.sh
 python3 scripts/c1_units_contract_test.py
+python3 scripts/lane_simulator_contract_test.py
 ```
 
 Mocked-runner tests check build reuse, fail-fast behavior, retained coverage,
@@ -192,3 +206,70 @@ six-job concurrency cap. Queue time and total suite work still exist. This is
 not a blanket timeout extension or permission to skip unfinished regressions.
 Focused reproduction of the image and deep-history checks remains separate
 from this scheduling correction.
+
+## Development speed and exact-tree UI evidence
+
+Local `dev-check` runs generation/static validation first, then overlaps the
+independent simulator build and host package suites. Both exit statuses and
+logs are retained under an invocation-owned evidence directory; a failed
+phase still fails the check. Local lane simulators are repository-namespaced
+and simulator management is locked, so concurrent worktrees and concurrent
+`ensure` calls do not select or create the same device. Direct C1/Makefile
+runs opt in with `HERMES_FLEET_LANE_SIM=1`; explicit destinations still win.
+
+Navigation test helpers wait for any valid tab bar, drawer, or adaptive
+control within a bounded budget. A ready alternate shell no longer waits for
+an absent control. Root-destination helpers still verify the destination,
+recover retained pushed stacks, and preserve drawer-dismissal assertions.
+Shared navigation helper changes select the complete deterministic inventory.
+
+Every UI class is checked against its exact source method inventory. Missing
+or extra cases, unexpected skips, and incomplete results fail. The existing
+explicit iPhone exception for the iPad landscape test remains visible.
+Partitions use the 60 observed suite runtimes from successful run
+[37081588038](https://github.com/AIowa-LLC/hermes-fleet/actions/runs/37081588038),
+recorded in `ci-runtime-baseline.json`. Weights guide balancing and must be
+re-profiled after harness changes; they are not completion-time guarantees.
+
+Test invocations fail after 600 seconds without XCTest case/suite or XCUI
+step progress. App startup noise does not reset the watchdog. The owned
+process group is stopped, and its original log, partial result bundle, and
+watchdog report are retained. An interrupted invocation is not a pass and is
+not automatically retried. Slow tests with real progress keep running.
+`HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS` accepts a finite positive override;
+the hosted default remains 600 seconds.
+
+Each of the twelve required UI jobs either executes its selected suites or
+validates trusted source evidence. Static guards, package suites, hosted
+units, and the five critical merge journeys always execute fresh under the
+existing event policy. Required CI Gate identity and the protected merge
+queue are unchanged; a skipped UI job cannot substitute for a successful one.
+
+Reuse is allowed only for a single-PR main merge candidate with an identical
+checkout tree and base, a clean checkout, and unchanged validation code.
+Workflow, runner/selector/parser scripts, app/UI/package tests, Xcode project
+and package build definitions changing in the PR disable reuse. Missing
+GitHub runner image identity disables reuse too. The source must be a completed, successful, same-repository
+PR CI run on the current PR head, at its first attempt, created within 24 hours,
+with the actual GitHub Actions CI Gate and all twelve successful UI jobs.
+Forks and posted checks from other apps cannot provide evidence.
+
+The candidate verifies all twelve source receipts, the source checkout's
+remote tree and ancestry, the artifact ownership and GitHub-provided SHA-256
+archive digest, exact suite/case selection and outcomes, pinned dependency
+locks, build policy, Xcode/Swift/SDK, macOS/runner image, simulator model and
+runtime. Candidate dependency resolution is compared with the actual
+transitive revisions used by the source build, including ignored generated
+lockfiles. Empty partitions record no test execution or compiler evidence;
+all selected partitions must carry matching environment fingerprints. The
+sole reviewed orientation skip is explicit. Recovered retries
+are retained in fresh results but do not qualify for reuse. Missing, expired,
+malformed, tampered, failed, skipped, retried or mismatched proof executes
+fresh UI automatically. Evidence validation remains a real successful job.
+
+The receipt collector/verifier has executable failure-injection contracts
+alongside the lane simulator, parallel-phase, watchdog, selector, partition,
+and xcresult contracts. Rollout additionally requires an actual source-to-
+queue pair proving successful reuse and fresh execution after validation
+changes. A local timing experiment or mocked receipt alone is not rollout
+qualification.

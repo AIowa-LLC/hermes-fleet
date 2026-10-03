@@ -63,6 +63,17 @@ require_in "$CI_WORKFLOW" '      max-parallel: 6' "focused concurrency must stay
 require_in "$CI_WORKFLOW" '      fail-fast: true' "focused matrix must fail fast"
 require_in "$CI_WORKFLOW" 'python3 scripts/c1_ui_runner_contract_test.py' "CI must exercise the runner and partition contracts"
 require_in "$CI_WORKFLOW" 'python3 scripts/c1_xcresult_parse_test.py' "CI must exercise the fail-closed result parser"
+# Reuse is evidence validation inside every required UI job, not a skipped
+# dependency or a posted success check. Its own implementation changes must
+# still execute fresh UI and critical merge smoke remains unconditional.
+require_in "$CI_WORKFLOW" 'python3 scripts/c1_ui_receipt_test.py' "CI must inject invalid receipt provenance"
+require_in "$CI_WORKFLOW" 'python3 scripts/xcode_progress_watchdog_test.py' "CI must test stalled and progressing test invocations"
+require_in "$CI_WORKFLOW" 'python3 scripts/lane_simulator_contract_test.py' "CI must test simulator isolation"
+require_in "$CI_WORKFLOW" 'python3 scripts/dev_check_parallel_test.py' "CI must preserve parallel phase failures"
+require_in "$CI_WORKFLOW" 'name: ui-receipt-${{ matrix.shard }}-attempt-${{ github.run_attempt }}' "UI receipts must be partition and attempt scoped"
+require_in scripts/c1_ui_preflight.sh 'python3 scripts/c1_ui_receipt.py reuse' "merge preflight must validate trusted source evidence"
+require_in scripts/c1_ui_preflight.sh 'python3 scripts/c1_ui_receipt.py create' "fresh preflight must retain exact case receipts"
+
 if grep -Fq 'MAX_FOCUSED_CLASSES' scripts/c1_ui_preflight.sh; then
   echo "FAIL: oversized changed-area coverage must not be dropped" >&2; exit 1
 fi

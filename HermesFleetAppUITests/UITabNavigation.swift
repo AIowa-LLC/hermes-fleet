@@ -8,25 +8,26 @@ import XCTest
 /// Buttons (SF-symbol identifiers) with no UITabBar element and no drawer.
 enum UITabNavigation {
 
+    /// Wait for any valid navigation shape in one budget. An absent tab bar
+    /// must not delay a ready drawer or adaptive control on every navigation.
+    private static func waitUntil(timeout: TimeInterval, _ ready: @escaping () -> Bool) -> Bool {
+        if ready() { return true }
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in ready() }, object: nil)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
     static func shellReady(_ app: XCUIApplication, timeout: TimeInterval = 15) {
-        // Three valid shell shapes, probed in order:
-        //  1. a system tab bar (expanded iPad sidebar / future compact bar),
-        //  2. the compact drawer's universal Menu button,
-        //  3. the regular-width iPad adaptive top control. Probe the
-        //     DESTINATION CONTROLS (labels Bots…Settings): they float above
-        //     whatever stack is mounted. `fleet.tab.bots` is NOT a valid
-        //     probe — the shell only mounts the selected/visited stacks, so
-        //     it is absent whenever AUTO_NAV or a relaunch has already
-        //     selected another destination (iPad B43/Artifacts failures).
         let tabBar = app.tabBars.firstMatch
-        if tabBar.exists || tabBar.waitForExistence(timeout: 2) { return }
-        let menu = app.buttons["fleet.drawer.open"]
-        if menu.exists || menu.waitForExistence(timeout: 2) { return }
-        let adaptiveBots = app.buttons["Bots"]
-        let adaptiveSettings = app.buttons["Settings"]
-        XCTAssertTrue(
-            adaptiveBots.waitForExistence(timeout: timeout) && adaptiveSettings.exists,
-            "navigation shell must expose the tab bar, Menu, or the adaptive top control")
+        let menu = app.buttons["fleet.drawer.open"].firstMatch
+        let adaptiveBots = app.buttons["Bots"].firstMatch
+        let adaptiveSettings = app.buttons["Settings"].firstMatch
+        XCTAssertTrue(waitUntil(timeout: timeout) {
+            (tabBar.exists && tabBar.isHittable)
+                || (menu.exists && menu.isEnabled && menu.isHittable)
+                || (adaptiveBots.exists && adaptiveBots.isHittable
+                    && adaptiveSettings.exists && adaptiveSettings.isHittable)
+        }, "navigation shell must expose the tab bar, Menu, or the adaptive top control")
     }
 
     static func assertSelected(_ app: XCUIApplication, label: String,
@@ -53,21 +54,13 @@ enum UITabNavigation {
     /// SwiftUI's sidebarAdaptable style exposes a visible tab bar on regular
     /// iPad and a drawer on compact iPhone.
     static func tabControl(_ app: XCUIApplication, label: String) -> XCUIElement {
-        let tabBar = app.tabBars.firstMatch
-        if tabBar.exists || tabBar.waitForExistence(timeout: 2) {
-            let tabButton = tabBar.buttons[label].firstMatch
-            if tabButton.exists || tabButton.waitForExistence(timeout: 2) {
-                return tabButton
-            }
-        }
+        let tab = app.tabBars.buttons[label].firstMatch
         let button = app.buttons[label].firstMatch
-        if button.exists || button.waitForExistence(timeout: 2) {
-            return button
-        }
-        // iPad landscape presents the same destinations as sidebar cells;
-        // their semantic labels remain the navigation contract even though
-        // UIKit does not expose them as Button elements.
-        return app.cells[label].firstMatch
+        let cell = app.cells[label].firstMatch
+        _ = waitUntil(timeout: 6) { tab.exists || button.exists || cell.exists }
+        if tab.exists { return tab }
+        if button.exists { return button }
+        return cell
     }
 
     /// Drawer destination identifier slug for a destination label.
@@ -99,25 +92,26 @@ enum UITabNavigation {
     @discardableResult
     static func selectTab(_ app: XCUIApplication, label: String,
                           timeout: TimeInterval = 15) -> XCUIElement {
+        shellReady(app, timeout: timeout)
         let tabBar = app.tabBars.firstMatch
-        if tabBar.exists || tabBar.waitForExistence(timeout: 1) {
+        if tabBar.exists {
             let tab = tabBar.buttons[label].firstMatch
             XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) tab should exist")
             tab.tap()
             return tab
         }
         let menu = app.buttons["fleet.drawer.open"].firstMatch
-        if !(menu.exists || menu.waitForExistence(timeout: 2)) {
+        if !menu.exists {
             let tab = tabControl(app, label: label)
             XCTAssertTrue(tab.waitForExistence(timeout: timeout), "\(label) sidebar destination should exist")
             tab.tap()
             return tab
         }
-        menu.tap()
+        _ = openDrawer(app, timeout: timeout)
         let raw = Self.drawerDestinationRaw(label)
         let destination = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer.destination.\(raw)").firstMatch
-        XCTAssertTrue(destination.waitForExistence(timeout: timeout), "drawer must expose \(label)")
+        XCTAssertTrue(destination.exists || destination.waitForExistence(timeout: timeout), "drawer must expose \(label)")
         let drawer = app.descendants(matching: .any)["fleet.drawer"]
         for _ in 0..<4 {
             destination.tap()
@@ -159,11 +153,19 @@ enum UITabNavigation {
     @discardableResult
     static func openDrawer(_ app: XCUIApplication, timeout: TimeInterval = 15) -> XCUIElement {
         let menu = app.buttons["fleet.drawer.open"].firstMatch
-        XCTAssertTrue(menu.waitForExistence(timeout: timeout), "the universal Menu button must exist")
-        menu.tap()
+        XCTAssertTrue(waitUntil(timeout: timeout) {
+            menu.exists && menu.isEnabled && menu.isHittable
+        }, "the universal Menu button must be ready for input")
         let drawer = app.descendants(matching: .any)
             .matching(identifier: "fleet.drawer").firstMatch
-        XCTAssertTrue(drawer.waitForExistence(timeout: timeout), "navigation drawer should open")
+        // A launch/layout transition can swallow a synthesized tap. Retry
+        // only while the drawer is closed; never toggle an already-open one.
+        for _ in 0..<3 {
+            if drawer.exists { break }
+            menu.tap()
+            if waitUntil(timeout: min(3, timeout), { drawer.exists }) { break }
+        }
+        XCTAssertTrue(drawer.exists || drawer.waitForExistence(timeout: timeout), "navigation drawer should open")
         return drawer
     }
 
@@ -211,15 +213,16 @@ enum UITabNavigation {
         expectedBar: String,
         timeout: TimeInterval
     ) -> XCUIElement {
+        shellReady(app, timeout: timeout)
         let tabBar = app.tabBars.firstMatch
-        let compact = !(tabBar.exists || tabBar.waitForExistence(timeout: 1))
+        let compact = app.buttons["fleet.drawer.open"].exists
         let bar = app.navigationBars[expectedBar]
         if compact {
             selectTab(app, label: label, timeout: timeout)
             // A retained stack legitimately hides the root bar — pop to the
             // root through the shell's own affordance, then let the final
             // assertion below own the verdict.
-            if !bar.waitForExistence(timeout: 2) {
+            if !(bar.exists || bar.waitForExistence(timeout: 2)) {
                 popToRootViaDrawer(app, label: label, timeout: timeout)
             }
         } else {
@@ -228,8 +231,9 @@ enum UITabNavigation {
             // Under heavy simulator load (long CI gates) the first tap can
             // land during the lock-unlock hierarchy swap or the splash
             // cross-fade and be dropped. Retry up to five times.
+            tab.tap()
             for _ in 0..<5 {
-                if bar.waitForExistence(timeout: 6) { break }
+                if bar.exists || bar.waitForExistence(timeout: 6) { break }
                 // Build 43 retention contract: a destination that KEEPS its
                 // pushed stack shows that screen's bar, never the root bar.
                 // Re-tapping the destination is the shell's pop-to-root
@@ -241,7 +245,7 @@ enum UITabNavigation {
                 tab.tap()
             }
         }
-        XCTAssertTrue(bar.waitForExistence(timeout: timeout),
+        XCTAssertTrue(bar.exists || bar.waitForExistence(timeout: timeout),
                       "the \(label) tab must host its screen (\(expectedBar))")
         return bar
     }
@@ -282,8 +286,11 @@ enum UITabNavigation {
         // launch without NAV_RESET restore the saved Fleet stack). Either
         // landing is acceptable; only push when the root is showing.
         let bar = app.navigationBars["Gateways"]
-        if bar.waitForExistence(timeout: 5) { return bar }
-        XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: timeout),
+        let fleetBar = app.navigationBars["Fleet"]
+        XCTAssertTrue(waitUntil(timeout: timeout) { bar.exists || fleetBar.exists },
+                      "Fleet must show its root or the restored Gateways registry")
+        if bar.exists { return bar }
+        XCTAssertTrue(fleetBar.exists,
                       "the Fleet tab must host its screen")
         let manage = app.descendants(matching: .any)
             .matching(identifier: "fleet.dashboard.gateways.manage").firstMatch

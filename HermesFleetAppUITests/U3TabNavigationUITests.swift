@@ -22,12 +22,20 @@ final class U3TabNavigationUITests: XCTestCase {
         // the adaptive path. tabControl/openDrawer still VERIFY the probed
         // shape actually renders.
         if UIDevice.current.userInterfaceIdiom == .pad {
-            // iPad: the top control hosts the five PRIMARY destinations
-            // (sidebarAdaptable paginates past five — Settings would hide);
-            // Settings stays in the drawer.
+            // The system top control paginates with the available width.
+            // Verify every primary destination, including the next page,
+            // without selecting one or changing the cold-launch Bots stack.
             for label in ["Bots", "Chats", "Groups", "Scheduled", "Kanban", "Fleet"] {
-                XCTAssertTrue(UITabNavigation.tabControl(app, label: label)
-                    .waitForExistence(timeout: 15), "root shell must include \(label)")
+                var control = UITabNavigation.tabControl(app, label: label)
+                if !control.exists {
+                    let nextPage = app.buttons["Next Page"].firstMatch
+                    XCTAssertTrue(nextPage.waitForExistence(timeout: 3),
+                                  "the adaptive control must expose its next page for \(label)")
+                    nextPage.tap()
+                    control = UITabNavigation.tabControl(app, label: label)
+                }
+                XCTAssertTrue(control.waitForExistence(timeout: 15),
+                              "root shell must include \(label)")
             }
             XCTAssertFalse(UITabNavigation.tabControl(app, label: "Gateways").exists,
                            "Gateways must not be a tab (Build 43: it lives under Fleet)")
