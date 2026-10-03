@@ -57,4 +57,36 @@ final class DiagnosticRedactionTests: XCTestCase {
         let text = "Roster refresh: MacBook answered — 3 bots"
         XCTAssertEqual(Redaction.safeDiagnosticText(text), text)
     }
+
+    // MARK: - Build 96 follow-up: cancellation vs. user-facing text
+
+    private func urlError(_ code: Int, url: String = "https://gw.example.test:9119/api/auth/providers") -> NSError {
+        NSError(domain: NSURLErrorDomain, code: code, userInfo: [
+            NSLocalizedDescriptionKey: code == NSURLErrorCancelled ? "cancelled" : "The Internet connection appears to be offline.",
+            NSURLErrorFailingURLStringErrorKey: url,
+            "_NSURLErrorRelatedURLSessionTaskErrorKey": ["LocalDataTask <SYNTHETIC-ID>.<1>"],
+        ])
+    }
+
+    func testCancellationIsRecognisedOnlyForCancelShapes() {
+        XCTAssertTrue(Redaction.isCancellation(CancellationError()))
+        XCTAssertTrue(Redaction.isCancellation(urlError(NSURLErrorCancelled)))
+        XCTAssertTrue(Redaction.isCancellation(URLError(.cancelled)))
+        XCTAssertFalse(Redaction.isCancellation(urlError(NSURLErrorNotConnectedToInternet)))
+        XCTAssertFalse(Redaction.isCancellation(URLError(.timedOut)))
+        XCTAssertFalse(Redaction.isCancellation(NSError(domain: "Other", code: NSURLErrorCancelled)))
+    }
+
+    func testUserFacingDescriptionOmitsEndpointAndRequestIdentifiers() {
+        let text = Redaction.userFacingErrorDescription(urlError(NSURLErrorNotConnectedToInternet))
+        XCTAssertEqual(text, "The Internet connection appears to be offline.")
+        XCTAssertFalse(text.contains("gw.example.test"))
+        XCTAssertFalse(text.contains("SYNTHETIC-ID"))
+    }
+
+    func testSafeErrorDescriptionFallbackIsUnchangedForGenericConsumers() {
+        // The verbose fallback is intentionally left alone for other callers.
+        let text = Redaction.safeErrorDescription(urlError(NSURLErrorNotConnectedToInternet))
+        XCTAssertTrue(text.contains("NSURLErrorDomain"))
+    }
 }

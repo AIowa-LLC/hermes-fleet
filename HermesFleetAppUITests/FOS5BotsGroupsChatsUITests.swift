@@ -287,6 +287,64 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
                        "Chats archive also hides the drawer row")
     }
 
+    /// Build 96 feedback evidence: Pin/Delete swipe icons rendered blank.
+    /// Attaches the real leading and trailing swipe renders of the Chats list
+    /// so the icon ink can be inspected under the simulator's current
+    /// appearance/accent (no assertion on pixels — the tint contrast contract
+    /// is unit-tested in FleetThemeTests).
+    func testChatsSwipeActionsRenderEvidence() throws {
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        _ = firstMatch(in: app, identifier: "fleet.chats").waitForExistence(timeout: 10)
+        let id = "fleet.chats.session.workstation#default/workstation.default.s2"
+        let row = firstMatch(in: app, identifier: id)
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        for _ in 0..<4 where row.isHittable && row.frame.maxY > 690 { app.swipeUp(velocity: .slow) }
+
+        func attach(_ name: String) {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        row.swipeRight()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.chats.swipe.pin.workstation#default/workstation.default.s2").waitForExistence(timeout: 5))
+        sleep(1)
+        attach("swipe-leading-pin")
+        row.tap() // close the open swipe
+        sleep(1)
+        row.swipeLeft()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.chats.swipe.delete.workstation#default/workstation.default.s2").waitForExistence(timeout: 5))
+        sleep(1)
+        attach("swipe-trailing-delete-archive")
+    }
+
+    /// Render evidence for the DRAWER's swipe actions (same tints as Chats).
+    func testDrawerSwipeActionsRenderEvidence() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
+        let entryID = "workstation#default/workstation.default.s1"
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.chats.session." + entryID).waitForExistence(timeout: 10))
+        app.buttons["fleet.drawer.open"].firstMatch.tap()
+        let recent = firstMatch(in: app, identifier: "fleet.drawer.recent." + entryID)
+        XCTAssertTrue(recent.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !recent.isHittable {
+            firstMatch(in: app, identifier: "fleet.drawer").swipeUp(velocity: .slow)
+        }
+        recent.swipeRight()
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer.swipe.pin.individual:" + entryID).waitForExistence(timeout: 5))
+        sleep(1)
+        attachShot("drawer-swipe-leading-pin")
+        recent.swipeLeft() // closes the leading swipe
+        sleep(1)
+        recent.swipeLeft() // opens the trailing actions
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer.swipe.archive.individual:" + entryID).waitForExistence(timeout: 5))
+        sleep(1)
+        attachShot("drawer-swipe-trailing-delete-archive")
+    }
+
     func testDrawerSwipePinUnpinArchiveAndDelete() throws {
         let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
         let entryID = "workstation#default/workstation.default.s1"
@@ -363,6 +421,96 @@ final class FOS5BotsGroupsChatsUITests: XCTestCase {
         // Non-chat chrome retains the shell's swipe-to-dismiss behavior.
         app.buttons["fleet.drawer.destination.fleet"].swipeLeft()
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer").waitForNonExistence(timeout: 5))
+    }
+
+    // MARK: Drawer Recents → conversation (Build 96: blank destination)
+
+    private func attachShot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    /// Opens a Recents row from the drawer and asserts the conversation really
+    /// renders (header + composer), not a blank pushed destination.
+    private func openRecentFromDrawerAndAssertConversation(
+        _ app: XCUIApplication, sessionID: String, shot: String
+    ) {
+        let drawerButton = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(drawerButton.waitForExistence(timeout: 10))
+        drawerButton.tap()
+        let recent = firstMatch(in: app, identifier: "fleet.drawer.recent.workstation#default/workstation.default.\(sessionID)")
+        XCTAssertTrue(recent.waitForExistence(timeout: 10), "Recents must list \(sessionID)")
+        for _ in 0..<4 where !recent.isHittable {
+            firstMatch(in: app, identifier: "fleet.drawer").swipeUp(velocity: .slow)
+        }
+        recent.tap()
+        let header = app.descendants(matching: .any)["fleet.conversation.header"].firstMatch
+        let landed = header.waitForExistence(timeout: 10)
+        attachShot(shot)
+        XCTAssertTrue(landed, "\(shot): the drawer Recents row must open a rendered conversation (header missing = blank destination)")
+        XCTAssertTrue(app.textFields["fleet.conversation.composer"].firstMatch.waitForExistence(timeout: 10),
+                      "\(shot): the conversation composer must render")
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer").waitForNonExistence(timeout: 5))
+    }
+
+    /// The Chats stack has never been mounted in this process (cold launch on
+    /// Bots); a PINNED row persists across launches, so it is the drawer route
+    /// that exists before any Chats load.
+    func testDrawerPinnedOpensConversationBeforeChatsEverMounted() throws {
+        let first = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
+        let id = "workstation#default/workstation.default.s1"
+        let row = firstMatch(in: first, identifier: "fleet.chats.session." + id)
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.swipeRight()
+        let pin = firstMatch(in: first, identifier: "fleet.chats.swipe.pin." + id)
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        pin.tap()
+        sleep(1)
+        first.terminate()
+
+        let app = XCUIApplication()
+        self.app = app
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "roster"   // Bots; Chats never mounted
+        app.launch()
+        UITabNavigation.shellReady(app)
+        let drawerButton = app.buttons["fleet.drawer.open"].firstMatch
+        XCTAssertTrue(drawerButton.waitForExistence(timeout: 10))
+        drawerButton.tap()
+        let pinned = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "fleet.drawer.pinned.individual:workstation")).firstMatch
+        XCTAssertTrue(pinned.waitForExistence(timeout: 10), "pinned row persists across launch")
+        pinned.tap()
+        let landed = app.descendants(matching: .any)["fleet.conversation.header"].firstMatch.waitForExistence(timeout: 10)
+        sleep(2)
+        attachShot("pinned-before-chats-mounted")
+        XCTAssertTrue(landed, "pinned row opened before Chats was ever mounted must show the conversation")
+        XCTAssertTrue(app.textFields["fleet.conversation.composer"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.drawer").waitForNonExistence(timeout: 5))
+    }
+
+    func testDrawerRecentOpensConversationFromChatsRoot() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1").waitForExistence(timeout: 10))
+        openRecentFromDrawerAndAssertConversation(app, sessionID: "s1", shot: "recent-from-chats-root")
+    }
+
+    func testDrawerRecentOpensConversationFromAnotherConversation() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
+        let first = firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1")
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        first.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.conversation.header"].firstMatch.waitForExistence(timeout: 10))
+        openRecentFromDrawerAndAssertConversation(app, sessionID: "s2", shot: "recent-from-open-conversation")
+    }
+
+    func testDrawerRecentOpensConversationFromAnotherTab() throws {
+        let app = launch(extraEnv: ["HERMES_FLEET_AUTO_NAV": "chats"])
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.chats.session.workstation#default/workstation.default.s1").waitForExistence(timeout: 10))
+        UITabNavigation.selectTab(app, label: "Bots")
+        XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+        openRecentFromDrawerAndAssertConversation(app, sessionID: "s1", shot: "recent-from-bots-tab")
     }
 
     // MARK: 4. Chats Compose + heading

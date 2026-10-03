@@ -540,6 +540,23 @@ public struct FleetThemeValues: Sendable {
     public var onHighlight: Color {
         FleetThemeContrast.maxContrastInk(on: resolvedHighlight).swiftUIColor
     }
+    /// Fill for a swipe action whose glyph/title iOS always draws in WHITE.
+    /// The highlight, darkened only as far as needed for ≥ 3:1 against white
+    /// (a white dark-appearance highlight would otherwise render a blank
+    /// white Pin pill — Build 96 feedback).
+    public var swipeActionTint: Color {
+        FleetThemeContrast.correctedForeground(
+            resolvedHighlight,
+            on: FleetStoredColor(red: 1, green: 1, blue: 1),
+            minimum: FleetThemeContrast.highlightMinimum).swiftUIColor
+    }
+    /// Destructive swipe fill. Explicit: the app-wide `.tint(highlight)`
+    /// otherwise overrides the destructive role's red and Delete goes blank
+    /// under a white highlight.
+    public var destructiveSwipeTint: Color { Color(red: 0.84, green: 0.16, blue: 0.14) }
+    /// Archive swipe fill (amber). Fixed, dark enough that the
+    /// white glyph/title iOS draws on it stays ≥ 3.5:1 in light and dark.
+    public var archiveSwipeTint: Color { Color(red: 0xC2 / 255, green: 0x6A / 255, blue: 0) }
     public var textPrimary: Color { resolvedText.swiftUIColor }
     public var textSecondary: Color { resolvedSecondaryText.swiftUIColor }
     public var textMuted: Color { resolvedMutedText.swiftUIColor }

@@ -414,7 +414,10 @@ public struct DashboardCronClient: CronDashboardProviding, Sendable {
         do {
             (data, response) = try await urlSession.data(for: request)
         } catch {
-            throw CronDashboardError.transport(Redaction.safeErrorDescription(error))
+            // A cancelled load is not a transport failure: keep it a cancellation
+            // so the model can tell it from a real outage.
+            if Redaction.isCancellation(error) { throw CancellationError() }
+            throw CronDashboardError.transport(Redaction.userFacingErrorDescription(error))
         }
         guard data.count <= AuthREST.maxResponseBytes else {
             throw CronDashboardError.malformedResponse("cron response too large")

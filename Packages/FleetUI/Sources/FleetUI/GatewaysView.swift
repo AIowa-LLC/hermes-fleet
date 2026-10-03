@@ -371,6 +371,7 @@ public struct GatewaysView: View {
                 } label: {
                     Label("Remove", systemImage: "trash")
                 }
+                .tint(theme.destructiveSwipeTint)
                 .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue).remove")
             }
             .contextMenu {

@@ -326,6 +326,9 @@ struct FleetNavigationDrawer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, FleetTheme.spacingMd)
             .padding(.vertical, 10)
+            // A plain Button hit-tests only drawn pixels: without a shape the
+            // blank space right of the title was dead (Build 96 feedback).
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("fleet.drawer.pinned.\(pin.id)")
@@ -423,18 +426,19 @@ private struct ConversationSwipeActions: ViewModifier {
                 Button(action: togglePin) {
                     Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin")
                 }
-                .tint(theme.highlight)
+                .tint(theme.swipeActionTint)
                 .accessibilityIdentifier("fleet.drawer.swipe.pin.\(identity.id)")
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive, action: delete) {
                     Label("Delete", systemImage: "trash")
                 }
+                .tint(theme.destructiveSwipeTint)
                 .accessibilityIdentifier("fleet.drawer.swipe.delete.\(identity.id)")
                 Button(action: archive) {
                     Label("Archive", systemImage: "archivebox")
                 }
-                .tint(theme.textSecondary)
+                .tint(theme.archiveSwipeTint)
                 .accessibilityIdentifier("fleet.drawer.swipe.archive.\(identity.id)")
             }
     }

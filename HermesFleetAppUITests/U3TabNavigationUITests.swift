@@ -386,6 +386,97 @@ final class U3TabNavigationUITests: XCTestCase {
         XCTAssertTrue(UITabNavigation.closeDrawer(app), "scrim dismissal still works")
     }
 
+    /// Build 96 feedback: tapping the blank space to the RIGHT of a drawer
+    /// destination label did nothing — only the glyphs were hittable (a
+    /// `.plain` Button hit-tests its drawn pixels, and an unselected row
+    /// paints a clear background). Every part of the row — icon, label, the
+    /// trailing blank area and the row's outer edge — must select the
+    /// destination (the drawer dismissing is the landing signal).
+    func testDrawerDestinationRowIsTappableAcrossItsWholeWidth() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        UITabNavigation.shellReady(app)
+        try XCTSkipIf(app.tabBars.firstMatch.exists, "compact drawer only")
+
+        let drawer = app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch
+        let touchPoints: [(String, CGFloat)] = [
+            ("icon", 0.10), ("label", 0.30), ("trailing blank", 0.85), ("trailing edge", 0.97),
+        ]
+        // The drawer dismissing alone is ambiguous (a miss lands on the scrim,
+        // which also dismisses), so each tap must also LAND on its screen.
+        for (destination, title) in [("chats", "Chats"), ("cron", "Scheduled"), ("artifacts", "Artifacts")] {
+            for (name, dx) in touchPoints {
+                // Start every attempt from a different destination.
+                UITabNavigation.selectTab(app, label: "Bots")
+                XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10))
+                _ = UITabNavigation.openDrawer(app)
+                let row = app.descendants(matching: .any)
+                    .matching(identifier: "fleet.drawer.destination.\(destination)").firstMatch
+                XCTAssertTrue(row.waitForExistence(timeout: 10), "\(destination) row must exist")
+                row.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: 0.5)).tap()
+                var dismissed = false
+                for _ in 0..<12 where !dismissed {
+                    if !drawer.exists { dismissed = true } else { usleep(250_000) }
+                }
+                XCTAssertTrue(dismissed, "tapping the \(destination) row's \(name) must select it and dismiss the drawer")
+                if !dismissed { UITabNavigation.closeDrawer(app) }
+                XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5),
+                              "tapping the \(destination) row's \(name) must land on \(title), not just dismiss the drawer (row frame \(row.frame))")
+            }
+        }
+    }
+
+    /// Same hit-area contract for a PINNED conversation row (pinned through
+    /// the real Chats swipe, opened from the real drawer): a tap in the blank
+    /// space right of the title must open the conversation.
+    func testDrawerPinnedConversationRowIsTappableAcrossItsWholeWidth() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_AUTO_NAV"] = "chats"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        try XCTSkipIf(app.tabBars.firstMatch.exists, "compact drawer only")
+        let rowID = "fleet.chats.session.workstation#default/workstation.default.s1"
+        let row = app.descendants(matching: .any)[rowID]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "seeded session row must render")
+        for _ in 0..<4 where row.isHittable && row.frame.maxY > 690 { app.swipeUp(velocity: .slow) }
+        row.swipeRight()
+        let pin = app.descendants(matching: .any)["fleet.chats.swipe.pin.workstation#default/workstation.default.s1"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+        pin.tap()
+        sleep(1)
+
+        // Dismissal alone is ambiguous (a missed tap lands on the scrim and also
+        // closes the drawer), so every probe starts from Bots and must land on
+        // the opened conversation: its header AND composer.
+        for (name, dx) in [("title", 0.10), ("trailing blank", 0.85), ("trailing edge", 0.97)] as [(String, CGFloat)] {
+            UITabNavigation.selectTab(app, label: "Bots")
+            XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 10),
+                          "\(name): probe must start from Bots")
+            XCTAssertFalse(app.descendants(matching: .any)["fleet.conversation.header"].firstMatch.exists,
+                           "\(name): no conversation may be open before the tap")
+            _ = UITabNavigation.openDrawer(app)
+            let pinned = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "fleet.drawer.pinned.individual:workstation")).firstMatch
+            var found = pinned.waitForExistence(timeout: 8)
+            for _ in 0..<3 where !found { app.swipeUp(velocity: .slow); found = pinned.waitForExistence(timeout: 3) }
+            XCTAssertTrue(found, "pinned row must be in the drawer")
+            let frame = pinned.frame
+            pinned.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: 0.5)).tap()
+            let header = app.descendants(matching: .any)["fleet.conversation.header"].firstMatch
+            let composer = app.descendants(matching: .any)["fleet.conversation.composer"].firstMatch
+            XCTAssertTrue(header.waitForExistence(timeout: 10),
+                          "tapping the pinned row's \(name) must open the conversation header (row frame \(frame))")
+            XCTAssertTrue(composer.waitForExistence(timeout: 10),
+                          "tapping the pinned row's \(name) must show the conversation composer")
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "fleet.drawer").firstMatch.waitForNonExistence(timeout: 5),
+                          "the drawer must be dismissed after opening")
+            if !header.exists { UITabNavigation.closeDrawer(app) }
+            // Back out so the next probe starts from Bots again.
+            app.buttons["fleet.conversation.back"].firstMatch.tap()
+        }
+    }
+
     // MARK: - Tab helpers (verified switch, one retry on a dropped tap)
 
     private func tapTab(_ app: XCUIApplication, _ label: String) {

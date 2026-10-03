@@ -365,6 +365,37 @@ final class DashboardCronClientTests: XCTestCase {
         }
     }
 
+    // MARK: - Build 96 follow-up: cancellation vs. transport failure
+
+    func testCancelledRequestStaysACancellationNotATransportFailure() async throws {
+        let client = Self.makeClient(handler: { _ in (200, Data()) })
+        CronURLProtocol.failure = URLError(.cancelled)
+        defer { CronURLProtocol.failure = nil }
+        do {
+            _ = try await client.listJobs(profile: nil)
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "got \(error)")
+        }
+    }
+
+    func testGenuineTransportFailureIsConciseWithoutEndpoint() async throws {
+        let client = Self.makeClient(handler: { _ in (200, Data()) })
+        CronURLProtocol.failure = URLError(
+            .notConnectedToInternet,
+            userInfo: [NSURLErrorFailingURLStringErrorKey: "http://gateway.example.invalid:18923/api/cron/jobs"])
+        defer { CronURLProtocol.failure = nil }
+        do {
+            _ = try await client.listJobs(profile: nil)
+            XCTFail("expected transport error")
+        } catch let error as CronDashboardError {
+            guard case .transport(let text) = error else { return XCTFail("wrong error: \(error)") }
+            XCTAssertFalse(text.contains("gateway.example.invalid"), text)
+            XCTAssertFalse(text.contains("UserInfo"), text)
+            XCTAssertFalse(text.isEmpty)
+        }
+    }
+
     // MARK: - Franchise test plumbing
 
     private static func makeClient(
@@ -372,6 +403,7 @@ final class DashboardCronClientTests: XCTestCase {
         handler: @escaping (URLRequest) -> (Int, Data)
     ) -> DashboardCronClient {
         CronURLProtocol.handler = handler
+        CronURLProtocol.failure = nil
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CronURLProtocol.self]
         return DashboardCronClient(
@@ -386,11 +418,17 @@ final class DashboardCronClientTests: XCTestCase {
 /// re-surfaces the request (method/path/query/body) for assertions.
 final class CronURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, Data))?
+    /// When set, the load fails with this error instead of answering.
+    nonisolated(unsafe) static var failure: Error?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        if let failure = Self.failure {
+            client?.urlProtocol(self, didFailWithError: failure)
+            return
+        }
         let (status, body) = Self.handler?(request) ?? (500, Data())
         let response = HTTPURLResponse(
             url: request.url!, statusCode: status,

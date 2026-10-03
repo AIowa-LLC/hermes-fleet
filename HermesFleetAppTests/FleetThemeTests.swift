@@ -667,4 +667,40 @@ final class FleetThemeTests: XCTestCase {
             UIColor(custom.semanticStatusColor(for: .offline)).resolvedColor(with: traits).description,
             UIColor(FleetTheme.statusNeutral).resolvedColor(with: traits).description)
     }
+
+    /// Build 96 feedback: swipe-action glyphs are drawn white by iOS, so the
+    /// Pin fill must keep ≥ 3:1 against white for every highlight — including
+    /// the white dark-appearance default that rendered a blank pill.
+    func testSwipeActionTintCarriesWhiteInk() {
+        let white = FleetStoredColor(red: 1, green: 1, blue: 1)
+        for palette in [FleetThemePalette.fleetDefault, .fleetDefaultDark] {
+            for dark in [false, true] {
+                let theme = FleetThemeValues(palette: palette, isDarkAppearance: dark, isIncreasedContrast: false)
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                XCTAssertTrue(UIColor(theme.swipeActionTint).getRed(&r, green: &g, blue: &b, alpha: &a))
+                let ratio = FleetThemeContrast.ratio(
+                    white, FleetStoredColor(red: Double(r), green: Double(g), blue: Double(b)))
+                XCTAssertGreaterThanOrEqual(ratio, 2.95, "palette \(palette.appearance) dark=\(dark)")
+            }
+        }
+    }
+
+    /// Archive (amber) and Delete (red) are fixed fills: the white glyph/title
+    /// iOS draws on them must stay ≥ 3.5:1, and they must differ from each
+    /// other and from the Pin fill.
+    func testArchiveAndDestructiveSwipeTintsCarryWhiteInk() {
+        func ratioToWhite(_ color: Color) -> Double {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            XCTAssertTrue(UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a))
+            return FleetThemeContrast.ratio(
+                FleetStoredColor(red: 1, green: 1, blue: 1),
+                FleetStoredColor(red: Double(r), green: Double(g), blue: Double(b)))
+        }
+        for dark in [false, true] {
+            let theme = FleetThemeValues(palette: .fleetDefaultDark, isDarkAppearance: dark, isIncreasedContrast: false)
+            XCTAssertGreaterThanOrEqual(ratioToWhite(theme.archiveSwipeTint), 3.5)
+            XCTAssertGreaterThanOrEqual(ratioToWhite(theme.destructiveSwipeTint), 3.5)
+            XCTAssertNotEqual(theme.archiveSwipeTint, theme.destructiveSwipeTint)
+        }
+    }
 }
