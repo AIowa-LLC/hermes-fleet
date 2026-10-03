@@ -7,6 +7,7 @@ not product acceptance evidence.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -109,6 +110,8 @@ class LaneSimulatorContracts(unittest.TestCase):
         self.git(self.repo, "add", "README")
         self.git(self.repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
                  "commit", "-q", "-m", "fixture")
+        self.repo_id = hashlib.sha256(str(self.repo / ".git").encode()).hexdigest()[:8]
+        self.orphan = dict(ORPHAN, name=f"HF-{self.repo_id}-deadbeef")
         self.second = base / "repo-second"
         self.git(self.repo, "worktree", "add", "-q", "-b", "second", str(self.second))
         for tree in (self.repo, self.second):
@@ -116,7 +119,7 @@ class LaneSimulatorContracts(unittest.TestCase):
 
     def install(self, tree: Path) -> None:
         (tree / "scripts").mkdir(parents=True, exist_ok=True)
-        for name in ("lane_simulator.sh", "sim_destination.sh"):
+        for name in ("lane_simulator.sh", "lane_simulator_lock.py", "sim_destination.sh"):
             shutil.copy2(ROOT / "scripts" / name, tree / "scripts" / name)
 
     def git(self, cwd: Path, *args: str) -> None:
@@ -149,7 +152,7 @@ class LaneSimulatorContracts(unittest.TestCase):
     def test_create_uses_chosen_iphone_type_and_newest_runtime(self):
         self.lane(self.repo, "ensure")
         create = next(c for c in self.calls() if c[:2] == ["simctl", "create"])
-        self.assertRegex(create[2], r"^HF-[0-9a-f]{8}$")
+        self.assertRegex(create[2], r"^HF-[0-9a-f]{8}-[0-9a-f]{8}$")
         self.assertEqual(create[3], "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro")
         self.assertEqual(create[4], "com.apple.CoreSimulator.SimRuntime.iOS-27-0")
 
@@ -174,7 +177,7 @@ class LaneSimulatorContracts(unittest.TestCase):
             self.assertNotIn(needle, blob)
         for name in self.names():
             if name not in {d["name"] for d in FOREIGN}:
-                self.assertRegex(name, r"^HF-[0-9a-f]{8}(-iPad)?$")
+                self.assertRegex(name, r"^HF-[0-9a-f]{8}-[0-9a-f]{8}(-iPad)?$")
 
     def test_ipad_family_gets_its_own_device(self):
         phone = self.lane(self.repo, "ensure").stdout
@@ -214,7 +217,7 @@ class LaneSimulatorContracts(unittest.TestCase):
         gone = self.lane(self.second, "ensure").stdout.strip()
         gone_ipad = self.lane(self.second, "ensure", "ipad").stdout.strip()
         live_second = self.lane(self.repo, "ensure").stdout.strip()
-        self.set_devices(self.devices() + [dict(ORPHAN)])
+        self.set_devices(self.devices() + [dict(self.orphan)])
         before = {d["udid"] for d in self.devices()}
         # A live second worktree keeps its simulators.
         result = self.lane(self.repo, "gc")
@@ -232,17 +235,35 @@ class LaneSimulatorContracts(unittest.TestCase):
         deleted = [c[2] for c in self.calls() if c[:2] == ["simctl", "delete"]]
         self.assertEqual(sorted(deleted), sorted([ORPHAN["udid"], gone, gone_ipad]))
 
+    def test_gc_preserves_another_repository_with_matching_lane_hash(self):
+        foreign = dict(ORPHAN, name="HF-ffffffff-deadbeef")
+        self.set_devices(self.devices() + [foreign])
+        result = self.lane(self.repo, "gc")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(foreign["udid"], {d["udid"] for d in self.devices()})
+        self.assertFalse(any(c[:2] == ["simctl", "delete"] for c in self.calls()))
+
+    def test_concurrent_ensure_creates_one_device(self):
+        args = ["bash", "scripts/lane_simulator.sh", "ensure"]
+        workers = [subprocess.Popen(args, cwd=self.repo, env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                   for _ in range(3)]
+        results = [worker.communicate(timeout=30) for worker in workers]
+        self.assertTrue(all(worker.returncode == 0 for worker in workers), results)
+        self.assertEqual(len({out for out, err in results}), 1)
+        self.assertEqual(sum(c[:2] == ["simctl", "create"] for c in self.calls()), 1)
+
     def test_gc_dry_run_deletes_nothing(self):
-        self.set_devices(self.devices() + [dict(ORPHAN)])
+        self.set_devices(self.devices() + [dict(self.orphan)])
         result = self.lane(self.repo, "gc", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("would delete HF-deadbeef", result.stderr)
+        self.assertIn(f"would delete HF-{self.repo_id}-deadbeef", result.stderr)
         self.assertFalse(any(c[:2] == ["simctl", "delete"] for c in self.calls()))
 
     def test_gc_fails_closed_when_worktrees_cannot_be_listed(self):
         outside = Path(self.tmp.name) / "not-a-repo"
         self.install(outside)
-        self.set_devices(self.devices() + [dict(ORPHAN)])
+        self.set_devices(self.devices() + [dict(self.orphan)])
         result = self.lane(outside, "gc", GIT_CEILING_DIRECTORIES=self.tmp.name)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c[:2] == ["simctl", "delete"] for c in self.calls()))
@@ -250,7 +271,7 @@ class LaneSimulatorContracts(unittest.TestCase):
     def test_list_reports_owner_without_paths(self):
         self.lane(self.repo, "ensure")
         self.lane(self.second, "ensure")
-        self.set_devices(self.devices() + [dict(ORPHAN)])
+        self.set_devices(self.devices() + [dict(self.orphan)])
         rows = [line.split("\t") for line in self.lane(self.repo, "list").stdout.splitlines()]
         owners = sorted(r[3] for r in rows)
         self.assertEqual(owners, ["orphaned", "other-worktree", "this-worktree"])

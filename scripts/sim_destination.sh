@@ -7,7 +7,7 @@
 # Precedence (first match wins):
 #   1. HERMES_FLEET_SIM_UDID          explicit device (iPad: HERMES_FLEET_IPAD_SIM_UDID)
 #      iPad only: HERMES_FLEET_IPAD_DESTINATION, an explicit device name
-#   2. HERMES_FLEET_LANE_SIM=1        this worktree's HF-<id> simulator, created
+#   2. HERMES_FLEET_LANE_SIM=1        this worktree's HF-<repo>-<id> simulator, created
 #                                     on demand by scripts/lane_simulator.sh
 #   3. current behavior               first available iPhone (iPad: a named
 #                                     iPad Pro), which is what CI uses

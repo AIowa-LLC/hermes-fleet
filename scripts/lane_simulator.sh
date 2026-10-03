@@ -2,7 +2,7 @@
 # Per-worktree named iOS simulators for parallel agent lanes.
 #
 # Every git worktree of this repository gets its own simulator, named from a
-# short hash of the worktree path (HF-<id>; the path is never printed or
+# short hash of the worktree path (HF-<repo>-<id>; the path is never printed or
 # embedded in a name), so concurrent local validation runs never install and
 # launch Fleet on the same device. Selection wiring lives in
 # scripts/sim_destination.sh; see docs/DEVELOPMENT.md#parallel-agent-lanes.
@@ -16,7 +16,7 @@
 #   bash scripts/lane_simulator.sh delete                delete this worktree's simulators
 #   bash scripts/lane_simulator.sh gc [--dry-run]        delete HF-* simulators whose worktree is gone
 #
-# Names: iPhone HF-<id>, iPad HF-<id>-iPad. Only devices named exactly like
+# Names: iPhone HF-<repo>-<id>, iPad HF-<repo>-<id>-iPad. Only devices named exactly like
 # that are ever touched; `delete` and `shutdown` act on this worktree's devices
 # only, and `gc` only on HF-* devices whose id matches no live worktree.
 #
@@ -32,11 +32,19 @@ log() { echo "lane_simulator: $*" >&2; }
 
 id_for_path() { printf '%s' "$1" | shasum -a 256 | cut -c1-8; }
 LANE_ID="$(id_for_path "$ROOT")"
+COMMON_DIR=$(git rev-parse --git-common-dir) || die "not a git worktree"
+COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P) || die "cannot resolve repository identity"
+REPO_ID="$(id_for_path "$COMMON_DIR")"
+# Serialize short simctl mutations, including same-lane concurrent ensure and
+# garbage collection. The lock lives outside the checkout, shared by its lanes.
+if [ "${HF_SIM_LOCK_HELD:-}" != "$REPO_ID" ]; then
+  exec python3 scripts/lane_simulator_lock.py "$COMMON_DIR/fleet-lane-simulator.lock" "$REPO_ID" "$0" "$@"
+fi
 
 name_for() {
   case "$1" in
-    iphone) printf 'HF-%s' "$LANE_ID" ;;
-    ipad) printf 'HF-%s-iPad' "$LANE_ID" ;;
+    iphone) printf 'HF-%s-%s' "$REPO_ID" "$LANE_ID" ;;
+    ipad) printf 'HF-%s-%s-iPad' "$REPO_ID" "$LANE_ID" ;;
     *) die "unknown device family '$1' (expected iphone or ipad)" ;;
   esac
 }
@@ -44,7 +52,7 @@ name_for() {
 # Prints "NAME UDID STATE" for every available device named HF-*.
 hf_devices() {
   xcrun simctl list devices available | sed -nE \
-    's/^[[:space:]]+(HF-[0-9a-f]{8}(-iPad)?) \(([0-9A-Fa-f-]{36})\) \(([^)]*)\).*$/\1 \3 \4/p'
+    "s/^[[:space:]]+(HF-${REPO_ID}-[0-9a-f]{8}(-iPad)?) \(([0-9A-Fa-f-]{36})\) \(([^)]*)\).*$/\1 \3 \4/p"
 }
 
 udid_for_name() { hf_devices | awk -v n="$1" '$1 == n { print $2; exit }'; }
@@ -131,7 +139,7 @@ cmd_list() {
   local live name udid state id owner
   live="$(live_ids)"
   hf_devices | while read -r name udid state; do
-    id="${name#HF-}"; id="${id%-iPad}"
+    id="${name#HF-"$REPO_ID"-}"; id="${id%-iPad}"
     if [ "$id" = "$LANE_ID" ]; then owner="this-worktree"
     elif printf '%s\n' "$live" | grep -qx "$id"; then owner="other-worktree"
     else owner="orphaned"; fi
@@ -173,7 +181,7 @@ cmd_gc() {
   # Fail closed: never collect when the set of live worktrees is unknown.
   live="$(live_ids)" || die "gc: cannot list git worktrees"
   hf_devices | while read -r name udid state; do
-    id="${name#HF-}"; id="${id%-iPad}"
+    id="${name#HF-"$REPO_ID"-}"; id="${id%-iPad}"
     if printf '%s\n' "$live" | grep -qx "$id"; then continue; fi
     if [ "$dry" -eq 1 ]; then
       log "would delete $name (no live worktree)"

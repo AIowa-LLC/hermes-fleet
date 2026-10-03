@@ -4,9 +4,11 @@
 #   theme call-site audit -> public-safety residue guard -> gitleaks
 # Used standalone by CI (job: static-guards) and by c1_ci_validate.sh.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO="$(pwd)"
 FAIL=0
+STATIC_RESULTS=$(mktemp -d /tmp/hermes-c1-static.XXXXXX) || exit 1
+echo "Static evidence: $STATIC_RESULTS"
 declare -a FAILURES=()
 note() { printf '\n=== %s ===\n' "$1"; }
 ok()   { printf 'PASS  %s\n' "$1"; }
@@ -14,18 +16,18 @@ bad()  { FAIL=$((FAIL+1)); FAILURES+=("$1"); printf 'FAIL  %s\n' "$1"; }
 
 # --- 1. xcodegen generate ----------------------------------------------------
 note "xcodegen generate"
-if xcodegen generate >/tmp/c1_xcodegen.log 2>&1; then
+if xcodegen generate >"$STATIC_RESULTS/c1_xcodegen.log" 2>&1; then
   ok "xcodegen generate succeeded"
 else
-  bad "xcodegen generate FAILED"; tail -5 /tmp/c1_xcodegen.log
+  bad "xcodegen generate FAILED"; tail -5 "$STATIC_RESULTS/c1_xcodegen.log"
 fi
 
 # --- 1b. xcodegen drift gate --------------------------------------------------
 note "xcodegen drift gate (project.yml authoritative)"
-if bash scripts/xcodegen_drift_gate.sh >/tmp/c1_drift.log 2>&1; then
+if bash scripts/xcodegen_drift_gate.sh >"$STATIC_RESULTS/c1_drift.log" 2>&1; then
   ok "xcodegen drift gate: committed project matches project.yml"
 else
-  bad "xcodegen DRIFT: HermesFleetApp.xcodeproj does not match project.yml"; tail -10 /tmp/c1_drift.log
+  bad "xcodegen DRIFT: HermesFleetApp.xcodeproj does not match project.yml"; tail -10 "$STATIC_RESULTS/c1_drift.log"
 fi
 
 # --- module-boundary check ----------------------------------------------------
@@ -49,83 +51,83 @@ fi
 
 # --- theme call-site audit ----------------------------------------------------
 note "Theme call-site audit"
-if bash scripts/theme_callsite_audit.sh >/tmp/c1_theme.log 2>&1; then
+if bash scripts/theme_callsite_audit.sh >"$STATIC_RESULTS/c1_theme.log" 2>&1; then
   ok "theme call-site audit: runtime product colors use FleetThemeValues"
 else
-  bad "theme call-site audit FAILED"; cat /tmp/c1_theme.log
+  bad "theme call-site audit FAILED"; cat "$STATIC_RESULTS/c1_theme.log"
 fi
 
 # --- privacy manifest and required-reason audit -------------------------------
 note "Privacy manifest validation"
-if bash scripts/privacy_manifest_validate.sh >/tmp/c1_privacy_manifest.log 2>&1; then
+if bash scripts/privacy_manifest_validate.sh >"$STATIC_RESULTS/c1_privacy_manifest.log" 2>&1; then
   ok "privacy manifest: present, well-formed, and truthful"
 else
-  bad "privacy manifest validation FAILED"; cat /tmp/c1_privacy_manifest.log
+  bad "privacy manifest validation FAILED"; cat "$STATIC_RESULTS/c1_privacy_manifest.log"
 fi
 
-if bash scripts/privacy_manifest_validate_test.sh >/tmp/c1_privacy_manifest_test.log 2>&1; then
+if bash scripts/privacy_manifest_validate_test.sh >"$STATIC_RESULTS/c1_privacy_manifest_test.log" 2>&1; then
   ok "privacy manifest fail-closed tests: disappearance/malformed content rejected"
 else
-  bad "privacy manifest fail-closed tests FAILED"; cat /tmp/c1_privacy_manifest_test.log
+  bad "privacy manifest fail-closed tests FAILED"; cat "$STATIC_RESULTS/c1_privacy_manifest_test.log"
 fi
 
 note "Required-reason API audit"
-if bash scripts/privacy_required_reason_audit.sh >/tmp/c1_privacy_reason.log 2>&1; then
+if bash scripts/privacy_required_reason_audit.sh >"$STATIC_RESULTS/c1_privacy_reason.log" 2>&1; then
   ok "required-reason API audit: declarations match production use"
 else
-  bad "required-reason API audit FAILED"; cat /tmp/c1_privacy_reason.log
+  bad "required-reason API audit FAILED"; cat "$STATIC_RESULTS/c1_privacy_reason.log"
 fi
 
-if bash scripts/privacy_required_reason_audit_test.sh >/tmp/c1_privacy_reason_test.log 2>&1; then
+if bash scripts/privacy_required_reason_audit_test.sh >"$STATIC_RESULTS/c1_privacy_reason_test.log" 2>&1; then
   ok "required-reason scanner positive/negative fixtures: complete API table covered"
 else
-  bad "required-reason scanner tests FAILED"; cat /tmp/c1_privacy_reason_test.log
+  bad "required-reason scanner tests FAILED"; cat "$STATIC_RESULTS/c1_privacy_reason_test.log"
 fi
 
 # --- launch-override + OSLog privacy source guard (P0.3d) ----------------------
 note "Security hygiene source guard"
-if python3 scripts/security_hygiene_guard.py >/tmp/c1_security_hygiene.log 2>&1; then
+if python3 scripts/security_hygiene_guard.py >"$STATIC_RESULTS/c1_security_hygiene.log" 2>&1; then
   ok "security hygiene: lock override DEBUG-only; no sensitive 'privacy: .public' log interpolations"
 else
-  bad "security hygiene guard FAILED"; cat /tmp/c1_security_hygiene.log
+  bad "security hygiene guard FAILED"; cat "$STATIC_RESULTS/c1_security_hygiene.log"
 fi
 
-if python3 scripts/security_hygiene_guard_test.py >/tmp/c1_security_hygiene_test.log 2>&1; then
+if python3 scripts/security_hygiene_guard_test.py >"$STATIC_RESULTS/c1_security_hygiene_test.log" 2>&1; then
   ok "security hygiene guard fixtures: unguarded reads and public URL logs rejected"
 else
-  bad "security hygiene guard fixture tests FAILED"; cat /tmp/c1_security_hygiene_test.log
+  bad "security hygiene guard fixture tests FAILED"; cat "$STATIC_RESULTS/c1_security_hygiene_test.log"
 fi
 
 # --- release preflight contract ----------------------------------------------
 note "Release preflight contract"
-if bash scripts/release_preflight_contract_test.sh >/tmp/c1_release_preflight.log 2>&1; then
+if bash scripts/release_preflight_contract_test.sh >"$STATIC_RESULTS/c1_release_preflight.log" 2>&1; then
   ok "release preflight: archive/export/signing contract fails closed"
 else
-  bad "release preflight contract tests FAILED"; cat /tmp/c1_release_preflight.log
+  bad "release preflight contract tests FAILED"; cat "$STATIC_RESULTS/c1_release_preflight.log"
 fi
 
 # --- package runner fail-closed contract ------------------------------------
 note "Package runner fail-closed contract"
-if bash scripts/c1_packages_contract_test.sh >/tmp/c1_packages_contract.log 2>&1; then
+if bash scripts/c1_packages_contract_test.sh >"$STATIC_RESULTS/c1_packages_contract.log" 2>&1; then
   ok "package runner rejects failed, missing, and partial test summaries"
 else
-  bad "package runner contract tests FAILED"; cat /tmp/c1_packages_contract.log
+  bad "package runner contract tests FAILED"; cat "$STATIC_RESULTS/c1_packages_contract.log"
 fi
 
 # --- xcresult retry parser contract ------------------------------------------
 note "xcresult retry parser contract"
-if python3 scripts/c1_xcresult_parse_test.py >/tmp/c1_xcresult_parse.log 2>&1; then
+if python3 scripts/c1_xcresult_parse_test.py >"$STATIC_RESULTS/c1_xcresult_parse.log" 2>&1; then
   ok "xcresult retry parser: final-attempt and recovered-flake semantics verified"
 else
-  bad "xcresult retry parser contract tests FAILED"; cat /tmp/c1_xcresult_parse.log
+  bad "xcresult retry parser contract tests FAILED"; cat "$STATIC_RESULTS/c1_xcresult_parse.log"
 fi
 
 # --- public-safety residue guard ----------------------------------------------
 note "public-safety residue guard"
-if bash scripts/public_safety_guard.sh >/tmp/c1_guard.log 2>&1; then
+if bash scripts/public_safety_guard.sh >"$STATIC_RESULTS/c1_guard.log" 2>&1; then
   ok "public-safety guard: tracked tree clean"
 else
-  bad "public-safety guard FAILED"; tail -20 /tmp/c1_guard.log
+  bad "public-safety guard FAILED"; tail -20 "$STATIC_RESULTS/c1_guard.log"
 fi
 
 # --- secrets scan (gitleaks) --------------------------------------------------
@@ -148,11 +150,11 @@ note "gitleaks detect"
 # yields stable fingerprints (no introducing-commit SHA embedded).
 GL_DIR=$(mktemp -d /tmp/c1_gitleaks_tree.XXXXXX)
 if git -C "$REPO" archive HEAD | tar -x -C "$GL_DIR" 2>/dev/null; then
-  if command -v gitleaks >/dev/null 2>&1 && (cd "$GL_DIR" && gitleaks detect --source . --no-git --no-banner) >/tmp/c1_gitleaks.log 2>&1; then
+  if command -v gitleaks >/dev/null 2>&1 && (cd "$GL_DIR" && gitleaks detect --source . --no-git --no-banner) >"$STATIC_RESULTS/c1_gitleaks.log" 2>&1; then
     ok "gitleaks: no leaks found (tracked tree at HEAD)"
     rm -rf "$GL_DIR"
   else
-    bad "gitleaks FAILED"; tail -15 /tmp/c1_gitleaks.log; rm -rf "$GL_DIR"
+    bad "gitleaks FAILED"; tail -15 "$STATIC_RESULTS/c1_gitleaks.log"; rm -rf "$GL_DIR"
   fi
 else
   bad "gitleaks FAILED: could not extract tracked tree (git archive)"; rm -rf "$GL_DIR"

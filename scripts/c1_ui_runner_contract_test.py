@@ -23,7 +23,7 @@ from c1_xcresult_parse import parse
 
 ROOT = Path(__file__).resolve().parent.parent
 MOCK = r'''#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, re, sys
 args = sys.argv[1:]
 if pathlib.Path(sys.argv[0]).name == 'xcodebuild':
     with open(os.environ['MOCK_CALLS'], 'a') as log:
@@ -45,11 +45,16 @@ if pathlib.Path(sys.argv[0]).name == 'xcodebuild':
     nodes = []
     for parts in selected:
         cls = parts[1]
-        method = parts[2] if len(parts) == 3 else 'testMockCase'
-        if os.environ.get('MOCK_WRONG_METHOD'):
-            method = 'testDifferentCase'
-        result = 'Skipped' if os.environ.get('MOCK_SKIP') else 'Passed'
-        nodes.append({'nodeType':'Test Case', 'nodeIdentifier':cls + '/' + method + '()', 'name':method + '()', 'result':result})
+        methods = [parts[2]] if len(parts) == 3 else re.findall(
+            r'^[ \t]*func[ \t]+(test[A-Za-z0-9_]+)[ \t]*\(',
+            pathlib.Path('HermesFleetAppUITests', cls + '.swift').read_text(), re.M)
+        if os.environ.get('MOCK_DROP_CASE'):
+            methods = methods[:-1]
+        for method in methods:
+            if os.environ.get('MOCK_WRONG_METHOD'):
+                method = 'testDifferentCase'
+            result = 'Skipped' if os.environ.get('MOCK_SKIP') else 'Passed'
+            nodes.append({'nodeType':'Test Case', 'nodeIdentifier':cls + '/' + method + '()', 'name':method + '()', 'result':result})
     if os.environ.get('MOCK_EMPTY'):
         nodes = []
     (bundle / 'mock.json').write_text(json.dumps(nodes))
@@ -114,7 +119,7 @@ class RunnerContract(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='fleet-ui-runner-contract-')
         self.root = Path(self.tmp.name)
         (self.root / 'scripts').mkdir()
-        for name in ('c1_ui_matrix.sh', 'c1_xcresult_parse.py', 'c1_critical_smoke.sh'):
+        for name in ('c1_ui_matrix.sh', 'c1_xcresult_parse.py', 'c1_critical_smoke.sh', 'xcode_progress_watchdog.py', 'c1_ui_case_inventory.py'):
             shutil.copy2(ROOT / 'scripts' / name, self.root / 'scripts' / name)
         shutil.copy2(ROOT / 'scripts' / 'sim_destination.sh', self.root / 'scripts' / 'sim_destination.sh')
         # Selection contract only: the real lane simulator has its own tests.
@@ -210,6 +215,10 @@ class RunnerContract(unittest.TestCase):
         result, calls = self.run_matrix('--classes', 'HermesFleetHappyPath HermesFleetReconnect', MOCK_TEST_FAIL='1')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(sum('test-without-building' in call for call in calls), 2)
+
+    def test_missing_case_from_full_class_is_blocking(self):
+        result, _ = self.run_matrix('--classes', 'U3TabNavigation', MOCK_DROP_CASE='1')
+        self.assertNotEqual(result.returncode, 0)
 
     def test_empty_report_fails(self):
         result, _ = self.run_matrix('--classes', 'HermesFleetHappyPath', MOCK_EMPTY='1')

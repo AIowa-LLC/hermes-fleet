@@ -110,8 +110,8 @@ Worktrees isolate source and the runners' derived-data directories
 (`build/DevCheck`, `build/C1Ci`, `build/C1Ui`, `build/ipad-smoke`), and local
 runs also get their own iOS Simulator device. `scripts/lane_simulator.sh`
 derives a short id from the worktree path (the path is never printed or
-embedded in a name) and creates or reuses a simulator named `HF-<id>` (iPad:
-`HF-<id>-iPad`) from an iPhone device type and the newest installed iOS
+embedded in a name) and creates or reuses a simulator named `HF-<repo>-<id>` (iPad:
+`HF-<repo>-<id>-iPad`) from an iPhone device type and the newest installed iOS
 runtime. Concurrent lanes therefore install and launch Fleet on different
 devices; no "one lane at a time" coordination is needed.
 
@@ -122,7 +122,7 @@ this order:
    iPad smoke uses `HERMES_FLEET_IPAD_SIM_UDID` (or the existing
    `HERMES_FLEET_IPAD_DESTINATION` name) instead, because an iPhone UDID is the
    wrong device family.
-2. `HERMES_FLEET_LANE_SIM=1`: this worktree's `HF-<id>` simulator. `make
+2. `HERMES_FLEET_LANE_SIM=1`: this worktree's `HF-<repo>-<id>` simulator. `make
    dev-check` (and so `scripts/dev_check.sh`) turns this on by default for
    local runs; `CI=true` turns it off. `HERMES_FLEET_LANE_SIM=0` opts out.
 3. Otherwise the original behavior: the first available iPhone (iPad smoke: a
@@ -146,11 +146,11 @@ bash scripts/lane_simulator.sh delete                   # this worktree's device
 bash scripts/lane_simulator.sh gc [--dry-run]           # HF-* devices whose worktree is gone
 ```
 
-`shutdown` and `delete` touch only this worktree's `HF-<id>` devices. `gc`
-removes only devices named exactly `HF-<8 hex>[-iPad]` whose id matches no
-existing worktree of this repository, so run it from any worktree after
-removing old lanes; use `--dry-run` first on hosts that also run other
-projects' `HF-*` devices. Delete the lane simulator (`delete`) when removing a
+`shutdown` and `delete` touch only this worktree's `HF-<repo>-<id>` devices. `gc`
+removes only devices in this repository's hashed namespace whose worktree
+id matches no existing worktree. Other repositories and legacy `HF-*`
+names are left alone. Simulator management is serialized under a repository
+lock so concurrent `ensure` calls create one device. Delete the lane simulator (`delete`) when removing a
 worktree. Static and package-only checks never need a simulator.
 
 One CI/release integrator coordinates shared integration surfaces per batch:
