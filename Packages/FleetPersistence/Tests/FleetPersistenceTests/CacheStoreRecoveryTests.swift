@@ -172,8 +172,16 @@ final class CacheStoreRecoveryTests: XCTestCase {
     }
 
     func testLockedStoreIsLeftUntouchedAndRunsInMemory() async throws {
-        try await seedHealthyStore()
-        let before = try Data(contentsOf: storeURL)
+        // Locked files are opaque to recovery: it must not open or decode
+        // them. A live SwiftData seed can checkpoint after the byte snapshot,
+        // so use static bytes with no unrelated writer and cover every member.
+        let primary = try XCTUnwrap(storeURL)
+        let members = [primary, URL(fileURLWithPath: primary.path + "-wal"),
+                       URL(fileURLWithPath: primary.path + "-shm")]
+        let before = members.enumerated().map { index, url in
+            (url, Data("locked cache member \(index)".utf8))
+        }
+        for (url, bytes) in before { try bytes.write(to: url) }
 
         let result = try SwiftDataCacheStore.openWithRecovery(
             storeURL: storeURL, faults: [.unreadablePrimaryStore, .protectedDataUnavailable])
@@ -182,7 +190,14 @@ final class CacheStoreRecoveryTests: XCTestCase {
         XCTAssertEqual(report.outcome, .storeLockedInMemory)
         XCTAssertEqual(report.registry, .nothingToRestore)
         XCTAssertTrue(report.notices.contains(.runningWithoutLocalCache))
-        XCTAssertEqual(try Data(contentsOf: storeURL), before, "store file must not be touched")
+        XCTAssertNil(result.store.storeURL, "locked data must use an in-memory store")
+        try await result.store.saveGatewayRecord(gateway("memory.example.invalid", name: "In memory"))
+        let loaded = try await result.store.loadGatewayRecords()
+        XCTAssertEqual(loaded.map(\.displayName), ["In memory"], "fallback must remain usable")
+        for (url, bytes) in before {
+            XCTAssertEqual(try Data(contentsOf: url), bytes,
+                           "\(url.lastPathComponent) must not be touched")
+        }
         XCTAssertTrue(try quarantineGenerations().isEmpty)
     }
 
