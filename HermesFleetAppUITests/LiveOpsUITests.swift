@@ -64,18 +64,9 @@ final class LiveOpsUITests: XCTestCase {
     }
 
     private func openFleetTab(_ app: XCUIApplication) {
-        UITabNavigation.shellReady(app)
-        if app.tabBars.firstMatch.exists {
-            app.tabBars.buttons["Fleet"].tap()
-        } else if app.buttons["fleet.drawer.open"].exists {
-            app.buttons["fleet.drawer.open"].tap()
-            let destination = app.descendants(matching: .any)
-                .matching(identifier: "fleet.drawer.destination.fleet").firstMatch
-            XCTAssertTrue(destination.waitForExistence(timeout: 10))
-            destination.tap()
-        } else {
-            UITabNavigation.tabControl(app, label: "Fleet").tap()
-        }
+        // Confirm drawer opening and destination dismissal through the shared
+        // helper; a single cold-launch Menu tap can leave the drawer closed.
+        UITabNavigation.openTabToFleet(app)
         XCTAssertTrue(app.navigationBars["Fleet"].waitForExistence(timeout: 10),
                       "Fleet destination should be visible")
     }
