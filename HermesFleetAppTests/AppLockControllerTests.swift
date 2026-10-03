@@ -272,7 +272,13 @@ final class AppLockControllerTests: XCTestCase {
         XCTAssertTrue(window.isShowing, "the scene window appears synchronously for the snapshot")
         controller.handleScenePhase(.active)
         window.setVisible(controller.isPrivacyShieldVisible)
-        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(controller.isPrivacyShieldVisible)
+        // Wait for the animation completion to release the actual window.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while window.isShowing, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertFalse(window.isShowing, "returning active removes the window and releases accessibility")
     }
 
