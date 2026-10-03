@@ -39,6 +39,31 @@ request information (such as IP address) when a document is opened, as may
 GitHub when the user opens the support or repository links. GitHub's and the
 host's own terms and privacy policies apply to those visits.
 
+## Push notification relay
+
+Push notifications are optional and reach your device through a relay, because
+Apple requires the app publisher's own credentials to send them. This section
+applies from the release in which push notifications are available; earlier
+releases do not register with a relay.
+
+- **What the relay sees.** Your device's Apple push token, the time and size of
+  each notification, a coarse alert category (approval, question, finished,
+  scheduled job), and the network address that connected to it. Apple's push
+  service sees the same delivery metadata.
+- **What the relay cannot see.** Message or approval content, which gateway a
+  notification came from, gateway addresses, or credentials. Details travel only
+  inside an end-to-end encrypted payload that your device opens; the visible
+  alert text is a fixed, generic phrase such as "Approval needed".
+- **What the relay keeps.** Your push token (encrypted at rest, plus a salted
+  hash used to avoid duplicate registrations) and a hashed sender secret, each
+  with an expiry. No content, no gateway identifiers, and no request logs
+  beyond route names and status codes.
+- **Your control.** Removing a gateway or turning notifications off deletes the
+  relay registration. You can also run your own relay; see
+  `docs/push-relay-self-host.md` in the public repository. Notifications are a
+  convenience only: the app always confirms state with the gateway when it is
+  opened.
+
 ## Retention and deletion
 
 Local cached fleet and conversation data remains on the device until it is

@@ -36,6 +36,7 @@ the v0.1 document deferred or excluded.
 - [`unread-indicators-and-read-state.md`](unread-indicators-and-read-state.md) - device-local conversation read state
 - [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
+- [`push-relay-self-host.md`](push-relay-self-host.md) - self-hosting the content-blind push relay (relay service: [`integrations/hermes-push-relay`](../integrations/hermes-push-relay/README.md))
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue
 - [`adr/`](adr/) - architectural decision records
