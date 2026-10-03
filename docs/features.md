@@ -36,6 +36,26 @@ actions use the same presence gate (Face ID with passcode fallback); child contr
 attachment. Desktop reporting requires the optional Hermes reporting plugin;
 see [setup and coverage](../integrations/hermes-liveops/README.md).
 
+## Code blocks in assistant replies
+
+Top-level fenced code (opening fence in column 0) renders in a Fleet-owned opaque
+card; fences nested in lists or quotes keep the renderer's card, restyled with the
+same palette. The card shows:
+
+- a language label taken verbatim from the fence info string (`python title=x`
+  shows `python`); no label when the fence declares none, and the language is
+  never guessed
+- a Copy button (44 pt target, VoiceOver label "Copy code", identifier
+  `fleet.conversation.code.copy`) that copies the exact text received so far,
+  is disabled while the block is empty, plays a success haptic, and briefly
+  shows a check (no symbol animation under Reduce Motion). The copy is
+  device-local (`localOnly`) and expires after 5 minutes
+- horizontal scrolling instead of wrapping, with edge fades only while the line
+  overflows; selection stays enabled
+- syntax colors chosen from the card itself (dark-card or light-card palette),
+  corrected to 4.5:1 (7:1 under Increase Contrast) against the card, with a
+  monochrome fallback when no token color can meet the gate
+
 ## Conversations
 
 - Chats and drawer Recents apply Hermes Desktop's human-facing Recents rules

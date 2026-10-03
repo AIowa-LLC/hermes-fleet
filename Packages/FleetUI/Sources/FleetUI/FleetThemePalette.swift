@@ -563,6 +563,8 @@ public struct FleetThemeValues: Sendable {
     public var background: Color { resolvedBackground.swiftUIColor }
     public var surface: Color { resolvedSurface.swiftUIColor }
     public var surfaceElevated: Color { resolvedSurfaceElevated.swiftUIColor }
+    /// Stored-color form of `surfaceElevated` for pure contrast math (#109).
+    var surfaceElevatedStored: FleetStoredColor { resolvedSurfaceElevated }
     public var surfaceIncreased: Color { isIncreasedContrast ? resolvedBackground.swiftUIColor : surface }
     public var border: Color { resolvedBorder.swiftUIColor }
 

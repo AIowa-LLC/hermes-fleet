@@ -58,8 +58,12 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
             richText.waitForExistence(timeout: 15),
             "the active assistant row should use Fleet's streaming rich-text wrapper")
 
-        let copy = app.buttons["Copy"].firstMatch
+        // Issue #109: Fleet-owned code card. The Copy control carries a stable
+        // identifier and the VoiceOver label "Copy code".
+        let copy = app.buttons["fleet.conversation.code.copy"].firstMatch
         XCTAssertTrue(copy.waitForExistence(timeout: 10), "code Copy affordance must be reachable")
+        XCTAssertEqual(copy.label, "Copy code")
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 43.5, "Copy target must be at least 44 pt")
 
         let safeLink = app.links["Safe link"].firstMatch
         XCTAssertTrue(safeLink.waitForExistence(timeout: 10), "HTTPS link must be reachable")

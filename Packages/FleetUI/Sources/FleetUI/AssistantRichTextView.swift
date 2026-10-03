@@ -21,12 +21,74 @@ public struct AssistantRichTextView: View {
     private let markdown: String
     private let isStreaming: Bool
     private let identity: String
+    @Environment(\.fleetTheme) private var theme
+
+    public init(markdown: String, isStreaming: Bool, identity: String) {
+        self.markdown = markdown
+        self.isStreaming = isStreaming
+        self.identity = identity
+    }
+
+    public var body: some View {
+        let segments = Self.segments(for: markdown)
+        let lastIndex = segments.count - 1
+        // Issue #109 (D6): top-level fenced code is drawn by Fleet's own card
+        // (label, Copy, horizontal scroll, palette-aware syntax colors); the
+        // third-party renderer keeps everything else. The appearance is only
+        // resolved when a code block is actually present.
+        let appearance = segments.contains(where: \.isCode)
+            ? CodeBlockAppearance.make(theme: theme)
+            : nil
+        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { ordinal, segment in
+                switch segment {
+                case .prose(let text):
+                    AssistantRichTextProseSegment(
+                        markdown: text,
+                        isStreaming: isStreaming && ordinal == lastIndex,
+                        // Ordinal 0 keeps the row's own identity, so a row
+                        // with no code renders exactly as before.
+                        identity: ordinal == 0 ? identity : "\(identity)#\(ordinal)")
+                case .code(let fence):
+                    if let appearance {
+                        FleetCodeBlockView(fence: fence, appearance: appearance)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("fleet.rich-text.\(identity)")
+    }
+
+    /// A row without top-level fences is one prose segment carrying the
+    /// original Markdown untouched.
+    static func segments(for markdown: String) -> [AssistantMarkdownSegment] {
+        let split = AssistantMarkdownSegmenter.split(markdown)
+        guard split.contains(where: \.isCode) else { return [.prose(markdown)] }
+        return split
+    }
+}
+
+private extension AssistantMarkdownSegment {
+    var isCode: Bool {
+        if case .code = self { return true }
+        return false
+    }
+}
+
+/// One prose run handed to the third-party renderer. This is the previous
+/// whole-row body, unchanged, scoped to a run of Markdown without top-level
+/// fences (or the entire row when there are none).
+private struct AssistantRichTextProseSegment: View {
+    let markdown: String
+    let isStreaming: Bool
+    let identity: String
     @StateObject private var model: AssistantRichTextModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.fleetTheme) private var theme
 
-    public init(markdown: String, isStreaming: Bool, identity: String) {
+    init(markdown: String, isStreaming: Bool, identity: String) {
         self.markdown = markdown
         self.isStreaming = isStreaming
         self.identity = identity
@@ -37,7 +99,7 @@ public struct AssistantRichTextView: View {
                 isStreaming: isStreaming))
     }
 
-    public var body: some View {
+    var body: some View {
         StreamedMarkdownView(
             source: model.source,
             config: FleetMarkdownRenderConfiguration.make(
@@ -59,7 +121,6 @@ public struct AssistantRichTextView: View {
         .transaction { transaction in
             transaction.animation = nil
         }
-        .accessibilityIdentifier("fleet.rich-text.\(identity)")
         .task {
             model.update(markdown: markdown, isStreaming: isStreaming)
         }
@@ -438,6 +499,7 @@ enum FleetMarkdownRenderConfiguration {
         let heading2 = FleetMarkdownFonts.heading2
         let heading3 = FleetMarkdownFonts.heading3
         let code = FleetMarkdownFonts.code
+        let appearance = CodeBlockAppearance.make(theme: theme)
 
         return MarkdownRenderConfig(
             // No token/reveal animation is used, even when Reduce Motion is
@@ -475,15 +537,18 @@ enum FleetMarkdownRenderConfiguration {
                 font: small.normal,
                 textColor: theme.textSecondary,
                 backgroundColor: theme.surfaceElevated),
-            // Dogfood r6 (G3): code renders as a DEDICATED card — a
-            // near-black fill for light ink (Hermex's measured recipe),
-            // the elevated token for dark ink — visually distinct from
-            // the canvas instead of same-fill-as-everything, and derived
-            // from THIS palette (see `codeCardBackground`).
+            // Dogfood r6 (G3): code renders as a DEDICATED card, derived from
+            // THIS palette (see `CodeBlockAppearance.cardFill`). Issue #109:
+            // top-level fences are drawn by `FleetCodeBlockView`; this config
+            // styles the rare remaining fences (indented inside lists/quotes)
+            // with the same card and the same palette-selected, contrast-gated
+            // syntax colors instead of a fixed `.xcode` theme. The CSS is the
+            // same for both system appearances on purpose: the palette follows
+            // the card, not the system color scheme.
             codeBlockConfig: .init(
-                theme: .xcode,
-                backgroundColor: Self.codeCardBackground(theme: theme),
-                foregroundColor: theme.textPrimary,
+                theme: .custom(lightCSS: appearance.css, darkCSS: appearance.css),
+                backgroundColor: appearance.card.swiftUIColor,
+                foregroundColor: appearance.chromeInk.swiftUIColor,
                 codeTextFonts: code,
                 chromeTextFonts: small),
             blockSpacing: FleetTheme.spacingMd,
@@ -493,27 +558,11 @@ enum FleetMarkdownRenderConfiguration {
     }
 
     /// Dogfood r6 (G3) + OCR fix: the code-card fill is derived from the ACTIVE
-    /// palette — never from a raw system color. `FleetThemeValues` is
-    /// user-customizable and a `.fixed` palette returns its stored background
-    /// verbatim, so a system-derived fill can contradict the palette (Background
-    /// = black / Text = white in light appearance → white-on-white code) and it
-    /// silently breaks the "distinct card" contract for every custom theme.
-    ///
-    /// Light ink takes the measured near-black card (this palette's canvas
-    /// pushed toward it); dark ink takes the elevated token. The near-black
-    /// card is contrast-checked against the palette's own text, so a
-    /// pathological palette falls back to the elevated token instead of
-    /// fabricating an unreadable block.
+    /// palette, never from a raw system color. The derivation lives in
+    /// `CodeBlockAppearance.cardFill` so the syntax palette can be chosen and
+    /// contrast-gated against the exact same fill.
     static func codeCardBackground(theme: FleetThemeValues) -> Color {
-        let palette = theme.resolvedPalette
-        let nearBlack = FleetStoredColor(red: 0.04, green: 0.05, blue: 0.07)
-        let darkCard = palette.background.blended(toward: nearBlack, amount: 0.75)
-        guard FleetThemeContrast.relativeLuminance(palette.text) > 0.5,
-              FleetThemeContrast.ratio(palette.text, darkCard)
-                >= FleetThemeContrast.normalTextMinimum else {
-            return theme.surfaceElevated
-        }
-        return darkCard.swiftUIColor
+        CodeBlockAppearance.cardFill(theme: theme).swiftUIColor
     }
 }
 
