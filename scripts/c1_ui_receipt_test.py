@@ -90,6 +90,7 @@ class ReceiptContracts(unittest.TestCase):
         run={'id':200,'event':'pull_request','path':'.github/workflows/ci.yml','head_sha':'a'*40,
              'head_repository':{'id':100},'status':'completed','conclusion':'success','run_attempt':1,
              'created_at':datetime.now(timezone.utc).isoformat()}
+        runs=[run]
         jobs=[{'name':name,'status':'completed','conclusion':'success'} for name in
               ['CI Gate',*[f'UI preflight {i}/12 (changed area)' for i in range(1,13)]]]
         checks=[{'name':'CI Gate','app':{'id':15368},'head_sha':'a'*40,'status':'completed','conclusion':'success',
@@ -106,7 +107,9 @@ class ReceiptContracts(unittest.TestCase):
         def github(repository,path,binary=False):
             self.assertEqual(repository,'fixture/fleet')
             if path=='pulls/17': return {'state':'open','draft':False,'base':{'ref':'main'},'head':{'sha':'a'*40,'repo':{'id':100}}}
-            if path.startswith('actions/workflows/'): return {'workflow_runs':[run]}
+            if path.startswith('actions/workflows/'):
+                self.assertNotIn('status=success',path)
+                return {'workflow_runs':runs}
             if '/jobs?' in path: return {'jobs':jobs}
             if '/check-runs?' in path: return {'check_runs':checks}
             if '/artifacts?' in path: return {'artifacts':artifacts}
@@ -125,6 +128,11 @@ class ReceiptContracts(unittest.TestCase):
             env={'GITHUB_EVENT_NAME':'merge_group','GITHUB_EVENT_PATH':str(event),'GITHUB_REPOSITORY':'fixture/fleet','GITHUB_REPOSITORY_ID':'100','RUNNER_TEMP':directory}
             with patch.dict(os.environ,env),patch.object(receipt.subprocess,'run',return_value=type('Result',(),{'returncode':0})()),patch.object(receipt,'api',side_effect=github),patch.object(receipt,'git',side_effect=git),patch.object(receipt,'environment',return_value=self.context['environment']),patch.object(receipt,'validation_changed',return_value=False):
                 proof=receipt.reuse('fixture-base',1,self.context['requested'])
+                # A newer failed run for the same head invalidates the old
+                # pass; never filter failures out when choosing source proof.
+                runs.append(dict(run,id=201,conclusion='failure'))
+                with self.assertRaisesRegex(receipt.ReceiptRejected,'failed/incomplete/retried source run'):
+                    receipt.reuse('fixture-base',1,self.context['requested'])
         self.assertEqual(proof['mode'],'verified-source-reuse')
         self.assertEqual(proof['candidate'],'f'*40)
         self.assertEqual(len(proof['artifacts']),12)
@@ -216,6 +224,7 @@ class CaseInventoryContracts(unittest.TestCase):
 class FreshFallbackContracts(unittest.TestCase):
     def test_build_definition_and_validation_changes_disable_reuse(self):
         for path in ('project.yml','HermesFleetApp.xcodeproj/project.pbxproj',
+                     'Package.swift','Package.resolved',
                      'Packages/FleetCore/Package.swift','Packages/FleetUI/Package.resolved',
                      'scripts/c1_ui_matrix.sh','.github/workflows/ci.yml',
                      'HermesFleetAppUITests/ExampleUITests.swift',

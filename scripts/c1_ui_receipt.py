@@ -56,7 +56,7 @@ def validation_changed(base):
     paths = git("diff", "--name-only", f"{base}...HEAD").splitlines()
     return any(path.startswith(VALIDATION_PATHS)
                or path.startswith("HermesFleetApp.xcodeproj/") or path == "project.yml"
-               or path.endswith(("/Package.swift", "/Package.resolved"))
+               or Path(path).name in ("Package.swift", "Package.resolved")
                or "/Tests/" in path for path in paths)
 
 
@@ -237,8 +237,8 @@ def reuse(base, shard, requested):
     context = {"repository": repository, "repository_id": repository_id, "source_head": head,
                "tree": git("rev-parse", "HEAD^{tree}"), "base": candidate_base,
                "environment": environment(), "requested": requested}
-    runs = api(repository, f"actions/workflows/ci.yml/runs?event=pull_request&head_sha={head}&status=success&per_page=20")["workflow_runs"]
-    check(bool(runs), "no successful source run")
+    runs = api(repository, f"actions/workflows/ci.yml/runs?event=pull_request&head_sha={head}&per_page=20")["workflow_runs"]
+    check(bool(runs), "no source run")
     # Prefer the most recent exact-head run. Any missing proof falls back to
     # fresh execution, rather than searching for a convenient older result.
     run = max(runs, key=lambda item: item["id"])
