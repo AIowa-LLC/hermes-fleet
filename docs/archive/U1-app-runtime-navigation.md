@@ -4,4 +4,4 @@
 
 U1 established the observable app environment, dependency-injected runtime seams, and the first native navigation shell.
 
-For current module and composition boundaries, see [`architecture.md`](architecture.md).
+For current module and composition boundaries, see [`architecture.md`](../architecture.md).

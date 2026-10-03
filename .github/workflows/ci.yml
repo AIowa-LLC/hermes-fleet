@@ -59,6 +59,10 @@ jobs:
         run: python3 scripts/c1_units_contract_test.py
       - name: Release source preservation guard contract tests
         run: python3 scripts/build90_source_check_test.py
+      - name: Unreferenced scripts guard
+        run: bash scripts/unreferenced_scripts_guard.sh
+      - name: Unreferenced scripts guard self-test
+        run: bash scripts/unreferenced_scripts_guard_test.sh
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)
