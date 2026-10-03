@@ -214,6 +214,22 @@ class CaseInventoryContracts(unittest.TestCase):
 
 
 class FreshFallbackContracts(unittest.TestCase):
+    def test_build_definition_and_validation_changes_disable_reuse(self):
+        for path in ('project.yml','HermesFleetApp.xcodeproj/project.pbxproj',
+                     'Packages/FleetCore/Package.swift','Packages/FleetUI/Package.resolved',
+                     'scripts/c1_ui_matrix.sh','.github/workflows/ci.yml',
+                     'HermesFleetAppUITests/ExampleUITests.swift',
+                     'Packages/FleetCore/Tests/FleetCoreTests/Example.swift'):
+            with self.subTest(path=path),patch.object(receipt,'git',return_value=path):
+                self.assertTrue(receipt.validation_changed('base'))
+        with patch.object(receipt,'git',return_value='HermesFleetApp/FleetServiceGraph.swift'):
+            self.assertFalse(receipt.validation_changed('base'))
+
+    def test_missing_runner_image_metadata_cannot_claim_environment_match(self):
+        with patch.dict('os.environ',{'GITHUB_ACTIONS':'true','ImageOS':'','ImageVersion':''}),patch.object(receipt,'command') as command:
+            with self.assertRaises(receipt.ReceiptRejected): receipt.environment()
+            command.assert_not_called()
+
     def test_validation_change_disables_reuse_before_network(self):
         with patch.dict('os.environ',{'GITHUB_EVENT_NAME':'merge_group'}),patch.object(receipt,'validation_changed',return_value=True),patch.object(receipt,'api') as network:
             with self.assertRaises(ValueError): receipt.reuse('fixture',1,['Splash'])

@@ -28,9 +28,13 @@ APP_ID = 15368
 VALIDATION_PATHS = (".github/", "scripts/", "HermesFleetAppUITests/", "HermesFleetAppTests/")
 
 
+class ReceiptRejected(ValueError):
+    """A verifier-owned reason safe to report without external exception text."""
+
+
 def check(condition, reason):
     if not condition:
-        raise ValueError(reason)
+        raise ReceiptRejected(reason)
 
 
 def command(*args):
@@ -50,11 +54,17 @@ def api(repository, path, binary=False):
 
 def validation_changed(base):
     paths = git("diff", "--name-only", f"{base}...HEAD").splitlines()
-    return any(path.startswith(VALIDATION_PATHS) or "/Tests/" in path for path in paths)
+    return any(path.startswith(VALIDATION_PATHS)
+               or path.startswith("HermesFleetApp.xcodeproj/") or path == "project.yml"
+               or path.endswith(("/Package.swift", "/Package.resolved"))
+               or "/Tests/" in path for path in paths)
 
 
 def environment():
     # Match the actual selected device model/runtime, never the host's UDID.
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        check(bool(os.environ.get("ImageOS")) and bool(os.environ.get("ImageVersion")),
+              "runner image metadata missing")
     destination = command("bash", "scripts/sim_destination.sh", "iphone")
     devices = json.loads(command("xcrun", "simctl", "list", "devices", "available", "-j"))["devices"]
     runtimes = {item["identifier"]: item for item in
@@ -277,10 +287,13 @@ def main():
         args.output.write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
         print(f"UI-RECEIPT: {args.mode} verified partition {args.shard}/{PARTITIONS}")
         return 0
-    except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile, subprocess.SubprocessError):
+    except ReceiptRejected as error:
+        print(f"UI-RECEIPT: {error}; fresh UI required")
+        return 10 if args.mode == "reuse" else 1
+    except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
         # Do not print exception contents: network/tool errors may include
         # private paths, credentials, or an expiring artifact download URL.
-        print("UI-RECEIPT: evidence unavailable or mismatched; fresh UI required")
+        print(f"UI-RECEIPT: evidence unavailable ({type(error).__name__}); fresh UI required")
         return 10 if args.mode == "reuse" else 1
 
 

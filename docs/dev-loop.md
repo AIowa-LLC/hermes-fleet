@@ -247,8 +247,9 @@ queue are unchanged; a skipped UI job cannot substitute for a successful one.
 
 Reuse is allowed only for a single-PR main merge candidate with an identical
 checkout tree and base, a clean checkout, and unchanged validation code.
-Workflow, runner/selector/parser scripts, app/UI/package tests changing in the
-PR disable reuse. The source must be a completed, successful, same-repository
+Workflow, runner/selector/parser scripts, app/UI/package tests, Xcode project
+and package build definitions changing in the PR disable reuse. Missing
+GitHub runner image identity disables reuse too. The source must be a completed, successful, same-repository
 PR CI run on the current PR head, at its first attempt, created within 24 hours,
 with the actual GitHub Actions CI Gate and all twelve successful UI jobs.
 Forks and posted checks from other apps cannot provide evidence.
