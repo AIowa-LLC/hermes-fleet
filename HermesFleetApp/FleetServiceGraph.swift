@@ -12,9 +12,9 @@ import FleetUI
 /// `AppEnvironment` (behind FleetCore seams). SwiftUI never imports the
 /// transport module (M0 hard guard, enforced by ModuleBoundaryTests).
 ///
-/// DEBUG builds use the scripted fleet simulator so the U1 navigation skeleton
-/// is fully walkable in the simulator without a live Hermes gateway; Release
-/// builds wire real Keychain + SwiftData + live transports.
+/// Debug simulator builds use the scripted fleet so navigation can be tested
+/// without a live Hermes gateway. Physical-device Debug and Release builds
+/// wire real Keychain + SwiftData + live transports.
 @MainActor
 enum FleetServiceGraph {
     /// One process-wide owner for ephemeral username/password sessions. The
