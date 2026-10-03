@@ -192,7 +192,8 @@ else
     [ -n "$BASE" ] || die "could not resolve a diff base; pass --base <ref> or --files <list>"
   fi
   git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1 || die "base is not a resolvable commit: $BASE"
-  git diff --name-only "${BASE}...HEAD" > "$LIST" || die "git diff failed for base ${BASE} vs HEAD"
+  # Classify removals and additions independently so moves retain both scopes.
+  git diff --no-renames --name-only "${BASE}...HEAD" > "$LIST" || die "git diff failed for base ${BASE} vs HEAD"
   SRC="git diff ${BASE}...HEAD"
 fi
 

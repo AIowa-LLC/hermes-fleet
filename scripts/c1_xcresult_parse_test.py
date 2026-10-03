@@ -19,6 +19,7 @@ def run(
     summary: dict,
     tests: dict,
     allowed_skips: tuple[str, ...] = (),
+    requested: str = REQUESTED,
 ) -> tuple[int, int, int, int, int]:
     with tempfile.TemporaryDirectory(prefix="c1-xcresult-parse-") as directory:
         root = Path(directory)
@@ -34,7 +35,7 @@ def run(
             "--tests",
             str(tests_path),
             "--requested",
-            REQUESTED,
+            requested,
         ]
         for allowed_skip in allowed_skips:
             command.extend(["--allow-skipped", allowed_skip])
@@ -132,6 +133,30 @@ check(
     "incomplete result is not a pass",
     run(summary("Passed", total=0), tests(case("testIncomplete()", "Passed"))),
     (1, 0, 0, 1, 0),
+)
+
+fixture = ROOT / "scripts/fixtures/xcresult-recovered-retry"
+check(
+    "real Xcode nested repetitions retain recovered failure",
+    run(json.loads((fixture / "summary.json").read_text()),
+        json.loads((fixture / "tests.json").read_text()), requested="RetryProbeUITests"),
+    (1, 0, 1, 1, 1),
+)
+check(
+    "nested repetitions retain final failure",
+    run(summary("Failed"), tests(case("testFails()", "Failed", children=[
+        {"nodeType":"Repetition", "nodeIdentifier":"1", "result":"Passed"},
+        {"nodeType":"Repetition", "nodeIdentifier":"2", "result":"Failed"},
+    ]))),
+    (1, 1, 0, 1, 0),
+)
+check(
+    "explicit nested run indexes override traversal order",
+    run(summary(), tests(case("testRecovered()", "Passed", children=[
+        {"nodeType":"Repetition", "nodeIdentifier":"2", "result":"Passed"},
+        {"nodeType":"Repetition", "nodeIdentifier":"1", "result":"Failed"},
+    ]))),
+    (1, 0, 1, 1, 1),
 )
 
 print("PASS: xcresult retry parser contract tests")

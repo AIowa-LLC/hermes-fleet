@@ -1,0 +1,57 @@
+{
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "name": "failed - Synthetic first-attempt failure",
+                          "nodeType": "Failure Message"
+                        }
+                      ],
+                      "name": "First Run",
+                      "nodeIdentifier": "1",
+                      "nodeIdentifierURL": "test://com.apple.xcode/RetryLayoutProbe/ProbeTests/RetryProbeUITests/testRecovered",
+                      "nodeType": "Repetition",
+                      "result": "Failed"
+                    },
+                    {
+                      "name": "Retry 1",
+                      "nodeIdentifier": "2",
+                      "nodeIdentifierURL": "test://com.apple.xcode/RetryLayoutProbe/ProbeTests/RetryProbeUITests/testRecovered",
+                      "nodeType": "Repetition",
+                      "result": "Passed"
+                    }
+                  ],
+                  "details": "\u26a0\ufe0f Passed after 1 retry",
+                  "name": "testRecovered()",
+                  "nodeIdentifier": "RetryProbeUITests/testRecovered()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/RetryLayoutProbe/ProbeTests/RetryProbeUITests/testRecovered",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "RetryProbeUITests",
+              "nodeIdentifierURL": "test://com.apple.xcode/RetryLayoutProbe/ProbeTests/RetryProbeUITests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "ProbeTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/RetryLayoutProbe/ProbeTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "RetryLayoutProbe",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ]
+}

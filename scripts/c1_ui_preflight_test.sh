@@ -1,6 +1,7 @@
 #!/bin/bash
 # Selector self-test for scripts/c1_ui_preflight.sh — deterministic fixtures,
-# no git history or simulator required. Runs in CI (static-guards job) and
+# isolated Git rename fixtures and explicit file lists; no simulator required.
+# Runs in CI (static-guards job) and
 # locally. A failure here means the focused preflight selection changed shape;
 # update the mapping deliberately, never silently.
 set -u
@@ -10,6 +11,7 @@ PRE=scripts/c1_ui_preflight.sh
 
 FAIL=0
 tmpd=$(mktemp -d /tmp/c1_ui_preflight_test.XXXXXX) || { echo "FAIL: mktemp"; exit 1; }
+trap 'rm -rf "$tmpd"' EXIT
 
 check() { # <name> <expected classes> <file...>
   name="$1"; expected="$2"; shift 2
@@ -100,6 +102,39 @@ check "about screen maps to its release regression" "FleetAbout" \
   "Packages/FleetUI/Sources/FleetUI/FleetAboutView.swift"
 check "compact chrome maps to its release regression" "ConversationCompactChrome" \
   "Packages/FleetUI/Sources/FleetUI/ConversationCompactChrome.swift"
+
+check_rename() { # <name> <expected classes> <original path> <destination path>
+  local name="$1" expected="$2" original="$3" destination="$4" repo base out got rc
+  repo=$(mktemp -d "$tmpd/rename.XXXXXX") || exit 1
+  mkdir -p "$repo/scripts" "$repo/HermesFleetAppUITests" \
+    "$repo/$(dirname "$original")" "$repo/$(dirname "$destination")"
+  cp "$PRE" scripts/c1_ui_matrix.sh scripts/c1_ui_partition.py "$repo/scripts/"
+  cp HermesFleetAppUITests/*.swift "$repo/HermesFleetAppUITests/"
+  printf '// synthetic rename fixture\n' > "$repo/$original"
+  git -C "$repo" init -q
+  git -C "$repo" add .
+  git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm base
+  base=$(git -C "$repo" rev-parse HEAD)
+  git -C "$repo" mv "$original" "$destination"
+  git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm rename
+  out=$(bash "$repo/scripts/c1_ui_preflight.sh" --base "$base" --print 2>&1); rc=$?
+  got=$(printf '%s\n' "$out" | sed -n 's/^SELECTED_CLASSES: *//p' | tail -1)
+  if [ "$rc" -eq 0 ] && [ "$got" = "$expected" ]; then
+    echo "PASS  $name"
+  else
+    echo "FAIL  $name (selector exited $rc)"
+    echo "  expected: '$expected'"
+    echo "  got:      '$got'"
+    FAIL=$((FAIL+1))
+  fi
+}
+
+check_rename "renamed core source retains full coverage" "$ALL" \
+  "Packages/FleetCore/Sources/FleetCore/RenameFixture.swift" "docs/RenameFixture.swift"
+check_rename "renamed shared UI helper retains full coverage" "$ALL" \
+  "HermesFleetAppUITests/UITabNavigation.swift" "docs/UITabNavigation.swift"
+check_rename "product-area rename retains source and destination coverage" "RoomChat RoomLinkMentions FleetAbout" \
+  "Packages/FleetUI/Sources/FleetUI/RoomChatView.swift" "Packages/FleetUI/Sources/FleetUI/FleetAboutView.swift"
 
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
