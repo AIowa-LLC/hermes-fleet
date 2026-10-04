@@ -1,0 +1,12 @@
+// Attach only to the explicit HermesFleetDev target in project.yml.
+// Never pass this as a global -xcconfig override to a production scheme.
+PRODUCT_BUNDLE_IDENTIFIER = com.aiowa.hermesfleet.dev
+PRODUCT_NAME = HermesFleetDev
+INFOPLIST_KEY_CFBundleDisplayName = Hermes Fleet Dev
+INFOPLIST_FILE = Config/FleetDevInfo.plist
+CODE_SIGN_ENTITLEMENTS = Config/FleetDev.entitlements
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+FLEET_DEV_BUILD = YES
+FLEET_URL_SCHEME = hermes-fleet-dev
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) FLEET_DEV
