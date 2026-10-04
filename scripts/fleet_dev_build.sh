@@ -42,7 +42,7 @@ if [ "$MODE" = simulator ] || [ "$MODE" = test ]; then
   sim_metadata_lines >>"$OUT/provenance.txt"
 fi
 ARGS=(-project HermesFleetApp.xcodeproj -scheme HermesFleetDev -configuration "$CONFIG"
-      -destination "$DEST" -derivedDataPath "$OUT/DerivedData" -jobs 2
+      -destination "$DEST" -derivedDataPath "$OUT/DerivedData" -jobs 2 -skipMacroValidation
       CURRENT_PROJECT_VERSION="$BUILD" FLEET_DEV_SOURCE_SHA="$SHA")
 [ "$MODE" = export ] || ARGS+=(CODE_SIGNING_ALLOWED=NO)
 xcodebuild "${ARGS[@]}" -showBuildSettings -json >"$OUT/settings.json" 2>"$OUT/settings.log"

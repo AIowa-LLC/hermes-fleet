@@ -78,6 +78,9 @@ bash scripts/fleet_dev_build.sh structure-only --sha "$SHA" --build 1
 bash scripts/fleet_dev_build.sh export --sha "$SHA" --build 1
 ```
 
+The wrapper uses the existing local runners’ per-invocation `-skipMacroValidation`
+option; it does not change persistent Xcode trust settings.
+
 Debug uses the existing synthetic simulator graph; no private endpoint or
 credential is built in. Release retains existing authentication and app-lock
 policy. The wrapper builds with two jobs and disables parallel test workers.
