@@ -52,7 +52,9 @@ else
   fail "deterministic UI inventory audit failed"
 fi
 
-if bash scripts/public_safety_guard.sh >$SCRIPT_TMP/rc_public_safety.log 2>&1; then
+# Release-candidate runs are fail-closed on the PRIVATE denylist: without it the
+# guard only has generic checks, which is not enough to clear a release.
+if HF_PUBLIC_SAFETY_REQUIRE_PRIVATE=1 bash scripts/public_safety_guard.sh >"$SCRIPT_TMP/rc_public_safety.log" 2>&1; then
   pass "public-safety guard"
 else
   fail "public-safety guard"; sed -n '1,80p' $SCRIPT_TMP/rc_public_safety.log
