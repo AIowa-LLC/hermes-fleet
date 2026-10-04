@@ -273,3 +273,23 @@ and xcresult contracts. Rollout additionally requires an actual source-to-
 queue pair proving successful reuse and fresh execution after validation
 changes. A local timing experiment or mocked receipt alone is not rollout
 qualification.
+
+## Temp-path surface guard
+
+`scripts/temp_path_surface_guard.py` (static phase) fails if a script reachable
+from a supported workflow writes to a predictable shared temp path
+(`/tmp/<name>`, `${TMPDIR:-/tmp}/<name>`). Roots: the Makefile, CI workflows,
+the current docs, `project.yml`/xcconfig/`Package.swift`, and any Swift file
+that spawns processes. Reachability follows every script one script names.
+Computed names (`scripts/${name}_check.sh`) expand to every script they could
+match; names too unspecific to expand (`scripts/$x.sh`, `scripts/*`) are
+reported and must be reviewed into `UNRESOLVED_ALLOWED`.
+
+Historical milestone and live-check scripts (`h1_*`, `h2_*`, `fos*`, `rt*`,
+`pet_live_check`, …) still use fixed `/tmp` names and are out of scope because
+nothing reachable mentions them (`--report` lists them). They are kept as
+historical references, not supported entry points.
+
+Remaining limits: names assembled from several run-time string pieces, scripts
+run only by hand, and temp locations that do not literally contain
+`/tmp/<name>` or `$TMPDIR/<name>` (for example `os.path.join("/tmp", name)`).

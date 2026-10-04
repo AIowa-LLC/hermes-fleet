@@ -44,5 +44,19 @@ case("an unreachable historical script is out of scope",
      {"Makefile": "t:\n\tbash scripts/a.sh\n", "scripts/a.sh": "echo ok\n", "scripts/old.sh": FIXED}, 0)
 case("comments are ignored",
      {"Makefile": "t:\n\tbash scripts/a.sh\n", "scripts/a.sh": "# logs used to go to /tmp/a.log\n"}, 0)
+case("computed script names expand to every script they could match",
+     {"Makefile": "t:\n\tbash scripts/runner.sh\n",
+      "scripts/runner.sh": 'bash "scripts/${name}_check.sh"\n',
+      "scripts/a_check.sh": FIXED, "scripts/old.sh": FIXED}, 1)
+case("an unspecific computed name is reported, not silently ignored",
+     {"Makefile": "t:\n\tbash scripts/runner.sh\n", "scripts/runner.sh": 'bash "scripts/$x.sh"\n', "scripts/old.sh": FIXED}, 1)
+case("a scripts/* glob in a reachable script is reported",
+     {"Makefile": "t:\n\tbash scripts/runner.sh\n", "scripts/runner.sh": "for f in scripts/*; do echo $f; done\n"}, 1)
+case("project.yml build phases are roots",
+     {"project.yml": "targets:\n  A:\n    postBuildScripts:\n      - script: bash scripts/a.sh\n", "scripts/a.sh": FIXED}, 1)
+case("a Swift file that spawns a process makes its scripts roots",
+     {"Sources/T.swift": 'let p = Process()\np.executableURL = URL(fileURLWithPath: "scripts/a.sh")\n', "scripts/a.sh": FIXED}, 1)
+case("a Swift file that merely mentions a script is not a root",
+     {"Sources/T.swift": "// started by scripts/a.sh\n", "scripts/a.sh": FIXED}, 0)
 print(f"temp-path guard fixtures: {cases.count(False)} failure(s)")
 sys.exit(0 if all(cases) else 1)

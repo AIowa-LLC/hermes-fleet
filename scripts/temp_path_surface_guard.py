@@ -9,8 +9,18 @@ that writes to a predictable shared location (`/tmp/<name>` or
 Historical milestone scripts that nothing reachable mentions are out of scope
 on purpose; they are listed by `--report`.
 
+Roots: the Makefile, CI workflows, the current docs, project.yml / xcconfig /
+Package.swift (build phases), and any Swift file that spawns processes.
+Dynamic invocations (`scripts/*`, `$SCRIPT_DIR/${name}_test.sh`) are expanded
+conservatively: a computed script name reaches every script it could match.
+
+Remaining limits (also in docs/dev-loop.md): invocation through names built
+from several string pieces at run time, scripts reached only by hand, and
+patterns that do not literally contain `/tmp/<name>` or `$TMPDIR/<name>`.
+
 Usage: temp_path_surface_guard.py [--root DIR] [--report]
 """
+import fnmatch
 import glob
 import os
 import re
@@ -20,6 +30,13 @@ DOC_ROOTS = [
     "README.md", "AGENTS.md", "docs/README.md", "docs/DEVELOPMENT.md", "docs/dev-loop.md",
     "docs/release-preflight.md", "docs/release/REVIEWER-ENVIRONMENT.md", "docs/fleet-dev.md",
     "docs/tls-first-use-review.md",
+]
+
+# Dynamic invocations the guard cannot resolve to specific scripts. Each entry
+# was reviewed: (file, token) -> why it is not a way to reach unreviewed scripts.
+UNRESOLVED_ALLOWED = [
+    ("private_dir_lib_test.sh", "scripts/$s.sh"),   # loops over six l1_* names written out in that file
+    ("c1_ui_preflight.sh", "scripts/*"),            # changed-file path classification, not an invocation
 ]
 
 # Reachable scripts whose matching line was reviewed and is NOT a host path.
@@ -33,28 +50,58 @@ ALLOWED = [
 ]
 
 
+BUILD_ROOT_GLOBS = ["project.yml", "Config/*", "Package.swift", "Packages/*/Package.swift", "*.xcconfig"]
+SPAWN_API = re.compile(r"\bProcess\(\)|\bNSTask\b|\bposix_spawn\b|\.executableURL\b")
+DYNAMIC_TOKEN = re.compile(r"[A-Za-z0-9_./${}*?-]*[$*][A-Za-z0-9_./${}*?-]*\.(?:sh|py)\b")
+GLOB_ALL = re.compile(r"scripts/\*(?![\w.])")
+
+
 def build(root):
     scripts = {os.path.basename(p): p for p in glob.glob(os.path.join(root, "scripts", "*")) if os.path.isfile(p)}
 
-    def refs(text):
-        return {n for n in scripts if re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w.-])", text)}
+    unresolved = []
+
+    def refs(text, origin=None):
+        found = {n for n in scripts if re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w.-])", text)}
+        if GLOB_ALL.search(text) and origin is not None:
+            unresolved.append((origin, "scripts/*"))
+        for token in DYNAMIC_TOKEN.findall(text):
+            pattern = re.sub(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*", "*", os.path.basename(token))
+            if len(pattern.replace("*", "")) < 4:
+                # Too unspecific to expand (would reach everything): report it.
+                if origin is not None:
+                    unresolved.append((origin, token))
+                continue
+            found |= {n for n in scripts if fnmatch.fnmatch(n, pattern)}
+        return found
 
     roots = set()
     files = [os.path.join(root, "Makefile")] + glob.glob(os.path.join(root, ".github", "**", "*"), recursive=True)
     files += [os.path.join(root, d) for d in DOC_ROOTS]
+    for pattern in BUILD_ROOT_GLOBS:
+        files += glob.glob(os.path.join(root, pattern))
     for f in files:
         if os.path.isfile(f):
-            roots |= refs(open(f, errors="ignore").read())
+            roots |= refs(open(f, errors="ignore").read(), os.path.basename(f))
+    # Swift sources that spawn processes can invoke scripts.
+    for f in glob.glob(os.path.join(root, "**", "*.swift"), recursive=True):
+        if "/.build/" in f or "/build/" in f or "DerivedData" in f:
+            continue
+        text = open(f, errors="ignore").read()
+        if SPAWN_API.search(text):
+            roots |= refs(text, os.path.basename(f))
     seen, stack = set(), list(roots)
     while stack:
         n = stack.pop()
         if n in seen:
             continue
         seen.add(n)
-        for m in refs(open(scripts[n], errors="ignore").read()):
+        if n.startswith("temp_path_surface_guard"):
+            continue  # its docstring/fixtures mention patterns by example
+        for m in refs(open(scripts[n], errors="ignore").read(), n):
             if m != n:
                 stack.append(m)
-    return scripts, seen
+    return scripts, seen, unresolved
 
 
 def fixed_temp_lines(path):
@@ -72,8 +119,12 @@ def main(argv):
     root = "."
     if "--root" in argv:
         root = argv[argv.index("--root") + 1]
-    scripts, reachable = build(root)
+    scripts, reachable, unresolved = build(root)
     failures = []
+    for origin, token in sorted(set(unresolved)):
+        if origin.startswith("temp_path_surface_guard") or (origin, token) in UNRESOLVED_ALLOWED:
+            continue
+        failures.append(f"{origin}: unresolved dynamic script invocation '{token}' (review it, then add it to UNRESOLVED_ALLOWED)")
     for name in sorted(reachable):
         if name.startswith("temp_path_surface_guard"):
             continue  # the guard's own patterns
