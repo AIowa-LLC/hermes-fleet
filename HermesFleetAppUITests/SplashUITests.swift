@@ -21,7 +21,7 @@ final class SplashUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_SPLASH"] = "on"
         // Deterministic hold for the test: a cold CI simulator can take >2s to
         // attach its first accessibility query, so we extend the product hold
-        // (1.8s, locked by the unit test) to a generous 4s window. The product
+        // (1.8s, locked by the unit test) to a generous 8s window. The product
         // default is exercised/asserted separately by SplashConfigurationTests.
         app.launchEnvironment["HERMES_FLEET_SPLASH_HOLD"] = "8.0"
 
@@ -39,7 +39,6 @@ final class SplashUITests: XCTestCase {
         let splash = app.descendants(matching: .any)["fleet.splash.artwork"].firstMatch
         XCTAssertTrue(splash.waitForExistence(timeout: 8),
                       "splash white-wing mark should appear at launch")
-        attachScreenshot(of: app, name: "v7-splash-wing-mark")
 
         // The mark is a centered modest mark (not a full-bleed artwork): its
         // frame must sit INSIDE the screen, roughly centered horizontally.
@@ -53,8 +52,12 @@ final class SplashUITests: XCTestCase {
 
         )
 
+        // Snapshot attachments can outlast the transient overlay. Capture
+        // its geometry before collecting the screenshot.
+        attachScreenshot(of: app, name: "v7-splash-wing-mark")
+
         // Then it must cross-fade OUT and release the app UI (it must NOT
-        // linger forever). Budget: 4s hold + 0.35s fade + slack.
+        // linger forever). Budget: 8s hold + 0.35s fade + slack.
         let gone = splash.waitForNonExistence(timeout: 8)
         XCTAssertTrue(gone, "splash must fade out and leave the hierarchy")
 
