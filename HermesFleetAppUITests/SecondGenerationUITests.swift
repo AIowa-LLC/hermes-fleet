@@ -57,6 +57,14 @@ final class SecondGenerationUITests: XCTestCase {
         let app = launch()
         // Projects beneath the workstation cockpit (explicit scope).
         UITabNavigation.openScopedPane(app, resource: "projects", profile: "default")
+        // The scoped shell can render while the asynchronous tree is loading.
+        // Wait only while that visible loading state exists; a missing or
+        // incorrect project still fails the exact row assertion below.
+        let loading = app.staticTexts["Mapping projects…"].firstMatch
+        if loading.exists {
+            XCTAssertTrue(loading.waitForNonExistence(timeout: 60),
+                          "scoped Projects should finish mapping its tree")
+        }
         XCTAssertTrue(firstMatchOrNil(app, "fleet.projects.row.proj-fleet").waitForExistence(timeout: 15))
         capture("revamp-projects-scoped")
         // Command Center (global launcher) unchanged — it lives on the
