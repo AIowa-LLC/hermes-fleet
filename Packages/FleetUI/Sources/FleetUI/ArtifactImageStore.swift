@@ -42,6 +42,11 @@ public final class ArtifactImageStore {
     /// How many retrieved payloads are retained in memory at once.
     public static let maxLoadedPayloads = 16
 
+    /// Aggregate cap on retained payload bytes. The per-artifact cap times
+    /// `maxLoadedPayloads` would otherwise allow hundreds of MB; oldest
+    /// payloads are evicted until the new one fits.
+    public static let maxLoadedBytes = 96 * 1024 * 1024
+
     public private(set) var states: [ArtifactReference: State] = [:]
 
     /// Insertion order for eviction (references whose payload is retained).
@@ -223,9 +228,9 @@ public final class ArtifactImageStore {
     private func store(_ state: State, for reference: ArtifactReference) {
         switch state {
         case .loaded(let payload):
-            evictIfNeeded(beforeInserting: reference)
+            evictIfNeeded(beforeInserting: reference, incomingBytes: payload.byteCount)
             states[reference] = .loaded(payload)
-            if let image = UIImage(data: payload.data) {
+            if let image = BoundedImageDecoder.decode(payload.data) {
                 decoded[reference] = image
             }
             loadedOrder.removeAll { $0 == reference }
@@ -240,9 +245,24 @@ public final class ArtifactImageStore {
         return state
     }
 
-    private func evictIfNeeded(beforeInserting reference: ArtifactReference) {
-        guard !loadedOrder.contains(reference) else { return }
-        while loadedOrder.count >= Self.maxLoadedPayloads {
+    private var loadedByteCount: Int {
+        loadedOrder.reduce(0) { total, ref in
+            if case .loaded(let payload) = states[ref] { return total + payload.byteCount }
+            return total
+        }
+    }
+
+    private func evictIfNeeded(beforeInserting reference: ArtifactReference, incomingBytes: Int) {
+        // A refreshed reference replaces its own entry: drop it from the
+        // accounting so it is not counted twice.
+        if loadedOrder.contains(reference) {
+            loadedOrder.removeAll { $0 == reference }
+            states[reference] = nil
+            decoded[reference] = nil
+        }
+        while !loadedOrder.isEmpty
+                && (loadedOrder.count >= Self.maxLoadedPayloads
+                    || loadedByteCount + incomingBytes > Self.maxLoadedBytes) {
             let oldest = loadedOrder.removeFirst()
             if case .loaded = states[oldest] {
                 states[oldest] = nil

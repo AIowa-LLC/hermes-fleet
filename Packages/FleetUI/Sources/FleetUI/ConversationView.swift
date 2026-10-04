@@ -2134,7 +2134,9 @@ enum ConversationHeaderChips {
     /// HEIC/RAW → JPEG via ImageIO (device photos default to HEIC; the
     /// gateway's image pipeline accepts PNG/JPEG/GIF/WebP/BMP only).
     private static func cameraDataAsJPEG(_ data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let size = BoundedImageDecoder.pixelSize(of: data),
+              BoundedImageDecoder.isWithinBudget(width: size.width, height: size.height),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0 else { return nil }
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
