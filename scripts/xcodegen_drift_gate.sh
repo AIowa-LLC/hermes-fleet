@@ -16,6 +16,10 @@
 #            clean-check mode is requested. Default mode regenerates in
 #            place and fails when `git diff --exit-code` reports drift.
 set -euo pipefail
+# Private per-run scratch (never a predictable shared /tmp name: a local
+# user could pre-create or symlink it and clobber files).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_xcodegen_drift_gate.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 
 if ! command -v xcodegen >/dev/null 2>&1; then
@@ -24,9 +28,9 @@ if ! command -v xcodegen >/dev/null 2>&1; then
 fi
 
 # Regenerate the project from project.yml.
-xcodegen generate >/tmp/xcodegen_drift_gate.log 2>&1 || {
+xcodegen generate >$SCRIPT_TMP/xcodegen_drift_gate.log 2>&1 || {
   echo "FAIL: xcodegen generate failed:" >&2
-  tail -5 /tmp/xcodegen_drift_gate.log >&2
+  tail -5 $SCRIPT_TMP/xcodegen_drift_gate.log >&2
   exit 2
 }
 
