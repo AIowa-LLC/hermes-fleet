@@ -27,7 +27,7 @@ DOC_ROOTS = [
 ALLOWED = [
     ("private_dir_lib.sh", "hermes-fleet"),          # unused example text
     ("private_dir_lib.sh", '"${TMPDIR:-/tmp}" "$1"'),  # the per-uid name builder itself
-    ("public_safety_guard.sh", "rm -rf /tmp/scratch"),  # destructive-command fixture string
+    ("public_safety_guard.sh", "DESTRUCTIVE_FIXTURE"),  # destructive-command fixture string
     ("reviewer_containment_test.sh", "udp53probe"),     # path INSIDE the container's tmpfs
     ("reviewer_provider_env_test.sh", "HOME=/tmp/evil"),  # hostile-environment fixture value
 ]

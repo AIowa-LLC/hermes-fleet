@@ -468,7 +468,12 @@ public final class ConversationViewModel {
     /// Rate limit for automatic recovery (retry-storm guard).
     @ObservationIgnored var gapGovernor = GapRecoveryGovernor()
     /// Injectable time/sleep so tests drive recovery deterministically.
-    @ObservationIgnored var gapClock: @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    @ObservationIgnored var gapClock: @MainActor () -> TimeInterval = {
+        // Monotonic seconds from the Swift clock (not a boot-time API).
+        let elapsed = ContinuousClock.now - Self.gapClockOrigin
+        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+    }
+    private static let gapClockOrigin = ContinuousClock.now
     @ObservationIgnored var gapSleep: @Sendable (TimeInterval) async -> Void = { seconds in
         try? await Task.sleep(for: .seconds(seconds))
     }
