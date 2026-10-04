@@ -279,7 +279,7 @@ enum FleetServiceGraph {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("HermesFleetCache", isDirectory: true)
+        return base.appendingPathComponent(FleetAppIdentity.cacheDirectoryName, isDirectory: true)
     }
 
     /// True when an earlier launch of this app already created its cache
