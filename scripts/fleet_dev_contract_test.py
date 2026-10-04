@@ -83,6 +83,14 @@ class DevContract(unittest.TestCase):
         guard.entitlements({'application-identifier': 'FIXTURE000.' + guard.BUNDLE,
                             'keychain-access-groups': ['FIXTURE000.' + guard.BUNDLE]})
 
+    def test_app_store_beta_entitlement_accepts_only_boolean_true(self):
+        guard.entitlements({})  # Source entitlements and unsigned builds stay empty.
+        guard.entitlements({'beta-reports-active': True})
+        for value in [False, 1, 0, 'true', 'false', None, [], {}]:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, 'Boolean true'):
+                    guard.entitlements({'beta-reports-active': value})
+
     def test_export_policy_rejects_external_upload_and_number_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / 'options.plist'
@@ -190,6 +198,7 @@ class DevContract(unittest.TestCase):
                 z.writestr('Payload/HermesFleetDev.app/embedded.mobileprovision', b'synthetic')
             signed = {'application-identifier': 'FIXTURE000.' + guard.BUNDLE,
                       'com.apple.developer.team-identifier': 'FIXTURE000', 'get-task-allow': False,
+                      'beta-reports-active': True,
                       'keychain-access-groups': ['FIXTURE000.' + guard.BUNDLE]}
             def fake_run(command, **kwargs):
                 if '--entitlements' in command: output = plistlib.dumps(signed).decode()
@@ -199,6 +208,11 @@ class DevContract(unittest.TestCase):
             with patch.object(exported, 'run', side_effect=fake_run), patch.object(exported, 'inspect_profile') as profile:
                 exported.inspect(out, '1')
                 profile.assert_called_once()
+                del signed['beta-reports-active']
+                shutil.rmtree(out/'ipa-inspection')
+                with self.assertRaisesRegex(ValueError, 'TestFlight beta entitlement required'):
+                    exported.inspect(out, '1')
+                signed['beta-reports-active'] = True
                 shutil.rmtree(out/'ipa-inspection')
                 signed['keychain-access-groups'] = ['FIXTURE000.com.synthetic.production']
                 with self.assertRaisesRegex(ValueError, 'shared keychain'): exported.inspect(out, '1')

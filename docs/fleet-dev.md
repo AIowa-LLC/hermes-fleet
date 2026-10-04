@@ -120,9 +120,17 @@ this restriction in any future authorized upload workflow. The reference
 [Hermex branch workflow](https://github.com/uzairansaruzi/hermex/blob/master/scripts/branch-testflight)
 uploads; Fleet's wrapper deliberately stops at local export.
 
+Signed App Store exports must contain the standard `beta-reports-active=true`
+entitlement described in [Apple QA1830](https://developer.apple.com/library/archive/qa/qa1830/_index.html).
+The inspector permits only the actual Boolean true, while source entitlements
+remain empty. This entitlement supports TestFlight signing; the committed export
+options enforce the separate internal-only distribution restriction.
+
 The initial local profile inventory found production Fleet profiles and none
-matching the Dev bundle. ASC records were not queried; absence of a local profile
-does not prove an Apple record is absent. Separately verify/approve:
+matching the Dev bundle. A subsequent authenticated read-only portal inventory
+also found no Dev App ID, separate Dev ASC app or Dev provisioning profile under
+the selected team. This does not establish global identifier availability.
+Separately verify/approve:
 
 1. The Dev Developer App ID and ASC app record under the intended existing team.
    Inspect existing records first; creating records requires separate approval.

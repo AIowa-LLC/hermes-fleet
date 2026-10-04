@@ -44,6 +44,7 @@ def inspect(out, build):
     signed = run(['codesign', '-d', '--entitlements', ':-', str(built)], label='Dev IPA entitlements')
     e = plistlib.loads(signed.stdout.encode())
     entitlements(e)
+    require(e.get('beta-reports-active') is True, 'App Store TestFlight beta entitlement required')
     require(e.get('application-identifier') == team + '.' + BUNDLE, 'signed application identity mismatch')
     require(e.get('com.apple.developer.team-identifier') == team, 'signed team entitlement mismatch')
     require(e.get('get-task-allow') is not True, 'distribution must disable debugging')

@@ -64,8 +64,12 @@ def entitlements(p):
     require(not p.get('com.apple.security.application-groups'), 'app groups require coordinated Dev isolation')
     require('aps-environment' not in p, 'push capability requires coordinated Dev isolation')
     allowed = {'application-identifier', 'com.apple.developer.team-identifier',
-               'get-task-allow', 'keychain-access-groups'}
+               'get-task-allow', 'keychain-access-groups', 'beta-reports-active'}
     require(set(p) <= allowed, 'unreviewed capability entitlement')
+    # App Store signing adds this standard TestFlight entitlement. It is not a
+    # shared capability and does not authorize external testing or an upload.
+    if 'beta-reports-active' in p:
+        require(p['beta-reports-active'] is True, 'beta entitlement must be Boolean true')
     appid = p.get('application-identifier')
     if appid:
         require(appid.endswith('.' + BUNDLE), 'production or foreign application identifier')
