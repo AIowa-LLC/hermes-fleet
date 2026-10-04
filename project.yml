@@ -104,6 +104,55 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: HermesFleetApp
 
+  # Independent internal development app. Production settings remain above.
+  HermesFleetDev:
+    type: application
+    platform: iOS
+    sources:
+      - path: HermesFleetApp
+        excludes:
+          - Info.plist
+    resources:
+      - HermesFleetApp/PrivacyInfo.xcprivacy
+    dependencies:
+      - package: FleetCore
+      - package: FleetNetworking
+      - package: FleetSecurity
+      - package: FleetPersistence
+      - package: FleetUI
+    configFiles:
+      Debug: Config/FleetDev.xcconfig
+      Release: Config/FleetDev.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiowa.hermesfleet.dev
+        PRODUCT_NAME: HermesFleetDev
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Config/FleetDevInfo.plist
+        CODE_SIGN_ENTITLEMENTS: Config/FleetDev.entitlements
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Hermes Fleet Dev
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        ASSETCATALOG_COMPILER_APPICON_NAME: FleetWing
+        ENABLE_PREVIEWS: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        FLEET_DEV_BUILD: "YES"
+        FLEET_URL_SCHEME: hermes-fleet-dev
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FLEET_DEV"
+
+  HermesFleetDevTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - HermesFleetDevTests
+    dependencies:
+      - target: HermesFleetDev
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aiowa.hermesfleet.dev.tests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   HermesFleetApp:
     build:
@@ -135,3 +184,19 @@ schemes:
       config: Release
       targets:
         - HermesFleetReleaseHygieneTests
+  HermesFleetDev:
+    build:
+      targets:
+        HermesFleetDev: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  HermesFleetDevTests:
+    build:
+      targets:
+        HermesFleetDev: all
+        HermesFleetDevTests: [test]
+    test:
+      targets:
+        - HermesFleetDevTests
