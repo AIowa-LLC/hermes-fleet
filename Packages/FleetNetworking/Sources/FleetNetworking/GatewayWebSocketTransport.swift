@@ -126,16 +126,27 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// Sessions that lost parked frames to the hold cap: their next replay must
     /// rehydrate from authoritative history (never trust a silent gap).
     private var replayHoldOverflowSessions: Set<String> = []
+    private var replayHoldBytes = 0
+    /// Sessions that may have lost events while the connection stayed up
+    /// (evicted watermark, refused frame). Reported by the next replay pass as
+    /// needing authoritative history; `incompleteAll` collapses the set when
+    /// the peer produced more distinct sessions than we will track.
+    private var incompleteSessions: Set<String> = []
+    private var incompleteAll = false
+    /// LRU clock for the bounded watermark table.
+    private var watermarkTouch: [String: UInt64] = [:]
+    private var touchClock: UInt64 = 0
 
     /// Hard bounds so a hostile or buggy gateway cannot grow client work or
     /// memory without limit with individually valid frames.
     /// - Frames parked while a replay pass is in flight.
-    public static let maxReplayHoldEvents = 2_000
+    public static let maxReplayHoldEvents = GatewayEventBudget.maxReplayHoldEvents
+    public static let maxReplayHoldBytes = GatewayEventBudget.maxReplayHoldBytes
     /// - Distinct sessions with a tracked watermark.
-    public static let maxTrackedSessions = 1_000
+    public static let maxTrackedSessions = GatewayEventBudget.maxTrackedSessions
     /// - Backlog a single event subscriber may accumulate before the oldest
     ///   undelivered events are discarded.
-    public static let maxSubscriberBacklog = 10_000
+    public static let maxSubscriberBacklog = GatewayEventBudget.maxSubscriberBacklog
 
     // MARK: RPC correlation (M2)
     /// Requests awaiting a correlated response, keyed by request id.
@@ -162,11 +173,12 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// rendered. Subscribers register in `subscribeToEvents()` and deregister
     /// via the stream's `onTermination`; the registry is lock-boxed so the
     /// `nonisolated` subscribe call stays synchronous.
-    private let eventSubscriptions: EventSubscriptionBox
+    private let eventFanOut: BoundedFanOut<GatewayEvent>
+    private let gapBroadcaster: GapBroadcaster
 
     /// P0.1 server→client requests (`approval`, `clarify`, `sudo`, `secret`):
     /// open-request registry + live subscribers. See `ServerRequestBox`.
-    private let serverRequests = ServerRequestBox()
+    private let serverRequests: ServerRequestBox
     private var serverRequestReplies: [String: Task<Void, any Error>] = [:]
     private var nextCapabilitiesID = 0
     private var capabilityRequestID: JSONRPCID?
@@ -203,10 +215,16 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
-        let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream()
+        let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(GatewayEventBudget.maxHealthBacklog))
         self.healthStream = healthStream
         self.healthContinuation = healthContinuation
-        self.eventSubscriptions = EventSubscriptionBox()
+        let broadcaster = GapBroadcaster()
+        self.gapBroadcaster = broadcaster
+        self.eventFanOut = BoundedFanOut<GatewayEvent>(
+            maxAggregateBytes: GatewayEventBudget.maxAggregateBufferedBytes,
+            onGap: { broadcaster.publish($0) })
+        self.serverRequests = ServerRequestBox(onGap: { broadcaster.publish($0) })
     }
 
     /// M1-compatible init: a plain `WSTicketMinting` is adapted to the
@@ -228,10 +246,16 @@ public actor GatewayWebSocketTransport: HermesTransport {
         let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
         self.readyEvents = stream
         self.readyContinuation = continuation
-        let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream()
+        let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(GatewayEventBudget.maxHealthBacklog))
         self.healthStream = healthStream
         self.healthContinuation = healthContinuation
-        self.eventSubscriptions = EventSubscriptionBox()
+        let broadcaster = GapBroadcaster()
+        self.gapBroadcaster = broadcaster
+        self.eventFanOut = BoundedFanOut<GatewayEvent>(
+            maxAggregateBytes: GatewayEventBudget.maxAggregateBufferedBytes,
+            onGap: { broadcaster.publish($0) })
+        self.serverRequests = ServerRequestBox(onGap: { broadcaster.publish($0) })
     }
 
     // MARK: HermesTransport
@@ -388,6 +412,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// server state (spec §9.6).
     public func clearWatermarks() {
         sessionWatermarks.removeAll()
+        watermarkTouch.removeAll()
     }
 
     /// Sessions whose parked live frames were dropped by the hold cap during
@@ -395,6 +420,39 @@ public actor GatewayWebSocketTransport: HermesTransport {
     public func takeReplayHoldOverflowSessions() -> Set<String> {
         defer { replayHoldOverflowSessions.removeAll() }
         return replayHoldOverflowSessions
+    }
+
+    /// Sessions (and whether ALL sessions) that may be incomplete because a
+    /// bound forced the transport to lose track; cleared on read. The replay
+    /// engine turns these into `.truncated` / `.historyIncomplete` outcomes so
+    /// the UI refetches authoritative history.
+    public func takeIncompleteSessions() -> (sessions: Set<String>, all: Bool) {
+        defer { incompleteSessions.removeAll(); incompleteAll = false }
+        return (incompleteSessions, incompleteAll)
+    }
+
+    private func markIncomplete(_ sessionID: String?, reason: EventGap.Reason) {
+        if let sessionID {
+            if incompleteSessions.count < Self.maxTrackedSessions || incompleteSessions.contains(sessionID) {
+                incompleteSessions.insert(sessionID)
+            } else {
+                incompleteAll = true
+            }
+        } else {
+            incompleteAll = true
+        }
+        gapBroadcaster.publish(EventGap(sessionID: sessionID, reason: reason))
+    }
+
+    /// Introspection for budget tests: bytes/subscribers currently buffered.
+    nonisolated var subscriberBufferedBytes: Int { eventFanOut.totalBytes }
+    nonisolated var eventSubscriberCount: Int { eventFanOut.subscriberCount }
+    var replayHoldBufferedBytes: Int { replayHoldBytes }
+    func takeReplayHoldOverflowSessionsPeek() -> Bool { replayHoldOverflowSessions.isEmpty }
+
+    /// Live gaps (see `EventGap`). Each call returns a fresh bounded stream.
+    public nonisolated func subscribeToGaps() -> AsyncStream<EventGap> {
+        gapBroadcaster.subscribe()
     }
 
     // MARK: P4 — replay hold
@@ -407,6 +465,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         replayHoldActive = true
         replayHoldBuffer.removeAll()
         replayHoldOverflowSessions.removeAll()
+        replayHoldBytes = 0
     }
 
     /// Resume forwarding, flushing parked frames seq-gated: frames with
@@ -416,6 +475,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         replayHoldActive = false
         let held = replayHoldBuffer
         replayHoldBuffer.removeAll()
+        replayHoldBytes = 0
         for event in held {
             // Replay-hold dedupe (spec §10): drop seq ≤ watermark — those
             // frames were already applied (replayed) or are stale; only
@@ -449,11 +509,23 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// Monotonic watermark update. A session beyond `maxTrackedSessions` is not
     /// tracked (its events still flow live); the table cannot grow without bound.
     private func recordWatermark(_ seq: Int, for sessionID: String) {
+        touchClock &+= 1
         if let current = sessionWatermarks[sessionID] {
             sessionWatermarks[sessionID] = max(current, seq)
-        } else if sessionWatermarks.count < Self.maxTrackedSessions {
+        } else {
+            if sessionWatermarks.count >= Self.maxTrackedSessions,
+               let coldest = watermarkTouch.min(by: { $0.value < $1.value })?.key {
+                // Evict the least recently active session, never the one
+                // being updated: an active conversation keeps its watermark.
+                // The evicted session can no longer be replayed exactly, so it
+                // is marked incomplete rather than silently forgotten.
+                sessionWatermarks.removeValue(forKey: coldest)
+                watermarkTouch.removeValue(forKey: coldest)
+                markIncomplete(coldest, reason: .watermarkEvicted)
+            }
             sessionWatermarks[sessionID] = seq
         }
+        watermarkTouch[sessionID] = touchClock
     }
 
     // MARK: RPC request/response (M2 — roster RPCs)
@@ -588,6 +660,14 @@ public actor GatewayWebSocketTransport: HermesTransport {
     private func handleInbound(_ message: WebSocketMessage) async {
         switch message {
         case .text(let line):
+            // Refuse an oversized frame BEFORE decoding it (no parse, no
+            // retained structure). Its session is unknown, so every session is
+            // marked possibly incomplete and a gap is published.
+            if line.utf8.count > GatewayEventBudget.maxFrameBytes {
+                markIncomplete(nil, reason: .oversizedFrame)
+                await recordMalformedFrame()
+                return
+            }
             // Decode BEFORE touching liveness (P1-4): a malformed text frame
             // is junk, not liveness — it must not keep a bad peer alive.
             guard let decoded = try? JSONRPCCodec.decode(line) else {
@@ -603,9 +683,8 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case .data(let data):
             // /api/ws is text-only; binary frames are junk (P1-4). They must
             // neither refresh liveness nor be silently tolerated forever.
-            if data.count > JSONRPCCodec.maxFrameBytes {
-                await recordMalformedFrame()
-                return
+            if data.count > GatewayEventBudget.maxFrameBytes {
+                markIncomplete(nil, reason: .oversizedFrame)
             }
             await recordMalformedFrame()
         }
@@ -681,13 +760,19 @@ public actor GatewayWebSocketTransport: HermesTransport {
         // `gateway.ready` has no session_id and always forwards (it is also
         // the only event routed to the ready channel).
         if replayHoldActive, let sessionID = event.sessionID, event.seq != nil {
-            if replayHoldBuffer.count < Self.maxReplayHoldEvents {
+            let bytes = GatewayEventBudget.estimatedBytes(of: event)
+            if replayHoldBuffer.count < Self.maxReplayHoldEvents,
+               replayHoldBytes + bytes <= Self.maxReplayHoldBytes {
                 replayHoldBuffer.append(event)
+                replayHoldBytes += bytes
             } else if replayHoldOverflowSessions.count < Self.maxTrackedSessions
                         || replayHoldOverflowSessions.contains(sessionID) {
-                // Over the cap: drop the frame but remember the session so the
-                // caller rehydrates it instead of trusting a silent gap.
+                // Over the count or byte budget: drop the frame but remember
+                // the session so the caller rehydrates it instead of trusting
+                // a silent gap.
                 replayHoldOverflowSessions.insert(sessionID)
+            } else {
+                incompleteAll = true
             }
             return
         }
@@ -744,8 +829,10 @@ public actor GatewayWebSocketTransport: HermesTransport {
         if event.type == .requestCancel, let id = event.payload?["id"]?.stringValue {
             serverRequests.settle(id)
         }
-        eventSubscriptions.yield(event)
-        serverRequests.forwardConversation(event)
+        let bytes = GatewayEventBudget.estimatedBytes(of: event)
+        eventFanOut.yield(event, bytes: bytes, sessionID: event.sessionID,
+                          pinned: event.type == .requestCancel || event.type == .approvalRequest)
+        serverRequests.forwardConversation(event, bytes: bytes)
         if advanceWatermark, let sessionID = event.sessionID, let seq = event.seq {
             recordWatermark(seq, for: sessionID)
         }
@@ -760,13 +847,11 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// after pop) iterated a dead stream and never rendered replies — the
     /// fan-out here is what makes conversation re-entry work.
     public nonisolated func subscribeToEvents() -> AsyncStream<GatewayEvent> {
-        let (stream, continuation) = AsyncStream<GatewayEvent>.makeStream(
-            bufferingPolicy: .bufferingNewest(Self.maxSubscriberBacklog))
-        let id = eventSubscriptions.add(continuation)
-        continuation.onTermination = { [eventSubscriptions] _ in
-            eventSubscriptions.remove(id)
-        }
-        return stream
+        // Bounded by count AND bytes; an overflow publishes a gap (never a
+        // silent drop). A stream that is created but never iterated stays
+        // registered (bounded) until the transport is released.
+        eventFanOut.makeStream(maxCount: Self.maxSubscriberBacklog,
+                               maxBytes: GatewayEventBudget.maxSubscriberBacklogBytes)
     }
 
     // MARK: P0.1 — server→client requests
@@ -787,13 +872,11 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     /// Conversation events, requests and withdrawals in transport order.
     public nonisolated func subscribeToConversationEvents() -> AsyncStream<ConversationEvent> {
-        let (stream, continuation) = AsyncStream<ConversationEvent>.makeStream(
-            bufferingPolicy: .bufferingNewest(Self.maxSubscriberBacklog))
-        let token = serverRequests.subscribeConversation(continuation)
-        continuation.onTermination = { [serverRequests] _ in
+        let (token, queue) = serverRequests.subscribeConversation(
+            maxCount: Self.maxSubscriberBacklog, maxBytes: GatewayEventBudget.maxSubscriberBacklogBytes)
+        return AsyncStream<ConversationEvent>(unfolding: { await queue.next() }, onCancel: { [serverRequests] in
             serverRequests.unsubscribeConversation(token)
-        }
-        return stream
+        })
     }
 
     /// Number of server requests currently open on this transport.
@@ -1108,6 +1191,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
             session = nil
             replayHoldActive = false
             replayHoldBuffer.removeAll()
+            replayHoldBytes = 0
             replayHoldOverflowSessions.removeAll()
             _ = error
             return
@@ -1211,36 +1295,6 @@ final class TransportLastFrameBox: @unchecked Sendable {
     func read() -> ConnectionLivenessSnapshot? {
         lock.withLock { instant in
             instant.map(ConnectionLivenessSnapshot.init)
-        }
-    }
-}
-
-/// P0-7: lock-boxed fan-out registry for live event subscribers, so the
-/// transport's `nonisolated` `subscribeToEvents()` can register/deregister
-/// synchronously while the actor's `forward()` yields to every live
-/// continuation. `OSAllocatedUnfairLock` is async-safe (scoped locking),
-/// matching `TransportStateBox`.
-final class EventSubscriptionBox: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock<[UUID: AsyncStream<GatewayEvent>.Continuation]>(initialState: [:])
-
-    /// Register a subscriber; returns its removal token.
-    func add(_ continuation: AsyncStream<GatewayEvent>.Continuation) -> UUID {
-        let id = UUID()
-        lock.withLock { $0[id] = continuation }
-        return id
-    }
-
-    /// Deregister a subscriber (idempotent — a token is removed once).
-    func remove(_ id: UUID) {
-        lock.withLock { _ = $0.removeValue(forKey: id) }
-    }
-
-    /// Deliver an event to every live subscriber.
-    func yield(_ event: GatewayEvent) {
-        lock.withLock { subscriptions in
-            for continuation in subscriptions.values {
-                continuation.yield(event)
-            }
         }
     }
 }
