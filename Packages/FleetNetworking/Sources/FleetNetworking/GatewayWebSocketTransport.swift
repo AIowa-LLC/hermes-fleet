@@ -123,6 +123,19 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// (dedupe); the rest are forwarded in order.
     private var replayHoldActive = false
     private var replayHoldBuffer: [GatewayEvent] = []
+    /// Sessions that lost parked frames to the hold cap: their next replay must
+    /// rehydrate from authoritative history (never trust a silent gap).
+    private var replayHoldOverflowSessions: Set<String> = []
+
+    /// Hard bounds so a hostile or buggy gateway cannot grow client work or
+    /// memory without limit with individually valid frames.
+    /// - Frames parked while a replay pass is in flight.
+    public static let maxReplayHoldEvents = 2_000
+    /// - Distinct sessions with a tracked watermark.
+    public static let maxTrackedSessions = 1_000
+    /// - Backlog a single event subscriber may accumulate before the oldest
+    ///   undelivered events are discarded.
+    public static let maxSubscriberBacklog = 10_000
 
     // MARK: RPC correlation (M2)
     /// Requests awaiting a correlated response, keyed by request id.
@@ -377,6 +390,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
         sessionWatermarks.removeAll()
     }
 
+    /// Sessions whose parked live frames were dropped by the hold cap during
+    /// the last replay pass (cleared on read).
+    public func takeReplayHoldOverflowSessions() -> Set<String> {
+        defer { replayHoldOverflowSessions.removeAll() }
+        return replayHoldOverflowSessions
+    }
+
     // MARK: P4 — replay hold
 
     /// Park inbound event frames for watermarked sessions until
@@ -386,6 +406,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
     public func beginReplayHold() {
         replayHoldActive = true
         replayHoldBuffer.removeAll()
+        replayHoldOverflowSessions.removeAll()
     }
 
     /// Resume forwarding, flushing parked frames seq-gated: frames with
@@ -422,7 +443,17 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// or after a truncated batch) so the next replay resumes from there.
     /// Watermarks are monotonic: this never lowers one.
     public func advanceWatermark(to seq: Int, for sessionID: String) {
-        sessionWatermarks[sessionID] = max(sessionWatermarks[sessionID] ?? 0, seq)
+        recordWatermark(seq, for: sessionID)
+    }
+
+    /// Monotonic watermark update. A session beyond `maxTrackedSessions` is not
+    /// tracked (its events still flow live); the table cannot grow without bound.
+    private func recordWatermark(_ seq: Int, for sessionID: String) {
+        if let current = sessionWatermarks[sessionID] {
+            sessionWatermarks[sessionID] = max(current, seq)
+        } else if sessionWatermarks.count < Self.maxTrackedSessions {
+            sessionWatermarks[sessionID] = seq
+        }
     }
 
     // MARK: RPC request/response (M2 — roster RPCs)
@@ -649,8 +680,15 @@ public actor GatewayWebSocketTransport: HermesTransport {
         // sessions instead of forwarding, so replayed events inject first.
         // `gateway.ready` has no session_id and always forwards (it is also
         // the only event routed to the ready channel).
-        if replayHoldActive, event.sessionID != nil, event.seq != nil {
-            replayHoldBuffer.append(event)
+        if replayHoldActive, let sessionID = event.sessionID, event.seq != nil {
+            if replayHoldBuffer.count < Self.maxReplayHoldEvents {
+                replayHoldBuffer.append(event)
+            } else if replayHoldOverflowSessions.count < Self.maxTrackedSessions
+                        || replayHoldOverflowSessions.contains(sessionID) {
+                // Over the cap: drop the frame but remember the session so the
+                // caller rehydrates it instead of trusting a silent gap.
+                replayHoldOverflowSessions.insert(sessionID)
+            }
             return
         }
         forward(event, advanceWatermark: true)
@@ -709,7 +747,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         eventSubscriptions.yield(event)
         serverRequests.forwardConversation(event)
         if advanceWatermark, let sessionID = event.sessionID, let seq = event.seq {
-            sessionWatermarks[sessionID] = max(sessionWatermarks[sessionID] ?? 0, seq)
+            recordWatermark(seq, for: sessionID)
         }
     }
 
@@ -722,7 +760,8 @@ public actor GatewayWebSocketTransport: HermesTransport {
     /// after pop) iterated a dead stream and never rendered replies — the
     /// fan-out here is what makes conversation re-entry work.
     public nonisolated func subscribeToEvents() -> AsyncStream<GatewayEvent> {
-        let (stream, continuation) = AsyncStream<GatewayEvent>.makeStream()
+        let (stream, continuation) = AsyncStream<GatewayEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(Self.maxSubscriberBacklog))
         let id = eventSubscriptions.add(continuation)
         continuation.onTermination = { [eventSubscriptions] _ in
             eventSubscriptions.remove(id)
@@ -748,7 +787,8 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     /// Conversation events, requests and withdrawals in transport order.
     public nonisolated func subscribeToConversationEvents() -> AsyncStream<ConversationEvent> {
-        let (stream, continuation) = AsyncStream<ConversationEvent>.makeStream()
+        let (stream, continuation) = AsyncStream<ConversationEvent>.makeStream(
+            bufferingPolicy: .bufferingNewest(Self.maxSubscriberBacklog))
         let token = serverRequests.subscribeConversation(continuation)
         continuation.onTermination = { [serverRequests] _ in
             serverRequests.unsubscribeConversation(token)
@@ -1068,6 +1108,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
             session = nil
             replayHoldActive = false
             replayHoldBuffer.removeAll()
+            replayHoldOverflowSessions.removeAll()
             _ = error
             return
         }

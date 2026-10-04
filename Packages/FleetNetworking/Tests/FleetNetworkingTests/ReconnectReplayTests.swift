@@ -491,6 +491,59 @@ final class ReconnectReplayTests: XCTestCase {
         await transport.disconnect()
     }
 
+    /// A replay response larger than the client's bound is NOT injected: it is
+    /// treated like a truncated ring (history refetch), so a runaway or hostile
+    /// `session.events.since` cannot force unbounded client work.
+    func testOversizedReplayBatchIsTreatedAsTruncated() async throws {
+        let first = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame(), Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 3)]
+        )
+        let historyStub = StubHistoryProvider()
+        let oversizedEvents = (0...GatewayReplayEngine.maxReplayBatchEvents).map {
+            Self.bareEvent(type: "message.delta", sessionID: "s1", seq: 4 + $0)
+        }
+        // Pre-rendered (id-less) body: the closure may only capture Sendable values.
+        let oversizedBody = try XCTUnwrap(String(
+            data: JSONSerialization.data(withJSONObject: [
+                "events": oversizedEvents, "latest_seq": 99_999,
+                "truncated": false, "count": oversizedEvents.count, "epoch": "epoch-1",
+            ]), encoding: .utf8))
+        let second = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                switch method {
+                case "session.events.since":
+                    return [#"{"jsonrpc":"2.0","id":"\#(id)","result":\#(oversizedBody)}"#]
+                case "session.history":
+                    historyStub.noteHistoryRequested(sessionID: "s1")
+                    return [Self.responseFrame(id: id, result: ["count": 0, "messages": []])]
+                default:
+                    return []
+                }
+            }
+        )
+        let server = try InProcessWebSocketServer(scripts: [first, second])
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        await waitUntil({ await transport.watermark(for: "s1") == 3 }, timeout: .seconds(3))
+        let engine = GatewayReplayEngine(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport, history: historyStub)
+        _ = try await engine.replayAfterReconnect()
+
+        server.abortConnection()
+        await waitUntil({ transport.state != .connected }, timeout: .seconds(3))
+        try await transport.connect()
+
+        let outcomes = try await engine.replayAfterReconnect()
+        XCTAssertEqual(outcomes, [.truncated(sessionID: "s1")])
+        XCTAssertTrue(historyStub.historyRequestedForS1)
+        await transport.disconnect()
+    }
+
     /// spec §9.6 + §36 "gateway epoch change": a changed replay_epoch means the
     /// gateway restarted — stale seq assumptions are discarded and watermarks
     /// cleared (rehydrate from server state).

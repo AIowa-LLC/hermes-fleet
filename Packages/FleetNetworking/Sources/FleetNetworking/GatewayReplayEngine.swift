@@ -31,6 +31,11 @@ public actor GatewayReplayEngine: ReplayProviding {
     /// first). Compared against the fresh epoch after each reconnect.
     private var adoptedEpoch: String?
 
+    /// A replay response larger than this is not injected: it is treated like
+    /// a truncated buffer (authoritative history refetch), so a hostile or
+    /// runaway `session.events.since` cannot force unbounded client work.
+    public static let maxReplayBatchEvents = 5_000
+
     public init(
         gatewayID: GatewayID,
         transport: GatewayWebSocketTransport,
@@ -95,6 +100,11 @@ public actor GatewayReplayEngine: ReplayProviding {
             }
         }
         await transport.endReplayHold()
+        // Live frames dropped by the hold cap leave a gap the watermark never
+        // advanced past: report those sessions as needing rehydration.
+        for sessionID in await transport.takeReplayHoldOverflowSessions().sorted() {
+            outcomes.append(.truncated(sessionID: sessionID))
+        }
         return outcomes
     }
 
@@ -114,7 +124,7 @@ public actor GatewayReplayEngine: ReplayProviding {
         // 4. Truncation (§9.5): the ring evicted events between lastSeen and
         // its oldest retained seq — refetch authoritative history instead of
         // trusting a gap. Never invent the missing events.
-        if batch.truncated {
+        if batch.truncated || batch.events.count > Self.maxReplayBatchEvents {
             // Best-effort authoritative refetch; a failure here is recorded on
             // the outcome, not thrown (the client still knows to rehydrate).
             do {
