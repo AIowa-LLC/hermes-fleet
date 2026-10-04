@@ -5,7 +5,8 @@ set -u
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_ROOT"
-WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
+. "$SCRIPT_DIR/private_dir_lib.sh"
+WORK=$(hf_private_dir "${HERMES_FLEET_LIVE_WORKDIR:-$(hf_private_name hermes-fleet-live)}") || exit 2
 
 echo "=== L1: pre-commit secrets scan ==="
 FILES=$(git status --short | grep -E '^\?\?' | awk '{print $2}' | grep -E 'L1|l1')

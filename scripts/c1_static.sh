@@ -106,6 +106,14 @@ else
   bad "release preflight contract tests FAILED"; cat "$STATIC_RESULTS/c1_release_preflight.log"
 fi
 
+# --- private working-directory helper -----------------------------------------
+note "Private working-directory helper"
+if bash scripts/private_dir_lib_test.sh >"$STATIC_RESULTS/c1_private_dir.log" 2>&1; then
+  ok "private dirs: symlink, squatted-dir and concurrent-run cases fail closed"
+else
+  bad "private working-directory tests FAILED"; cat "$STATIC_RESULTS/c1_private_dir.log"
+fi
+
 # --- package runner fail-closed contract ------------------------------------
 note "Package runner fail-closed contract"
 if bash scripts/c1_packages_contract_test.sh >"$STATIC_RESULTS/c1_packages_contract.log" 2>&1; then

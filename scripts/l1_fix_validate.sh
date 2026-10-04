@@ -11,7 +11,8 @@ SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_l1_fix_validate.XXXXXX") || { echo "F
 trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
-WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
+. "$REPO/scripts/private_dir_lib.sh"
+WORK=$(hf_private_dir "${HERMES_FLEET_LIVE_WORKDIR:-$(hf_private_name hermes-fleet-live)}") || exit 2
 PASS=0
 FAIL=0
 declare -a FAILURES=()

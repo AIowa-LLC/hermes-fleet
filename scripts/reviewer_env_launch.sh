@@ -36,7 +36,8 @@
 #   REVIEWER_SERVE_PORT        host loopback port (default 9318)
 #   REVIEWER_PROVIDER_ENV_FILE 0600 KEY=value file; ONLY allowlisted provider
 #                              keys are forwarded (see reviewer_provider_env_lib.sh)
-#   REVIEWER_ENV_DIR           state dir for credentials (default /tmp/…, 0700)
+#   REVIEWER_ENV_DIR           state dir for credentials (default <tmp>/hermes-fleet-reviewer-<uid>;
+#                              must be a real 0700 dir owned by you, else refused)
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,7 +45,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/reviewer_provider_env_lib.sh"
 
 REVIEWER_IMAGE="${REVIEWER_IMAGE:-hermes-agent:0.21.1-reviewer}"
-REVIEWER_ENV_DIR="${REVIEWER_ENV_DIR:-${TMPDIR:-/tmp}/hermes-fleet-reviewer}"
+. "$SCRIPT_DIR/private_dir_lib.sh"
+REVIEWER_ENV_DIR="${REVIEWER_ENV_DIR:-$(hf_private_name hermes-fleet-reviewer)}"
 CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
 CONT_NAME="fleet-reviewer"
 VOL_NAME="fleet-reviewer-home"
@@ -63,7 +65,7 @@ require_docker() {
 
 # ---------------------------------------------------------------- credentials
 resolve_credentials() {
-  mkdir -p "$REVIEWER_ENV_DIR" && chmod 700 "$REVIEWER_ENV_DIR" || die "cannot create $REVIEWER_ENV_DIR"
+  hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "$REVIEWER_ENV_DIR is not a private directory owned by this user"
   if [ -s "$CREDS_FILE" ]; then
     REVIEWER_USERNAME="$(sed -n 's/^username=//p' "$CREDS_FILE")"
     REVIEWER_PASSWORD="$(sed -n 's/^password=//p' "$CREDS_FILE")"
@@ -363,12 +365,20 @@ do_stop() {
 
 # -------------------------------------------------------------------- clean
 do_clean() {
-  do_stop
+  # Validate the target BEFORE any destructive step (container, volume,
+  # network), so a refused purge changes nothing.
   if [ "${1:-}" = "--purge" ]; then
     local repo_root
     repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
     case "$REVIEWER_ENV_DIR/" in "$repo_root"/*) die "REFUSING to purge inside the repository" ;; esac
     [ "$REVIEWER_ENV_DIR" = "/" ] && die "REFUSING to purge /"
+    [ "$REVIEWER_ENV_DIR" = "$HOME" ] && die "REFUSING to purge \$HOME"
+    # Only ever delete a directory that is verifiably ours (not a symlink,
+    # not another user's, not world/group accessible).
+    hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "REFUSING to purge $REVIEWER_ENV_DIR: not a private directory owned by this user"
+  fi
+  do_stop
+  if [ "${1:-}" = "--purge" ]; then
     docker volume rm "$VOL_NAME" >/dev/null 2>&1 && info "destroyed demo volume $VOL_NAME (home, sessions, config)" \
       || info "no volume to destroy"
     teardown_network
