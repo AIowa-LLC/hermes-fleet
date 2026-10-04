@@ -281,6 +281,18 @@ class DevContract(unittest.TestCase):
         tests['testNodes'][0].pop('details'); summary['skippedTests'] = 1
         with self.assertRaises(ValueError): result_guard.verify(summary, tests)
 
+
+    def test_only_dev_xctest_allowed_in_simulator_test_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp); info = fixture_info(); info['CFBundleSupportedPlatforms'] = ['iPhoneSimulator']
+            (p/'Info.plist').write_bytes(plistlib.dumps(info)); (p/'PrivacyInfo.xcprivacy').write_bytes(b'synthetic')
+            tests = p/'PlugIns/HermesFleetDevTests.xctest'; tests.mkdir(parents=True)
+            (tests/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': guard.BUNDLE + '.tests'}))
+            guard.app(p, '1', 'a'*40, 'iPhoneSimulator', allow_test_bundle=True)
+            with self.assertRaises(ValueError): guard.app(p, '1', 'a'*40, 'iPhoneSimulator')
+            (tests/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.synthetic.production.tests'}))
+            with self.assertRaises(ValueError): guard.app(p, '1', 'a'*40, 'iPhoneSimulator', allow_test_bundle=True)
+
     def test_version_counter_is_separate_and_production_unchanged(self):
         config = (ROOT/'Config/FleetDev.xcconfig').read_text()
         self.assertIn('MARKETING_VERSION = 0.1.0', config)

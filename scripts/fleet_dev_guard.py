@@ -113,7 +113,7 @@ def app_info(p, build):
     require(p.get('MinimumOSVersion') == '26.0', 'deployment target drift')
 
 
-def app(path, build, sha=None, platform=None):
+def app(path, build, sha=None, platform=None, allow_test_bundle=False):
     info = plistlib.loads((path / 'Info.plist').read_bytes())
     app_info(info, build)
     if sha:
@@ -122,7 +122,12 @@ def app(path, build, sha=None, platform=None):
         require(info.get('CFBundleSupportedPlatforms') == [platform], 'artifact platform mismatch')
         require(str(info.get('DTXcode', '')).startswith(('26', '27')) and bool(info.get('DTXcodeBuild')), 'unsupported or missing toolchain provenance')
     require((path / 'PrivacyInfo.xcprivacy').is_file(), 'privacy manifest missing')
-    require(not (path / 'PlugIns').exists(), 'extensions require coordinated identity audit')
+    plugins = path / 'PlugIns'
+    if plugins.exists():
+        require(allow_test_bundle and platform == 'iPhoneSimulator', 'extensions require coordinated identity audit')
+        require([p.name for p in plugins.iterdir()] == ['HermesFleetDevTests.xctest'], 'only the explicit Dev simulator test bundle is allowed')
+        test_info = plistlib.loads((plugins / 'HermesFleetDevTests.xctest/Info.plist').read_bytes())
+        require(test_info.get('CFBundleIdentifier') == BUNDLE + '.tests', 'embedded test bundle identity mismatch')
 
 
 def main():
@@ -133,6 +138,7 @@ def main():
     p.add_argument('--app', type=Path)
     p.add_argument('--build', default='1')
     p.add_argument('--artifact-sha')
+    p.add_argument('--allow-test-bundle', action='store_true')
     p.add_argument('--platform', choices=['iPhoneOS', 'iPhoneSimulator'])
     a = p.parse_args()
     require(re.fullmatch(r'[1-9][0-9]{0,3}', a.build), 'Dev build must be explicit integer 1..9999; no auto-increment')
@@ -148,7 +154,7 @@ def main():
     if a.test_settings:
         test_settings(json.loads(a.test_settings.read_text()), a.build, a.artifact_sha)
     if a.app:
-        app(a.app, a.build, a.artifact_sha, a.platform)
+        app(a.app, a.build, a.artifact_sha, a.platform, a.allow_test_bundle)
     require(a.sha or a.settings or a.test_settings or a.app, 'specify source, settings, or built app to inspect')
     print('Fleet Dev boundary: PASS')
 

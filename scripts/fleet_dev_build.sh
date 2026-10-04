@@ -60,7 +60,9 @@ if [ "$MODE" = simulator ] || [ "$MODE" = test ]; then
   else
     xcodebuild "${ARGS[@]}" build >"$OUT/build.log" 2>&1
   fi
-  python3 scripts/fleet_dev_guard.py --app "$OUT/DerivedData/Build/Products/Debug-iphonesimulator/HermesFleetDev.app" --build "$BUILD" --artifact-sha "$SHA" --platform iPhoneSimulator
+  APP_CHECK=(--app "$OUT/DerivedData/Build/Products/Debug-iphonesimulator/HermesFleetDev.app" --build "$BUILD" --artifact-sha "$SHA" --platform iPhoneSimulator)
+  [ "$MODE" != test ] || APP_CHECK+=(--allow-test-bundle)
+  python3 scripts/fleet_dev_guard.py "${APP_CHECK[@]}"
 else
   ARCHIVE="$OUT/HermesFleetDev.xcarchive"
   xcodebuild "${ARGS[@]}" -archivePath "$ARCHIVE" archive >"$OUT/archive.log" 2>&1
