@@ -88,7 +88,7 @@ public struct DashboardCronClient: CronDashboardProviding, Sendable {
 
     private static func url(base: URL, path: String, query: [URLQueryItem]) -> URL? {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
-        components?.path = path
+        components?.path = GatewayEndpoint.path(joining: path, onto: base)
         components?.queryItems = query.isEmpty ? nil : query
         return components?.url
     }

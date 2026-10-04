@@ -1117,7 +1117,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         case "ws", "wss": break
         default: return nil
         }
-        components.path = path
+        components.path = GatewayEndpoint.path(joining: path, onto: base)
         var query = components.queryItems ?? []
         switch authentication {
         case .none:

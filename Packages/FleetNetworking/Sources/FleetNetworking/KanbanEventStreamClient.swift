@@ -350,7 +350,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     public static func buildBoardURL(base: URL, board: String?) -> URL? {
         var components = URLComponents(
             url: base, resolvingAgainstBaseURL: false)
-        components?.path = "/api/plugins/kanban/board"
+        components?.path = GatewayEndpoint.path(joining: "/api/plugins/kanban/board", onto: base)
         if let board, !board.isEmpty {
             components?.queryItems = [
                 URLQueryItem(name: "board", value: board)
@@ -363,7 +363,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     public static func buildBoardsListURL(base: URL) -> URL {
         var components = URLComponents(
             url: base, resolvingAgainstBaseURL: false)!
-        components.path = "/api/plugins/kanban/boards"
+        components.path = GatewayEndpoint.path(joining: "/api/plugins/kanban/boards", onto: base)
         components.query = nil
         return components.url!
     }
@@ -388,7 +388,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         case "ws", "wss": break
         default: return nil
         }
-        components.path = "/api/plugins/kanban/events"
+        components.path = GatewayEndpoint.path(joining: "/api/plugins/kanban/events", onto: base)
         var query = components.queryItems ?? []
         query.append(URLQueryItem(name: "since", value: String(since)))
         if let board, !board.isEmpty {
