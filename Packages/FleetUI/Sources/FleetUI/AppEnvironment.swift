@@ -2614,11 +2614,20 @@ public final class AppEnvironment {
     /// Record the user's explicit decision to trust the first secure
     /// certificate presented by a gateway. The transport will still pin the
     /// presented SPKI only after this decision is present.
-    public func approveTLSFirstUse(for id: GatewayID) async throws {
+    ///
+    /// Pass the fingerprint the user actually reviewed (`presentedPin`, from a
+    /// rejected first-use attempt) to bind the approval to that exact key; the
+    /// transport then refuses any other key. Without it the approval is an
+    /// unbound, single-use intent.
+    public func approveTLSFirstUse(for id: GatewayID, presentedPin: SPKIFingerprint? = nil) async throws {
         guard gateways.contains(where: { $0.id == id }) else {
             throw GatewayRegistryError.notFound(id)
         }
-        try await tlsApprovalStore?.approveFirstUse(for: id)
+        if let presentedPin {
+            try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: presentedPin)
+        } else {
+            try await tlsApprovalStore?.approveFirstUse(for: id)
+        }
     }
 
     /// Clear both the stored SPKI and the first-use decision. The next secure

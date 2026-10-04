@@ -8,6 +8,9 @@ import Foundation
 /// the gateway endpoint and confirmed pairing in the UI.
 public protocol TLSFirstUseApprovalStoring: Sendable {
     func approveFirstUse(for gatewayID: GatewayID) async throws
+    /// Approve first use of ONE specific key (the SPKI the user actually
+    /// reviewed). A different presented key never consumes this approval.
+    func approveFirstUse(for gatewayID: GatewayID, boundTo fingerprint: SPKIFingerprint) async throws
     func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool
     func resetFirstUseApproval(for gatewayID: GatewayID) async throws
 }
@@ -16,4 +19,11 @@ public protocol TLSFirstUseApprovalStoring: Sendable {
 public protocol SynchronousTLSFirstUseApprovalStoring: Sendable {
     func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool
     func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws
+    /// Record an approval bound to one reviewed key (`nil` = unbound intent).
+    func syncSetFirstUseApproval(boundTo fingerprint: SPKIFingerprint?, for gatewayID: GatewayID) throws
+    /// Atomically check AND consume the approval for the key presented right
+    /// now. Returns true only when an approval exists and is unbound or bound
+    /// to exactly `presented`; the approval is single-use and is removed on
+    /// success. A key-bound approval for a different key is left in place.
+    func syncConsumeFirstUseApproval(matching presented: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool
 }

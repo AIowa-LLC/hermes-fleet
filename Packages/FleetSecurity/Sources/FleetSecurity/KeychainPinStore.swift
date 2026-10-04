@@ -71,6 +71,19 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         }
     }
 
+    public func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
+        // SecItemAdd is the atomic compare-and-set: a duplicate means a pin
+        // already exists and must never be replaced by a first-use accept.
+        var query = Self.baseAttributes(account: gatewayID.rawValue)
+        query[kSecValueData as String] = Data(pin.base64String.utf8)
+        let status = keychain.add(query as CFDictionary)
+        switch status {
+        case errSecSuccess: return true
+        case errSecDuplicateItem: return false
+        default: throw PinStoreError.unexpectedStatus(Int(status))
+        }
+    }
+
     public func syncLoadPin(for gatewayID: GatewayID) throws -> SPKIFingerprint? {
         let account = gatewayID.rawValue
         var query = Self.baseAttributes(account: account)
@@ -109,6 +122,10 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         try syncSetFirstUseApproved(true, for: gatewayID)
     }
 
+    public func approveFirstUse(for gatewayID: GatewayID, boundTo fingerprint: SPKIFingerprint) async throws {
+        try syncSetFirstUseApproval(boundTo: fingerprint, for: gatewayID)
+    }
+
     public func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool {
         try syncIsFirstUseApproved(for: gatewayID)
     }
@@ -119,7 +136,11 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
 
     // MARK: SynchronousTLSFirstUseApprovalStoring
 
-    public func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool {
+    private static let unboundApproval = "approved"
+    private static let boundApprovalPrefix = "pin:"
+
+    /// nil = no approval; .some(nil) = unbound intent; .some(fp) = key-bound.
+    private func loadApproval(for gatewayID: GatewayID) throws -> SPKIFingerprint?? {
         var query = Self.approvalAttributes(account: gatewayID.rawValue)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -127,26 +148,46 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         let status = keychain.copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
-            guard let data = result as? Data else { throw PinStoreError.malformedData }
-            return data == Data("approved".utf8)
+            guard let data = result as? Data,
+                  let value = String(data: data, encoding: .utf8) else {
+                throw PinStoreError.malformedData
+            }
+            if value == Self.unboundApproval { return .some(nil) }
+            if value.hasPrefix(Self.boundApprovalPrefix),
+               let fp = SPKIFingerprint(base64: String(value.dropFirst(Self.boundApprovalPrefix.count))) {
+                return .some(fp)
+            }
+            throw PinStoreError.malformedData
         case errSecItemNotFound:
-            return false
+            return .none
         default:
             throw PinStoreError.unexpectedStatus(Int(status))
         }
     }
 
-    public func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws {
-        let attributes = Self.approvalAttributes(account: gatewayID.rawValue)
-        if !approved {
-            let status = keychain.delete(attributes as CFDictionary)
-            guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw PinStoreError.unexpectedStatus(Int(status))
-            }
-            return
-        }
+    public func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool {
+        try loadApproval(for: gatewayID) != nil
+    }
 
-        let data = Data("approved".utf8)
+    public func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws {
+        if approved {
+            try syncSetFirstUseApproval(boundTo: nil, for: gatewayID)
+        } else {
+            try deleteApproval(for: gatewayID)
+        }
+    }
+
+    private func deleteApproval(for gatewayID: GatewayID) throws {
+        let status = keychain.delete(Self.approvalAttributes(account: gatewayID.rawValue) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw PinStoreError.unexpectedStatus(Int(status))
+        }
+    }
+
+    public func syncSetFirstUseApproval(boundTo fingerprint: SPKIFingerprint?, for gatewayID: GatewayID) throws {
+        let attributes = Self.approvalAttributes(account: gatewayID.rawValue)
+        let text = fingerprint.map { Self.boundApprovalPrefix + $0.base64String } ?? Self.unboundApproval
+        let data = Data(text.utf8)
         let updateStatus = keychain.update(
             attributes as CFDictionary,
             [kSecValueData as String: data] as CFDictionary)
@@ -162,6 +203,15 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         guard updateStatus == errSecSuccess else {
             throw PinStoreError.unexpectedStatus(Int(updateStatus))
         }
+    }
+
+    public func syncConsumeFirstUseApproval(matching presented: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
+        guard let entry = try loadApproval(for: gatewayID) else { return false }
+        if let bound = entry, bound != presented { return false }
+        // Single-use: remove before the caller pins. If removal fails the
+        // approval is not honoured (fail closed).
+        try deleteApproval(for: gatewayID)
+        return true
     }
 
     // MARK: query building (exposed for tests; no secret material)

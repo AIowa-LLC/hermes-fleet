@@ -66,17 +66,35 @@ public struct TLSTrustEvaluator: Sendable {
             // approval seam to preserve the pure evaluator's legacy contract.
             if let approvalStore {
                 do {
-                    guard try approvalStore.syncIsFirstUseApproved(for: gatewayID) else {
+                    // Atomic check-and-consume for THIS presented key: the
+                    // approval is single-use and, when bound, only matches
+                    // the exact SPKI the user reviewed.
+                    guard try approvalStore.syncConsumeFirstUseApproval(
+                        matching: presented, for: gatewayID) else {
+                        // A concurrent connection may have pinned this same
+                        // key a moment ago; that is a match, not a first use.
+                        if let raced = try? pinStore.syncLoadPin(for: gatewayID) {
+                            return raced == presented
+                                ? .pinMatched(raced)
+                                : .pinMismatch(expected: raced, presented: presented)
+                        }
                         return .firstUseRequiresConfirmation(presented)
                     }
                 } catch {
                     return .internalError("first-use approval store unavailable (fail closed)")
                 }
             }
-            // Trust on first use: accept AND persist the pin only after the
-            // explicit approval above.
+            // Trust on first use: persist only if no pin appeared meanwhile
+            // (compare-and-set), never overwriting an established pin.
             do {
-                try pinStore.syncSavePin(presented, for: gatewayID)
+                guard try pinStore.syncSavePinIfAbsent(presented, for: gatewayID) else {
+                    guard let current = try pinStore.syncLoadPin(for: gatewayID) else {
+                        return .internalError("pin store changed during first use (fail closed)")
+                    }
+                    return current == presented
+                        ? .pinMatched(current)
+                        : .pinMismatch(expected: current, presented: presented)
+                }
             } catch {
                 return .internalError("pin store write failed; refusing to trust unpinned")
             }

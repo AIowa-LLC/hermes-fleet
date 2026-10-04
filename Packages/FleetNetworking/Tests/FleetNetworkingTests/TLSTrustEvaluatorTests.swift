@@ -78,6 +78,37 @@ final class TLSTrustEvaluatorTests: XCTestCase {
         XCTAssertEqual(try store.syncLoadPin(for: gatewayID), try gatewayPin)
     }
 
+    func testApprovalBoundToDifferentKeyDoesNotPin() throws {
+        let store = InMemoryPinStore()
+        // The user reviewed the gateway's key, but a different key is presented.
+        try store.syncSetFirstUseApproval(boundTo: try gatewayPin, for: gatewayID)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
+
+        let verdict = evaluator.verdict(forPresentedCertificate: try mitmCert())
+
+        XCTAssertEqual(verdict, .firstUseRequiresConfirmation(try mitmPin))
+        XCTAssertNil(try store.syncLoadPin(for: gatewayID))
+        XCTAssertTrue(try store.syncIsFirstUseApproved(for: gatewayID),
+                      "a mismatched key must not consume the reviewed-key approval")
+    }
+
+    func testApprovalBoundToPresentedKeyPinsAndIsSingleUse() throws {
+        let store = InMemoryPinStore()
+        try store.syncSetFirstUseApproval(boundTo: try gatewayPin, for: gatewayID)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
+
+        XCTAssertEqual(evaluator.verdict(forPresentedCertificate: try gatewayCert()),
+                       .tofuAccept(try gatewayPin))
+        XCTAssertFalse(try store.syncIsFirstUseApproved(for: gatewayID), "approval is single-use")
+    }
+
+    func testFirstUseNeverOverwritesExistingPin() throws {
+        let store = InMemoryPinStore()
+        try store.syncSavePin(try gatewayPin, for: gatewayID)
+        XCTAssertFalse(try store.syncSavePinIfAbsent(try mitmPin, for: gatewayID))
+        XCTAssertEqual(try store.syncLoadPin(for: gatewayID), try gatewayPin)
+    }
+
     func testPinnedCertificateMatchesOnReconnect() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)
@@ -132,6 +163,9 @@ final class TLSTrustEvaluatorTests: XCTestCase {
             throw PinStoreError.unexpectedStatus(-25291)
         }
         func syncDeletePin(for gatewayID: GatewayID) throws {
+            throw PinStoreError.unexpectedStatus(-25291)
+        }
+        func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
             throw PinStoreError.unexpectedStatus(-25291)
         }
     }
