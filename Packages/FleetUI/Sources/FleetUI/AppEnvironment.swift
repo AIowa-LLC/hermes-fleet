@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import FleetCore
+import FleetPersistence
 
 /// Builds a single-gateway connection for a registered gateway, so the app
 /// runtime can drive the connect/disconnect/reconnect lifecycle without
@@ -632,7 +633,7 @@ public final class AppEnvironment {
         connectionIntentDefaults: UserDefaults? = nil,
         gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
         gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil,
-        conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
+        conversationPinStore: any ConversationPinStoring = FileConversationPinStore(),
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
@@ -753,7 +754,7 @@ public final class AppEnvironment {
         // otherwise flips the next suite's swipe action to "Unpin".
         #if DEBUG
         if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
-            UserDefaultsConversationPinStore.resetForUITests()
+            FileConversationPinStore.resetForUITests()
             await bridgedStore.resetForUITests()
             RoomDraftStore.resetForUITests()
             conversationDrafts.removeAll()

@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Observation
 import FleetCore
+import FleetPersistence
 
 public struct RoomWorkIndicator: Identifiable, Equatable {
     public let id: String
@@ -594,32 +595,81 @@ private struct RoomTranscriptAccessibilityModifier: ViewModifier {
     }
 }
 
+/// Unsent room composer drafts.
+///
+/// Drafts are private message text, so they are persisted in a protected,
+/// backup-excluded file in Application Support (`NSFileProtectionComplete`, like
+/// `ConversationDraftStore`) — NOT in `UserDefaults`, whose plist is unprotected,
+/// included in backups and readable by diagnostics. Drafts previously saved
+/// under the legacy `UserDefaults` keys are migrated once and removed there.
+///
+/// Bounded: at most `maxEntries` drafts of `maxCharacters` each; drafts
+/// untouched for `retentionInterval` are dropped. Writes are debounced.
 @MainActor
 enum RoomDraftStore {
+    struct Entry: Codable, Equatable {
+        var text: String
+        var updatedAt: Date
+    }
+
+    static let maxEntries = 50
+    static let maxCharacters = 20_000
+    static let retentionInterval: TimeInterval = 30 * 24 * 3600
+    private static let debounce: Duration = .milliseconds(300)
+    private static let legacyPrefix = "fleet.room.draft.v1."
+
     private static var removedGateways: Set<GatewayID> = []
     private static var removedRooms: Set<FleetRoomID> = []
-    private static let prefix = "fleet.room.draft.v1."
+    private static var entries: [String: Entry] = [:]
+    private static var loaded = false
+    /// True when a store file exists but could not be read: nothing is written
+    /// until it has been read, so existing drafts are never overwritten.
+    private static var persistenceBlocked = false
+    private static var saveTask: Task<Void, Never>?
+    private static var fileURL: URL = defaultURL()
+
+    static func defaultURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("fleet-room-drafts.json")
+    }
+
+    /// Test seam: point the store at a unique file and drop in-memory state.
+    static func useStoreURLForTesting(_ url: URL) {
+        saveTask?.cancel()
+        fileURL = url
+        entries.removeAll()
+        loaded = false
+        persistenceBlocked = false
+    }
 
     static func resetForUITests(defaults: UserDefaults = .standard) {
         removedGateways.removeAll()
         removedRooms.removeAll()
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
-            defaults.removeObject(forKey: key)
-        }
+        saveTask?.cancel()
+        entries.removeAll()
+        loaded = true
+        persistenceBlocked = false
+        removeLegacyKeys(from: defaults)
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
     static func load(for id: FleetRoomID) -> String {
-        UserDefaults.standard.string(forKey: key(for: id)) ?? ""
+        ensureLoaded()
+        return entries[id.storageKey]?.text ?? ""
     }
 
     static func save(_ draft: String, for id: FleetRoomID) {
         guard !removedGateways.contains(id.gatewayID), !removedRooms.contains(id) else { return }
-        let key = key(for: id)
+        ensureLoaded()
+        let key = id.storageKey
         if draft.isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
+            guard entries.removeValue(forKey: key) != nil else { return }
         } else {
-            UserDefaults.standard.set(draft, forKey: key)
+            entries[key] = Entry(text: String(draft.prefix(maxCharacters)), updatedAt: Date())
+            pruneLocked()
         }
+        scheduleSave()
     }
 
     static func purge(for id: FleetRoomID) {
@@ -628,13 +678,22 @@ enum RoomDraftStore {
     }
 
     static func clear(for id: FleetRoomID) {
-        UserDefaults.standard.removeObject(forKey: key(for: id))
+        ensureLoaded()
+        guard entries.removeValue(forKey: id.storageKey) != nil else { return }
+        scheduleSave()
+    }
+
+    /// Write any pending change now (scene-phase change / tests).
+    static func flush() {
+        saveTask?.cancel()
+        saveTask = nil
+        writeNow()
     }
 
     /// Remove every saved draft that belongs to `gatewayID`'s rooms (gateway
-    /// removal). Keys are `<prefix><provenance>:<gatewayID>:<roomKey>` and
-    /// gateway ids may themselves contain `:` (`host:port`), so a bare prefix
-    /// match could also hit a different gateway whose id extends this one.
+    /// removal). Keys are `<provenance>:<gatewayID>:<roomKey>` and gateway ids
+    /// may themselves contain `:` (`host:port`), so a bare prefix match could
+    /// also hit a different gateway whose id extends this one.
     /// `otherGatewayIDs` (the gateways that remain) disambiguates: a key that
     /// begins with another gateway's own `<provenance>:<id>:` is left alone.
     static func clearAll(
@@ -643,26 +702,94 @@ enum RoomDraftStore {
         defaults: UserDefaults = .standard
     ) {
         removedGateways.insert(gatewayID)
+        ensureLoaded()
         let own = [RoomProvenance.hosted, .desktopLegacy].map {
-            prefix + "\($0.rawValue):\(gatewayID.rawValue):"
+            "\($0.rawValue):\(gatewayID.rawValue):"
         }
         let others = [RoomProvenance.hosted, .desktopLegacy].flatMap { provenance in
             otherGatewayIDs.filter { $0 != gatewayID }.map {
-                prefix + "\(provenance.rawValue):\($0.rawValue):"
+                "\(provenance.rawValue):\($0.rawValue):"
             }
         }
-        for key in defaults.dictionaryRepresentation().keys
-        where own.contains(where: key.hasPrefix) && !others.contains(where: key.hasPrefix) {
-            defaults.removeObject(forKey: key)
+        let doomed = entries.keys.filter { key in
+            own.contains(where: key.hasPrefix) && !others.contains(where: key.hasPrefix)
         }
+        guard !doomed.isEmpty else { return }
+        doomed.forEach { entries.removeValue(forKey: $0) }
+        scheduleSave()
     }
 
     static func allowWrites(forGateway id: GatewayID) {
         removedGateways.remove(id)
     }
 
-    private static func key(for id: FleetRoomID) -> String {
-        prefix + id.storageKey
+    // MARK: persistence
+
+    private static func ensureLoaded() {
+        guard !loaded else { return }
+        loaded = true
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            BackupExclusion.apply(to: fileURL)
+            if let data = try? Data(contentsOf: fileURL),
+               let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
+                entries = decoded
+            } else {
+                persistenceBlocked = true
+            }
+        }
+        migrateLegacyDefaults()
+        pruneLocked()
+    }
+
+    /// One-time move of drafts out of `UserDefaults` into the protected file.
+    private static func migrateLegacyDefaults(defaults: UserDefaults = .standard) {
+        var migrated = false
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(legacyPrefix) {
+            let roomKey = String(key.dropFirst(legacyPrefix.count))
+            if let text = value as? String, !text.isEmpty, entries[roomKey] == nil, !persistenceBlocked {
+                entries[roomKey] = Entry(text: String(text.prefix(maxCharacters)), updatedAt: Date())
+                migrated = true
+            }
+        }
+        // Only delete the plaintext copies once the protected copy is durable
+        // (or there was nothing to migrate).
+        if migrated {
+            writeNow()
+            guard !persistenceBlocked, FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        }
+        if !persistenceBlocked { removeLegacyKeys(from: defaults) }
+    }
+
+    private static func removeLegacyKeys(from defaults: UserDefaults) {
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(legacyPrefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private static func pruneLocked() {
+        let cutoff = Date().addingTimeInterval(-retentionInterval)
+        entries = entries.filter { $0.value.updatedAt >= cutoff }
+        if entries.count > maxEntries {
+            let keep = entries.sorted { $0.value.updatedAt > $1.value.updatedAt }.prefix(maxEntries)
+            entries = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        }
+    }
+
+    private static func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(for: debounce)
+            guard !Task.isCancelled else { return }
+            writeNow()
+        }
+    }
+
+    private static func writeNow() {
+        guard !persistenceBlocked else { return }
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        try? data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        // An atomic write replaces the file: re-apply backup exclusion each time.
+        try? CacheStoreProtection.apply(to: fileURL)
     }
 }
 
