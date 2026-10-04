@@ -62,10 +62,16 @@ else
 fi
 
 if [ -n "$PRIVATE_PATTERN" ]; then
-  PRIVATE_HITS=$(git grep -n -I -E "$PRIVATE_PATTERN" -- . ":!$GUARD_REL" 2>/dev/null | cut -d: -f1,2 || true)
-  if [ -n "$PRIVATE_HITS" ]; then
+  # git grep exits 0 (match), 1 (no match) or >=2 (error, e.g. a malformed
+  # regex in the denylist). An error must FAIL: treating it as "no match" would
+  # let a typo silently disable the private check.
+  PRIVATE_RAW=$(git grep -n -I -E "$PRIVATE_PATTERN" -- . ":!$GUARD_REL" 2>/dev/null); PRIVATE_RC=$?
+  if [ "$PRIVATE_RC" -ge 2 ]; then
+    echo "FAIL: private denylist could not be evaluated (invalid pattern in the denylist file?)"
+    FAIL=1
+  elif [ "$PRIVATE_RC" -eq 0 ]; then
     echo "FAIL: private denylist matched in tracked files (file:line only):"
-    echo "$PRIVATE_HITS" | head -40
+    echo "$PRIVATE_RAW" | cut -d: -f1,2 | head -40
     FAIL=1
   else
     echo "PASS: private denylist not matched in tracked tree"

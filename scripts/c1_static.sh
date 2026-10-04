@@ -114,6 +114,14 @@ else
   bad "private working-directory tests FAILED"; cat "$STATIC_RESULTS/c1_private_dir.log"
 fi
 
+# --- public-safety private denylist fail-closed ---------------------------------
+note "Public-safety denylist fail-closed"
+if bash scripts/public_safety_guard_denylist_test.sh >"$STATIC_RESULTS/c1_guard_denylist.log" 2>&1; then
+  ok "public-safety guard: malformed, empty, absent and matching denylists fail closed"
+else
+  bad "public-safety denylist tests FAILED"; cat "$STATIC_RESULTS/c1_guard_denylist.log"
+fi
+
 # --- package runner fail-closed contract ------------------------------------
 note "Package runner fail-closed contract"
 if bash scripts/c1_packages_contract_test.sh >"$STATIC_RESULTS/c1_packages_contract.log" 2>&1; then
