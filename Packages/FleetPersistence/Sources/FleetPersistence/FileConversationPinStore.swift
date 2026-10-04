@@ -61,7 +61,13 @@ public actor FileConversationPinStore: ConversationPinStoring {
 
     private func write(_ pins: [FleetConversationPin]) throws {
         let data = try JSONEncoder().encode(pins)
+        // `NSFileProtectionComplete` is an iOS data-protection class; on a macOS
+        // host (package tests) it can fail while the machine is locked.
+        #if os(iOS)
         try data.write(to: url, options: [.atomic, .completeFileProtection])
+        #else
+        try data.write(to: url, options: [.atomic])
+        #endif
         // An atomic write replaces the file: re-apply exclusion every time.
         try CacheStoreProtection.apply(to: url)
     }
