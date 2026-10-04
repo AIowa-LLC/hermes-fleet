@@ -34,6 +34,9 @@ hf_private_dir() {
   if [ -z "$d" ]; then echo "FAIL: empty private directory path" >&2; return 1; fi
   if [ -L "$d" ]; then echo "FAIL: $d is a symlink; refusing to use it" >&2; return 1; fi
   if [ ! -e "$d" ]; then
+    # Missing parents are created as before (mkdir -p), but only the leaf is
+    # the private, validated directory.
+    mkdir -p "$(dirname "$d")" 2>/dev/null || true
     # Non-recursive and mode-atomic. Losing a creation race is fine: the
     # validation below then rejects anything that is not ours and private.
     (umask 077; mkdir -m 700 "$d") 2>/dev/null || true

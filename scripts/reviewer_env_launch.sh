@@ -376,6 +376,11 @@ do_clean() {
     # Only ever delete a directory that is verifiably ours (not a symlink,
     # not another user's, not world/group accessible).
     hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "REFUSING to purge $REVIEWER_ENV_DIR: not a private directory owned by this user"
+    # ...and only one this launcher created (holds its credentials file) or an
+    # empty one; never an arbitrary directory you happen to own.
+    if [ -n "$(ls -A "$REVIEWER_ENV_DIR" 2>/dev/null)" ] && [ ! -f "$CREDS_FILE" ]; then
+      die "REFUSING to purge $REVIEWER_ENV_DIR: not a reviewer state directory (no credentials file)"
+    fi
   fi
   do_stop
   if [ "${1:-}" = "--purge" ]; then

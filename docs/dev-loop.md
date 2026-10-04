@@ -175,7 +175,7 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 696 core, 629 networking, 62 persistence, and 49
+Package baselines are 696 core, 632 networking, 64 persistence, and 49
 security tests. These include the Live Ops runtime, cold-transport,
 cross-process reporting, structured ownership-refusal, and frozen-clock
 launch-cache TTL boundary regressions. Launch-cache fixtures use an injected

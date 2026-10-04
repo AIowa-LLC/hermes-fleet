@@ -51,6 +51,9 @@ final class PathScopedEndpointTests: XCTestCase {
         // An id containing a slash must stay ONE segment under the prefix.
         let encoded = try XCTUnwrap(DashboardCronClient.jobURL(base: scoped, id: "a/../b", profile: nil))
         XCTAssertTrue(encoded.absoluteString.hasPrefix("https://example.test/gw/api/cron/jobs/"))
+        // Raw (undecoded) path: the id adds exactly ONE segment under the prefix.
+        let rawSegments = encoded.absoluteString.dropFirst("https://example.test".count).split(separator: "/", omittingEmptySubsequences: false)
+        XCTAssertEqual(rawSegments.count, 6, "\(encoded.absoluteString)") // "", gw, api, cron, jobs, <id>
         XCTAssertFalse(encoded.path.hasPrefix("/api/"), "never escapes to the origin root")
         XCTAssertEqual(encoded.host, "example.test")
     }

@@ -246,10 +246,11 @@ public final class ArtifactImageStore {
         return state
     }
 
-    /// Resident bytes of a decoded image (4 bytes per pixel); 0 when not an image.
+    /// Resident bytes of a decoded image from its real row stride (covers
+    /// 16-bit and wide-gamut bitmaps); 0 when not an image.
     static func bitmapBytes(of image: UIImage?) -> Int {
         guard let cg = image?.cgImage else { return 0 }
-        return cg.width * cg.height * 4
+        return cg.bytesPerRow * cg.height
     }
 
     /// Payload plus decoded-bitmap bytes of every retained entry.
