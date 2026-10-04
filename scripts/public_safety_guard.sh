@@ -4,58 +4,77 @@
 # Fails when known classes of private/maintainer residue appear in the
 # TRACKED tree (git grep — generated build products are never tracked, so
 # they are naturally excluded):
-#   - personal email identities (gmail/icloud/hermes-fleet.local)
-#   - absolute maintainer home paths
-#   - physical-device / retired-simulator UDID prefixes
-#   - maintainer-owned production endpoints
-#   - real private LAN/tailnet addresses and private machine identifiers
+#   - personal email identities and agent commit identities
+#   - absolute home paths of a real user
+#   - physical-device UDIDs; tailnet/CGNAT addresses in the onboarding prompt
+#   - maintainer-specific values from a PRIVATE out-of-repo denylist
 #
-# SELF-MATCH AVOIDANCE: every detected string is CONSTRUCTED at runtime from
-# fragments, so this file's own source never contains the literals it
-# detects; the guard also excludes itself from the scan as belt-and-braces.
+# NO PRIVATE DATA IN THIS FILE. A denylist of the exact private values it
+# blocks would itself publish them (splitting the literals into fragments does
+# not hide them). This public file therefore carries only GENERIC residue
+# classes. Maintainer-specific values live in a private denylist outside the
+# repository, one extended-regex per line (blank lines and `#` comments ok):
+#   $HF_PUBLIC_SAFETY_DENYLIST_FILE, else
+#   ${XDG_CONFIG_HOME:-$HOME/.config}/hermes-fleet/public-safety-denylist.txt
+# Hosted CI can materialize the same file from a secret. Set
+# HF_PUBLIC_SAFETY_REQUIRE_PRIVATE=1 (release/RC runs) to FAIL when it is absent.
 set -u
 cd "$(dirname "$0")/.."
 GUARD_REL="scripts/public_safety_guard.sh"
 FAIL=0
 
-# --- Constructed residue patterns (never literal in this file) ---------------
-HOME_DIR="Users/""tonysimons"          # absolute maintainer home path
-GMAIL="gmail""\\.""com"                 # personal email domain
-ICLOUD="icloud""\\.""com"               # personal email domain
-ME_COM="""@me.""\\.""com"               # personal email domain
-AGENT_ID="hermes-fleet""\\.""local"     # local-only agent commit identity
-DEV_UDID="DB3922C1""-05FA"              # physical iPhone UDID prefix
-SIM_UDID="393F1335""-2DB1"              # retired simulator UDID prefix
-FLEET_HOST="fleet""\\.""tonysimons""\\.""dev"   # maintainer production endpoint
-LAN_A="192""\\.""168""\\.""4""\\."       # real LAN subnet
-TAIL_A="100""\\.""100""\\.""105""\\."    # real tailnet address
-TAIL_B="100""\\.""108""\\.""104""\\."    # real tailnet address
-ARCH_HOST="archlinux""-1"               # private machine hostname
-TS_TAILNET="taila00fdc"                 # real tailnet name fragment
-MAC_HOST="macbook""-m5"                 # maintainer workstation hostname
-PERSONAL_APPLE="asimons""1981"          # personal Apple ID local part
-KNOWN_LAN="192""\\.""168""\\.""50""\\.(37|58)" # retired operator LAN fixtures
-KNOWN_TAIL_A="100""\\.""100""\\.""200""\\.61" # retired operator tailnet fixture
-KNOWN_TAIL_B="100""\\.""127""\\.""200""\\.89" # retired operator tailnet fixture
-LIVE_TOKEN="sk""-live-"              # live-looking credential fixture
-QR_PASSWORD="7f3a""9c21""e8b0"       # retired QR credential fragment
-DESTRUCTIVE_FIXTURE="rm"" -rf /tmp/scratch" # destructive approval fixture
+# --- Generic residue classes (no private values) -------------------------------
+# Absolute home paths of a real user (placeholder accounts are allowed).
+HOME_PATH='/Users/[A-Za-z0-9._-]+/'
+HOME_ALLOWED='/Users/(dev|user|you|name|example|runner|Shared|me|someone|t)/'
+PERSONAL_EMAIL='@(gmail|googlemail|icloud|me|outlook|hotmail|yahoo)\.com'
+AGENT_ID='@hermes-fleet\.local'                     # local-only agent commit identity
+# Not scanned tree-wide (product code and tests legitimately use RFC 6598
+# fixtures); enforced only on the onboarding prompt below.
+CGNAT='(^|[^0-9.])100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}([^0-9]|$)' # tailnet/CGNAT address
+DEVICE_UDID='(^|[^0-9A-Fa-f-])[0-9A-F]{8}-[0-9A-F]{16}([^0-9A-Fa-f]|$)' # physical-device UDID form
+LIVE_TOKEN='sk-live-'                                # live-looking credential fixture
+DESTRUCTIVE_FIXTURE='rm -rf /tmp/scratch'            # destructive approval fixture
 
-# Keep concrete maintainer-specific patterns while allowing generic public
-# fixture hosts and RFC/private-range examples.
-PATTERN="${HOME_DIR}|${GMAIL}|${ICLOUD}|${ME_COM}|${AGENT_ID}|${DEV_UDID}|${SIM_UDID}|${FLEET_HOST}|${LAN_A}|${TAIL_A}|${TAIL_B}|${ARCH_HOST}|${TS_TAILNET}|${MAC_HOST}|${PERSONAL_APPLE}|${KNOWN_LAN}|${KNOWN_TAIL_A}|${KNOWN_TAIL_B}|${LIVE_TOKEN}|${QR_PASSWORD}|${DESTRUCTIVE_FIXTURE}"
+PATTERN="${PERSONAL_EMAIL}|${AGENT_ID}|${DEVICE_UDID}|${LIVE_TOKEN}|${DESTRUCTIVE_FIXTURE}"
+
+# --- Private, out-of-repo denylist ---------------------------------------------
+PRIVATE_FILE="${HF_PUBLIC_SAFETY_DENYLIST_FILE:-${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/hermes-fleet/public-safety-denylist.txt}"
+PRIVATE_PATTERN=""
+if [ -f "$PRIVATE_FILE" ]; then
+  PRIVATE_PATTERN=$(grep -v -E '^[[:space:]]*(#|$)' "$PRIVATE_FILE" | paste -sd'|' -)
+fi
 
 note() { printf '=== %s ===\n' "$1"; }
 
 # --- 1. tracked-tree scan ------------------------------------------------------
 note "tracked-tree residue scan"
+# Hit lines are NOT echoed in full for private-denylist matches: printing the
+# matched text would copy the private value into logs/CI output.
 HITS=$(git grep -n -I -E "$PATTERN" -- . ":!$GUARD_REL" 2>/dev/null || true)
-if [ -n "$HITS" ]; then
+HOME_HITS=$(git grep -n -I -E "$HOME_PATH" -- . ":!$GUARD_REL" 2>/dev/null | grep -v -E "$HOME_ALLOWED" || true)
+if [ -n "$HITS$HOME_HITS" ]; then
   echo "FAIL: private residue present in tracked files:"
-  echo "$HITS" | head -40
+  printf '%s\n%s\n' "$HITS" "$HOME_HITS" | grep -v '^$' | cut -d: -f1,2 | head -40
   FAIL=1
 else
-  echo "PASS: no known private residue in tracked tree"
+  echo "PASS: no generic private residue in tracked tree"
+fi
+
+if [ -n "$PRIVATE_PATTERN" ]; then
+  PRIVATE_HITS=$(git grep -n -I -E "$PRIVATE_PATTERN" -- . ":!$GUARD_REL" 2>/dev/null | cut -d: -f1,2 || true)
+  if [ -n "$PRIVATE_HITS" ]; then
+    echo "FAIL: private denylist matched in tracked files (file:line only):"
+    echo "$PRIVATE_HITS" | head -40
+    FAIL=1
+  else
+    echo "PASS: private denylist not matched in tracked tree"
+  fi
+elif [ "${HF_PUBLIC_SAFETY_REQUIRE_PRIVATE:-0}" = "1" ]; then
+  echo "FAIL: private denylist required but not found (set HF_PUBLIC_SAFETY_DENYLIST_FILE)"
+  FAIL=1
+else
+  echo "NOTE: no private denylist configured; generic checks only"
 fi
 
 # --- 1b. local/operator evidence must never be tracked ----------------------
@@ -84,7 +103,8 @@ fi
 note "onboarding prompt source hygiene"
 PROMPT="Packages/FleetUI/Sources/FleetUI/OnboardingPrompt.swift"
 if git ls-files --error-unmatch "$PROMPT" >/dev/null 2>&1; then
-  if git grep -q -E "$FLEET_HOST|${LAN_A}|${TAIL_A}|${TAIL_B}" -- "$PROMPT"; then
+  PROMPT_PATTERN="${CGNAT}${PRIVATE_PATTERN:+|$PRIVATE_PATTERN}"
+  if git grep -q -E "$PROMPT_PATTERN" -- "$PROMPT"; then
     echo "FAIL: OnboardingPrompt.swift references maintainer/private endpoints"
     FAIL=1
   else
