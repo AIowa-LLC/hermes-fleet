@@ -412,7 +412,7 @@ public struct DashboardCronClient: CronDashboardProviding, Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await urlSession.data(for: request)
+            (data, response) = try await urlSession.boundedData(for: request)
         } catch {
             // A cancelled load is not a transport failure: keep it a cancellation
             // so the model can tell it from a real outage.

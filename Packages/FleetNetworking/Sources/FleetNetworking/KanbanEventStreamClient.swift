@@ -141,7 +141,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw KanbanBoardError.malformedResponse("boards response too large")
         }
@@ -181,7 +181,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw KanbanBoardError.malformedResponse("board response too large")
         }

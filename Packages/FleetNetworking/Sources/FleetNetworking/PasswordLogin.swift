@@ -106,7 +106,7 @@ public struct PasswordLoginClient: Sendable {
 
         Self.log.info("password-login: GET /api/auth/providers (\(Redaction.redactedURL(self.baseURL), privacy: .private))")
         do {
-            let (data, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.boundedData(for: request)
             guard data.count <= AuthREST.maxResponseBytes else {
                 throw PasswordLoginError.malformedProvidersResponse
             }
@@ -153,7 +153,7 @@ public struct PasswordLoginClient: Sendable {
         AuthREST.bounded(&request)
 
         Self.log.info("password-login: POST /auth/password-login (\(Redaction.redactedURL(self.baseURL), privacy: .private))")
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw PasswordLoginError.malformedProvidersResponse
         }
