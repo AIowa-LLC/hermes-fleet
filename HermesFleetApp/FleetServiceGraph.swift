@@ -224,6 +224,7 @@ enum FleetServiceGraph {
             cache: cache,
             tlsPinStore: pinStore,
             tlsApprovalStore: pinStore,
+            tlsKeyProbe: TLSPresentedKeyProbe(),
             sessionList: sessionList,
             connectionFactory: makeConnectionFactory(
                 credentialStore: credentialStore, health: health, pinStore: pinStore),

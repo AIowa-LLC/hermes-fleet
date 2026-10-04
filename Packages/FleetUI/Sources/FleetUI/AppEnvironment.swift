@@ -449,6 +449,7 @@ public final class AppEnvironment {
     /// not need the UI re-pair surface and leave these nil.
     private let tlsPinStore: (any TLSPinStoring)?
     private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
+    private let tlsKeyProbe: (any TLSKeyProbing)?
     /// ADR-0012: the launch cache (last-good roster + session lists).
     /// Defaults to an in-memory store; the composition root injects the
     /// SwiftData-backed concrete. Structurally non-secret.
@@ -606,6 +607,7 @@ public final class AppEnvironment {
         cache: any CacheStoring,
         tlsPinStore: (any TLSPinStoring)? = nil,
         tlsApprovalStore: (any TLSFirstUseApprovalStoring)? = nil,
+        tlsKeyProbe: (any TLSKeyProbing)? = nil,
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
@@ -644,6 +646,7 @@ public final class AppEnvironment {
         self.cache = cache
         self.tlsPinStore = tlsPinStore
         self.tlsApprovalStore = tlsApprovalStore
+        self.tlsKeyProbe = tlsKeyProbe
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
@@ -2329,16 +2332,31 @@ public final class AppEnvironment {
     /// call (U2 add-gateway form). The credential is passed straight to the
     /// registry's Keychain-safe store — it is never held by the view layer
     /// or logged. `nil` credential → registration only.
+    ///
+    /// A secure (`https`) endpoint requires `tlsReview`: the fingerprint of the
+    /// key the endpoint actually presented, confirmed by the user for THIS
+    /// endpoint. The review is validated (same endpoint, not stale) BEFORE
+    /// anything is registered, and the first-use approval stored from it is
+    /// bound to that exact key, so a different key can never pin. The
+    /// credential is saved only after trust is recorded.
     public func addGateway(
         _ registration: GatewayRegistration,
         credential: GatewayCredential?,
-        confirmsTLSFirstUse: Bool = false
+        tlsReview: TLSKeyReview? = nil
     ) async throws -> FleetGateway {
+        let review = try Self.validatedReview(tlsReview, for: registration.endpoint, required: true)
         let gateway = try await registry.addGateway(registration)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
         conversationDrafts.allowWrites(gatewayID: gateway.id)
-        if confirmsTLSFirstUse {
-            try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
+        if let review {
+            do {
+                try await tlsApprovalStore?.approveFirstUse(for: gateway.id, boundTo: review.fingerprint)
+            } catch {
+                // Trust could not be recorded: do not leave a half-configured
+                // secure gateway behind.
+                try? await registry.removeGateway(gateway.id)
+                throw error
+            }
         }
         if let credential {
             try await registry.saveCredential(credential, for: gateway.id)
@@ -2347,11 +2365,72 @@ public final class AppEnvironment {
         return gateway
     }
 
+    private static func sameEndpoint(_ a: URL?, _ b: URL?) -> Bool {
+        func key(_ url: URL?) -> String? {
+            guard let url, let origin = try? GatewayEndpoint.normalizedOrigin(from: url) else { return nil }
+            var text = origin.absoluteString.lowercased()
+            if text.hasSuffix("/") { text.removeLast() }
+            return text
+        }
+        return key(a) != nil && key(a) == key(b)
+    }
+
+    /// The review to apply for `endpoint`: nil for a non-secure endpoint (no
+    /// TLS key to review). For `https` a missing, stale or mismatched review
+    /// throws; `required` makes a missing review an error.
+    private static func validatedReview(
+        _ review: TLSKeyReview?, for endpoint: URL?, required: Bool
+    ) throws -> TLSKeyReview? {
+        guard let endpoint, endpoint.scheme?.lowercased() == "https" else { return nil }
+        guard let review else {
+            if required { throw TLSKeyReviewError.required }
+            return nil
+        }
+        try review.validate(for: endpoint)
+        return review
+    }
+
+    /// Show the user the key a secure endpoint ACTUALLY presents. Nothing but a
+    /// TLS handshake is performed — no request, no credentials. The returned
+    /// review is bound to this endpoint and key and expires.
+    public func reviewTLSKey(for endpoint: URL) async throws -> TLSKeyReview {
+        let origin = try GatewayEndpoint.normalizedOrigin(from: endpoint)
+        guard origin.scheme?.lowercased() == "https", let tlsKeyProbe else {
+            throw TLSKeyReviewError.probeFailed
+        }
+        let fingerprint = try await tlsKeyProbe.presentedKey(for: origin)
+        return TLSKeyReview(endpoint: origin, fingerprint: fingerprint)
+    }
+
     /// Apply a partial edit to a gateway's display name / endpoint / auth
     /// config. Throws `.notFound` / `.invalidEndpoint` from the registry seam.
-    public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
+    ///
+    /// Trust belongs to an endpoint. When the endpoint changes, the stored pin
+    /// and any first-use approval are cleared, and a secure new endpoint needs
+    /// a fresh `tlsReview` (validated BEFORE the edit is applied). On an
+    /// unchanged secure endpoint a review is optional: it is how a gateway
+    /// whose trust was cleared is re-paired.
+    public func updateGateway(
+        _ id: GatewayID,
+        edits: GatewayEdit,
+        tlsReview: TLSKeyReview? = nil
+    ) async throws -> FleetGateway {
         let previous = gateways.first(where: { $0.id == id })
+        let endpointChanged: Bool = {
+            guard let new = edits.endpoint else { return false }
+            return !Self.sameEndpoint(previous?.endpoint, new)
+        }()
+        let review = try Self.validatedReview(
+            tlsReview, for: edits.endpoint ?? previous?.endpoint, required: endpointChanged)
         let gateway = try await registry.updateGateway(id, edits: edits)
+        if endpointChanged {
+            // A pin or approval for the OLD endpoint must never carry over.
+            try await tlsPinStore?.deletePin(for: id)
+            try await tlsApprovalStore?.resetFirstUseApproval(for: id)
+        }
+        if let review {
+            try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: review.fingerprint)
+        }
         if previous?.endpoint != gateway.endpoint
             || previous?.authConfiguration != gateway.authConfiguration {
             await gatewaySessionInvalidator?(id)
@@ -2612,23 +2691,17 @@ public final class AppEnvironment {
 
     // MARK: TLS trust lifecycle (T3)
 
-    /// Record the user's explicit decision to trust the first secure
-    /// certificate presented by a gateway. The transport will still pin the
-    /// presented SPKI only after this decision is present.
-    ///
-    /// Pass the fingerprint the user actually reviewed (`presentedPin`, from a
-    /// rejected first-use attempt) to bind the approval to that exact key; the
-    /// transport then refuses any other key. Without it the approval is an
-    /// unbound, single-use intent.
-    public func approveTLSFirstUse(for id: GatewayID, presentedPin: SPKIFingerprint? = nil) async throws {
-        guard gateways.contains(where: { $0.id == id }) else {
+    /// Record the user's confirmation of a reviewed key for an existing
+    /// gateway (re-pair after trust was cleared). The review must be for the
+    /// gateway's CURRENT endpoint and not stale; the approval is bound to that
+    /// exact key, so the transport pins only that key.
+    public func approveTLSFirstUse(for id: GatewayID, review: TLSKeyReview) async throws {
+        guard let gateway = gateways.first(where: { $0.id == id }) else {
             throw GatewayRegistryError.notFound(id)
         }
-        if let presentedPin {
-            try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: presentedPin)
-        } else {
-            try await tlsApprovalStore?.approveFirstUse(for: id)
-        }
+        guard let endpoint = gateway.endpoint else { throw TLSKeyReviewError.endpointChanged }
+        try review.validate(for: endpoint)
+        try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: review.fingerprint)
     }
 
     /// Clear both the stored SPKI and the first-use decision. The next secure
