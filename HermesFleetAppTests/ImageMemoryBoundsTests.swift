@@ -69,4 +69,31 @@ final class ImageMemoryBoundsTests: XCTestCase {
         XCTAssertNotNil(store.state(for: refs[1]))
         XCTAssertNotNil(store.state(for: refs[2]))
     }
+
+    // MARK: picker size cap before materialization
+
+    private func tempFile(bytes: Int) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bounded-\(UUID().uuidString).bin")
+        try Data(count: bytes).write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testBoundedFileReadsWithinLimit() throws {
+        let url = try tempFile(bytes: 100)
+        XCTAssertEqual(try BoundedPickedFile.read(url, limit: 100).count, 100)
+    }
+
+    func testBoundedFileRefusesOversizeWithoutReading() throws {
+        let url = try tempFile(bytes: 101)
+        XCTAssertThrowsError(try BoundedPickedFile.read(url, limit: 100)) { error in
+            XCTAssertEqual((error as? BoundedPickedFile.TooLarge)?.sizeBytes, 101)
+        }
+    }
+
+    func testBoundedFileSizeFailsClosedForMissingFile() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString)")
+        XCTAssertThrowsError(try BoundedPickedFile.size(of: url))
+    }
 }

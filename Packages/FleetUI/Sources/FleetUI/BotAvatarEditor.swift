@@ -62,8 +62,8 @@ struct BotAvatarEditor: View {
                 guard let item else { return }
                 Task {
                     do {
-                        guard let data = try await item.loadTransferable(type: Data.self) else { throw BotPortraitError.invalidImage }
-                        try stageNormalizedImage(data)
+                        guard let picked = try await item.loadTransferable(type: PickedAvatarData.self) else { throw BotPortraitError.invalidImage }
+                        try stageNormalizedImage(picked.data)
                     } catch { status = "Could not read the selected photo." }
                 }
             }
@@ -73,9 +73,10 @@ struct BotAvatarEditor: View {
                         let url = try result.get()
                         let scoped = url.startAccessingSecurityScopedResource()
                         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                        let size = try BoundedPickedFile.size(of: url)
                         guard BotAvatarImageNormalization.isInputSizeAllowed(size) else { throw BotPortraitError.invalidImage }
-                        try stageNormalizedImage(try Data(contentsOf: url))
+                        try stageNormalizedImage(
+                            try BoundedPickedFile.read(url, limit: BotAvatarImageNormalization.maxInputBytes))
                     } catch { status = "Could not read the selected image (maximum input size 20 MB)." }
                 }
             }
