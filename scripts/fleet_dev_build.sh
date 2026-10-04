@@ -51,7 +51,7 @@ if [ "$MODE" = simulator ] || [ "$MODE" = test ]; then
   if [ "$MODE" = test ]; then
     TEST_ARGS=("${ARGS[@]}")
     TEST_ARGS[3]=HermesFleetDevTests
-    xcodebuild "${TEST_ARGS[@]}" -showBuildSettings -json >"$OUT/test-settings.json" 2>"$OUT/test-settings.log"
+    xcodebuild "${TEST_ARGS[@]}" -showBuildSettings -json test >"$OUT/test-settings.json" 2>"$OUT/test-settings.log"
     python3 scripts/fleet_dev_guard.py --test-settings "$OUT/test-settings.json" --build "$BUILD" --artifact-sha "$SHA"
     xcodebuild "${TEST_ARGS[@]}" -parallel-testing-enabled NO -test-iterations 1       -resultBundlePath "$OUT/Tests.xcresult" test >"$OUT/test.log" 2>&1
     xcrun xcresulttool get test-results summary --path "$OUT/Tests.xcresult" >"$OUT/summary.json"
