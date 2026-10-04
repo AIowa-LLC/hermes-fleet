@@ -33,8 +33,15 @@ final class SecondGenerationUITests: XCTestCase {
         session.tap()
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15) || app.textViews["fleet.conversation.composer"].exists)
         let composer = app.textFields["fleet.conversation.composer"].exists ? app.textFields["fleet.conversation.composer"] : app.textViews["fleet.conversation.composer"]
+        // The first tap can miss focus while the canvas is settling.
+        // Use one bounded fallback, then verify the actual input value.
         composer.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            composer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         composer.typeText("Show the timeline")
+        XCTAssertEqual(composer.value as? String, "Show the timeline",
+                       "the routed conversation composer should contain the prompt")
         app.buttons["fleet.conversation.send"].tap()
         capture("revamp-conversation")
         // Compaction round 2: the timeline affordance lives in the ⋯
