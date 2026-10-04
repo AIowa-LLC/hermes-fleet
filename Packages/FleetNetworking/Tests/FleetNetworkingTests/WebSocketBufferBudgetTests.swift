@@ -501,4 +501,14 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         let released = await waitUntil { fanOut.subscriberCount == 0 }
         XCTAssertTrue(released, "an abandoned, never-iterated stream must not stay registered")
     }
+
+    func testMessageTooLargeDetectionCoversTopLevelAndNestedErrors() {
+        XCTAssertTrue(GatewayWebSocketTransport.isMessageTooLarge(NSError(domain: NSPOSIXErrorDomain, code: 40)))
+        XCTAssertTrue(GatewayWebSocketTransport.isMessageTooLarge(URLError(.dataLengthExceedsMaximum)))
+        let nested = NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost,
+                             userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: 40)])
+        XCTAssertTrue(GatewayWebSocketTransport.isMessageTooLarge(nested))
+        XCTAssertFalse(GatewayWebSocketTransport.isMessageTooLarge(NSError(domain: NSPOSIXErrorDomain, code: 57)))
+        XCTAssertFalse(GatewayWebSocketTransport.isMessageTooLarge(URLError(.timedOut)))
+    }
 }

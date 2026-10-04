@@ -1115,6 +1115,20 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
     // MARK: teardown
 
+    /// EMSGSIZE (POSIX 40), URLError.dataLengthExceedsMaximum (-1103), at the
+    /// top level or nested as an underlying error.
+    nonisolated static func isMessageTooLarge(_ error: any Error) -> Bool {
+        var current: NSError? = error as NSError
+        var depth = 0
+        while let e = current, depth < 4 {
+            if (e.domain == NSPOSIXErrorDomain && e.code == 40)
+                || (e.domain == NSURLErrorDomain && e.code == NSURLErrorDataLengthExceedsMaximum) { return true }
+            current = e.userInfo[NSUnderlyingErrorKey] as? NSError
+            depth += 1
+        }
+        return false
+    }
+
     private func handleReceiveFailure(_ error: any Error, for failedSession: any WebSocketSession) async {
         // Ignore a failure from a session that is no longer current — the
         // reconnect already replaced it and its own loop owns teardown (P4).
@@ -1141,8 +1155,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         // observed) or close code 1009. The refused message's session is
         // unknown, and a session with no watermark yet is not covered by
         // `events.since`, so mark every session possibly incomplete.
-        let nsError = error as NSError
-        if code == 40 || code == 1009 || (nsError.domain == NSPOSIXErrorDomain && nsError.code == 40) {
+        if code == 40 || code == 1009 || Self.isMessageTooLarge(error) {
             markIncomplete(nil, reason: .oversizedFrame)
         }
         if let code {
