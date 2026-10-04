@@ -33,8 +33,15 @@ final class SecondGenerationUITests: XCTestCase {
         session.tap()
         XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15) || app.textViews["fleet.conversation.composer"].exists)
         let composer = app.textFields["fleet.conversation.composer"].exists ? app.textFields["fleet.conversation.composer"] : app.textViews["fleet.conversation.composer"]
+        // The first tap can miss focus while the canvas is settling.
+        // Use one bounded fallback, then verify the actual input value.
         composer.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
+            composer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         composer.typeText("Show the timeline")
+        XCTAssertEqual(composer.value as? String, "Show the timeline",
+                       "the routed conversation composer should contain the prompt")
         app.buttons["fleet.conversation.send"].tap()
         capture("revamp-conversation")
         // Compaction round 2: the timeline affordance lives in the ⋯
@@ -57,6 +64,14 @@ final class SecondGenerationUITests: XCTestCase {
         let app = launch()
         // Projects beneath the workstation cockpit (explicit scope).
         UITabNavigation.openScopedPane(app, resource: "projects", profile: "default")
+        // The scoped shell can render while the asynchronous tree is loading.
+        // Wait only while that visible loading state exists; a missing or
+        // incorrect project still fails the exact row assertion below.
+        let loading = app.staticTexts["Mapping projects…"].firstMatch
+        if loading.exists {
+            XCTAssertTrue(loading.waitForNonExistence(timeout: 60),
+                          "scoped Projects should finish mapping its tree")
+        }
         XCTAssertTrue(firstMatchOrNil(app, "fleet.projects.row.proj-fleet").waitForExistence(timeout: 15))
         capture("revamp-projects-scoped")
         // Command Center (global launcher) unchanged — it lives on the

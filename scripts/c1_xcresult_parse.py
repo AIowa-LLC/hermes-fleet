@@ -104,7 +104,11 @@ def single_clean_attempt(node: dict[str, Any]) -> bool:
         return False
     for child in walk(node.get("children", [])):
         kind = str(child.get("nodeType", "")).lower()
-        if "run" in kind or "repetition" in kind or "iteration" in kind:
+        # Xcode's Runtime Warning node is metadata, not another test run.
+        # Its result and descendants still undergo the checks below.
+        if kind != "runtime warning" and (
+            "run" in kind or "repetition" in kind or "iteration" in kind
+        ):
             return False
         if "result" in child and child["result"] not in PASS_RESULTS:
             return False

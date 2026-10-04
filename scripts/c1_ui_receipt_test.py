@@ -259,8 +259,30 @@ class FreshFallbackContracts(unittest.TestCase):
             self.assertEqual(records,{'RetryProbe':{'testRecovered()':['Failed','Passed']}})
             self.assertFalse(clean)
 
+    def test_runtime_warning_metadata_preserves_one_clean_attempt(self):
+        # Synthetic form of Xcode's passed case with runtime-warning metadata.
+        # The warning is retained in the result; it is not a repeated run.
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'HermesFleetAppUITests').mkdir()
+            (root/'HermesFleetAppUITests/ExampleUITests.swift').write_text(
+                'final class ExampleUITests {\n func testOne() {}\n}\n')
+            (root/'Example.summary.json').write_text(json.dumps({'result':'Passed','totalTestCount':1}))
+            (root/'Example.tests.json').write_text(json.dumps({'testNodes':[{
+                'nodeType':'Test Case','nodeIdentifier':'ExampleUITests/testOne()',
+                'name':'testOne()','result':'Passed','children':[
+                    {'nodeType':'Runtime Warning','name':'Multiple Runtime Warnings'}]}]}))
+            with patch.object(receipt,'ROOT',root):
+                records,clean=receipt.result_cases(root,['Example'])
+            self.assertEqual(records,{'Example':{'testOne()':['Passed']}})
+            self.assertTrue(clean)
+
     def test_run_children_nonpass_descendants_and_recovered_verdict_are_not_clean(self):
         for child in ({'nodeType':'Test Case Run','result':'Passed'},
+                      {'nodeType':'Runtime Run','result':'Passed'},
+                      {'nodeType':'Runtime Warning','result':'Failed'},
+                      {'nodeType':'Runtime Warning','result':'Skipped'},
+                      {'nodeType':'Runtime Warning','children':[
+                          {'nodeType':'Test Case Run','result':'Passed'}]},
                       {'nodeType':'Unknown Status','result':'Failed'},
                       {'nodeType':'Unknown Status','result':'Skipped'}):
             with self.subTest(child=child),tempfile.TemporaryDirectory() as directory:

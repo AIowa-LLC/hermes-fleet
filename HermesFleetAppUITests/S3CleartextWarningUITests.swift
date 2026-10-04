@@ -31,10 +31,8 @@ final class S3CleartextWarningUITests: XCTestCase {
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        focus(nameField, in: app)
-        nameField.typeText("Public Gateway")
-        focus(endpointField, in: app)
-        endpointField.typeText("http://gateway.example.com:9120")
+        enter("Public Gateway", into: nameField, in: app)
+        enter("http://gateway.example.com:9120", into: endpointField, in: app)
 
         // Prominent warning must appear for a public http host.
         let warning = firstMatch(in: app, identifier: "fleet.gateways.form.cleartext-warning")
@@ -90,10 +88,8 @@ final class S3CleartextWarningUITests: XCTestCase {
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        focus(nameField, in: app)
-        nameField.typeText("LAN Gateway")
-        focus(endpointField, in: app)
-        endpointField.typeText("http://10.0.0.37:9120")
+        enter("LAN Gateway", into: nameField, in: app)
+        enter("http://10.0.0.37:9120", into: endpointField, in: app)
 
         // No warning for an RFC1918 private host; Save enabled immediately.
         let warning = firstMatch(in: app, identifier: "fleet.gateways.form.cleartext-warning")
@@ -119,10 +115,8 @@ final class S3CleartextWarningUITests: XCTestCase {
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
-        focus(nameField, in: app)
-        nameField.typeText("Local Gateway")
-        focus(endpointField, in: app)
-        endpointField.typeText("http://127.0.0.1:8642")
+        enter("Local Gateway", into: nameField, in: app)
+        enter("http://127.0.0.1:8642", into: endpointField, in: app)
 
         let warning = firstMatch(in: app, identifier: "fleet.gateways.form.cleartext-warning")
         XCTAssertFalse(warning.waitForExistence(timeout: 2),
@@ -158,16 +152,17 @@ final class S3CleartextWarningUITests: XCTestCase {
         element.tap()
     }
 
-    /// Hosted runners can expose a visible field before the first tap has
-    /// transferred keyboard focus. Confirm the keyboard is active before
-    /// typing, with one coordinate fallback for SwiftUI text fields.
-    private func focus(_ field: XCUIElement, in app: XCUIApplication) {
+    /// A focused field can accept input without exposing a software keyboard.
+    /// Keep one focus fallback, then verify the actual value used by the
+    /// warning and Save gate. A missed focus or failed input still fails.
+    private func enter(_ text: String, into field: XCUIElement, in app: XCUIApplication) {
         field.tap()
         let keyboard = app.keyboards.firstMatch
         if !keyboard.waitForExistence(timeout: 2) {
             field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "text field should receive keyboard focus")
+        field.typeText(text)
+        XCTAssertEqual(field.value as? String, text, "gateway field should retain the typed input")
     }
 
     @discardableResult
