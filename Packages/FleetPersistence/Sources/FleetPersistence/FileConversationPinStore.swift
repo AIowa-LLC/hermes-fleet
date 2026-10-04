@@ -81,8 +81,12 @@ public actor FileConversationPinStore: ConversationPinStoring {
         }
         // Never overwrite pins already in the protected file with legacy ones.
         if !FileManager.default.fileExists(atPath: url.path) {
-            let pins = try JSONDecoder().decode([FleetConversationPin].self, from: legacy)
-            try write(pins)
+            // An undecodable legacy blob can never become a pin; keeping it
+            // would break every load and save forever, and it is plaintext.
+            // Drop it. Write failures still throw and keep the legacy copy.
+            if let pins = try? JSONDecoder().decode([FleetConversationPin].self, from: legacy) {
+                try write(pins)
+            }
         }
         defaults.removeObject(forKey: UserDefaultsConversationPinStore.storageKey)
         migrated = true

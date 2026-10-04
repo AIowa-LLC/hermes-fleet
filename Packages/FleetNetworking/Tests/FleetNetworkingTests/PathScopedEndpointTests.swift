@@ -37,4 +37,21 @@ final class PathScopedEndpointTests: XCTestCase {
                 base: scoped, since: 0, authentication: .none)).path,
             "/gw/api/plugins/kanban/events")
     }
+
+    func testCronURLsKeepPrefixAndEncodeIdsInsideIt() throws {
+        for base in [scoped, scopedSlash] {
+            XCTAssertEqual(try XCTUnwrap(DashboardCronClient.jobsURL(base: base, profile: "p")).path, "/gw/api/cron/jobs")
+            XCTAssertEqual(try XCTUnwrap(DashboardCronClient.jobURL(base: base, id: "j1", profile: nil)).path, "/gw/api/cron/jobs/j1")
+            XCTAssertEqual(try XCTUnwrap(DashboardCronClient.jobActionURL(base: base, id: "j1", action: "pause", profile: nil)).path,
+                           "/gw/api/cron/jobs/j1/pause")
+            XCTAssertEqual(try XCTUnwrap(DashboardCronClient.runsURL(base: base, id: "j1", profile: nil, limit: 5)).path,
+                           "/gw/api/cron/jobs/j1/runs")
+            XCTAssertEqual(try XCTUnwrap(DashboardCronClient.deliveryTargetsURL(base: base)).path, "/gw/api/cron/delivery-targets")
+        }
+        // An id containing a slash must stay ONE segment under the prefix.
+        let encoded = try XCTUnwrap(DashboardCronClient.jobURL(base: scoped, id: "a/../b", profile: nil))
+        XCTAssertTrue(encoded.absoluteString.hasPrefix("https://example.test/gw/api/cron/jobs/"))
+        XCTAssertFalse(encoded.path.hasPrefix("/api/"), "never escapes to the origin root")
+        XCTAssertEqual(encoded.host, "example.test")
+    }
 }

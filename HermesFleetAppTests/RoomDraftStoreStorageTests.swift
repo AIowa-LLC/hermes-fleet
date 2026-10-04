@@ -56,4 +56,17 @@ final class RoomDraftStoreStorageTests: XCTestCase {
         RoomDraftStore.save(String(repeating: "x", count: RoomDraftStore.maxCharacters + 500), for: room)
         XCTAssertEqual(RoomDraftStore.load(for: room).count, RoomDraftStore.maxCharacters)
     }
+
+    func testFailedProtectedWriteKeepsLegacyPlaintextUntilDurable() {
+        let legacyKey = "fleet.room.draft.v1." + room.storageKey
+        UserDefaults.standard.set("old plaintext draft", forKey: legacyKey)
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: legacyKey) }
+        // Parent directory missing: the protected write cannot succeed.
+        RoomDraftStore.useStoreURLForTesting(FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString)").appendingPathComponent("drafts.json"))
+
+        XCTAssertEqual(RoomDraftStore.load(for: room), "old plaintext draft", "draft is still usable in memory")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: legacyKey), "old plaintext draft",
+                       "legacy copy must remain until a durable protected copy exists")
+    }
 }

@@ -754,8 +754,9 @@ enum RoomDraftStore {
         // Only delete the plaintext copies once the protected copy is durable
         // (or there was nothing to migrate).
         if migrated {
-            writeNow()
-            guard !persistenceBlocked, FileManager.default.fileExists(atPath: fileURL.path) else { return }
+            // The plaintext is removed only if THIS write succeeded: an
+            // existing-but-stale file must not be mistaken for a durable copy.
+            guard writeNow() else { return }
         }
         if !persistenceBlocked { removeLegacyKeys(from: defaults) }
     }
@@ -784,12 +785,19 @@ enum RoomDraftStore {
         }
     }
 
-    private static func writeNow() {
-        guard !persistenceBlocked else { return }
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+    /// True only when the drafts are durably on disk.
+    @discardableResult
+    private static func writeNow() -> Bool {
+        guard !persistenceBlocked else { return false }
+        guard let data = try? JSONEncoder().encode(entries) else { return false }
+        do {
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        } catch {
+            return false
+        }
         // An atomic write replaces the file: re-apply backup exclusion each time.
         try? CacheStoreProtection.apply(to: fileURL)
+        return true
     }
 }
 
@@ -855,6 +863,7 @@ private struct RoomComposerFramePreferenceKey: PreferenceKey {
 /// mono metadata — no generic grouped Forms.
 public struct RoomChatView: View {
     @Environment(\.fleetTheme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel: RoomChatViewModel
     private let environment: AppEnvironment
     @State private var draft = ""
@@ -953,6 +962,12 @@ public struct RoomChatView: View {
             .onChange(of: draft) { _, value in
                 RoomDraftStore.save(value, for: viewModel.room.id)
             }
+            .onChange(of: scenePhase) { _, phase in
+                // The debounced write must not be lost when the app is
+                // backgrounded or about to be terminated.
+                if phase != .active { RoomDraftStore.flush() }
+            }
+            .onDisappear { RoomDraftStore.flush() }
             .task {
                 await viewModel.start()
                 // FOS-4 (SPEC §7/§17): the room's open resolved and its scoped

@@ -70,6 +70,23 @@ final class ImageMemoryBoundsTests: XCTestCase {
         XCTAssertNotNil(store.state(for: refs[2]))
     }
 
+    func testAggregateCapCountsDecodedBitmapsNotOnlyCompressedBytes() async {
+        // A solid-colour PNG is tiny on the wire but ~64 MB once decoded.
+        let png = Self.png(width: 4000, height: 4000)
+        XCTAssertLessThan(png.count, ArtifactImageStore.maxLoadedBytes / 16,
+                          "fixture must be small compressed so only decoded bytes can trip the cap")
+        let store = ArtifactImageStore()
+        let retriever = Retriever(gatewayID: gateway, data: png)
+        let refs = (0..<4).map {
+            ArtifactReference(gatewayID: gateway, sessionID: "s", profile: "default", path: "/x/\($0).png")
+        }
+        for ref in refs { _ = await store.load(ref, using: retriever) }
+        XCTAssertLessThanOrEqual(store.loadedByteCount, ArtifactImageStore.maxLoadedBytes,
+                                 "retained payload + decoded bitmap bytes stay under the cap")
+        XCTAssertNil(store.state(for: refs[0]), "oldest entries are evicted by decoded size")
+        XCTAssertNotNil(store.state(for: refs[3]))
+    }
+
     // MARK: picker size cap before materialization
 
     private func tempFile(bytes: Int) throws -> URL {

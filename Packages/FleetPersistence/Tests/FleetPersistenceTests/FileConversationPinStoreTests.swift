@@ -65,4 +65,31 @@ final class FileConversationPinStoreTests: XCTestCase {
         let pins = try await FileConversationPinStore(url: url, legacy: .suite(suite)).loadPins()
         XCTAssertTrue(pins.isEmpty)
     }
+
+    func testCorruptLegacyBlobIsDroppedAndDoesNotBreakTheStore() async throws {
+        defaults.set(Data("not-json".utf8), forKey: UserDefaultsConversationPinStore.storageKey)
+        let store = FileConversationPinStore(url: url, legacy: .suite(suite))
+
+        let pins = try await store.loadPins()
+
+        XCTAssertTrue(pins.isEmpty)
+        XCTAssertNil(defaults.data(forKey: UserDefaultsConversationPinStore.storageKey),
+                     "an unusable plaintext blob must not linger or wedge the store")
+        try await store.savePins([pin("fresh")])
+        let reloaded = try await FileConversationPinStore(url: url, legacy: .suite(suite)).loadPins()
+        XCTAssertEqual(reloaded, [pin("fresh")])
+    }
+
+    func testFailedProtectedWriteKeepsLegacyCopy() async throws {
+        defaults.set(try JSONEncoder().encode([pin("old")]), forKey: UserDefaultsConversationPinStore.storageKey)
+        // The parent directory does not exist, so the protected write fails.
+        let unwritable = url.deletingLastPathComponent()
+            .appendingPathComponent("missing-\(UUID().uuidString)").appendingPathComponent("pins.json")
+        let store = FileConversationPinStore(url: unwritable, legacy: .suite(suite))
+
+        do { _ = try await store.loadPins(); XCTFail("expected the failed write to surface") } catch {}
+
+        XCTAssertNotNil(defaults.data(forKey: UserDefaultsConversationPinStore.storageKey),
+                        "legacy data must survive until the protected copy is durable")
+    }
 }

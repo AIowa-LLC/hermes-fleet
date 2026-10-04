@@ -42,9 +42,10 @@ public final class ArtifactImageStore {
     /// How many retrieved payloads are retained in memory at once.
     public static let maxLoadedPayloads = 16
 
-    /// Aggregate cap on retained payload bytes. The per-artifact cap times
-    /// `maxLoadedPayloads` would otherwise allow hundreds of MB; oldest
-    /// payloads are evicted until the new one fits.
+    /// Aggregate cap on retained memory: payload bytes PLUS the decoded
+    /// bitmap of each entry (a few-hundred-KB solid-colour PNG can expand to a
+    /// ~64 MB bitmap, so counting compressed bytes alone would not bound
+    /// memory). Oldest entries are evicted until the new one fits.
     public static let maxLoadedBytes = 96 * 1024 * 1024
 
     public private(set) var states: [ArtifactReference: State] = [:]
@@ -228,11 +229,11 @@ public final class ArtifactImageStore {
     private func store(_ state: State, for reference: ArtifactReference) {
         switch state {
         case .loaded(let payload):
-            evictIfNeeded(beforeInserting: reference, incomingBytes: payload.byteCount)
+            let image = BoundedImageDecoder.decode(payload.data)
+            evictIfNeeded(beforeInserting: reference,
+                          incomingBytes: payload.byteCount + Self.bitmapBytes(of: image))
             states[reference] = .loaded(payload)
-            if let image = BoundedImageDecoder.decode(payload.data) {
-                decoded[reference] = image
-            }
+            if let image { decoded[reference] = image }
             loadedOrder.removeAll { $0 == reference }
             loadedOrder.append(reference)
         case .loading, .failed:
@@ -245,9 +246,18 @@ public final class ArtifactImageStore {
         return state
     }
 
-    private var loadedByteCount: Int {
+    /// Resident bytes of a decoded image (4 bytes per pixel); 0 when not an image.
+    static func bitmapBytes(of image: UIImage?) -> Int {
+        guard let cg = image?.cgImage else { return 0 }
+        return cg.width * cg.height * 4
+    }
+
+    /// Payload plus decoded-bitmap bytes of every retained entry.
+    var loadedByteCount: Int {
         loadedOrder.reduce(0) { total, ref in
-            if case .loaded(let payload) = states[ref] { return total + payload.byteCount }
+            if case .loaded(let payload) = states[ref] {
+                return total + payload.byteCount + Self.bitmapBytes(of: decoded[ref])
+            }
             return total
         }
     }
