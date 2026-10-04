@@ -464,6 +464,7 @@ public final class ConversationViewModel {
     nonisolated(unsafe) private var gapTask: Task<Void, Never>?
     nonisolated(unsafe) private var gapRecoveryTask: Task<Void, Never>?
     @ObservationIgnored private var gapRecoveryPending = false
+    @ObservationIgnored private var gapGeneration = 0
     /// Rate limit for automatic recovery (retry-storm guard).
     @ObservationIgnored var gapGovernor = GapRecoveryGovernor()
     /// Injectable time/sleep so tests drive recovery deterministically.
@@ -2160,12 +2161,20 @@ public final class ConversationViewModel {
 
     // MARK: Stream-gap recovery (bounded, never silent)
 
+    /// Flag the transcript incomplete. The generation fences "recovered": a
+    /// refetch that STARTED before this gap can never clear the flag.
+    @MainActor
+    private func markHistoryGap() {
+        gapGeneration += 1
+        historyMayBeIncomplete = true
+        integrityNotice = "Some live updates were skipped — refreshing history."
+    }
+
     @MainActor
     func handleStreamGap(_ gap: EventGap) {
         guard let sid = openedSessionID else { return }
         if let gapSession = gap.sessionID, gapSession != sid { return }
-        historyMayBeIncomplete = true
-        integrityNotice = "Some live updates were skipped — refreshing history."
+        markHistoryGap()
         scheduleGapRecovery()
     }
 
@@ -2193,13 +2202,20 @@ public final class ConversationViewModel {
             switch decision {
             case .recoverNow:
                 guard let sid = openedSessionID else { return }
-                await refetchAuthoritativeHistory(sessionID: sid)
-                if historyLoadError == nil {
-                    historyMayBeIncomplete = false
-                    integrityNotice = "Skipped live updates were recovered — history refreshed."
-                } else {
-                    integrityNotice = "History may be incomplete — refresh failed. Reopen the conversation to retry."
+                // A history swap mid-turn would wipe the in-flight assistant
+                // row, so wait (bounded) for the turn to settle first.
+                var waits = 0
+                while isStreaming, waits < 120, !Task.isCancelled {
+                    await gapSleep(0.5)
+                    waits += 1
                 }
+                await refetchAuthoritativeHistory(sessionID: sid)
+                if historyLoadError != nil {
+                    integrityNotice = "History may be incomplete — refresh failed. Reopen the conversation to retry."
+                } else if !historyMayBeIncomplete {
+                    integrityNotice = "Skipped live updates were recovered — history refreshed."
+                }
+                // else: a newer gap arrived meanwhile; its pass is pending.
             case .suppressed:
                 integrityNotice = "History may be incomplete — updates were skipped faster than they could be recovered. Reopen the conversation to refresh."
                 return
@@ -2236,15 +2252,21 @@ public final class ConversationViewModel {
             switch gapGovernor.request(at: gapClock()) {
             case .recoverNow:
                 Task { await recoverGap(after: after, before: before, triggering: event) }
+                // Do NOT apply the triggering event yet — recovery re-applies
+                // it in order (it will be contiguous then). If recovery fails,
+                // the unrecoverable path refetches authoritative history.
+                return
             case .deferUntil, .suppressed:
-                historyMayBeIncomplete = true
-                integrityNotice = "Some live updates were skipped — refreshing history."
+                // Recovery is rate-limited. Freezing the stream until it runs
+                // would drop every later event against a stale cursor, so the
+                // live tail keeps rendering (cursor advances past the hole)
+                // while the transcript is flagged incomplete and ONE coalesced
+                // history refetch is scheduled.
+                markHistoryGap()
                 scheduleGapRecovery()
+                applyRendered(event)
+                return
             }
-            // Do NOT apply the triggering event yet — recovery re-applies it
-            // in order (it will be contiguous then). If recovery fails, the
-            // unrecoverable path refetches authoritative history instead.
-            return
         case .contiguous, .unknown:
             break
         }
@@ -2331,6 +2353,7 @@ public final class ConversationViewModel {
     /// behavior for unfenced callers.
     private func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async {
         let transcriptRevisionAtRequest = transcriptMutationRevision
+        let gapGenerationAtRequest = gapGeneration
         // H1: a failed fetch must NEVER wipe the transcript. Cached/projection
         // rows stay rendered, an honest non-secret error surfaces, and the
         // placeholder stays armed only if nothing ever landed (still loading,
@@ -2352,7 +2375,7 @@ public final class ConversationViewModel {
                 // Authoritative empty (session.history always carries the
                 // persisted rows) — the session genuinely has no messages.
                 allRows = []
-                historyMayBeIncomplete = false
+                if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
                 hydratedFromCache = false
                 isHistoryHydrationInProgress = false
                 historyLoadError = nil
@@ -2374,7 +2397,7 @@ public final class ConversationViewModel {
                 allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
             }
             adoptHistoryReactions(into: allRows, from: history.messages)
-            historyMayBeIncomplete = false
+            if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
             historyLoadError = nil

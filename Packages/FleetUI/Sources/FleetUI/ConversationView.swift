@@ -1002,7 +1002,8 @@ enum ConversationHeaderChips {
             replayNotice: model.replayNotice,
             hydratedFromCache: model.hydratedFromCache,
             historyLoadError: model.historyLoadError,
-            errorMessage: model.errorMessage
+            errorMessage: model.errorMessage,
+            historyMayBeIncomplete: model.historyMayBeIncomplete
         ) {
             HStack(spacing: 12) {
                 bannerBody(banner)

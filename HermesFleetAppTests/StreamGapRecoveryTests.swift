@@ -27,7 +27,10 @@ final class StreamGapRecoveryTests: XCTestCase {
         let gapStream: AsyncStream<EventGap>
         let gapContinuation: AsyncStream<EventGap>.Continuation
 
-        init() { (gapStream, gapContinuation) = AsyncStream<EventGap>.makeStream() }
+        init() {
+            (gapStream, gapContinuation) = AsyncStream<EventGap>.makeStream()
+            (eventStream, eventContinuation) = AsyncStream<ConversationEvent>.makeStream()
+        }
 
         var historyFetches: Int { lock.withLock { _historyFetches } }
         var failHistory: Bool {
@@ -57,7 +60,9 @@ final class StreamGapRecoveryTests: XCTestCase {
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission { PromptSubmission(status: "streaming") }
         func interrupt(sessionID: String) async throws -> InterruptResult { InterruptResult(status: "ok") }
         func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
-        var events: AsyncStream<ConversationEvent> { AsyncStream { _ in } }
+        let eventStream: AsyncStream<ConversationEvent>
+        let eventContinuation: AsyncStream<ConversationEvent>.Continuation
+        var events: AsyncStream<ConversationEvent> { eventStream }
 
         func watermarks() async -> [SessionEventWatermark] { [] }
         func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
@@ -84,6 +89,7 @@ final class StreamGapRecoveryTests: XCTestCase {
         viewModel.gapClock = { clock.now }
         viewModel.gapSleep = { seconds in clock.advance(seconds) } // instant, but time passes
         await viewModel.start()
+        try await Task.sleep(for: .milliseconds(400)) // let open-time hydration settle before baselines
         return (session, viewModel)
     }
 
@@ -169,5 +175,36 @@ final class StreamGapRecoveryTests: XCTestCase {
         XCTAssertLessThanOrEqual(fetches, 12)
         XCTAssertLessThanOrEqual(model.gapGovernor.attemptsInWindow(at: clock.now),
                                  model.gapGovernor.policy.maxRecoveriesPerWindow)
+    }
+
+    func testSuppressedRecoveryNeverFreezesTheLiveStream() async throws {
+        let clock = FakeClock()
+        let (session, model) = try await makeFixture(clock: clock)
+        session.failHistory = true
+        // Exhaust the governor: four recoveries already spent inside the window.
+        var governor = model.gapGovernor
+        for offset in [100.0, 70, 40, 10] { _ = governor.request(at: clock.now - offset) }
+        model.gapGovernor = governor
+        XCTAssertEqual(governor.attemptsInWindow(at: clock.now), 4)
+
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "A", rendered: nil, seq: 1))
+        _ = await waitUntil { model.transcript.contains { $0.text.contains("A") } }
+        // A hole (seq 2-4 never arrive) while recovery is suppressed.
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "B", rendered: nil, seq: 5))
+        let rendered = await waitUntil { model.transcript.contains { $0.text.contains("B") } }
+        XCTAssertTrue(rendered, "the live tail must keep rendering, not drop against a stale cursor")
+        XCTAssertTrue(model.historyMayBeIncomplete, "the hole is visible as an incomplete transcript")
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "C", rendered: nil, seq: 6))
+        let tail = await waitUntil { model.transcript.contains { $0.text.contains("C") } }
+        XCTAssertTrue(tail, "subsequent events stay contiguous after the hole")
+    }
+
+    func testAnOlderRefetchCannotClearAFlagRaisedByANewerGap() async throws {
+        let (session, model) = try await makeFixture(clock: FakeClock())
+        let baseline = session.historyFetches
+        session.gapContinuation.yield(EventGap(sessionID: "s1", reason: .subscriberOverflow))
+        session.gapContinuation.yield(EventGap(sessionID: "s1", reason: .subscriberOverflow))
+        let done = await waitUntil { session.historyFetches >= baseline + 2 && !model.historyMayBeIncomplete }
+        XCTAssertTrue(done, "after the last gap's own refetch the flag clears")
     }
 }

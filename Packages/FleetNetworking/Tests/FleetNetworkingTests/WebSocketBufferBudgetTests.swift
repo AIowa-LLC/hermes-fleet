@@ -172,7 +172,8 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         collector.task = Task { for await g in gapStream { collector.add(g) } }
         let fanOut = BoundedFanOut<Int>(maxAggregateBytes: 1 << 30) { gaps.publish($0) }
         let fast = fanOut.makeStream(maxCount: 100, maxBytes: 10_000)
-        _ = fanOut.makeStream(maxCount: 5, maxBytes: 10_000) // slow: never iterated
+        let slow = fanOut.makeStream(maxCount: 5, maxBytes: 10_000) // slow: held but never iterated
+        defer { withExtendedLifetime(slow) {} }
         let received = Task { () -> [Int] in
             var out: [Int] = []
             for await v in fast { out.append(v); if out.count == 50 { break } }
@@ -213,7 +214,8 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         let socket = ScriptedSession()
         let transport = makeTransport(socket)
         let gaps = collectGaps(transport)
-        _ = transport.subscribeToEvents() // slow consumer: created, never iterated
+        let slow = transport.subscribeToEvents() // slow consumer: held, never iterated
+        defer { withExtendedLifetime(slow) {} }
         socket.push(Self.ready)
         try await transport.connect()
         let total = GatewayEventBudget.maxSubscriberBacklog + 2_500
@@ -235,7 +237,8 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         let socket = ScriptedSession()
         let transport = makeTransport(socket)
         let gaps = collectGaps(transport)
-        _ = transport.subscribeToEvents()
+        let slow = transport.subscribeToEvents()
+        defer { withExtendedLifetime(slow) {} }
         socket.push(Self.ready)
         try await transport.connect()
         let big = String(repeating: "x", count: 600_000) // under the 1 MiB frame cap
@@ -396,6 +399,7 @@ final class WebSocketBufferBudgetTests: XCTestCase {
             configuration: TransportConfiguration(
                 pingInterval: .seconds(30), inboundDeadline: .seconds(30),
                 connectTimeout: .seconds(10), requestTimeout: .seconds(3)))
+        let gaps = collectGaps(transport)
         let events = transport.subscribeToEvents()
         let delivered = Task { () -> Int in
             var n = 0
@@ -406,6 +410,9 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         let failed = await waitUntil(10) { transport.state != .connected }
         XCTAssertTrue(failed, "the oversized message must fail the connection, not be buffered")
         XCTAssertEqual(transport.subscriberBufferedBytes, 0, "nothing from the oversized frame was retained")
+        let incomplete = await transport.takeIncompleteSessions()
+        XCTAssertTrue(incomplete.all, "a refused message of unknown session must mark every session incomplete")
+        XCTAssertTrue(gaps.all.contains { $0.reason == .oversizedFrame && $0.sessionID == nil })
         let watermark = await transport.watermark(for: "s1")
         XCTAssertEqual(watermark, 0, "the oversized event was never parsed")
         try await transport.connect()
@@ -413,5 +420,85 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         XCTAssertEqual(server.connectionCount, 2, "no automatic retry storm: exactly the explicit reconnect")
         await transport.disconnect()
         delivered.cancel()
+    }
+
+    // MARK: reviewer-driven regressions
+
+    final class Probe: @unchecked Sendable {
+        nonisolated(unsafe) static var live = 0
+        init() { Self.live += 1 }
+        deinit { Self.live -= 1 }
+    }
+
+    func testDrainedEntriesAreReleasedImmediatelyNotAtCompaction() async {
+        Probe.live = 0
+        let queue = BoundedQueue<Probe>(maxCount: 10_000, maxBytes: 1 << 30)
+        for _ in 0..<300 { queue.push(.init(value: Probe(), bytes: 1, sessionID: nil)) }
+        for _ in 0..<300 { _ = await queue.next() }
+        XCTAssertEqual(queue.byteCount, 0)
+        XCTAssertEqual(Probe.live, 0, "dead queue slots must not keep payloads alive")
+    }
+
+    func testAForgedPinnedFloodCannotBypassTheByteBudget() async {
+        let queue = BoundedQueue<Int>(maxCount: 1_000_000, maxBytes: 4 << 20)
+        var evicted = 0
+        // The peer chooses event types, so every entry claims to be an approval.
+        for i in 0..<2_000 { evicted += queue.push(.init(value: i, bytes: 1 << 20, sessionID: "s", pinned: true)).count }
+        XCTAssertLessThanOrEqual(queue.byteCount, 4 << 20 + (1 << 20), "oversized 'pins' are ordinary, evictable entries")
+        XCTAssertGreaterThan(evicted, 1_900)
+        // Small genuine prompts are still protected, up to the pin cap.
+        let small = BoundedQueue<Int>(maxCount: 3, maxBytes: 1 << 20)
+        for i in 0..<10 { small.push(.init(value: i, bytes: 100, sessionID: "s", pinned: true)) }
+        XCTAssertEqual(small.count, 10, "within the pin cap nothing is evicted")
+        let flood = BoundedQueue<Int>(maxCount: 3, maxBytes: 1 << 20)
+        for i in 0..<1_000 { flood.push(.init(value: i, bytes: 100, sessionID: "s", pinned: true)) }
+        XCTAssertLessThanOrEqual(flood.count, BoundedQueue<Int>.maxPinned + 3, "pins are capped by count too")
+    }
+
+    func testForgedApprovalRequestFloodThroughTheTransportStaysBounded() async throws {
+        let socket = ScriptedSession()
+        let transport = makeTransport(socket)
+        let slow = transport.subscribeToEvents()
+        defer { withExtendedLifetime(slow) {} }
+        socket.push(Self.ready)
+        try await transport.connect()
+        let big = String(repeating: "x", count: 600_000)
+        for i in 1...60 {
+            let params: [String: Any] = ["type": "approval.request", "session_id": "s", "seq": i, "payload": ["text": big]]
+            let data = try! JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "method": "event", "params": params])
+            socket.push(String(data: data, encoding: .utf8)!)
+        }
+        _ = await waitUntil(20) { await transport.watermark(for: "s") == 60 }
+        XCTAssertLessThanOrEqual(transport.subscriberBufferedBytes,
+                                 GatewayEventBudget.maxSubscriberBacklogBytes + (1 << 20))
+        await transport.disconnect()
+    }
+
+    func testAdmittingAServerRequestIntoAFullQueueReportsTheEvictedEvent() async {
+        let collector = GapCollector()
+        let gaps = GapBroadcaster()
+        let stream = gaps.subscribe()
+        collector.task = Task { for await g in stream { collector.add(g) } }
+        let box = ServerRequestBox(onGap: { gaps.publish($0) })
+        let (_, queue) = box.subscribeConversation(maxCount: 2, maxBytes: 1 << 20)
+        queue.push(.init(value: .messageStart(sessionID: "s1"), bytes: 10, sessionID: "s1"))
+        queue.push(.init(value: .messageStart(sessionID: "s2"), bytes: 10, sessionID: "s2"))
+        let request = ServerRequest(id: "srq-1", sessionID: "s3", kind: .approval(
+            ApprovalRequest(requestID: "srq-1", sessionID: "s3", command: "true", choices: ["once", "deny"])))
+        _ = box.admit(.init(wireID: .string("srq-1"), request: request))
+        let reported = await waitUntil { collector.all.contains { $0.sessionID == "s1" && $0.reason == .subscriberOverflow } }
+        XCTAssertTrue(reported, "evicting an ordinary event to admit a prompt must publish a gap")
+    }
+
+    func testDroppingAStreamWithoutIteratingItDeregistersTheSubscriber() async {
+        let gaps = GapBroadcaster()
+        let fanOut = BoundedFanOut<Int>(maxAggregateBytes: 1_000) { gaps.publish($0) }
+        do {
+            let stream = fanOut.makeStream(maxCount: 10, maxBytes: 100)
+            XCTAssertEqual(fanOut.subscriberCount, 1)
+            _ = stream
+        }
+        let released = await waitUntil { fanOut.subscriberCount == 0 }
+        XCTAssertTrue(released, "an abandoned, never-iterated stream must not stay registered")
     }
 }

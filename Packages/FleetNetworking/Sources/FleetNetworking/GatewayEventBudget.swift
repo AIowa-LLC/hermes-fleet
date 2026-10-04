@@ -19,8 +19,9 @@ import os
 /// | Per-session watermarks | one Int | `maxTrackedSessions` (LRU; eviction marks incomplete) | same |
 /// | Incomplete-session set | one id | `maxTrackedSessions`, then a single "all sessions" flag | same |
 /// | Open server requests | one request | `ServerRequestBox.maxOpen` | same |
+/// | Pinned queue entries (approvals) | 16 KiB | 64 per queue, then evictable | 64 per queue |
 /// | Pending gaps (per gap subscriber) | one gap | 64, then one "unknown session" gap | same |
-/// | Health events | one value | `maxHealthBacklog` newest | same |
+/// | Health samples / ready events | one value | newest-wins by design (state, not history) | same |
 ///
 /// Unavoidable buffering: URLSession assembles a whole WebSocket message in
 /// memory before handing it over, so the earliest a frame can be refused is at
@@ -76,15 +77,23 @@ final class BoundedQueue<Element: Sendable>: @unchecked Sendable {
         let value: Element
         let bytes: Int
         let sessionID: String?
-        /// Pinned entries (approval requests and their withdrawals) are never
-        /// evicted for overflow: dropping one would strand a prompt. Their
-        /// number is bounded by the open-request cap, not by the peer.
+        /// Approval requests and their withdrawals are pinned (not evicted for
+        /// overflow) because dropping one would strand a prompt. The event type
+        /// is chosen by the peer, so pins are capped per queue (`maxPinned`)
+        /// and per entry (`maxPinnedEntryBytes`); excess is evictable.
         var pinned = false
     }
 
+    /// At most this many entries per queue are pinned, each at most this big,
+    /// so pinned memory is bounded at 64 × 16 KiB = 1 MiB regardless of the peer.
+    static var maxPinned: Int { 64 }
+    static var maxPinnedEntryBytes: Int { 16 << 10 }
+
     private struct State {
-        var items: [Entry] = []
+        var items: [Entry?] = []
         var head = 0
+        /// Entries currently pinned (bounded: see `maxPinned`).
+        var pinnedCount = 0
         var bytes = 0
         var waiter: CheckedContinuation<Element?, Never>?
         var finished = false
@@ -113,6 +122,17 @@ final class BoundedQueue<Element: Sendable>: @unchecked Sendable {
                 state.waiter = nil
                 return (waiter, [])
             }
+            var entry = entry
+            // A pin is a narrow exemption, never a way around the budget:
+            // the peer chooses event types, so pinning is capped by count and
+            // per-entry size; anything beyond is an ordinary evictable entry.
+            if entry.pinned {
+                if state.pinnedCount < Self.maxPinned, entry.bytes <= Self.maxPinnedEntryBytes {
+                    state.pinnedCount += 1
+                } else {
+                    entry.pinned = false
+                }
+            }
             state.items.append(entry)
             state.bytes += entry.bytes
             var evictedEntries: [Entry] = []
@@ -133,19 +153,23 @@ final class BoundedQueue<Element: Sendable>: @unchecked Sendable {
 
     private static func evictOldestUnpinned(_ state: inout State) -> Entry? {
         var index = state.head
-        while index < state.items.count, state.items[index].pinned { index += 1 }
-        guard index < state.items.count else { return nil }
+        while index < state.items.count, state.items[index]?.pinned == true { index += 1 }
+        guard index < state.items.count, let entry = state.items[index] else { return nil }
         if index == state.head { return popOldest(&state) }
-        let entry = state.items.remove(at: index)
+        state.items.remove(at: index)
         state.bytes -= entry.bytes
         return entry
     }
 
+    /// Removes the head entry. The slot is tombstoned immediately so the
+    /// payload is released now, not when the array is eventually compacted.
     private static func popOldest(_ state: inout State) -> Entry {
-        let entry = state.items[state.head]
+        let entry = state.items[state.head]!
+        state.items[state.head] = nil
         state.head += 1
         state.bytes -= entry.bytes
-        if state.head > 512, state.head * 2 > state.items.count {
+        if entry.pinned { state.pinnedCount -= 1 }
+        if state.head > 64, state.head * 2 > state.items.count {
             state.items.removeFirst(state.head)
             state.head = 0
         }
@@ -172,12 +196,20 @@ final class BoundedQueue<Element: Sendable>: @unchecked Sendable {
             state.items.removeAll()
             state.head = 0
             state.bytes = 0
+            state.pinnedCount = 0
             let w = state.waiter
             state.waiter = nil
             return w
         }
         waiter?.resume(returning: nil)
     }
+}
+
+/// Runs `release` when the last owner lets go.
+final class Lease: @unchecked Sendable {
+    private let release: @Sendable () -> Void
+    init(_ release: @escaping @Sendable () -> Void) { self.release = release }
+    deinit { release() }
 }
 
 /// Fan-out registry of bounded queues with an aggregate byte budget. Used for
@@ -227,7 +259,14 @@ final class BoundedFanOut<Element: Sendable>: @unchecked Sendable {
 
     func makeStream(maxCount: Int, maxBytes: Int) -> AsyncStream<Element> {
         let (id, queue) = register(maxCount: maxCount, maxBytes: maxBytes)
-        return AsyncStream<Element>(unfolding: { await queue.next() }, onCancel: { [weak self] in
+        // The stream's closure owns the lease; the registry does not. When the
+        // stream is dropped (even if never iterated) the lease is released and
+        // the subscriber is deregistered. Cancellation deregisters too.
+        let lease = Lease { [weak self] in self?.remove(id) }
+        return AsyncStream<Element>(unfolding: {
+            _ = lease
+            return await queue.next()
+        }, onCancel: { [weak self] in
             self?.remove(id)
         })
     }

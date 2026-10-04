@@ -212,7 +212,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         self.stateBox = TransportStateBox(initialState)
         self.lastInbound = .now
         self.lastFrameBox = TransportLastFrameBox()
-        let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
+        let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream(bufferingPolicy: .bufferingNewest(8))
         self.readyEvents = stream
         self.readyContinuation = continuation
         let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream(
@@ -243,7 +243,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
         self.stateBox = TransportStateBox(initialState)
         self.lastInbound = .now
         self.lastFrameBox = TransportLastFrameBox()
-        let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
+        let (stream, continuation) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream(bufferingPolicy: .bufferingNewest(8))
         self.readyEvents = stream
         self.readyContinuation = continuation
         let (healthStream, healthContinuation) = AsyncStream<ConnectionHealthEvent>.makeStream(
@@ -310,7 +310,7 @@ public actor GatewayWebSocketTransport: HermesTransport {
 
         // Recreate the ready-handshake channel for this connection (M1 P4
         // residual fix): a prior teardown finished the previous channel.
-        let (readyStream, readyCont) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream()
+        let (readyStream, readyCont) = AsyncStream<GatewayEvent.ReadyPayload>.makeStream(bufferingPolicy: .bufferingNewest(8))
         readyEvents = readyStream
         readyContinuation = readyCont
 
@@ -874,7 +874,13 @@ public actor GatewayWebSocketTransport: HermesTransport {
     public nonisolated func subscribeToConversationEvents() -> AsyncStream<ConversationEvent> {
         let (token, queue) = serverRequests.subscribeConversation(
             maxCount: Self.maxSubscriberBacklog, maxBytes: GatewayEventBudget.maxSubscriberBacklogBytes)
-        return AsyncStream<ConversationEvent>(unfolding: { await queue.next() }, onCancel: { [serverRequests] in
+        // Lease-owned deregistration (see `BoundedFanOut.makeStream`): a stream
+        // that is dropped without being iterated still releases its queue.
+        let lease = Lease { [serverRequests] in serverRequests.unsubscribeConversation(token) }
+        return AsyncStream<ConversationEvent>(unfolding: {
+            _ = lease
+            return await queue.next()
+        }, onCancel: { [serverRequests] in
             serverRequests.unsubscribeConversation(token)
         })
     }
@@ -1130,6 +1136,14 @@ public actor GatewayWebSocketTransport: HermesTransport {
                 code = failedSession.lastCloseCode
                 if code != nil { break }
             }
+        }
+        // A message above `maximumMessageSize` surfaces as POSIX EMSGSIZE (40,
+        // observed) or close code 1009. The refused message's session is
+        // unknown, and a session with no watermark yet is not covered by
+        // `events.since`, so mark every session possibly incomplete.
+        let nsError = error as NSError
+        if code == 40 || code == 1009 || (nsError.domain == NSPOSIXErrorDomain && nsError.code == 40) {
+            markIncomplete(nil, reason: .oversizedFrame)
         }
         if let code {
             let reason = CloseCodeMapping.reason(forRawCode: code)

@@ -189,22 +189,26 @@ final class ServerRequestBox: @unchecked Sendable {
 
     /// Record an open request and deliver it to every subscriber.
     func admit(_ open: Open) -> Admission {
-        lock.withLock { state in
+        let (admission, evicted): (Admission, [BoundedQueue<ConversationEvent>.Entry]) = lock.withLock { state in
             let id = open.request.id
-            if state.settled.contains(id) { return .settled }
-            if state.open.contains(where: { $0.request.id == id }) { return .duplicate }
-            guard state.open.count < Self.maxOpen else { return .full }
+            if state.settled.contains(id) { return (.settled, []) }
+            if state.open.contains(where: { $0.request.id == id }) { return (.duplicate, []) }
+            guard state.open.count < Self.maxOpen else { return (.full, []) }
             state.open.append(open)
             for continuation in state.subscribers.values {
                 continuation.yield(open.request)
             }
+            var evictedEntries: [BoundedQueue<ConversationEvent>.Entry] = []
             for queue in state.conversationSubscribers.values {
-                // Pinned: an approval prompt is never evicted for overflow.
-                queue.push(.init(value: .serverRequest(open.request), bytes: 256,
-                                 sessionID: open.request.sessionID, pinned: true))
+                // Pinned: an approval prompt is not evicted for overflow, but
+                // admitting it may evict an older ordinary event: report it.
+                evictedEntries += queue.push(.init(value: .serverRequest(open.request), bytes: 256,
+                                                   sessionID: open.request.sessionID, pinned: true))
             }
-            return .admitted
+            return (.admitted, evictedEntries)
         }
+        for e in evicted { onGap(EventGap(sessionID: e.sessionID, reason: .subscriberOverflow)) }
+        return admission
     }
 
     /// Atomically register a subscriber and hand it the currently open
