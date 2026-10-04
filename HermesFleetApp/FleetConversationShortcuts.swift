@@ -1,5 +1,6 @@
 import AppIntents
 import FleetCore
+import FleetSecurity
 import FleetUI
 import Foundation
 
@@ -126,7 +127,7 @@ struct HermesFleetShortcuts: AppShortcutsProvider {
 /// The app-private URL handoff used by the intent. Query items are validated
 /// before navigation and carry only source-qualified identity.
 enum FleetConversationDeepLink {
-    private static let scheme = "hermes-fleet"
+    private static let scheme = FleetAppIdentity.conversationURLScheme
     private static let host = "conversation"
 
     static func url(for entity: FleetConversationShortcutEntity) -> URL {

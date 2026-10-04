@@ -88,6 +88,17 @@ def settings(rows, build):
     return s
 
 
+
+def test_settings(rows, build, sha):
+    require(len(rows) == 2 and {r.get('target') for r in rows} == {TARGET, TARGET + 'Tests'},
+            'Dev test scheme must contain only Dev app and its test bundle')
+    resolved = settings([r for r in rows if r.get('target') == TARGET], build)
+    require(resolved.get('FLEET_DEV_SOURCE_SHA') == sha, 'test source SHA mismatch')
+    test = next(r['buildSettings'] for r in rows if r.get('target') == TARGET + 'Tests')
+    require(test.get('PRODUCT_BUNDLE_IDENTIFIER') == BUNDLE + '.tests', 'test bundle identity mismatch')
+    require(test.get('TEST_HOST', '').endswith('/HermesFleetDev.app/HermesFleetDev'), 'test host must be Dev app')
+    require(test.get('BUNDLE_LOADER') == test.get('TEST_HOST'), 'test bundle loader must be Dev host')
+
 def app_info(p, build):
     expected = {'CFBundleIdentifier': BUNDLE, 'CFBundleDisplayName': NAME,
                 'CFBundleShortVersionString': VERSION, 'CFBundleVersion': build,
@@ -118,6 +129,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--sha')
     p.add_argument('--settings', type=Path)
+    p.add_argument('--test-settings', type=Path)
     p.add_argument('--app', type=Path)
     p.add_argument('--build', default='1')
     p.add_argument('--artifact-sha')
@@ -133,9 +145,11 @@ def main():
         s = settings(json.loads(a.settings.read_text()), a.build)
         if a.artifact_sha:
             require(s.get('FLEET_DEV_SOURCE_SHA') == a.artifact_sha, 'resolved source SHA mismatch')
+    if a.test_settings:
+        test_settings(json.loads(a.test_settings.read_text()), a.build, a.artifact_sha)
     if a.app:
         app(a.app, a.build, a.artifact_sha, a.platform)
-    require(a.sha or a.settings or a.app, 'specify source, settings, or built app to inspect')
+    require(a.sha or a.settings or a.test_settings or a.app, 'specify source, settings, or built app to inspect')
     print('Fleet Dev boundary: PASS')
 
 

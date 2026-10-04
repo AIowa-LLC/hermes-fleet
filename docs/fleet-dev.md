@@ -1,186 +1,140 @@
-# Hermes Fleet Dev: isolated internal build lane
+# Hermes Fleet Dev
 
-Status: **prepared, target integration blocked on shared-file coordination**.
-This patch deliberately does not add a runnable target to `project.yml`, modify
-its generated project, or wire shared runtime identities. It supplies dedicated
-Dev configuration, fail-closed tooling and synthetic contract tests. The wrapper
-rejects current main before Xcode runs. There is no Dev simulator, device,
-archive, signing, export, TestFlight or processing acceptance evidence yet.
+`HermesFleetDev` is an explicit side-by-side internal development app generated
+from authoritative `project.yml`. Production's bundle, display name, URL scheme,
+version/build settings and capabilities remain unchanged. No production data is
+imported into Dev; shipped Build 97 and its retained artifact are not rebuilt.
 
-## Scope and ownership
+## Identities and storage
 
-The lane started from freshly fetched main
-`2dd0e4a40961540f1f7506b221d173fcee8137e1`. The ownership audit found:
-
-| Surface | Concurrent proposal | Coordination needed |
+| Boundary | Production | Dev |
 | --- | --- | --- |
-| `project.yml`, generated Xcode project, production `Info.plist`, app groups/shared keychain | #169 extension kit | Integrator must combine Dev and extension identities before target edits. |
-| Conversation shortcut/deep-link code | #168 local notifications | Agree on the Dev scheme and tap-routing isolation. |
-| `FleetServiceGraph.swift` | #178 CI reuse qualification; #171 OAuth; #166 file protection; #168 notifications | Preserve each change and coordinate cache identity integration. |
-| UI readiness and result parsing | #181 | No changes in this lane. |
-| Production version, Build 97 archives, release ledger and ancestry floor | Release owner | No changes in this lane. |
-
-No current lane is replaced, stopped, merged, rebased or duplicated. Do not
-merge this preparatory work and describe it as a completed Dev app. Coordinate
-and complete the integration below, regenerate once, then validate the exact
-combined source. These tools do not change CI topology, required checks, test
-parsers, package counts or UI registration.
-
-## Identity contract
-
-| Boundary | Production | Proposed Dev |
-| --- | --- | --- |
-| Target / scheme | `HermesFleetApp` | `HermesFleetDev` |
+| App target / build scheme | `HermesFleetApp` | `HermesFleetDev` |
 | Display name | Hermes Fleet | Hermes Fleet Dev |
 | Bundle | `com.aiowa.hermesfleet` | `com.aiowa.hermesfleet.dev` |
-| URL scheme | `hermes-fleet` | `hermes-fleet-dev` |
-| Marketing/build source | Existing production settings | Independent `0.1.0` / `1` initial defaults |
-| Files / standard defaults / notification center | Production app sandbox | Separate Dev app sandbox and defaults domain |
-| Default keychain access group | Production bundle identity | Dev bundle identity, no sharing |
-| Keychain service prefix | Existing production prefix | `com.aiowa.hermesfleet.dev` |
-| Cache directory | `HermesFleetCache` | `HermesFleetDevCache` within the Dev sandbox |
-| App groups / push / extensions | None on audited main | None in initial Dev lane; capability guard rejects additions |
+| Conversation scheme | `hermes-fleet` | `hermes-fleet-dev` |
+| Keychain service prefix | `com.aiowa.hermesfleet` | `com.aiowa.hermesfleet.dev` |
+| Cache component | `HermesFleetCache` | `HermesFleetDevCache` |
+| Version/build settings | Existing production settings | Independent `0.1.0` / `1` defaults |
+| Test bundle / scheme | Existing hosted suites | `HermesFleetDevTests` |
 
-No production data is imported or migrated into Dev. Identical local notification
-request IDs cannot cross the two app notification centers. If #169 shared groups
-or #168/#176 notifications land, re-audit actual capabilities and routing before
-building Dev. Future Dev groups must have their own explicitly registered suffix,
-shared-keychain access group and extension bundle identities. Do not attach
-`SharedGroups.entitlements` or any production group to Dev. This initial guard
-intentionally rejects all app-group/push/extension additions until a separately
-reviewed capability change extends its tests.
+`FleetAppIdentity` derives package namespaces from the actual host bundle and
+Dev Info.plist marker; app compiler flags do not propagate to Swift packages.
+A mismatched Dev bundle/marker fails closed. Production service names/cache
+component stay stable. Keychain install reconciliation enumerates the selected
+store namespaces, so Dev cleanup cannot purge production services. The default
+keychain access group, sandbox, `UserDefaults.standard`, Shortcuts registry and
+notification center belong to each app's bundle. Deep-link generation and
+acceptance use that app's scheme, rejecting cross-app URLs.
 
-The Dev build counter must be owner-approved and unused **for the Dev ASC app**.
-The wrapper requires `--build N` (1..9999), records it, and never discovers,
-auto-increments or changes production `CURRENT_PROJECT_VERSION`. Defaults in
-`Config/FleetDev.xcconfig` are not evidence of an unused ASC number.
+There are no Dev app groups, push entitlements, shared keychain groups or
+extensions. The capability/artifact guard rejects their introduction until a
+separately reviewed Dev capability change extends its tests. Adding production
+shared entitlements to Dev is forbidden.
 
-## Required integrator changes (pending)
+## Ownership and future proposals
 
-1. Add an explicit `HermesFleetDev` application target and same-named scheme to
-   authoritative `project.yml`. Use the same app sources, privacy resource,
-   package dependencies, device family and deployment target as production.
-   Attach `Config/FleetDev.xcconfig` via target `configFiles` for both Debug and
-   Release. Set target-level `PRODUCT_BUNDLE_IDENTIFIER`, `PRODUCT_NAME`,
-   `INFOPLIST_FILE`, `CODE_SIGN_ENTITLEMENTS`, display name, Dev version/build,
-   `FLEET_DEV_BUILD`, `FLEET_URL_SCHEME` and `FLEET_DEV` condition as specified
-   there. Preserve production target settings. Use `GENERATE_INFOPLIST_FILE: YES`
-   and the existing `FleetWing` icon initially. Build only `HermesFleetDev` in
-   this scheme; tests get separate explicit targets in a later coordinated
-   integration. Do not include production app/test bundles in the Dev scheme.
-2. Introduce a small `FleetAppIdentity` API in a suitable shared module.
-   `keychainNamespace` must preserve the existing production prefix and return
-   the Dev prefix only for the exact Dev app bundle. Do not use a Swift package
-   compilation flag: app-target conditions do not propagate to package targets.
-   Bundle-based identity must be injectable for synthetic tests. Reject an
-   inconsistent Dev marker/bundle combination instead of silently using
-   production. Expose `conversationURLScheme` and a cache directory component
-   through the same validated identity.
-3. Wire `KeychainCredentialStore`, `KeychainTokenStore`, `KeychainPinStore` to
-   `FleetAppIdentity.keychainNamespace`, retaining their service suffixes.
-   `KeychainInstallHygiene` already enumerates those store service names; verify
-   first-launch cleanup can touch only the current app's services/access group.
-   Reconcile any incoming OAuth/shared-keychain store with the same policy.
-   Keychain accessibility, no-sync policy and credential handling stay intact.
-4. Wire `FleetConversationDeepLink` to
-   `FleetAppIdentity.conversationURLScheme`, importing its module. Validate both
-   emitted and accepted URLs. Production rejects Dev links; Dev rejects
-   production links. Reconcile notification and intent tap-routing against the
-   same identity. Keep production `Info.plist` unchanged; Dev uses its dedicated
-   `Config/FleetDevInfo.plist` with the same privacy/ATS policy.
-5. Coordinate `FleetServiceGraph` to select the cache component through the
-   validated identity without changing the production directory or recovery
-   behavior. Other sandbox-local caches and `UserDefaults.standard` already
-   separate naturally by app identity; audit future group/suite storage.
-6. Add runtime isolation tests: synthetic credentials saved/deleted through one
-   namespace do not affect the other; Dev install reconciliation cannot delete
-   production secrets; cross-app URLs rejected; separate defaults/cache URLs;
-   effective Info.plist and signed entitlements match the actual target.
-   Register affected test counts/suites through the existing CI integrator.
-7. Run `xcodegen generate`, review deterministic generated changes and the
-   smallest relevant runtime tests, then the broader gate required for shared
-   security/composition-root changes. Preserve original failures and retries.
-   Commit the combined target/runtime changes before invoking these wrappers.
+This lane started from freshly fetched main
+`2dd0e4a40961540f1f7506b221d173fcee8137e1`. The initial preparation paused target
+integration for ownership assessment. Read-only follow-up found #169/#168's
+original worktrees clean, September 30 source/commit timestamps, and the local
+extension reconciliation explicitly retained pending CI qualification. No active
+build or uncommitted edits existed in those worktrees. The Dev lane therefore
+adds its own target against present main without landing either older proposal.
+Existing workers, branches and release artifacts remain untouched.
 
-The source guard checks for the explicit Dev target/scheme and identity consumer
-integration, then the resolved Xcode settings and actual app metadata. These
-checks are rejection boundaries, not proof that runtime isolation is correct;
-step 6 remains required. Never loosen the guard to force this preparation past
-its intentionally missing target.
+- #169 proposes production-only, default-OFF `FLEET_SHARED_GROUPS`, shared app
+  group/keychain settings and FleetClientKit. Its additions occur in production
+  target settings; Dev is added after the existing test targets. When that work
+  is integrated, propagate package dependencies deliberately and keep Dev groups
+  OFF. Enabling groups later requires Dev-specific groups/profiles/extension IDs
+  and a new guard audit. Regenerate the combined project; do not merge generated
+  project conflicts by hand.
+- #168 adds an overload to the deep-link builder for notification taps. This lane
+  only changes its scheme source and import; preserve that overload when combined.
+  Notifications must continue using the app-qualified builder and notification
+  center. Re-audit capabilities/tap routing if #168/#176 land.
+- #178 owns service-graph comment/CI reuse qualification, #181 owns UI readiness
+  and result parsing. This lane changes only the graph cache-component expression;
+  no CI topology, parsers, required checks, package counts or existing test suite
+  registration change. Reconcile other graph/OAuth proposals before landing.
 
-## Commands after integration
+Production project settings remain unchanged. Generated source adds the Dev app
+and its dedicated test bundle/schemes. A throwaway generated overlay is not the
+supported acceptance path: committed project/source and exact-SHA guards remain
+mandatory. CI/protected integration acceptance is still required before landing.
 
-From the isolated, freshly fetched lane with all source committed:
+## Build and test locally
+
+Commit source first and fetch main. Use only this lane's simulator:
 
 ```sh
 python3 scripts/fleet_dev_contract_test.py
 SHA="$(git rev-parse HEAD)"
 bash scripts/fleet_dev_build.sh simulator --sha "$SHA" --build 1
+bash scripts/fleet_dev_build.sh test --sha "$SHA" --build 1
 bash scripts/fleet_dev_build.sh structure-only --sha "$SHA" --build 1
-# Requires separately approved Apple setup and an unused Dev build number:
+# Requires separately approved Apple setup and unused Dev build number:
 bash scripts/fleet_dev_build.sh export --sha "$SHA" --build 1
 ```
 
-`simulator` uses Debug's existing synthetic simulator graph, the repository's
-per-worktree `lane_simulator.sh` via `sim_destination.sh`, two build jobs and
-separate derived data. It refuses an explicit/shared simulator override and
-never installs or launches the production app. It builds/inspects only; after
-acceptance, install and launch the inspected **Dev** bundle on that lane's device
-using ordinary `simctl` commands. No personal endpoints or credentials belong
-in fixtures. Release archives retain Release's security behavior; this patch
-adds no device-only fixture or authentication override.
+Debug uses the existing synthetic simulator graph; no private endpoint or
+credential is built in. Release retains existing authentication and app-lock
+policy. The wrapper builds with two jobs and disables parallel test workers.
+It selects `lane_simulator.sh` through `sim_destination.sh`, refuses explicit or
+shared simulator overrides, and writes unique SHA/build/mode evidence folders
+under `build/FleetDev/`. It never cancels another Xcode job or manages another
+lane's device. Simulator mode builds/inspects only; install the inspected Dev app
+and launch the Dev bundle on that lane's device after build acceptance.
 
-`structure-only` produces an unsigned device archive. `export` archives with
-existing signing assets and exports locally using the committed plist, with
-`destination=export`, `testFlightInternalTestingOnly=true` and automatic build
-number management disabled. There is no upload, credential validation,
-provisioning-update switch or argument passthrough. Xcode 27's local help confirms
-that this export flag prevents external TestFlight/App Store distribution.
-Keep that restriction even after a future authorized upload workflow is added.
-The reference Hermex branch workflow uploads; this Fleet lane stops at local
-export and preserves Fleet's existing release ancestry guard.
+The dedicated hosted suite tests the actual Dev bundle, stable production
+identity, invalid metadata rejection, keychain save/delete/purge isolation,
+private keychain policy, shortcut scheme rejection and synthetic defaults/cache
+separation. All credentials and Keychain operations in these tests are fake.
+Its eight cases must each pass once with zero skips or recovered attempts.
+This scheme is independent of the existing hosted/UI CI inventory; the CI owner
+may add its required coverage in a separate coordinated change.
 
-Every command requires clean tracked/untracked source, exact full SHA equal to
-HEAD, the committed integration floor and `origin/main` ancestry. Fetch main
-first. Ignored files under source/Config inputs are rejected too. Generation
-runs only in this checkout; any drift is retained and fails. A per-checkout lock
-rejects overlapping wrapper invocations. If interrupted with a retained lock,
-confirm this lane has no active wrapper/Xcode process before removing only its
-empty `build/FleetDev/run.lock` directory. Unique SHA/build/mode evidence folders
-retain generation, resolved settings, commands' logs and provenance on failure.
-No failed archive is accepted as distribution evidence. No other simulator,
-Xcode process, checkout, lock, archive or evidence is removed.
+Every mode requires a clean tracked/untracked checkout, full SHA equal to HEAD,
+Fleet's unmodified committed ancestry floor and `origin/main` ancestry. Ignored
+source/Config injection is rejected. XcodeGen runs only in this isolated lane;
+drift is retained and fails. Resolved settings reject production/mixed app
+targets; hosted settings reject production test hosts. Actual app metadata must
+match Dev identities, platform, toolchain, explicit build and embedded source SHA.
+A per-checkout lock rejects concurrent wrapper invocations. After interruption,
+confirm this lane has no active wrapper/Xcode job before removing only its empty
+`build/FleetDev/run.lock`. Retain failure logs and partial result bundles.
 
-## Apple setup and approval boundary
+## Internal archive/export and Apple setup
 
-A read-only local profile audit found profiles for production Fleet and no local
-profile matching the proposed Dev bundle. It did not query authenticated ASC app
-records; absence of a local profile does not prove an Apple record is absent.
-This repository patch does not create any Apple record or change permissions.
-The release owner must separately inspect/approve:
+`structure-only` creates an unsigned Dev device archive and provides structural
+evidence only. `export` uses existing signing assets and exports locally with
+`destination=export`, `testFlightInternalTestingOnly=true`, and automatic build
+number management disabled. Xcode 27's local help states that the internal-only
+flag prevents external TestFlight/App Store distribution. There is no upload,
+provisioning update, credential validation or Xcode argument passthrough. Keep
+this restriction in any future authorized upload workflow. The reference
+[Hermex branch workflow](https://github.com/uzairansaruzi/hermex/blob/master/scripts/branch-testflight)
+uploads; Fleet's wrapper deliberately stops at local export.
 
-1. An explicit Developer App ID for the Dev bundle and an App Store Connect app
-   record for Hermes Fleet Dev, under the intended existing team. Confirm an
-   existing record first; create only with separate authorization.
-2. Dev-specific development and App Store provisioning profiles backed by
-   existing authorized certificates. Do not share production access groups or
-   register optional app-group/push/extension capabilities in this initial lane.
-3. An unused Dev app build number and appropriate ASC user roles/internal tester
-   membership. Internal TestFlight access follows Apple account roles; simulator
-   success does not establish it.
-4. Exact combined-source CI/ancestry evidence, inspected Dev archive and IPA,
-   explicit upload approval, Apple's validation/upload and processing result,
-   export compliance answers, internal tester assignment and installation beside
-   production on a physical device. Verify production data remains intact and
-   Dev keychain, links and notifications stay isolated there.
+The initial local profile inventory found production Fleet profiles and none
+matching the Dev bundle. ASC records were not queried; absence of a local profile
+does not prove an Apple record is absent. Separately verify/approve:
 
-Creating records, registering identifiers/capabilities, changing signing/security
-permissions, adding secrets, uploading to TestFlight, merging or publishing
-source are outside this patch. Shipped Build 97 and its immutable artifact and
-release number remain unchanged. Production upload automation, ASC build-number
-lookup, hosted pins and workflow templates belong in subsequent phased work.
+1. The Dev Developer App ID and ASC app record under the intended existing team.
+   Inspect existing records first; creating records requires separate approval.
+2. Dev development and distribution provisioning profiles backed by existing
+   authorized certificates. No optional app-group/push capability is needed.
+3. An owner-approved unused Dev build number (the wrapper accepts 1..9999) and
+   appropriate ASC user roles/internal tester membership. The initial default
+   does not prove that number is unused. Production build metadata stays intact.
+4. Exact-source integration evidence, inspected archive/IPA, explicit upload
+   approval, Apple's validation/processing, compliance answers and internal tester
+   assignment, followed by physical side-by-side installation/data isolation.
 
-References: [Fleet development](DEVELOPMENT.md), [Dev Loop](dev-loop.md),
-[release preflight](release-preflight.md),
-[Hermex branch configuration](https://github.com/uzairansaruzi/hermex/blob/master/Config/BranchTestFlight.xcconfig),
-[Hermex internal-only export](https://github.com/uzairansaruzi/hermex/blob/master/Config/BranchTestFlightExportOptions.plist).
+A simulator build or hosted test pass is not TestFlight readiness. Apple setup,
+identifier registration, signing/security permission changes, secrets, upload,
+push/PR publication and merge are outside this local implementation scope.
+Future production upload automation, ASC build-number lookup and hosted pinning
+remain separate phased work. See [DEVELOPMENT.md](DEVELOPMENT.md),
+[dev-loop.md](dev-loop.md) and [release-preflight.md](release-preflight.md).

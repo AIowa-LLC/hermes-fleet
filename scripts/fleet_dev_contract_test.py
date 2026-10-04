@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 import fleet_dev_guard as guard
 import fleet_dev_export_inspect as exported
+import fleet_dev_test_result as result_guard
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -256,6 +257,29 @@ class DevContract(unittest.TestCase):
             self.assertEqual(exports[0][exports[0].index('-exportOptionsPlist')+1], 'Config/FleetDevExportOptions.plist')
             self.assertNotIn('-allowProvisioningUpdates', exports[0])
             self.assertEqual(len(list((root/'build/FleetDev').glob('*/provenance.txt'))), 3)
+
+
+    def test_dev_hosted_scheme_rejects_production_host(self):
+        rows = fixture_settings() + [{'target': 'HermesFleetDevTests', 'buildSettings': {
+            'PRODUCT_BUNDLE_IDENTIFIER': guard.BUNDLE + '.tests',
+            'TEST_HOST': '/synthetic/HermesFleetDev.app/HermesFleetDev',
+            'BUNDLE_LOADER': '/synthetic/HermesFleetDev.app/HermesFleetDev'}}]
+        guard.test_settings(rows, '1', 'a'*40)
+        rows[1]['buildSettings']['TEST_HOST'] = '/synthetic/HermesFleetApp.app/HermesFleetApp'
+        with self.assertRaises(ValueError): guard.test_settings(rows, '1', 'a'*40)
+
+    def test_dev_result_rejects_missing_skipped_or_recovered_cases(self):
+        summary = {'result': 'Passed', 'totalTestCount': 8, 'skippedTests': 0}
+        tests = {'testNodes': [{'nodeType': 'Test Case', 'name': name,
+                               'nodeIdentifier': 'FleetDevIsolationTests/' + name, 'result': 'Passed'}
+                              for name in sorted(result_guard.EXPECTED)]}
+        result_guard.verify(summary, tests)
+        missing = {'testNodes': tests['testNodes'][:-1]}
+        with self.assertRaises(ValueError): result_guard.verify(summary, missing)
+        tests['testNodes'][0]['details'] = 'Passed after 1 retry'
+        with self.assertRaises(ValueError): result_guard.verify(summary, tests)
+        tests['testNodes'][0].pop('details'); summary['skippedTests'] = 1
+        with self.assertRaises(ValueError): result_guard.verify(summary, tests)
 
     def test_version_counter_is_separate_and_production_unchanged(self):
         config = (ROOT/'Config/FleetDev.xcconfig').read_text()
