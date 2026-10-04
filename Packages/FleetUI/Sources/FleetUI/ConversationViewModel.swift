@@ -470,7 +470,7 @@ public final class ConversationViewModel {
     /// Injectable time/sleep so tests drive recovery deterministically.
     @ObservationIgnored var gapClock: @MainActor () -> TimeInterval = {
         // Monotonic seconds from the Swift clock (not a boot-time API).
-        let elapsed = ContinuousClock.now - Self.gapClockOrigin
+        let elapsed = ContinuousClock.now - ConversationViewModel.gapClockOrigin
         return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
     }
     private static let gapClockOrigin = ContinuousClock.now
