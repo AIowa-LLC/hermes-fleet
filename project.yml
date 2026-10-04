@@ -109,7 +109,9 @@ targets:
     type: application
     platform: iOS
     sources:
-      - HermesFleetApp
+      - path: HermesFleetApp
+        excludes:
+          - Info.plist
     resources:
       - HermesFleetApp/PrivacyInfo.xcprivacy
     dependencies:

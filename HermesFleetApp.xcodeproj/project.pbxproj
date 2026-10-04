@@ -185,7 +185,6 @@
 		D2753CF3C10A84C09DA1B907 /* KanbanBoardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F8429CA0C859E3E79DDEEA /* KanbanBoardViewModelTests.swift */; };
 		D6D26E52EB47C6C3A479A84F /* ImageGenerationAnimationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5D3EBD6F4D46D0139E63F9 /* ImageGenerationAnimationUITests.swift */; };
 		D82BFF6EBCBB2A7B6D1B0C11 /* U4DashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */; };
-		D8D1D47EFB8A4975CA36C78A /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = FABC7CBF939AAF966D3C7ACD /* Info.plist */; };
 		D9DC730BEE5131BE4CDFB4B2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8DE26D4BAD2C7D97E451973 /* PrivacyInfo.xcprivacy */; };
 		DD67AC6ED8C64C68589DEBEF /* ConversationDraftStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E3B481779EB31BE7249CBB1 /* ConversationDraftStoreTests.swift */; };
 		DEA04FB333232EAAE82C9AD7 /* R9ManagementPanesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C593000BFB095D711C803E /* R9ManagementPanesUITests.swift */; };
@@ -946,7 +945,6 @@
 			files = (
 				56A36AE6002E8BF3B106D4D9 /* Assets.xcassets in Resources */,
 				EA5A5221A3C0FB41536C8CAA /* FleetWing.icon in Resources */,
-				D8D1D47EFB8A4975CA36C78A /* Info.plist in Resources */,
 				A3F713DC5B23EDB9F72E7349 /* LaunchScreen.storyboard in Resources */,
 				58698A7881B326B4CD69AA47 /* PrivacyInfo.xcprivacy in Resources */,
 			);
