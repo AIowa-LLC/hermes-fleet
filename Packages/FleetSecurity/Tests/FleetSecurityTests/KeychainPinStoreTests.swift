@@ -144,7 +144,7 @@ final class KeychainPinStoreTests: XCTestCase {
         let store = KeychainPinStore(keychain: ScriptedKeychainSession())
         let reviewed = try XCTUnwrap(SPKIFingerprint(base64: Self.pinB64))
         let other = try XCTUnwrap(SPKIFingerprint(base64: Self.otherB64))
-        try store.syncSetFirstUseApproval(boundTo: reviewed, for: gatewayID)
+        try store.syncApproveFirstUse(boundTo: reviewed, for: gatewayID)
 
         XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: other, for: gatewayID))
         XCTAssertTrue(try store.syncIsFirstUseApproved(for: gatewayID),
@@ -154,11 +154,14 @@ final class KeychainPinStoreTests: XCTestCase {
         XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: reviewed, for: gatewayID))
     }
 
-    func testUnboundApprovalIsSingleUseForAnyKey() throws {
-        let store = KeychainPinStore(keychain: ScriptedKeychainSession())
+    func testLegacyUnboundApprovalValueIsNotAnApproval() throws {
+        let session = ScriptedKeychainSession()
+        let store = KeychainPinStore(keychain: session)
         let key = try XCTUnwrap(SPKIFingerprint(base64: Self.otherB64))
-        try store.syncSetFirstUseApproved(true, for: gatewayID)
-        XCTAssertTrue(try store.syncConsumeFirstUseApproval(matching: key, for: gatewayID))
+        // The retired format ("approved") never bound to a reviewed key.
+        session.seed(Data("approved".utf8), account: "approval:\(gatewayID.rawValue)")
+
+        XCTAssertFalse(try store.syncIsFirstUseApproved(for: gatewayID))
         XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: key, for: gatewayID))
     }
 

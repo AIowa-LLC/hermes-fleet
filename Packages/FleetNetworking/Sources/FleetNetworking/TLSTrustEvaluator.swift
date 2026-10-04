@@ -24,10 +24,9 @@ public enum TLSTrustVerdict: Sendable, Equatable {
 ///
 /// Pure decision logic over the `SynchronousPinStoring` seam (the URLSession
 /// challenge callback cannot await):
-/// - no stored pin → require configured first-use approval, then `.tofuAccept`
-///   and write the pin (the production composition root supplies approval);
-/// - no approval seam → retain the pure evaluator's legacy TOFU contract for
-///   hermetic tests and explicitly non-production callers;
+/// - no stored pin → require an approval for exactly the presented key (a
+///   fingerprint the user reviewed), consume it, then `.tofuAccept` and write
+///   the pin with compare-and-set. There is no unapproved first-use path;
 /// - stored pin == presented pin → `.pinMatched` (connect);
 /// - stored pin != presented pin → `.pinMismatch` (REJECT; the composition
 ///   root surfaces the warn-on-change flow to the user);
@@ -35,13 +34,14 @@ public enum TLSTrustVerdict: Sendable, Equatable {
 ///   closed).
 public struct TLSTrustEvaluator: Sendable {
     public let gatewayID: GatewayID
+    private static let firstUseLock = NSLock()
     private let pinStore: any SynchronousPinStoring
-    private let approvalStore: (any SynchronousTLSFirstUseApprovalStoring)?
+    private let approvalStore: any SynchronousTLSFirstUseApprovalStoring
 
     public init(
         gatewayID: GatewayID,
         pinStore: any SynchronousPinStoring,
-        approvalStore: (any SynchronousTLSFirstUseApprovalStoring)? = nil
+        approvalStore: any SynchronousTLSFirstUseApprovalStoring
     ) {
         self.gatewayID = gatewayID
         self.pinStore = pinStore
@@ -61,28 +61,40 @@ public struct TLSTrustEvaluator: Sendable {
             return .internalError("pin store unavailable (fail closed)")
         }
         guard let expected else {
-            // Production requires an explicit user decision before TOFU can
-            // persist a key. Tests and non-production callers may omit the
-            // approval seam to preserve the pure evaluator's legacy contract.
-            if let approvalStore {
-                do {
-                    // Atomic check-and-consume for THIS presented key: the
-                    // approval is single-use and, when bound, only matches
-                    // the exact SPKI the user reviewed.
-                    guard try approvalStore.syncConsumeFirstUseApproval(
-                        matching: presented, for: gatewayID) else {
-                        // A concurrent connection may have pinned this same
-                        // key a moment ago; that is a match, not a first use.
-                        if let raced = try? pinStore.syncLoadPin(for: gatewayID) {
-                            return raced == presented
-                                ? .pinMatched(raced)
-                                : .pinMismatch(expected: raced, presented: presented)
-                        }
-                        return .firstUseRequiresConfirmation(presented)
-                    }
-                } catch {
-                    return .internalError("first-use approval store unavailable (fail closed)")
+            // First use is decided under ONE process-wide lock so the approval
+            // consume and the pin write are atomic with respect to other
+            // connections racing for the same gateway: a loser always sees the
+            // winner's pin (and matches or mismatches it), never a gap.
+            Self.firstUseLock.lock()
+            defer { Self.firstUseLock.unlock() }
+            do {
+                if let raced = try pinStore.syncLoadPin(for: gatewayID) {
+                    return raced == presented
+                        ? .pinMatched(raced)
+                        : .pinMismatch(expected: raced, presented: presented)
                 }
+            } catch {
+                return .internalError("pin store unavailable (fail closed)")
+            }
+            // First use REQUIRES an approval for exactly this presented key
+            // (a reviewed fingerprint). There is no unapproved TOFU path.
+            do {
+                // Atomic check-and-consume for THIS presented key: the
+                // approval is single-use and only matches the exact SPKI the
+                // user reviewed.
+                guard try approvalStore.syncConsumeFirstUseApproval(
+                    matching: presented, for: gatewayID) else {
+                    // A concurrent connection may have pinned this same key a
+                    // moment ago; that is a match, not a first use.
+                    if let raced = try? pinStore.syncLoadPin(for: gatewayID) {
+                        return raced == presented
+                            ? .pinMatched(raced)
+                            : .pinMismatch(expected: raced, presented: presented)
+                    }
+                    return .firstUseRequiresConfirmation(presented)
+                }
+            } catch {
+                return .internalError("first-use approval store unavailable (fail closed)")
             }
             // Trust on first use: persist only if no pin appeared meanwhile
             // (compare-and-set), never overwriting an established pin.

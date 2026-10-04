@@ -108,7 +108,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
         let pins = KeychainPinStore(keychain: keychain)
         let pin = try XCTUnwrap(SPKIFingerprint(base64: "0sshb6QBdnSVmS4d7pNB5MC4rowmN+JUeF0KQS/kpOk="))
         try await pins.savePin(pin, for: id)
-        try await pins.approveFirstUse(for: id)
+        try await pins.approveFirstUse(for: id, boundTo: pin)
     }
 
     func testFreshInstallWithLeftoverItemsPurgesThenSetsMarker() async throws {

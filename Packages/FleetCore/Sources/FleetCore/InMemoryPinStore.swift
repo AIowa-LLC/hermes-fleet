@@ -11,7 +11,7 @@ public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring,
     TLSFirstUseApprovalStoring, SynchronousTLSFirstUseApprovalStoring,
     @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<[String: SPKIFingerprint]>(initialState: [:])
-    private let approvalLock = OSAllocatedUnfairLock<[String: SPKIFingerprint?]>(initialState: [:])
+    private let approvalLock = OSAllocatedUnfairLock<[String: SPKIFingerprint]>(initialState: [:])
 
     public init() {}
 
@@ -47,17 +47,13 @@ public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring,
 
     public func syncDeletePin(for gatewayID: GatewayID) throws {
         _ = lock.withLock { $0.removeValue(forKey: gatewayID.rawValue) }
-        try syncSetFirstUseApproved(false, for: gatewayID)
+        try syncClearFirstUseApproval(for: gatewayID)
     }
 
     // MARK: TLSFirstUseApprovalStoring
 
-    public func approveFirstUse(for gatewayID: GatewayID) async throws {
-        try syncSetFirstUseApproved(true, for: gatewayID)
-    }
-
     public func approveFirstUse(for gatewayID: GatewayID, boundTo fingerprint: SPKIFingerprint) async throws {
-        try syncSetFirstUseApproval(boundTo: fingerprint, for: gatewayID)
+        try syncApproveFirstUse(boundTo: fingerprint, for: gatewayID)
     }
 
     public func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool {
@@ -65,7 +61,7 @@ public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring,
     }
 
     public func resetFirstUseApproval(for gatewayID: GatewayID) async throws {
-        try syncSetFirstUseApproved(false, for: gatewayID)
+        try syncClearFirstUseApproval(for: gatewayID)
     }
 
     // MARK: SynchronousTLSFirstUseApprovalStoring
@@ -74,22 +70,17 @@ public final class InMemoryPinStore: TLSPinStoring, SynchronousPinStoring,
         approvalLock.withLock { $0.keys.contains(gatewayID.rawValue) }
     }
 
-    public func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws {
-        if approved {
-            try syncSetFirstUseApproval(boundTo: nil, for: gatewayID)
-        } else {
-            approvalLock.withLock { _ = $0.removeValue(forKey: gatewayID.rawValue) }
-        }
+    public func syncApproveFirstUse(boundTo fingerprint: SPKIFingerprint, for gatewayID: GatewayID) throws {
+        approvalLock.withLock { $0[gatewayID.rawValue] = fingerprint }
     }
 
-    public func syncSetFirstUseApproval(boundTo fingerprint: SPKIFingerprint?, for gatewayID: GatewayID) throws {
-        approvalLock.withLock { $0[gatewayID.rawValue] = .some(fingerprint) }
+    public func syncClearFirstUseApproval(for gatewayID: GatewayID) throws {
+        approvalLock.withLock { _ = $0.removeValue(forKey: gatewayID.rawValue) }
     }
 
     public func syncConsumeFirstUseApproval(matching presented: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
         approvalLock.withLock {
-            guard let entry = $0[gatewayID.rawValue] else { return false }
-            if let bound = entry, bound != presented { return false }
+            guard let bound = $0[gatewayID.rawValue], bound == presented else { return false }
             $0.removeValue(forKey: gatewayID.rawValue)
             return true
         }

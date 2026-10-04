@@ -14,6 +14,7 @@ public final class InProcessTLSServer: @unchecked Sendable {
     private var _connection: NWConnection?
     private var _inboundCount = 0
     private var _connectionCount = 0
+    private var _tlsCompletedCount = 0
     private var _openFramesSent = false
     private var _failureDescription: String?
 
@@ -43,6 +44,14 @@ public final class InProcessTLSServer: @unchecked Sendable {
         }
         parameters.defaultProtocolStack.applicationProtocols.insert(wsOptions, at: 0)
         self.listener = try NWListener(using: parameters, on: .any)
+    }
+
+    /// Connections whose TLS handshake COMPLETED (state `.ready`). A client
+    /// that rejects the presented key cancels the handshake before this, so 0
+    /// means no application bytes (and no credential) could have been sent.
+    public var tlsCompletedCount: Int {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _tlsCompletedCount
     }
 
     public var connectionCount: Int {
@@ -100,6 +109,7 @@ public final class InProcessTLSServer: @unchecked Sendable {
             switch state {
             case .ready:
                 self.stateLock.lock()
+                self._tlsCompletedCount += 1
                 let shouldSendOpenFrames = self._connection === connection && !self._openFramesSent
                 if shouldSendOpenFrames { self._openFramesSent = true }
                 self.stateLock.unlock()

@@ -28,7 +28,7 @@ public final class PinningTrustHandler: @unchecked Sendable {
     public init(
         gatewayID: GatewayID,
         pinStore: any SynchronousPinStoring,
-        approvalStore: (any SynchronousTLSFirstUseApprovalStoring)? = nil
+        approvalStore: any SynchronousTLSFirstUseApprovalStoring
     ) {
         self.gatewayID = gatewayID
         self.evaluator = TLSTrustEvaluator(
