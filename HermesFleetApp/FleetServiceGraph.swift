@@ -401,6 +401,8 @@ enum FleetServiceGraph {
                 let cookie = try await PasswordLoginClient(baseURL: base, urlSession: urlSession).login(
                     username: username, password: credential.rawValue)
                 return .cookie(cookie)
+            case .oauthNative:
+                throw KanbanBoardError.malformedResponse("OAuth native HTTP credential is wired by the composition root")
             }
         }
     }
@@ -887,6 +889,16 @@ enum FleetServiceGraph {
                 baseURL: base,
                 urlSession: urlSession,
                 sessionStore: sessionStore
+            )
+        case .oauthNative:
+            // Browser presentation lives in the app target; the composition
+            // root wires NativeOAuthClient + KeychainOAuthTokenStore when the
+            // user completes sign-in. Until then the authenticator fails closed.
+            return GatewayAuthenticator(
+                gatewayID: gateway.id,
+                strategy: .oauthNative,
+                baseURL: base,
+                urlSession: urlSession
             )
         }
     }
