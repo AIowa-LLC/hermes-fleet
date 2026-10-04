@@ -372,6 +372,104 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(connection.connectCount, 3, "the retry budget bounds the loop")
     }
 
+    // MARK: Finding 5 — backoff survives short-lived connections
+
+    /// A peer that accepts the connection and drops it again (for example
+    /// after rejecting an oversized frame) must not regain the base reconnect
+    /// delay by staying "online" for a watch tick.
+    func testRepeatedShortLivedConnectionsStayBoundedByTheRetryBudget() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 3, healthyDuration: 30))
+        await environment.connect(to: id)
+        for _ in 0..<8 {
+            let before = connection.connectCount
+            // Connected for a few watch ticks, then dropped (oversized-frame style).
+            _ = await waitUntil(timeout: 0.15) { false }
+            connection.statusValue = .offline
+            connection.reasonValue = .abnormalClosure
+            _ = await waitUntil(timeout: 0.4) { connection.connectCount > before }
+        }
+        let settled = connection.connectCount
+        _ = await waitUntil(timeout: 0.4) { false }
+        XCTAssertEqual(connection.connectCount, settled, "the loop has stopped: no further reconnects")
+        // Eight drops were offered. Unbounded behavior (budget restored by a
+        // single online sample) would reconnect for every one of them (1 + 8).
+        XCTAssertLessThanOrEqual(settled, 1 + 3, "never more than the initial connect plus maxAttempts retries")
+        XCTAssertGreaterThanOrEqual(settled, 2, "recovery did start")
+    }
+
+    func testSustainedHealthRestoresTheBudgetSoARecoveredGatewayIsNotPenalized() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 0.15))
+        await environment.connect(to: id)
+        for _ in 0..<6 {
+            let before = connection.connectCount
+            _ = await waitUntil(timeout: 0.4) { false }          // healthy: online well past healthyDuration
+            connection.statusValue = .offline
+            connection.reasonValue = .abnormalClosure
+            let retried = await waitUntil(timeout: 1) { connection.connectCount > before }
+            XCTAssertTrue(retried, "a gateway that stayed healthy keeps recovering")
+        }
+        XCTAssertGreaterThan(connection.connectCount, 1 + 2, "more reconnects than a single budget allows")
+    }
+
+    func testForegroundRestoreAndManualReconnectRestoreAnExhaustedBudget() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: Array(
+            repeating: .failure(.unreachable, .abnormalClosure), count: 3))
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        _ = await waitUntil { connection.connectCount == 3 }
+        _ = await waitUntil(timeout: 0.3) { false }
+        XCTAssertEqual(connection.connectCount, 3, "budget spent")
+        connection.scripted = [] // next connect succeeds
+        await environment.restoreIntendedConnections()
+        XCTAssertEqual(connection.connectCount, 4, "a foreground restore is an explicit fresh start")
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        // And the budget really is fresh: two more drops still retry.
+        for expected in [5, 6] {
+            connection.statusValue = .offline
+            connection.reasonValue = .abnormalClosure
+            let retried = await waitUntil(timeout: 1) { connection.connectCount == expected }
+            XCTAssertTrue(retried)
+        }
+    }
+
+    func testDisconnectCancelsPendingBackoffAndLeavesNoStaleBudget() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: Array(
+            repeating: .failure(.unreachable, .abnormalClosure), count: 2))
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.3, maxDelay: 0.3, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        _ = await waitUntil(timeout: 0.1) { false }
+        await environment.disconnect(from: id)                 // cancels the pending retry
+        _ = await waitUntil(timeout: 0.5) { false }
+        XCTAssertEqual(connection.connectCount, 1)
+        connection.scripted = []
+        await environment.reconnect(to: id)                    // explicit user reconnect
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        for expected in [3, 4] {
+            connection.statusValue = .offline
+            connection.reasonValue = .abnormalClosure
+            let retried = await waitUntil(timeout: 1.5) { connection.connectCount == expected }
+            XCTAssertTrue(retried, "the budget was reset by the deliberate reconnect")
+        }
+    }
+
     func testManualDisconnectCancelsPendingRetry() async {
         let id = GatewayID(rawValue: "workstation")
         let connection = RecoveringConnection(gatewayID: id, scripted: [

@@ -550,7 +550,8 @@ public final class AppEnvironment {
     /// `connectionStates` stale-`.connected`).
     @ObservationIgnored private var connectionWatchTasks: [GatewayID: Task<Void, Never>] = [:]
     @ObservationIgnored private var reconnectRetryTasks: [GatewayID: Task<Void, Never>] = [:]
-    @ObservationIgnored private var reconnectAttempts: [GatewayID: Int] = [:]
+    @ObservationIgnored private var reconnectBackoffs: [GatewayID: ReconnectBackoff] = [:]
+    @ObservationIgnored private static let recoveryOrigin = ContinuousClock.now
 
     /// Desired connection intent is deliberately distinct from live transport
     /// state. The store contains gateway IDs only; production backs it with
@@ -1980,8 +1981,13 @@ public final class AppEnvironment {
         let live = connection.status
         switch live {
         case .online:
-            // A live connection clears the retry budget.
-            reconnectAttempts[id] = 0
+            // Online is not "healthy": the retry budget is restored only after
+            // `healthyDuration` of continuous uptime, so a peer that accepts a
+            // connection and then drops it (e.g. after a rejected frame)
+            // cannot regain the base reconnect delay.
+            var backoff = reconnectBackoffs[id] ?? ReconnectBackoff(policy: recoveryTiming.backoffPolicy)
+            backoff.observeOnline(at: Self.recoveryNow())
+            reconnectBackoffs[id] = backoff
             cancelPendingRetry(for: id)
             // FB2: the transport can self-heal (e.g. its own reconnect logic
             // lands on `.online`) WITHOUT ever going through `connect(to:)`'s
@@ -1999,6 +2005,7 @@ public final class AppEnvironment {
         case .offline, .degraded, .authenticationRequired, .unsupported:
             let reason = await connection.lastDisconnectReason()
             guard !Task.isCancelled else { return }
+            reconnectBackoffs[id]?.observeFailure() // restart the stability clock
             let retryable = reason.map {
                 ReconnectPolicy.decision(for: $0) == .reconnect
             } ?? false
@@ -2024,12 +2031,9 @@ public final class AppEnvironment {
     private func scheduleAutoReconnect(for id: GatewayID) {
         guard connectionIntent.isIntended(id) else { return }
         guard reconnectRetryTasks[id] == nil else { return }
-        let attempt = reconnectAttempts[id, default: 0] + 1
-        guard attempt <= recoveryTiming.maxAttempts else { return }
-        reconnectAttempts[id] = attempt
-        let delay = min(
-            recoveryTiming.maxDelay,
-            recoveryTiming.baseDelay * pow(2, Double(attempt - 1)))
+        var backoff = reconnectBackoffs[id] ?? ReconnectBackoff(policy: recoveryTiming.backoffPolicy)
+        guard let delay = backoff.nextDelay() else { return } // budget spent
+        reconnectBackoffs[id] = backoff
         reconnectRetryTasks[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
@@ -2037,6 +2041,19 @@ public final class AppEnvironment {
             guard self.connectionIntent.isIntended(id) else { return }
             await self.connect(to: id)
         }
+    }
+
+    /// Monotonic seconds for the stability clock (Swift clock; not a boot-time API).
+    private static func recoveryNow() -> TimeInterval {
+        let elapsed = ContinuousClock.now - recoveryOrigin
+        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+    }
+
+    /// Restore the full retry budget for one gateway: foreground restore,
+    /// manual reconnect, deliberate endpoint change.
+    private func resetReconnectBackoff(for id: GatewayID) {
+        cancelPendingRetry(for: id)
+        reconnectBackoffs[id] = nil
     }
 
     private func cancelPendingRetry(for id: GatewayID) {
@@ -2050,7 +2067,7 @@ public final class AppEnvironment {
         connectionWatchTasks[id]?.cancel()
         connectionWatchTasks[id] = nil
         cancelPendingRetry(for: id)
-        reconnectAttempts[id] = nil
+        reconnectBackoffs[id] = nil
     }
 
     private func cancelAllConnectionRecovery() {
@@ -2062,7 +2079,7 @@ public final class AppEnvironment {
             reconnectRetryTasks[id]?.cancel()
         }
         reconnectRetryTasks.removeAll()
-        reconnectAttempts.removeAll()
+        reconnectBackoffs.removeAll()
     }
 
     /// Disconnect cleanly and safely from every state (spec §31).
@@ -2180,6 +2197,8 @@ public final class AppEnvironment {
                 await connection.disconnect()
                 activeConnections[gateway.id] = nil
             }
+            // A foreground restore is an explicit fresh start for the budget.
+            resetReconnectBackoff(for: gateway.id)
             await connect(to: gateway.id)
         }
     }
@@ -2433,6 +2452,9 @@ public final class AppEnvironment {
         }
         if previous?.endpoint != gateway.endpoint
             || previous?.authConfiguration != gateway.authConfiguration {
+            // A deliberate endpoint/auth change is a fresh start: the old
+            // endpoint's backoff must not penalize the new one.
+            resetReconnectBackoff(for: id)
             await gatewaySessionInvalidator?(id)
         }
         await reloadGateways()
