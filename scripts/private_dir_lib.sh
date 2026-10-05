@@ -62,13 +62,22 @@ hf_legacy_reviewer_dir() {
 # Physical (symlink-free) absolute form of <path>. The longest existing prefix
 # is resolved with `cd -P`; any not-yet-existing tail is appended unchanged.
 hf_canonical_path() {
-  local p="$1" d b
+  local p="$1" d b target hops="${2:-0}"
   [ -n "$p" ] || return 1
   case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
+  # Resolve the final entry too, including relative/chained file links. Bound
+  # traversal so cycles fail rather than being mistaken for non-legacy paths.
+  if [ -L "$p" ]; then
+    [ "$hops" -lt 40 ] || return 1
+    target=$(readlink "$p") || return 1
+    case "$target" in /*) ;; *) target="$(dirname "$p")/$target" ;; esac
+    hf_canonical_path "$target" "$((hops + 1))"
+    return
+  fi
   if [ -d "$p" ]; then ( cd -P "$p" 2>/dev/null && pwd -P ); return; fi
   d="$(dirname "$p")"; b="$(basename "$p")"
   [ "$d" = "$p" ] && { printf '%s' "$p"; return; }
-  d="$(hf_canonical_path "$d")" || return 1
+  d="$(hf_canonical_path "$d" "$hops")" || return 1
   [ "$d" = "/" ] && printf '/%s' "$b" || printf '%s/%s' "$d" "$b"
 }
 
@@ -76,8 +85,8 @@ hf_canonical_path() {
 # symlinks, `.`/`..`, trailing or doubled slashes and (on macOS) case.
 hf_is_legacy_reviewer_path() {
   local p legacy
-  p="$(hf_canonical_path "${1:-}")" || return 1
-  legacy="$(hf_canonical_path "$(hf_legacy_reviewer_dir)")" || return 1
+  p="$(hf_canonical_path "${1:-}")" || return 2
+  legacy="$(hf_canonical_path "$(hf_legacy_reviewer_dir)")" || return 2
   if [ "$(uname)" = "Darwin" ]; then
     p="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
     legacy="$(printf '%s' "$legacy" | tr '[:upper:]' '[:lower:]')"
@@ -85,4 +94,34 @@ hf_is_legacy_reviewer_path() {
   [ "$p" = "$legacy" ] && return 0
   case "$p" in "$legacy"/*) return 0 ;; esac
   return 1
+}
+
+# Validate before any credential bytes are parsed; print an absolute physical
+# filename on success. Explicit legacy opt-in does not relax file safety.
+hf_reviewer_credential_file() {
+  local p="${1:-}" physical owner mode rc
+  if hf_is_legacy_reviewer_path "$p"; then
+    if [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != 1 ]; then
+      echo "FAIL: credential file is inside the legacy reviewer state directory; provision fresh credentials" >&2
+      return 1
+    fi
+  else
+    rc=$?
+    if [ "$rc" != 1 ]; then
+      echo "FAIL: cannot resolve reviewer credential path" >&2
+      return 1
+    fi
+  fi
+  if [ -L "$p" ] || [ ! -f "$p" ] || [ ! -r "$p" ]; then
+    echo "FAIL: reviewer credential file must be a readable regular file, not a symlink" >&2
+    return 1
+  fi
+  physical=$(hf_canonical_path "$p") || return 1
+  owner=$(hf__stat_field owner "$physical") || return 1
+  mode=$(hf__stat_field mode "$physical") || return 1
+  if [ "$owner" != "$(id -u)" ] || [ "$mode" != 600 ]; then
+    echo "FAIL: reviewer credential file must be owned by the current user with mode 600" >&2
+    return 1
+  fi
+  printf '%s\n' "$physical"
 }

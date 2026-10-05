@@ -107,5 +107,66 @@ out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/side/.
 if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory" && [ -f "$LEG/credentials" ]; then pass "purge via a dotted spelling is refused and nothing is deleted"; else fail "purge bypass rc=$rc"; fi
 unset TMPDIR
 
+# 13. Final credential-file aliases are refused before Docker/network work.
+ALIAS="$T/credential-aliases"; mkdir -m 700 "$ALIAS"
+ln -s "$LEG/credentials" "$ALIAS/direct"
+ln -s direct "$ALIAS/chained"
+ln -s absent "$ALIAS/dangling"
+ln -s loop-b "$ALIAS/loop-a"; ln -s loop-a "$ALIAS/loop-b"
+for alias in "$ALIAS/direct" "$ALIAS/chained"; do
+  if TMPDIR="$LT" hf_is_legacy_reviewer_path "$alias"; then pass "final-file legacy alias recognised"; else fail "final-file legacy alias missed"; fi
+done
+TOOLS="$T/no-external-tools"; mkdir "$TOOLS"
+for tool in docker curl; do
+  cat > "$TOOLS/$tool" <<'STUB'
+#!/bin/sh
+: > "$HF_TEST_EXTERNAL_TOOL_MARKER"
+exit 86
+STUB
+  chmod 755 "$TOOLS/$tool"
+done
+FRESH="$T/fresh-reviewer"; mkdir -m 700 "$FRESH"
+ln -s "$LEG/credentials" "$FRESH/credentials"
+printf 'password=synthetic-fresh\n' > "$ALIAS/safe"; chmod 600 "$ALIAS/safe"
+cp "$ALIAS/safe" "$ALIAS/public"; chmod 644 "$ALIAS/public"
+ln -s safe "$ALIAS/safe-link"
+for alias in "$ALIAS/direct" "$ALIAS/chained" "$ALIAS/dangling" "$ALIAS/loop-a" \
+             "$T/legacy-link/credentials" "$ALIAS/public" "$ALIAS/safe-link"; do
+  for consumer in scripts/reviewer_env_check.sh scripts/reviewer_containment_test.sh; do
+    rm -f "$T/tool-used"
+    out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+      HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_BASE_URL=https://example.invalid \
+      REVIEWER_CRED_FILE="$alias" bash "$consumer" 2>&1); rc=$?
+    if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "$consumer refuses final-file alias before external work"; else fail "$consumer alias guard rc=$rc external=$(test -e "$T/tool-used" && echo yes || echo no)"; fi
+  done
+done
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$FRESH" \
+  bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses linked credentials before Docker"; else fail "launcher credential-link guard rc=$rc"; fi
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$ALIAS/loop-a" \
+  bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses unresolvable state before Docker"; else fail "launcher state resolution rc=$rc"; fi
+[ "$(cat "$LEG/credentials")" = "$BEFORE" ] && [ "$(mode_of "$LEG/credentials")" = 600 ] \
+  && pass "all alias refusals preserve synthetic legacy contents and mode" || fail "alias refusal changed legacy fixture"
+
+# 14. Positive controls: regular private files still work; deliberate legacy
+# opt-in permits a safe regular file but never relaxes the file/link policy.
+SAFE_CANONICAL=$(hf_canonical_path "$ALIAS/safe")
+out=$(TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/safe" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "regular private credential file accepted" || fail "safe regular file rc=$rc"
+out=$(cd "$ALIAS" && TMPDIR="$LT" hf_reviewer_credential_file ./safe 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "relative safe filename returns physical absolute path" || fail "relative safe file rc=$rc"
+out=$(REVIEWER_ALLOW_LEGACY_DIR=1 TMPDIR="$LT" hf_reviewer_credential_file "$LEG/credentials" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$(hf_canonical_path "$LEG/credentials")" ] && pass "explicit legacy opt-in accepts safe regular file" || fail "legacy opt-in rc=$rc"
+for alias in "$ALIAS/direct" "$ALIAS/dangling" "$ALIAS/loop-a" "$ALIAS/public" "$ALIAS/safe-link"; do
+  if REVIEWER_ALLOW_LEGACY_DIR=1 TMPDIR="$LT" hf_reviewer_credential_file "$alias" >/dev/null 2>&1; then fail "legacy opt-in relaxed file safety"; else pass "legacy opt-in still refuses unsafe file"; fi
+done
+out=$(TMPDIR="$LT" hf_is_legacy_reviewer_path "$ALIAS/loop-a" 2>/dev/null); rc=$?
+[ "$rc" = 2 ] && pass "link loop returns distinct resolution failure" || fail "loop classification rc=$rc"
+
 echo "private_dir: $FAILS failure(s)"
 [ "$FAILS" = 0 ]

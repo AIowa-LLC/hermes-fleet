@@ -50,9 +50,22 @@ REVIEWER_ENV_DIR="${REVIEWER_ENV_DIR:-$(hf_private_name hermes-fleet-reviewer)}"
 CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
 # Old credentials in the pre-rename default directory are preserved but never
 # read, moved, overwritten or reused unless the operator opts in explicitly.
-if hf_is_legacy_reviewer_path "$REVIEWER_ENV_DIR" && [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != "1" ]; then
-  printf 'FAIL: REVIEWER_ENV_DIR is the legacy reviewer state directory, which may hold old credentials. Use a fresh directory (the default), or set REVIEWER_ALLOW_LEGACY_DIR=1 to reuse it deliberately.\n' >&2
-  exit 1
+if hf_is_legacy_reviewer_path "$REVIEWER_ENV_DIR"; then
+  if [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != "1" ]; then
+    printf 'FAIL: REVIEWER_ENV_DIR is the legacy reviewer state directory, which may hold old credentials. Use a fresh directory (the default), or set REVIEWER_ALLOW_LEGACY_DIR=1 to reuse it deliberately.\n' >&2
+    exit 1
+  fi
+else
+  path_rc=$?
+  if [ "$path_rc" != 1 ]; then
+    printf 'FAIL: cannot resolve reviewer state directory\n' >&2
+    exit 2
+  fi
+fi
+# An existing credential-file alias must not enter a run (or a purge/status
+# command) before Docker is consulted. A missing fresh file is generated later.
+if [ -e "$CREDS_FILE" ] || [ -L "$CREDS_FILE" ]; then
+  CREDS_FILE=$(hf_reviewer_credential_file "$CREDS_FILE") || exit 2
 fi
 if [ -e "$(hf_legacy_reviewer_dir)" ] && ! hf_is_legacy_reviewer_path "$REVIEWER_ENV_DIR"; then
   printf '  note: a legacy reviewer state directory exists and is IGNORED (never read, moved or reused)\n' >&2
@@ -75,6 +88,9 @@ require_docker() {
 # ---------------------------------------------------------------- credentials
 resolve_credentials() {
   hf_private_dir "$REVIEWER_ENV_DIR" >/dev/null || die "$REVIEWER_ENV_DIR is not a private directory owned by this user"
+  if [ -e "$CREDS_FILE" ] || [ -L "$CREDS_FILE" ]; then
+    CREDS_FILE=$(hf_reviewer_credential_file "$CREDS_FILE") || die "refusing unsafe reviewer credentials"
+  fi
   if [ -s "$CREDS_FILE" ]; then
     REVIEWER_USERNAME="$(sed -n 's/^username=//p' "$CREDS_FILE")"
     REVIEWER_PASSWORD="$(sed -n 's/^password=//p' "$CREDS_FILE")"
