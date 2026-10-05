@@ -6,6 +6,10 @@
 # cleartext-warning UI tests), secrets scan, git state.
 # Run with: bash scripts/s3_validate.sh
 set -u
+# Private per-run scratch (never a predictable shared /tmp name: a local
+# user could pre-create or symlink it and clobber files).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_s3_validate.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 PASS=0
@@ -84,10 +88,10 @@ fi
 # --- 3. FULL PACKAGE SUITES --------------------------------------------------
 for PKG in FleetCore FleetNetworking FleetSecurity FleetPersistence; do
   note "$PKG build + full tests"
-  if (cd Packages/$PKG && swift build) >/tmp/s3_${PKG}_build.log 2>&1; then
+  if (cd Packages/$PKG && swift build) >$SCRIPT_TMP/s3_${PKG}_build.log 2>&1; then
     ok "$PKG builds"
   else
-    bad "$PKG build failed"; tail -5 /tmp/s3_${PKG}_build.log
+    bad "$PKG build failed"; tail -5 $SCRIPT_TMP/s3_${PKG}_build.log
   fi
   POUT=$(cd Packages/$PKG && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
   echo "  $POUT"
@@ -100,38 +104,38 @@ done
 
 # --- 4. XCODEGEN + XCODEBUILD build/test (iOS Simulator) ---------------------
 note "xcodegen + xcodebuild build/test (iOS Simulator)"
-if xcodegen generate >/tmp/s3_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+if xcodegen generate >$SCRIPT_TMP/s3_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
   ok "xcodegen regenerated; team 3JS22HX92T present"
 else
-  bad "xcodegen / team missing"; tail -5 /tmp/s3_xcodegen.log
+  bad "xcodegen / team missing"; tail -5 $SCRIPT_TMP/s3_xcodegen.log
 fi
 DEST="platform=iOS Simulator,name=iPhone 17 Pro,OS=latest"
 DD="$REPO/build/DerivedDataS3"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" build >/tmp/s3_xcbuild.log 2>&1; then
+    -destination "$DEST" -derivedDataPath "$DD" build >$SCRIPT_TMP/s3_xcbuild.log 2>&1; then
   ok "xcodebuild BUILD SUCCEEDED (iOS Simulator)"
 else
-  bad "xcodebuild build FAILED"; grep -E "error:" /tmp/s3_xcbuild.log | head -20
+  bad "xcodebuild build FAILED"; grep -E "error:" $SCRIPT_TMP/s3_xcbuild.log | head -20
 fi
 # App UNIT-test bundle (gateway-independent) — the repo convention.
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -destination "$DEST" -derivedDataPath "$DD" \
-    -only-testing:HermesFleetAppTests test >/tmp/s3_xctest.log 2>&1; then
-  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/s3_xctest.log | tail -1)
+    -only-testing:HermesFleetAppTests test >$SCRIPT_TMP/s3_xctest.log 2>&1; then
+  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' $SCRIPT_TMP/s3_xctest.log | tail -1)
   ok "xcodebuild app UNIT tests SUCCEEDED — $TESTLINE"
 else
-  bad "xcodebuild app unit tests FAILED"; grep -E 'error:|failed|Test Suite' /tmp/s3_xctest.log | tail -20
+  bad "xcodebuild app unit tests FAILED"; grep -E 'error:|failed|Test Suite' $SCRIPT_TMP/s3_xctest.log | tail -20
 fi
 # S3 cleartext-warning UI tests (deterministic — scripted fleet, no live
 # gateway). These are the B2 acceptance UI tests.
 note "S3 cleartext-warning UI tests (scripted fleet)"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -destination "$DEST" -derivedDataPath "$DD" \
-    -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests test >/tmp/s3_xcuit.log 2>&1; then
-  UILINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/s3_xcuit.log | tail -1)
+    -only-testing:HermesFleetAppUITests/S3CleartextWarningUITests test >$SCRIPT_TMP/s3_xcuit.log 2>&1; then
+  UILINE=$(grep -E 'Test Suite.*(passed|failed)' $SCRIPT_TMP/s3_xcuit.log | tail -1)
   ok "S3 cleartext-warning UI tests SUCCEEDED — $UILINE"
 else
-  bad "S3 cleartext-warning UI tests FAILED"; grep -E 'error:|failed|Test Case.*failed' /tmp/s3_xcuit.log | tail -20
+  bad "S3 cleartext-warning UI tests FAILED"; grep -E 'error:|failed|Test Case.*failed' $SCRIPT_TMP/s3_xcuit.log | tail -20
 fi
 
 # --- 5. Secrets scan (S3-touched files ONLY — sweeping all of

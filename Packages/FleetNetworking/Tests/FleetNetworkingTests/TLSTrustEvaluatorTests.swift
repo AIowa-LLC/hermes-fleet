@@ -34,7 +34,8 @@ final class TLSTrustEvaluatorTests: XCTestCase {
 
     func testFirstUseIsTOFUAccept() throws {
         let store = InMemoryPinStore()
-        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
+        try store.syncApproveFirstUse(boundTo: try gatewayPin, for: gatewayID)
 
         let verdict = evaluator.verdict(forPresentedCertificate: try gatewayCert())
 
@@ -43,7 +44,8 @@ final class TLSTrustEvaluatorTests: XCTestCase {
 
     func testTOFUAcceptWritesThePin() async throws {
         let store = InMemoryPinStore()
-        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
+        try store.syncApproveFirstUse(boundTo: try gatewayPin, for: gatewayID)
 
         _ = evaluator.verdict(forPresentedCertificate: try gatewayCert())
 
@@ -66,7 +68,7 @@ final class TLSTrustEvaluatorTests: XCTestCase {
 
     func testApprovedFirstUsePinsAndReconnects() throws {
         let store = InMemoryPinStore()
-        try store.syncSetFirstUseApproved(true, for: gatewayID)
+        try store.syncApproveFirstUse(boundTo: try gatewayPin, for: gatewayID)
         let evaluator = TLSTrustEvaluator(
             gatewayID: gatewayID,
             pinStore: store,
@@ -78,10 +80,41 @@ final class TLSTrustEvaluatorTests: XCTestCase {
         XCTAssertEqual(try store.syncLoadPin(for: gatewayID), try gatewayPin)
     }
 
+    func testApprovalBoundToDifferentKeyDoesNotPin() throws {
+        let store = InMemoryPinStore()
+        // The user reviewed the gateway's key, but a different key is presented.
+        try store.syncApproveFirstUse(boundTo: try gatewayPin, for: gatewayID)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
+
+        let verdict = evaluator.verdict(forPresentedCertificate: try mitmCert())
+
+        XCTAssertEqual(verdict, .firstUseRequiresConfirmation(try mitmPin))
+        XCTAssertNil(try store.syncLoadPin(for: gatewayID))
+        XCTAssertTrue(try store.syncIsFirstUseApproved(for: gatewayID),
+                      "a mismatched key must not consume the reviewed-key approval")
+    }
+
+    func testApprovalBoundToPresentedKeyPinsAndIsSingleUse() throws {
+        let store = InMemoryPinStore()
+        try store.syncApproveFirstUse(boundTo: try gatewayPin, for: gatewayID)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
+
+        XCTAssertEqual(evaluator.verdict(forPresentedCertificate: try gatewayCert()),
+                       .tofuAccept(try gatewayPin))
+        XCTAssertFalse(try store.syncIsFirstUseApproved(for: gatewayID), "approval is single-use")
+    }
+
+    func testFirstUseNeverOverwritesExistingPin() throws {
+        let store = InMemoryPinStore()
+        try store.syncSavePin(try gatewayPin, for: gatewayID)
+        XCTAssertFalse(try store.syncSavePinIfAbsent(try mitmPin, for: gatewayID))
+        XCTAssertEqual(try store.syncLoadPin(for: gatewayID), try gatewayPin)
+    }
+
     func testPinnedCertificateMatchesOnReconnect() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)
-        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
         let verdict = evaluator.verdict(forPresentedCertificate: try gatewayCert())
 
@@ -91,7 +124,7 @@ final class TLSTrustEvaluatorTests: XCTestCase {
     func testDifferentCertificateIsPinMismatch() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)
-        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
         let verdict = evaluator.verdict(forPresentedCertificate: try mitmCert())
 
@@ -102,7 +135,7 @@ final class TLSTrustEvaluatorTests: XCTestCase {
         // A keychain read failure must REJECT, never fall through to accept
         // (fail closed — an unavailable pin store is not "no pin").
         let store = FailingPinStore()
-        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: InMemoryPinStore())
 
         let verdict = evaluator.verdict(forPresentedCertificate: try gatewayCert())
 
@@ -113,7 +146,7 @@ final class TLSTrustEvaluatorTests: XCTestCase {
 
     func testUnextractableKeyFailsClosed() throws {
         let store = InMemoryPinStore()
-        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store)
+        let evaluator = TLSTrustEvaluator(gatewayID: gatewayID, pinStore: store, approvalStore: store)
         // A certificate with an unsupported key type (RSA-1024) — the SPKI
         // extractor must fail closed rather than pin a weak key.
         let badCert = try XCTUnwrap(SecCertificateCreateWithData(
@@ -132,6 +165,9 @@ final class TLSTrustEvaluatorTests: XCTestCase {
             throw PinStoreError.unexpectedStatus(-25291)
         }
         func syncDeletePin(for gatewayID: GatewayID) throws {
+            throw PinStoreError.unexpectedStatus(-25291)
+        }
+        func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
             throw PinStoreError.unexpectedStatus(-25291)
         }
     }

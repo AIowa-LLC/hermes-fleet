@@ -105,38 +105,16 @@ public struct GatewaysView: View {
                     title: "Add Gateway",
                     saveButton: "Add",
                     initial: nil,
-                    draftStore: environment.gatewayFormDraft
-                ) { registration, credential, confirmsTLSFirstUse in
+                    draftStore: environment.gatewayFormDraft,
+                    reviewKey: { try await environment.reviewTLSKey(for: $0) }
+                ) { registration, credential, tlsReview in
                     _ = try await environment.addGateway(
                         registration,
                         credential: credential,
-                        confirmsTLSFirstUse: confirmsTLSFirstUse)
+                        tlsReview: tlsReview)
                 }
             case .edit(let gateway):
-                GatewayFormSheet(
-                    title: "Edit Gateway",
-                    saveButton: "Save",
-                    initial: gateway,
-                    draftStore: environment.gatewayFormDraft
-                ) { registration, credential, confirmsTLSFirstUse in
-                    // Apply the edited display name / endpoint / strategy.
-                    _ = try await environment.updateGateway(
-                        gateway.id,
-                        edits: GatewayEdit(
-                            displayName: registration.displayName,
-                            endpoint: registration.endpoint,
-                            authConfiguration: registration.authConfiguration
-                        )
-                    )
-                    // Store a newly-entered credential (Keychain-safe);
-                    // nil keeps the registry's existing credential.
-                    if let credential {
-                        try await environment.saveCredential(credential, for: gateway.id)
-                    }
-                    if confirmsTLSFirstUse {
-                        try await environment.approveTLSFirstUse(for: gateway.id)
-                    }
-                }
+                EditGatewayFormHost(environment: environment, gateway: gateway)
             case .auth(let id):
                 GatewayAuthSheet(environment: environment, gatewayID: id)
             }
@@ -790,5 +768,50 @@ extension GatewaysView {
         case .runningWithoutLocalCache:
             return "Running without local cache. Changes made in this session won't be saved."
         }
+    }
+}
+
+
+/// Edit-gateway form. Loads whether the gateway already has a pinned key so the
+/// form knows if a certificate review is still needed (a cleared or never-pinned
+/// secure gateway is re-paired here by reviewing the key it actually presents).
+private struct EditGatewayFormHost: View {
+    let environment: AppEnvironment
+    let gateway: FleetGateway
+    @State private var pinned: Bool?
+
+    var body: some View {
+        Group {
+            if let pinned {
+                GatewayFormSheet(
+                    title: "Edit Gateway",
+                    saveButton: "Save",
+                    initial: gateway,
+                    draftStore: environment.gatewayFormDraft,
+                    tlsPinned: pinned,
+                    reviewKey: { try await environment.reviewTLSKey(for: $0) }
+                ) { registration, credential, tlsReview in
+                    // Apply the edited display name / endpoint / strategy. A
+                    // changed secure address needs its own reviewed key.
+                    _ = try await environment.updateGateway(
+                        gateway.id,
+                        edits: GatewayEdit(
+                            displayName: registration.displayName,
+                            endpoint: registration.endpoint,
+                            authConfiguration: registration.authConfiguration
+                        ),
+                        tlsReview: tlsReview
+                    )
+                    // Store a newly-entered credential (Keychain-safe);
+                    // nil keeps the registry's existing credential.
+                    if let credential {
+                        try await environment.saveCredential(credential, for: gateway.id)
+                    }
+                }
+            } else {
+                ProgressView()
+            }
+        }
+        .task { pinned = await environment.tlsPin(for: gateway.id) != nil }
     }
 }

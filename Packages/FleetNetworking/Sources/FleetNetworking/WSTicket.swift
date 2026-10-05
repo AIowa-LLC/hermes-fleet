@@ -18,6 +18,38 @@ enum AuthREST {
     }
 }
 
+extension URLSession {
+    /// `data(for:)` with the response size enforced WHILE receiving, not after
+    /// the whole body is buffered. A body longer than `limit` (declared by
+    /// Content-Length or discovered mid-stream) cancels the transfer and is
+    /// returned as exactly `limit + 1` zero bytes, so every caller's existing
+    /// `data.count <= AuthREST.maxResponseBytes` guard rejects it without the
+    /// oversized payload ever being held in memory.
+    func boundedData(
+        for request: URLRequest,
+        limit: Int = AuthREST.maxResponseBytes
+    ) async throws -> (Data, URLResponse) {
+        let (bytes, response) = try await self.bytes(for: request)
+        let oversized = (Data(count: limit + 1), response)
+        if response.expectedContentLength > Int64(limit) {
+            bytes.task.cancel()
+            return oversized
+        }
+        var data = Data()
+        if response.expectedContentLength > 0 {
+            data.reserveCapacity(Int(response.expectedContentLength))
+        }
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > limit {
+                bytes.task.cancel()
+                return oversized
+            }
+        }
+        return (data, response)
+    }
+}
+
 /// A short-lived, single-use WebSocket upgrade ticket minted by the gateway.
 ///
 /// Wire contract (verified in `hermes_cli/dashboard_auth/routes.py:932` and
@@ -139,7 +171,7 @@ public struct WSTicketClient: WSTicketMinting {
         }
         AuthREST.bounded(&request)
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw TicketMintError.malformedResponse
         }

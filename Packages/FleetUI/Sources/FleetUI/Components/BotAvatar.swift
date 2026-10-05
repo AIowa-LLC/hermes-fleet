@@ -49,7 +49,7 @@ public struct BotAvatar: View {
         Group {
             if let bot, bot.hasAvatar,
                let data = management?.avatarDataByRoute[bot.route],
-               let image = UIImage(data: data) {
+               let image = BoundedImageDecoder.decode(data, maxDimension: 1024) {
                 Image(uiImage: image).resizable().scaledToFill()
             } else if identity.isEmpty {
                 Text(FleetDashboardFormatting.avatarInitials(from: displayName))

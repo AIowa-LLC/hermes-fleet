@@ -12,6 +12,9 @@
 # TOOLING: script file only, run with `bash scripts/u4_device.sh`
 #   HERMES_FLEET_DEVICE_ID=<UDID> bash scripts/u4_device.sh
 set -u
+# Private per-run scratch (never a predictable shared /tmp name).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_u4_device.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 # shellcheck source=scripts/fleet_device.sh
@@ -38,27 +41,27 @@ if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -skipMacroValidation \
     -allowProvisioningUpdates \
     CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=3JS22HX92T \
-    build >/tmp/u4_device_build.log 2>&1; then
+    build >$SCRIPT_TMP/u4_device_build.log 2>&1; then
   ok "device BUILD SUCCEEDED"
 else
   bad "device build FAILED — refusing to install an older artifact"
-  tail -30 /tmp/u4_device_build.log
+  tail -30 $SCRIPT_TMP/u4_device_build.log
   exit 1
 fi
 
 # --- 2. Codesign verification (metadata only, no key material) ---------------
 note "Codesign + embedded profile verification"
-if codesign -dv --verbose=4 "$APP" >/tmp/u4_device_codesign.log 2>&1; then
-  echo "  $(grep -E '^Authority|^TeamIdentifier|^Identifier' /tmp/u4_device_codesign.log | tr '\n' ' ')"
-  AUTHORITY=$(grep -c '^Authority=Apple Development' /tmp/u4_device_codesign.log)
-  TEAM=$(grep '^TeamIdentifier' /tmp/u4_device_codesign.log | head -1)
+if codesign -dv --verbose=4 "$APP" >$SCRIPT_TMP/u4_device_codesign.log 2>&1; then
+  echo "  $(grep -E '^Authority|^TeamIdentifier|^Identifier' $SCRIPT_TMP/u4_device_codesign.log | tr '\n' ' ')"
+  AUTHORITY=$(grep -c '^Authority=Apple Development' $SCRIPT_TMP/u4_device_codesign.log)
+  TEAM=$(grep '^TeamIdentifier' $SCRIPT_TMP/u4_device_codesign.log | head -1)
   if [ "$AUTHORITY" -ge 1 ] && echo "$TEAM" | grep -q '3JS22HX92T'; then
     ok "codesign identity = Apple Development (team 3JS22HX92T), by reference"
   else
-    bad "codesign identity mismatch"; cat /tmp/u4_device_codesign.log
+    bad "codesign identity mismatch"; cat $SCRIPT_TMP/u4_device_codesign.log
   fi
 else
-  bad "codesign --verify FAILED"; tail -10 /tmp/u4_device_codesign.log
+  bad "codesign --verify FAILED"; tail -10 $SCRIPT_TMP/u4_device_codesign.log
 fi
 
 if [ -f "$APP/embedded.mobileprovision" ]; then
@@ -82,10 +85,10 @@ if [ "$FAIL" -gt 0 ]; then
   exit 1
 fi
 APP_QUERY="$(mktemp -t fleet_installed_apps)"
-trap 'rm -f "$APP_QUERY"' EXIT
+trap 'rm -f "$APP_QUERY"; rm -rf "$SCRIPT_TMP"' EXIT
 if ! xcrun devicectl device info apps --device "$DEVICE" \
     --bundle-id com.aiowa.hermesfleet --json-output "$APP_QUERY" \
-    >/tmp/u4_device_apps.log 2>&1; then
+    >$SCRIPT_TMP/u4_device_apps.log 2>&1; then
   bad "could not read installed app version — refusing device install"
   exit 1
 fi
@@ -98,15 +101,15 @@ else
 fi
 
 note "Install in place (preserve app container)"
-if xcrun devicectl device install app --device "$DEVICE" "$APP" >/tmp/u4_device_install.log 2>&1; then
+if xcrun devicectl device install app --device "$DEVICE" "$APP" >$SCRIPT_TMP/u4_device_install.log 2>&1; then
   ok "app installed to device"
 else
-  bad "device install FAILED"; tail -15 /tmp/u4_device_install.log
+  bad "device install FAILED"; tail -15 $SCRIPT_TMP/u4_device_install.log
   exit 1
 fi
 if ! xcrun devicectl device info apps --device "$DEVICE" \
     --bundle-id com.aiowa.hermesfleet --json-output "$APP_QUERY" \
-    >/tmp/u4_device_apps_after.log 2>&1; then
+    >$SCRIPT_TMP/u4_device_apps_after.log 2>&1; then
   bad "could not verify installed app version"
   exit 1
 fi

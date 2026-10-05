@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import FleetCore
+import FleetPersistence
 
 /// Builds a single-gateway connection for a registered gateway, so the app
 /// runtime can drive the connect/disconnect/reconnect lifecycle without
@@ -448,6 +449,7 @@ public final class AppEnvironment {
     /// not need the UI re-pair surface and leave these nil.
     private let tlsPinStore: (any TLSPinStoring)?
     private let tlsApprovalStore: (any TLSFirstUseApprovalStoring)?
+    private let tlsKeyProbe: (any TLSKeyProbing)?
     /// ADR-0012: the launch cache (last-good roster + session lists).
     /// Defaults to an in-memory store; the composition root injects the
     /// SwiftData-backed concrete. Structurally non-secret.
@@ -548,7 +550,8 @@ public final class AppEnvironment {
     /// `connectionStates` stale-`.connected`).
     @ObservationIgnored private var connectionWatchTasks: [GatewayID: Task<Void, Never>] = [:]
     @ObservationIgnored private var reconnectRetryTasks: [GatewayID: Task<Void, Never>] = [:]
-    @ObservationIgnored private var reconnectAttempts: [GatewayID: Int] = [:]
+    @ObservationIgnored private var reconnectBackoffs: [GatewayID: ReconnectBackoff] = [:]
+    @ObservationIgnored private static let recoveryOrigin = ContinuousClock.now
 
     /// Desired connection intent is deliberately distinct from live transport
     /// state. The store contains gateway IDs only; production backs it with
@@ -605,6 +608,7 @@ public final class AppEnvironment {
         cache: any CacheStoring,
         tlsPinStore: (any TLSPinStoring)? = nil,
         tlsApprovalStore: (any TLSFirstUseApprovalStoring)? = nil,
+        tlsKeyProbe: (any TLSKeyProbing)? = nil,
         sessionList: any SessionListProviding,
         connectionFactory: @escaping FleetConnectionFactory,
         conversationFactory: FleetConversationFactory? = nil,
@@ -632,7 +636,7 @@ public final class AppEnvironment {
         connectionIntentDefaults: UserDefaults? = nil,
         gatewaySessionInvalidator: FleetGatewaySessionInvalidator? = nil,
         gatewaySessionInvalidatorAll: FleetGatewaySessionInvalidatorAll? = nil,
-        conversationPinStore: any ConversationPinStoring = UserDefaultsConversationPinStore(),
+        conversationPinStore: any ConversationPinStoring = FileConversationPinStore(),
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
@@ -643,6 +647,7 @@ public final class AppEnvironment {
         self.cache = cache
         self.tlsPinStore = tlsPinStore
         self.tlsApprovalStore = tlsApprovalStore
+        self.tlsKeyProbe = tlsKeyProbe
         self.sessionList = sessionList
         self.connectionFactory = connectionFactory
         self.conversationFactory = conversationFactory
@@ -753,7 +758,7 @@ public final class AppEnvironment {
         // otherwise flips the next suite's swipe action to "Unpin".
         #if DEBUG
         if ProcessInfo.processInfo.environment["HERMES_FLEET_NAV_RESET"] == "1" {
-            UserDefaultsConversationPinStore.resetForUITests()
+            FileConversationPinStore.resetForUITests()
             await bridgedStore.resetForUITests()
             RoomDraftStore.resetForUITests()
             conversationDrafts.removeAll()
@@ -1888,6 +1893,16 @@ public final class AppEnvironment {
     /// idempotent from `.open`, but the guard also prevents redundant work and
     /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
+        // A user-initiated connect (Connect button, reconnect, restore) is an
+        // explicit fresh start for the retry budget. The auto-retry task calls
+        // `performConnect` directly so it can never reset its own budget.
+        if connectionStates[id] != .connecting, connectionStates[id] != .connected {
+            resetReconnectBackoff(for: id)
+        }
+        await performConnect(to: id)
+    }
+
+    private func performConnect(to id: GatewayID) async {
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
         guard let gateway = gateways.first(where: { $0.id == id }) else { return }
@@ -1976,8 +1991,13 @@ public final class AppEnvironment {
         let live = connection.status
         switch live {
         case .online:
-            // A live connection clears the retry budget.
-            reconnectAttempts[id] = 0
+            // Online is not "healthy": the retry budget is restored only after
+            // `healthyDuration` of continuous uptime, so a peer that accepts a
+            // connection and then drops it (e.g. after a rejected frame)
+            // cannot regain the base reconnect delay.
+            var backoff = reconnectBackoffs[id] ?? ReconnectBackoff(policy: recoveryTiming.backoffPolicy)
+            backoff.observeOnline(at: Self.recoveryNow())
+            reconnectBackoffs[id] = backoff
             cancelPendingRetry(for: id)
             // FB2: the transport can self-heal (e.g. its own reconnect logic
             // lands on `.online`) WITHOUT ever going through `connect(to:)`'s
@@ -1995,6 +2015,15 @@ public final class AppEnvironment {
         case .offline, .degraded, .authenticationRequired, .unsupported:
             let reason = await connection.lastDisconnectReason()
             guard !Task.isCancelled else { return }
+            // The await above is a suspension point: a retry may have finished
+            // meanwhile. Acting on the stale `live` sample would mark a healthy
+            // gateway failed and burn a retry attempt; the next tick re-samples.
+            guard connection.status == live else { return }
+            // A connect already in flight owns the state: do not overwrite its
+            // `.connecting` with `.failed` (that would also let a second
+            // concurrent connect through).
+            guard connectionStates[id] != .connecting else { return }
+            reconnectBackoffs[id]?.observeFailure() // restart the stability clock
             let retryable = reason.map {
                 ReconnectPolicy.decision(for: $0) == .reconnect
             } ?? false
@@ -2020,19 +2049,32 @@ public final class AppEnvironment {
     private func scheduleAutoReconnect(for id: GatewayID) {
         guard connectionIntent.isIntended(id) else { return }
         guard reconnectRetryTasks[id] == nil else { return }
-        let attempt = reconnectAttempts[id, default: 0] + 1
-        guard attempt <= recoveryTiming.maxAttempts else { return }
-        reconnectAttempts[id] = attempt
-        let delay = min(
-            recoveryTiming.maxDelay,
-            recoveryTiming.baseDelay * pow(2, Double(attempt - 1)))
+        // A connect already in flight owns the outcome; scheduling another
+        // retry now would only burn budget (its connect would be dropped).
+        guard connectionStates[id] != .connecting else { return }
+        var backoff = reconnectBackoffs[id] ?? ReconnectBackoff(policy: recoveryTiming.backoffPolicy)
+        guard let delay = backoff.nextDelay() else { return } // budget spent
+        reconnectBackoffs[id] = backoff
         reconnectRetryTasks[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
             self.reconnectRetryTasks[id] = nil
             guard self.connectionIntent.isIntended(id) else { return }
-            await self.connect(to: id)
+            await self.performConnect(to: id)
         }
+    }
+
+    /// Monotonic seconds for the stability clock (Swift clock; not a boot-time API).
+    private static func recoveryNow() -> TimeInterval {
+        let elapsed = ContinuousClock.now - recoveryOrigin
+        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+    }
+
+    /// Restore the full retry budget for one gateway: foreground restore,
+    /// manual reconnect, deliberate endpoint change.
+    private func resetReconnectBackoff(for id: GatewayID) {
+        cancelPendingRetry(for: id)
+        reconnectBackoffs[id] = nil
     }
 
     private func cancelPendingRetry(for id: GatewayID) {
@@ -2040,13 +2082,19 @@ public final class AppEnvironment {
         reconnectRetryTasks[id] = nil
     }
 
+    #if DEBUG
+    /// Test hook: attempts spent in the current backoff budget.
+    public func reconnectAttemptsForTesting(_ id: GatewayID) -> Int { reconnectBackoffs[id]?.attempts ?? 0 }
+    public func hasPendingRetryForTesting(_ id: GatewayID) -> Bool { reconnectRetryTasks[id] != nil }
+    #endif
+
     /// Stop all auto-recovery activity for a gateway (manual disconnect,
     /// gateway removal). A later explicit connect() restarts the watch.
     private func cancelConnectionRecovery(for id: GatewayID) {
         connectionWatchTasks[id]?.cancel()
         connectionWatchTasks[id] = nil
         cancelPendingRetry(for: id)
-        reconnectAttempts[id] = nil
+        reconnectBackoffs[id] = nil
     }
 
     private func cancelAllConnectionRecovery() {
@@ -2058,7 +2106,7 @@ public final class AppEnvironment {
             reconnectRetryTasks[id]?.cancel()
         }
         reconnectRetryTasks.removeAll()
-        reconnectAttempts.removeAll()
+        reconnectBackoffs.removeAll()
     }
 
     /// Disconnect cleanly and safely from every state (spec §31).
@@ -2176,6 +2224,8 @@ public final class AppEnvironment {
                 await connection.disconnect()
                 activeConnections[gateway.id] = nil
             }
+            // A foreground restore is an explicit fresh start for the budget.
+            resetReconnectBackoff(for: gateway.id)
             await connect(to: gateway.id)
         }
     }
@@ -2328,16 +2378,31 @@ public final class AppEnvironment {
     /// call (U2 add-gateway form). The credential is passed straight to the
     /// registry's Keychain-safe store — it is never held by the view layer
     /// or logged. `nil` credential → registration only.
+    ///
+    /// A secure (`https`) endpoint requires `tlsReview`: the fingerprint of the
+    /// key the endpoint actually presented, confirmed by the user for THIS
+    /// endpoint. The review is validated (same endpoint, not stale) BEFORE
+    /// anything is registered, and the first-use approval stored from it is
+    /// bound to that exact key, so a different key can never pin. The
+    /// credential is saved only after trust is recorded.
     public func addGateway(
         _ registration: GatewayRegistration,
         credential: GatewayCredential?,
-        confirmsTLSFirstUse: Bool = false
+        tlsReview: TLSKeyReview? = nil
     ) async throws -> FleetGateway {
+        let review = try Self.validatedReview(tlsReview, for: registration.endpoint, required: true)
         let gateway = try await registry.addGateway(registration)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
         conversationDrafts.allowWrites(gatewayID: gateway.id)
-        if confirmsTLSFirstUse {
-            try await tlsApprovalStore?.approveFirstUse(for: gateway.id)
+        if let review {
+            do {
+                try await tlsApprovalStore?.approveFirstUse(for: gateway.id, boundTo: review.fingerprint)
+            } catch {
+                // Trust could not be recorded: do not leave a half-configured
+                // secure gateway behind.
+                try? await registry.removeGateway(gateway.id)
+                throw error
+            }
         }
         if let credential {
             try await registry.saveCredential(credential, for: gateway.id)
@@ -2346,13 +2411,77 @@ public final class AppEnvironment {
         return gateway
     }
 
+    private static func sameEndpoint(_ a: URL?, _ b: URL?) -> Bool {
+        func key(_ url: URL?) -> String? {
+            guard let url, let origin = try? GatewayEndpoint.normalizedOrigin(from: url) else { return nil }
+            var text = origin.absoluteString.lowercased()
+            if text.hasSuffix("/") { text.removeLast() }
+            return text
+        }
+        return key(a) != nil && key(a) == key(b)
+    }
+
+    /// The review to apply for `endpoint`: nil for a non-secure endpoint (no
+    /// TLS key to review). For `https` a missing, stale or mismatched review
+    /// throws; `required` makes a missing review an error.
+    private static func validatedReview(
+        _ review: TLSKeyReview?, for endpoint: URL?, required: Bool
+    ) throws -> TLSKeyReview? {
+        guard let endpoint, endpoint.scheme?.lowercased() == "https" else { return nil }
+        guard let review else {
+            if required { throw TLSKeyReviewError.required }
+            return nil
+        }
+        try review.validate(for: endpoint)
+        return review
+    }
+
+    /// Show the user the key a secure endpoint ACTUALLY presents. Nothing but a
+    /// TLS handshake is performed — no request, no credentials. The returned
+    /// review is bound to this endpoint and key and expires.
+    public func reviewTLSKey(for endpoint: URL) async throws -> TLSKeyReview {
+        let origin = try GatewayEndpoint.normalizedOrigin(from: endpoint)
+        guard origin.scheme?.lowercased() == "https", let tlsKeyProbe else {
+            throw TLSKeyReviewError.probeFailed
+        }
+        let fingerprint = try await tlsKeyProbe.presentedKey(for: origin)
+        return TLSKeyReview(endpoint: origin, fingerprint: fingerprint)
+    }
+
     /// Apply a partial edit to a gateway's display name / endpoint / auth
     /// config. Throws `.notFound` / `.invalidEndpoint` from the registry seam.
-    public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
+    ///
+    /// Trust belongs to an endpoint. When the endpoint changes, the stored pin
+    /// and any first-use approval are cleared, and a secure new endpoint needs
+    /// a fresh `tlsReview` (validated BEFORE the edit is applied). On an
+    /// unchanged secure endpoint a review is optional: it is how a gateway
+    /// whose trust was cleared is re-paired.
+    public func updateGateway(
+        _ id: GatewayID,
+        edits: GatewayEdit,
+        tlsReview: TLSKeyReview? = nil
+    ) async throws -> FleetGateway {
         let previous = gateways.first(where: { $0.id == id })
+        let endpointChanged: Bool = {
+            guard let new = edits.endpoint else { return false }
+            return !Self.sameEndpoint(previous?.endpoint, new)
+        }()
+        let review = try Self.validatedReview(
+            tlsReview, for: edits.endpoint ?? previous?.endpoint, required: endpointChanged)
         let gateway = try await registry.updateGateway(id, edits: edits)
+        if endpointChanged {
+            // A pin or approval for the OLD endpoint must never carry over.
+            try await tlsPinStore?.deletePin(for: id)
+            try await tlsApprovalStore?.resetFirstUseApproval(for: id)
+        }
+        if let review {
+            try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: review.fingerprint)
+        }
         if previous?.endpoint != gateway.endpoint
             || previous?.authConfiguration != gateway.authConfiguration {
+            // A deliberate endpoint/auth change is a fresh start: the old
+            // endpoint's backoff must not penalize the new one.
+            resetReconnectBackoff(for: id)
             await gatewaySessionInvalidator?(id)
         }
         await reloadGateways()
@@ -2611,14 +2740,17 @@ public final class AppEnvironment {
 
     // MARK: TLS trust lifecycle (T3)
 
-    /// Record the user's explicit decision to trust the first secure
-    /// certificate presented by a gateway. The transport will still pin the
-    /// presented SPKI only after this decision is present.
-    public func approveTLSFirstUse(for id: GatewayID) async throws {
-        guard gateways.contains(where: { $0.id == id }) else {
+    /// Record the user's confirmation of a reviewed key for an existing
+    /// gateway (re-pair after trust was cleared). The review must be for the
+    /// gateway's CURRENT endpoint and not stale; the approval is bound to that
+    /// exact key, so the transport pins only that key.
+    public func approveTLSFirstUse(for id: GatewayID, review: TLSKeyReview) async throws {
+        guard let gateway = gateways.first(where: { $0.id == id }) else {
             throw GatewayRegistryError.notFound(id)
         }
-        try await tlsApprovalStore?.approveFirstUse(for: id)
+        guard let endpoint = gateway.endpoint else { throw TLSKeyReviewError.endpointChanged }
+        try review.validate(for: endpoint)
+        try await tlsApprovalStore?.approveFirstUse(for: id, boundTo: review.fingerprint)
     }
 
     /// Clear both the stored SPKI and the first-use decision. The next secure

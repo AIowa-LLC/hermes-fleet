@@ -1,0 +1,172 @@
+#!/bin/bash
+# Shared-host and concurrency tests for scripts/private_dir_lib.sh and the
+# supported-workflow scripts that use it. All fixtures live in a private
+# per-run directory; nothing touches a fixed shared /tmp name.
+set -u
+cd "$(dirname "$0")/.."
+T="$(mktemp -d "${TMPDIR:-/tmp}/hf_private_dir_test.XXXXXX")" || exit 2
+trap 'rm -rf "$T"' EXIT
+FAILS=0
+pass() { echo "PASS  $1"; }
+fail() { echo "FAIL  $1" >&2; FAILS=$((FAILS+1)); }
+# shellcheck source=private_dir_lib.sh
+. scripts/private_dir_lib.sh
+
+mode_of() { hf__stat_field mode "$1"; }
+
+# 1. Fresh creation is 0700 and owned by us, even under a permissive umask.
+( umask 000; hf_private_dir "$T/fresh" >/dev/null ) && [ "$(mode_of "$T/fresh")" = 700 ] \
+  && pass "fresh directory is created 0700 under umask 000" || fail "fresh directory mode"
+
+# 2. Re-validating our own directory succeeds (stable across script runs).
+hf_private_dir "$T/fresh" >/dev/null && pass "existing private directory is reused" || fail "reuse"
+
+# 3. A pre-created group/world-accessible directory (another user squatting
+#    the predictable name) is refused, not silently repaired and used.
+mkdir "$T/squat" && chmod 755 "$T/squat"
+if hf_private_dir "$T/squat" >/dev/null 2>&1; then fail "755 directory accepted"; else pass "pre-created 755 directory refused"; fi
+mkdir "$T/squat777" && chmod 777 "$T/squat777"
+if hf_private_dir "$T/squat777" >/dev/null 2>&1; then fail "777 directory accepted"; else pass "pre-created 777 directory refused"; fi
+
+# 4. A symlink (redirecting writes elsewhere) is refused, including when it
+#    points at a directory that would itself be valid.
+mkdir "$T/target" && chmod 700 "$T/target"
+ln -s "$T/target" "$T/link"
+if hf_private_dir "$T/link" >/dev/null 2>&1; then fail "symlink accepted"; else pass "symlink to a private directory refused"; fi
+ln -s "$T/does-not-exist" "$T/dangling"
+if hf_private_dir "$T/dangling" >/dev/null 2>&1; then fail "dangling symlink accepted"; else pass "dangling symlink refused"; fi
+[ ! -e "$T/does-not-exist" ] && pass "refused symlink was not followed to create its target" || fail "symlink target created"
+
+# 5. A regular file with the name is refused; empty path is refused.
+: > "$T/file"
+if hf_private_dir "$T/file" >/dev/null 2>&1; then fail "regular file accepted"; else pass "regular file refused"; fi
+if hf_private_dir "" >/dev/null 2>&1; then fail "empty path accepted"; else pass "empty path refused"; fi
+
+# 6. Concurrent first runs converge on one valid directory with no failures.
+RACE="$T/race"; : > "$T/race.fail"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  ( hf_private_dir "$RACE" >/dev/null 2>&1 || echo x >> "$T/race.fail" ) &
+done
+wait
+[ ! -s "$T/race.fail" ] && [ "$(mode_of "$RACE")" = 700 ] \
+  && pass "12 concurrent first runs all succeed on one 0700 directory" || fail "concurrent creation"
+
+# 7. Names are per-user so two users never contend for one shared name.
+case "$(hf_private_name hermes-fleet-live)" in *"-$(id -u)") pass "default name carries the uid";; *) fail "name lacks uid";; esac
+
+# 8. Supported scripts fail closed (exit 2, nothing written) on a bad dir.
+BAD="$T/bad-workdir"; mkdir "$BAD" && chmod 755 "$BAD"
+for s in l1_ats_check l1_secrets_scan l1_start_serve l1_live_contract l1_live_contract2 l1_live_contract3_lean; do
+  out=$(HERMES_FLEET_LIVE_WORKDIR="$BAD" bash "scripts/$s.sh" 2>&1); rc=$?
+  if [ "$rc" = 2 ] && [ -z "$(ls -A "$BAD")" ]; then pass "$s refuses a non-private work directory"; else fail "$s rc=$rc wrote=$(ls -A "$BAD")"; fi
+done
+ln -s "$T/target" "$T/wd-link"
+out=$(HERMES_FLEET_LIVE_WORKDIR="$T/wd-link" bash scripts/l1_start_serve.sh 2>&1); rc=$?
+[ "$rc" = 2 ] && [ -z "$(ls -A "$T/target")" ] && pass "l1_start_serve refuses a symlinked work directory" || fail "l1_start_serve symlink rc=$rc"
+
+# 9. The launcher refuses an unsafe state directory before touching it.
+out=$(REVIEWER_ENV_DIR="$BAD" bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+[ "$rc" != 0 ] && [ -d "$BAD" ] && printf '%s' "$out" | grep -q "REFUSING to purge" \
+  && pass "reviewer clean --purge refuses a non-private directory before any destructive step" || fail "purge guard rc=$rc"
+
+# 10. The artifact check's default evidence path is inside the private dir.
+grep -q 'hf_private_dir "$(hf_private_name hermes-fleet-live)"' scripts/c_artifact_live_check.sh \
+  && ! grep -q '/tmp}/c-artifact-evidence' scripts/c_artifact_live_check.sh \
+  && pass "c_artifact_live_check default evidence path is private" || fail "c_artifact default path"
+
+# 11. Legacy reviewer credentials never enter a run silently.
+LT="$T/legacytmp"; mkdir -p "$LT/hermes-fleet-reviewer"; chmod 700 "$LT/hermes-fleet-reviewer"
+printf 'password=synthetic\n' > "$LT/hermes-fleet-reviewer/credentials"; chmod 600 "$LT/hermes-fleet-reviewer/credentials"
+BEFORE=$(cat "$LT/hermes-fleet-reviewer/credentials")
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/hermes-fleet-reviewer" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "launcher refuses the legacy directory"; else fail "launcher legacy refusal rc=$rc"; fi
+out=$(TMPDIR="$LT" REVIEWER_BASE_URL=https://example.invalid REVIEWER_CRED_FILE="$LT/hermes-fleet-reviewer/credentials" bash scripts/reviewer_env_check.sh 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "env check refuses credentials from the legacy directory"; else fail "check legacy refusal rc=$rc"; fi
+out=$(TMPDIR="$LT" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if printf '%s' "$out" | grep -q "legacy reviewer state directory exists and is IGNORED"; then pass "default run reports the legacy directory as ignored"; else fail "no ignored-notice"; fi
+[ "$(cat "$LT/hermes-fleet-reviewer/credentials")" = "$BEFORE" ] && [ "$(stat -f %Lp "$LT/hermes-fleet-reviewer/credentials" 2>/dev/null || stat -c %a "$LT/hermes-fleet-reviewer/credentials")" = 600 ] \
+  && pass "legacy credentials untouched (content and mode preserved)" || fail "legacy credentials were modified"
+
+# 12. Spellings that used to bypass a lexical match are refused too.
+. scripts/private_dir_lib.sh
+LEG="$LT/hermes-fleet-reviewer"
+ln -s "$LEG" "$T/legacy-link"; ln -s "$LT" "$T/tmp-link"; mkdir -p "$LT/side"
+export TMPDIR="$LT"
+for spelling in "$LEG/credentials" "$LEG//credentials" "$LT//hermes-fleet-reviewer/credentials" \
+                "$LT/side/../hermes-fleet-reviewer/credentials" "$LT/./hermes-fleet-reviewer/credentials" \
+                "$T/legacy-link/credentials" "$T/tmp-link/hermes-fleet-reviewer/credentials"; do
+  if hf_is_legacy_reviewer_path "$spelling"; then pass "legacy path recognised: ${spelling#$T/}"; else fail "legacy bypass: ${spelling#$T/}"; fi
+done
+( cd "$LT" && hf_is_legacy_reviewer_path "./hermes-fleet-reviewer/credentials" ) && pass "relative spelling recognised" || fail "relative spelling bypass"
+UPPER="$(printf '%s' "$LEG/credentials" | tr 'a-z' 'A-Z')"
+if [ "$(uname)" = "Darwin" ]; then hf_is_legacy_reviewer_path "$UPPER" && pass "case-variant recognised on a case-insensitive volume" || fail "case bypass"; fi
+if hf_is_legacy_reviewer_path "$LT/hermes-fleet-reviewer-1234/credentials"; then fail "per-uid sibling wrongly treated as legacy"; else pass "per-uid sibling directory is NOT legacy"; fi
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_BASE_URL=https://example.invalid REVIEWER_CRED_FILE="$LT//hermes-fleet-reviewer/credentials" bash scripts/reviewer_containment_test.sh 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "containment test refuses legacy credentials"; else fail "containment legacy refusal rc=$rc"; fi
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/side/../hermes-fleet-reviewer" bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory" && [ -f "$LEG/credentials" ]; then pass "purge via a dotted spelling is refused and nothing is deleted"; else fail "purge bypass rc=$rc"; fi
+unset TMPDIR
+
+# 13. Final credential-file aliases are refused before Docker/network work.
+ALIAS="$T/credential-aliases"; mkdir -m 700 "$ALIAS"
+ln -s "$LEG/credentials" "$ALIAS/direct"
+ln -s direct "$ALIAS/chained"
+ln -s absent "$ALIAS/dangling"
+ln -s loop-b "$ALIAS/loop-a"; ln -s loop-a "$ALIAS/loop-b"
+for alias in "$ALIAS/direct" "$ALIAS/chained"; do
+  if TMPDIR="$LT" hf_is_legacy_reviewer_path "$alias"; then pass "final-file legacy alias recognised"; else fail "final-file legacy alias missed"; fi
+done
+TOOLS="$T/no-external-tools"; mkdir "$TOOLS"
+for tool in docker curl; do
+  cat > "$TOOLS/$tool" <<'STUB'
+#!/bin/sh
+: > "$HF_TEST_EXTERNAL_TOOL_MARKER"
+exit 86
+STUB
+  chmod 755 "$TOOLS/$tool"
+done
+FRESH="$T/fresh-reviewer"; mkdir -m 700 "$FRESH"
+ln -s "$LEG/credentials" "$FRESH/credentials"
+printf 'password=synthetic-fresh\n' > "$ALIAS/safe"; chmod 600 "$ALIAS/safe"
+cp "$ALIAS/safe" "$ALIAS/public"; chmod 644 "$ALIAS/public"
+ln -s safe "$ALIAS/safe-link"
+for alias in "$ALIAS/direct" "$ALIAS/chained" "$ALIAS/dangling" "$ALIAS/loop-a" \
+             "$T/legacy-link/credentials" "$ALIAS/public" "$ALIAS/safe-link"; do
+  for consumer in scripts/reviewer_env_check.sh scripts/reviewer_containment_test.sh; do
+    rm -f "$T/tool-used"
+    out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+      HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_BASE_URL=https://example.invalid \
+      REVIEWER_CRED_FILE="$alias" bash "$consumer" 2>&1); rc=$?
+    if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "$consumer refuses final-file alias before external work"; else fail "$consumer alias guard rc=$rc external=$(test -e "$T/tool-used" && echo yes || echo no)"; fi
+  done
+done
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$FRESH" \
+  bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses linked credentials before Docker"; else fail "launcher credential-link guard rc=$rc"; fi
+rm -f "$T/tool-used"
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" PATH="$TOOLS:$PATH" \
+  HF_TEST_EXTERNAL_TOOL_MARKER="$T/tool-used" REVIEWER_ENV_DIR="$ALIAS/loop-a" \
+  bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" = 2 ] && [ ! -e "$T/tool-used" ]; then pass "launcher refuses unresolvable state before Docker"; else fail "launcher state resolution rc=$rc"; fi
+[ "$(cat "$LEG/credentials")" = "$BEFORE" ] && [ "$(mode_of "$LEG/credentials")" = 600 ] \
+  && pass "all alias refusals preserve synthetic legacy contents and mode" || fail "alias refusal changed legacy fixture"
+
+# 14. Positive controls: regular private files still work; deliberate legacy
+# opt-in permits a safe regular file but never relaxes the file/link policy.
+SAFE_CANONICAL=$(hf_canonical_path "$ALIAS/safe")
+out=$(TMPDIR="$LT" hf_reviewer_credential_file "$ALIAS/safe" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "regular private credential file accepted" || fail "safe regular file rc=$rc"
+out=$(cd "$ALIAS" && TMPDIR="$LT" hf_reviewer_credential_file ./safe 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$SAFE_CANONICAL" ] && pass "relative safe filename returns physical absolute path" || fail "relative safe file rc=$rc"
+out=$(REVIEWER_ALLOW_LEGACY_DIR=1 TMPDIR="$LT" hf_reviewer_credential_file "$LEG/credentials" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "$(hf_canonical_path "$LEG/credentials")" ] && pass "explicit legacy opt-in accepts safe regular file" || fail "legacy opt-in rc=$rc"
+for alias in "$ALIAS/direct" "$ALIAS/dangling" "$ALIAS/loop-a" "$ALIAS/public" "$ALIAS/safe-link"; do
+  if REVIEWER_ALLOW_LEGACY_DIR=1 TMPDIR="$LT" hf_reviewer_credential_file "$alias" >/dev/null 2>&1; then fail "legacy opt-in relaxed file safety"; else pass "legacy opt-in still refuses unsafe file"; fi
+done
+out=$(TMPDIR="$LT" hf_is_legacy_reviewer_path "$ALIAS/loop-a" 2>/dev/null); rc=$?
+[ "$rc" = 2 ] && pass "link loop returns distinct resolution failure" || fail "loop classification rc=$rc"
+
+echo "private_dir: $FAILS failure(s)"
+[ "$FAILS" = 0 ]

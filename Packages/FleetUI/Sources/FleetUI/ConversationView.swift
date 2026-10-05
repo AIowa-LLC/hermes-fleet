@@ -1002,7 +1002,8 @@ enum ConversationHeaderChips {
             replayNotice: model.replayNotice,
             hydratedFromCache: model.hydratedFromCache,
             historyLoadError: model.historyLoadError,
-            errorMessage: model.errorMessage
+            errorMessage: model.errorMessage,
+            historyMayBeIncomplete: model.historyMayBeIncomplete
         ) {
             HStack(spacing: 12) {
                 bannerBody(banner)
@@ -2100,10 +2101,12 @@ enum ConversationHeaderChips {
     private func loadPickedPhoto(_ item: PhotosPickerItem, model: ConversationViewModel) async {
         let data: Data
         do {
-            guard let loaded = try await item.loadTransferable(type: Data.self), !loaded.isEmpty else {
+            // Size-checked on disk before the bytes are read into memory.
+            guard let loaded = try await item.loadTransferable(type: PickedAttachmentData.self),
+                  !loaded.data.isEmpty else {
                 return // user-cancelled / empty pick — not an error
             }
-            data = loaded
+            data = loaded.data
         } catch {
             await model.stageAttachment(
                 name: "photo.bin", mime: nil, byteCount: 0,
@@ -2134,7 +2137,9 @@ enum ConversationHeaderChips {
     /// HEIC/RAW → JPEG via ImageIO (device photos default to HEIC; the
     /// gateway's image pipeline accepts PNG/JPEG/GIF/WebP/BMP only).
     private static func cameraDataAsJPEG(_ data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let size = BoundedImageDecoder.pixelSize(of: data),
+              BoundedImageDecoder.isWithinBudget(width: size.width, height: size.height),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0 else { return nil }
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
@@ -2153,14 +2158,23 @@ enum ConversationHeaderChips {
         let name = url.lastPathComponent
         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
         do {
-            // Pre-upload guard on the real size before reading the bytes.
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            // Pre-upload guard on the real size before reading the bytes. An
+            // unreadable size fails closed (it never defaults to "small"), and
+            // the read itself is bounded so a file that grows cannot slip past.
+            let size = try BoundedPickedFile.size(of: url)
             await model.stageAttachment(
                 name: name,
                 mime: mime,
                 byteCount: size,
-                loadBytes: { try Data(contentsOf: url) })
+                loadBytes: {
+                    do {
+                        return try BoundedPickedFile.read(url, limit: AttachmentStagingRules.clientCapBytes)
+                    } catch let error as BoundedPickedFile.TooLarge {
+                        throw AttachmentStagingError.fileTooLarge(
+                            name: name, sizeBytes: error.sizeBytes,
+                            capBytes: AttachmentStagingRules.clientCapBytes)
+                    }
+                })
         } catch {
             await model.stageAttachment(
                 name: name, mime: mime, byteCount: 0,

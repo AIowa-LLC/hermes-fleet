@@ -36,6 +36,12 @@
 # 10000). The assertions are the functionality the reviewers must have; the
 # denials are containment.
 set -u
+# Old credentials in the legacy reviewer directory must never silently enter a run;
+# checked first, before any docker or file access.
+. "$(dirname "${BASH_SOURCE[0]}")/private_dir_lib.sh"
+if [ -n "${REVIEWER_CRED_FILE:-}" ]; then
+  REVIEWER_CRED_FILE=$(hf_reviewer_credential_file "$REVIEWER_CRED_FILE") || exit 2
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONT_NAME="${REVIEWER_CONTAINMENT_CONTAINER:-fleet-reviewer}"
 NET_NAME="${REVIEWER_CONTAINMENT_NETWORK:-fleet-reviewer}"

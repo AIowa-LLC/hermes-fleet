@@ -57,6 +57,7 @@ private final class ScriptedKeychainSession: KeychainSession, @unchecked Sendabl
               let account = dict[kSecAttrAccount as String] as? String else {
             return errSecParam
         }
+        if store[account] != nil { return errSecDuplicateItem }
         store[account] = dict[kSecValueData as String] as? Data
         return errSecSuccess
     }
@@ -127,6 +128,41 @@ final class KeychainPinStoreTests: XCTestCase {
         let loaded = try await store.loadPin(for: gatewayID)
         XCTAssertEqual(loaded, pin)
         XCTAssertEqual(loaded?.base64String, Self.pinB64)
+    }
+
+    func testSavePinIfAbsentNeverOverwritesAnEstablishedPin() throws {
+        let store = KeychainPinStore(keychain: ScriptedKeychainSession())
+        let first = try XCTUnwrap(SPKIFingerprint(base64: Self.pinB64))
+        let other = try XCTUnwrap(SPKIFingerprint(base64: Self.otherB64))
+
+        XCTAssertTrue(try store.syncSavePinIfAbsent(first, for: gatewayID))
+        XCTAssertFalse(try store.syncSavePinIfAbsent(other, for: gatewayID))
+        XCTAssertEqual(try store.syncLoadPin(for: gatewayID), first)
+    }
+
+    func testBoundApprovalOnlyMatchesTheReviewedKeyAndIsSingleUse() throws {
+        let store = KeychainPinStore(keychain: ScriptedKeychainSession())
+        let reviewed = try XCTUnwrap(SPKIFingerprint(base64: Self.pinB64))
+        let other = try XCTUnwrap(SPKIFingerprint(base64: Self.otherB64))
+        try store.syncApproveFirstUse(boundTo: reviewed, for: gatewayID)
+
+        XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: other, for: gatewayID))
+        XCTAssertTrue(try store.syncIsFirstUseApproved(for: gatewayID),
+                      "a different key must not consume the approval")
+        XCTAssertTrue(try store.syncConsumeFirstUseApproval(matching: reviewed, for: gatewayID))
+        XCTAssertFalse(try store.syncIsFirstUseApproved(for: gatewayID), "approval is single-use")
+        XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: reviewed, for: gatewayID))
+    }
+
+    func testLegacyUnboundApprovalValueIsNotAnApproval() throws {
+        let session = ScriptedKeychainSession()
+        let store = KeychainPinStore(keychain: session)
+        let key = try XCTUnwrap(SPKIFingerprint(base64: Self.otherB64))
+        // The retired format ("approved") never bound to a reviewed key.
+        session.seed(Data("approved".utf8), account: "approval:\(gatewayID.rawValue)")
+
+        XCTAssertFalse(try store.syncIsFirstUseApproved(for: gatewayID))
+        XCTAssertFalse(try store.syncConsumeFirstUseApproval(matching: key, for: gatewayID))
     }
 
     func testUpsertUpdatesInPlaceNotDeleteThenAdd() async throws {
