@@ -466,6 +466,9 @@ public final class ConversationViewModel {
     @ObservationIgnored private var gapRecoveryPending = false
     @ObservationIgnored private var gapGeneration = 0
     @ObservationIgnored private var refetchSequence = 0
+    /// Bumped each time an authoritative snapshot replaces the transcript. A
+    /// gap replay that started before a snapshot was applied is covered by it.
+    @ObservationIgnored private var snapshotGeneration = 0
     @ObservationIgnored private var settleRefreshArmed = false
     /// Rate limit for automatic recovery (retry-storm guard).
     @ObservationIgnored var gapGovernor = GapRecoveryGovernor()
@@ -2335,9 +2338,14 @@ public final class ConversationViewModel {
     private func recoverGap(after: Int, before: Int, triggering: ConversationEvent) async {
         let token = operationGeneration
         guard let sid = openedSessionID else { return }
+        let snapshotAtStart = snapshotGeneration
         do {
             let missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
             guard isCurrent(token) else { return }
+            // A history snapshot was applied while the replay was in flight: it
+            // already contains these events and reset the continuity cursor, so
+            // re-applying them would duplicate text and rows. Discard the replay.
+            guard snapshotGeneration == snapshotAtStart else { return }
             // Re-apply in seq order, cursor-gated: replayed overlap drops,
             // the missed events + triggering event apply contiguously.
             for event in missed {
@@ -2475,6 +2483,7 @@ public final class ConversationViewModel {
                 hydratedFromCache = false
                 isHistoryHydrationInProgress = false
                 historyLoadError = nil
+                snapshotGeneration &+= 1
                 return .applied
             }
             if hydratedFromCache {
@@ -2502,6 +2511,7 @@ public final class ConversationViewModel {
             // from the freshest server state instead of false-gap-firing against
             // a stale cursor.
             lastAppliedEventID = nil
+            snapshotGeneration &+= 1
             Task { await persistTranscript() }
             return .applied
         } catch {

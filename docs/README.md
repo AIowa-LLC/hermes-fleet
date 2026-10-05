@@ -37,6 +37,7 @@ the v0.1 document deferred or excluded.
 - [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
+- [`connection-recovery.md`](connection-recovery.md) - reconnect backoff, history-refetch rules and known limitations
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue
 - [`adr/`](adr/) - architectural decision records
 

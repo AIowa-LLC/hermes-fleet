@@ -50,6 +50,8 @@ final class HistoryRefetchRaceTests: XCTestCase {
         nonisolated(unsafe) var failIndices: Set<Int> = []
         /// Real suspension for `immediate` responses so live events can interleave.
         nonisolated(unsafe) var immediateDelayMs = 0
+        /// When set, `resumeEvents` (targeted gap replay) suspends on this handler.
+        nonisolated(unsafe) var resumeEventsHandler: (@Sendable () async -> [ConversationEvent])?
         let gapStream: AsyncStream<EventGap>
         let gapContinuation: AsyncStream<EventGap>.Continuation
         let eventStream: AsyncStream<ConversationEvent>
@@ -78,7 +80,10 @@ final class HistoryRefetchRaceTests: XCTestCase {
         }
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission { PromptSubmission(status: "streaming") }
         func interrupt(sessionID: String) async throws -> InterruptResult { InterruptResult(status: "ok") }
-        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] { [] }
+        func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] {
+            if let resumeEventsHandler { return await resumeEventsHandler() }
+            return []
+        }
         var events: AsyncStream<ConversationEvent> { eventStream }
         func watermarks() async -> [SessionEventWatermark] { [] }
         func replayAfterReconnect() async throws -> [ReplayOutcome] { [.nothingToReplay] }
@@ -344,5 +349,61 @@ final class HistoryRefetchRaceTests: XCTestCase {
         let outcome = await task.value
         XCTAssertEqual(outcome, .cancelled)
         XCTAssertFalse(texts(model).contains("SHOULD-NOT-APPEAR"))
+    }
+
+    // MARK: recoverGap x refetch overlap (pre-existing race, now fenced)
+
+    /// A seq-gap replay (`recoverGap`) is in flight when a history refetch applies
+    /// a snapshot that already contains the "missed" events. The replayed events
+    /// must be discarded, not re-applied on top of the snapshot (the refetch resets
+    /// the continuity cursor, which would otherwise let them apply as new).
+    func testGapReplayThatOverlapsASnapshotIsDiscardedInsteadOfDuplicatingText() async throws {
+        let (session, model) = try await makeFixture()
+        // Establish a cursor with a completed turn (seq 1-3).
+        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "first", rendered: nil, seq: 2))
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "first", status: nil, error: nil, seq: 3))
+        _ = await waitUntil { texts(model).contains("first") && !model.isStreaming }
+
+        // The targeted replay will deliver the missed turn (seq 4-6) only when released.
+        let replayGate = Gates()
+        let missed: [ConversationEvent] = [
+            .messageStart(sessionID: "s1", seq: 4),
+            .messageDelta(sessionID: "s1", text: "MISSED", rendered: nil, seq: 5),
+            .messageComplete(sessionID: "s1", text: "MISSED", status: nil, error: nil, seq: 6),
+        ]
+        session.resumeEventsHandler = {
+            _ = await replayGate.wait(0)
+            return missed
+        }
+        // A live event jumps to seq 9: gap -> recoverGap suspends in resumeEvents.
+        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 9))
+        _ = await waitUntil { model.integrityNotice != nil || replayGate.callCount >= 0 }
+        try await Task.sleep(for: .milliseconds(150))
+
+        // Meanwhile a history refetch applies a snapshot that ALREADY contains the missed turn.
+        session.immediate = [msg("first"), msg("MISSED")]
+        let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
+        XCTAssertEqual(outcome, .applied)
+        XCTAssertEqual(texts(model), ["first", "MISSED"])
+
+        // The late replay arrives: it must not duplicate what the snapshot holds.
+        replayGate.release(0, [])
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(texts(model), ["first", "MISSED"], "replayed events covered by the snapshot are discarded")
+    }
+
+    /// The gateway persists a message and then emits its event, so a snapshot can
+    /// already contain a message whose `message.complete` is delivered afterwards.
+    /// That late event must be idempotent (it only rewrites the existing row).
+    func testLateCompleteForAMessageAlreadyInTheSnapshotDoesNotDuplicateIt() async throws {
+        let (session, model) = try await makeFixture()
+        session.immediate = [msg("question", role: .user), msg("ANSWER")]
+        let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
+        XCTAssertEqual(outcome, .applied)
+        XCTAssertEqual(texts(model), ["question", "ANSWER"])
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "ANSWER", status: nil, error: nil, seq: 7))
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(texts(model), ["question", "ANSWER"], "no duplicate row or text")
     }
 }
