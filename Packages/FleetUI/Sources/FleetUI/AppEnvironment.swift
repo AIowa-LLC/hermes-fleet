@@ -1893,6 +1893,16 @@ public final class AppEnvironment {
     /// idempotent from `.open`, but the guard also prevents redundant work and
     /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
+        // A user-initiated connect (Connect button, reconnect, restore) is an
+        // explicit fresh start for the retry budget. The auto-retry task calls
+        // `performConnect` directly so it can never reset its own budget.
+        if connectionStates[id] != .connecting, connectionStates[id] != .connected {
+            resetReconnectBackoff(for: id)
+        }
+        await performConnect(to: id)
+    }
+
+    private func performConnect(to id: GatewayID) async {
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
         guard let gateway = gateways.first(where: { $0.id == id }) else { return }
@@ -2005,6 +2015,10 @@ public final class AppEnvironment {
         case .offline, .degraded, .authenticationRequired, .unsupported:
             let reason = await connection.lastDisconnectReason()
             guard !Task.isCancelled else { return }
+            // The await above is a suspension point: a retry may have finished
+            // meanwhile. Acting on the stale `live` sample would mark a healthy
+            // gateway failed and burn a retry attempt; the next tick re-samples.
+            guard connection.status == live else { return }
             reconnectBackoffs[id]?.observeFailure() // restart the stability clock
             let retryable = reason.map {
                 ReconnectPolicy.decision(for: $0) == .reconnect
@@ -2031,6 +2045,9 @@ public final class AppEnvironment {
     private func scheduleAutoReconnect(for id: GatewayID) {
         guard connectionIntent.isIntended(id) else { return }
         guard reconnectRetryTasks[id] == nil else { return }
+        // A connect already in flight owns the outcome; scheduling another
+        // retry now would only burn budget (its connect would be dropped).
+        guard connectionStates[id] != .connecting else { return }
         var backoff = reconnectBackoffs[id] ?? ReconnectBackoff(policy: recoveryTiming.backoffPolicy)
         guard let delay = backoff.nextDelay() else { return } // budget spent
         reconnectBackoffs[id] = backoff
@@ -2039,7 +2056,7 @@ public final class AppEnvironment {
             guard let self, !Task.isCancelled else { return }
             self.reconnectRetryTasks[id] = nil
             guard self.connectionIntent.isIntended(id) else { return }
-            await self.connect(to: id)
+            await self.performConnect(to: id)
         }
     }
 
@@ -2060,6 +2077,12 @@ public final class AppEnvironment {
         reconnectRetryTasks[id]?.cancel()
         reconnectRetryTasks[id] = nil
     }
+
+    #if DEBUG
+    /// Test hook: attempts spent in the current backoff budget.
+    public func reconnectAttemptsForTesting(_ id: GatewayID) -> Int { reconnectBackoffs[id]?.attempts ?? 0 }
+    public func hasPendingRetryForTesting(_ id: GatewayID) -> Bool { reconnectRetryTasks[id] != nil }
+    #endif
 
     /// Stop all auto-recovery activity for a gateway (manual disconnect,
     /// gateway removal). A later explicit connect() restarts the watch.

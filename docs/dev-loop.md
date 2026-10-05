@@ -175,7 +175,7 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 703 core, 657 networking, 64 persistence, and 49
+Package baselines are 709 core, 657 networking, 64 persistence, and 49
 security tests. These include the Live Ops runtime, cold-transport,
 cross-process reporting, structured ownership-refusal, and frozen-clock
 launch-cache TTL boundary regressions. Launch-cache fixtures use an injected
@@ -281,9 +281,10 @@ from a supported workflow writes to a predictable shared temp path
 (`/tmp/<name>`, `${TMPDIR:-/tmp}/<name>`). Roots: the Makefile, CI workflows,
 the current docs, `project.yml`/xcconfig/`Package.swift`, and any Swift file
 that spawns processes. Reachability follows every script one script names.
-Computed names (`scripts/${name}_check.sh`) expand to every script they could
-match; names too unspecific to expand (`scripts/$x.sh`, `scripts/*`) are
-reported and must be reviewed into `UNRESOLVED_ALLOWED`.
+Computed names that keep a meaningful literal part expand to every script they
+could match; names too unspecific to expand (a bare variable plus an extension,
+or a glob over the whole scripts directory) are reported and must be reviewed
+into `UNRESOLVED_ALLOWED` in the guard.
 
 Historical milestone and live-check scripts (`h1_*`, `h2_*`, `fos*`, `rt*`,
 `pet_live_check`, …) still use fixed `/tmp` names and are out of scope because
@@ -292,4 +293,4 @@ historical references, not supported entry points.
 
 Remaining limits: names assembled from several run-time string pieces, scripts
 run only by hand, and temp locations that do not literally contain
-`/tmp/<name>` or `$TMPDIR/<name>` (for example `os.path.join("/tmp", name)`).
+`/tmp/<name>` or `$TMPDIR/<name>` (for example a path joined from pieces in Python).

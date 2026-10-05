@@ -669,6 +669,7 @@ public final class ConversationViewModel {
                         profile: route.profileSlug.rawValue
                     )
                     guard isCurrent(token) else { return false }
+                    settleRefreshArmed = false
                     openedSessionID = resumed.sessionID
                     openedStoredSessionID = Self.durableSessionID(
                         listedSessionID: sessionID, opened: resumed)
@@ -688,6 +689,7 @@ public final class ConversationViewModel {
                         cols: nil
                     )
                     guard isCurrent(token) else { return false }
+                    settleRefreshArmed = false
                     openedSessionID = created.sessionID
                     openedStoredSessionID = Self.durableSessionID(
                         listedSessionID: nil, opened: created)
@@ -1850,6 +1852,7 @@ public final class ConversationViewModel {
         // prefix locally before appending the one new user row, so the old
         // user/assistant pair is never displayed twice.
         allRows.removeSubrange(userIndex...)
+        transcriptMutationRevision &+= 1
         let sent = await sendPrepared(
             modelText: prompt,
             displayText: prompt,
@@ -2386,20 +2389,27 @@ public final class ConversationViewModel {
     ///
     /// A response is applied only if, since its request began: no live event
     /// or local mutation touched the transcript (`transcriptMutationRevision`),
-    /// no turn is streaming, no newer refetch started (`refetchSequence`,
+    /// no newer refetch started (`refetchSequence`,
     /// which rejects out-of-order responses), the opened session is unchanged,
     /// the recovery token is still current and the task was not cancelled.
-    /// A stale response is retried (bounded by `maxRefetchAttempts`, waiting
-    /// for streaming to settle between attempts). If every attempt is stale
+    /// A stale response is retried (bounded by `maxRefetchAttempts`). If every attempt is stale
     /// the transcript is flagged incomplete and one more refresh is armed for
     /// the next quiet moment (turn completion), still governed by
     /// `GapRecoveryGovernor`.
     @discardableResult
     func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async -> HistoryRefetchOutcome {
+        let originRevision = transcriptMutationRevision
         for _ in 0..<Self.maxRefetchAttempts {
-            await waitForTurnToSettle()
             guard !Task.isCancelled else { return .cancelled }
-            let outcome = await refetchHistoryOnce(sessionID: sessionID, fencedBy: token)
+            let outcome = await refetchHistoryOnce(sessionID: sessionID, fencedBy: token, originRevision: originRevision)
+            if outcome == .failed, historyMayBeIncomplete {
+                // A failed refresh (possibly the newer request that superseded
+                // an earlier valid one) must not leave "refreshing…" with no
+                // pending pass: keep the honest notice and re-arm one governed
+                // refresh for the next quiet moment.
+                integrityNotice = "History may be incomplete — refresh failed. It will retry when the conversation next updates."
+                settleRefreshArmed = true
+            }
             if outcome != .rejectedStale { return outcome }
         }
         // Busy conversation: do not claim recovery.
@@ -2410,19 +2420,8 @@ public final class ConversationViewModel {
         return .rejectedStale
     }
 
-    /// Bounded wait (<= 30 s) for an in-flight turn to finish; a history swap
-    /// mid-turn would otherwise wipe the assistant row being streamed.
     @MainActor
-    private func waitForTurnToSettle() async {
-        var waits = 0
-        while isStreaming, waits < 60, !Task.isCancelled {
-            await gapSleep(0.5)
-            waits += 1
-        }
-    }
-
-    @MainActor
-    private func refetchHistoryOnce(sessionID: String, fencedBy token: Int?) async -> HistoryRefetchOutcome {
+    private func refetchHistoryOnce(sessionID: String, fencedBy token: Int?, originRevision: UInt64) async -> HistoryRefetchOutcome {
         refetchSequence += 1
         let sequence = refetchSequence
         let revisionAtRequest = transcriptMutationRevision
@@ -2439,8 +2438,17 @@ public final class ConversationViewModel {
             guard sequence == refetchSequence else { return .superseded }
             guard openedSessionID == sessionAtRequest,
                   openedSessionID == nil || openedSessionID == sessionID else { return .superseded }
-            guard transcriptMutationRevision == revisionAtRequest, !isStreaming else { return .rejectedStale }
+            guard transcriptMutationRevision == revisionAtRequest else { return .rejectedStale }
             if history.messages.isEmpty {
+                // An empty snapshot is authoritative only for the moment the CALL
+                // began: if live rows arrived since (even between retries), a
+                // server that has not persisted them yet must not erase them.
+                guard transcriptMutationRevision == originRevision else {
+                    hydratedFromCache = false
+                    isHistoryHydrationInProgress = false
+                    historyLoadError = nil
+                    return .superseded
+                }
                 // Authoritative empty (session.history always carries the
                 // persisted rows) — the session genuinely has no messages.
                 allRows = []
@@ -3113,6 +3121,7 @@ public final class ConversationViewModel {
             $0.kind == kind && $0.rowID == nil
         }) {
             allRows[idx].rowID = resultRowID
+            transcriptMutationRevision &+= 1
         }
         // Drop the in-flight live-* entry (the promoted row now reads the
         // durable key; a next live write optimistically starts fresh).

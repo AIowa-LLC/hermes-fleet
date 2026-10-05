@@ -46,6 +46,10 @@ final class HistoryRefetchRaceTests: XCTestCase {
         let gates = Gates()
         /// When set, calls return immediately with these messages (no gating).
         nonisolated(unsafe) var immediate: [SessionMessage]?
+        /// When set, the next ungated calls throw (history unavailable).
+        nonisolated(unsafe) var failIndices: Set<Int> = []
+        /// Real suspension for `immediate` responses so live events can interleave.
+        nonisolated(unsafe) var immediateDelayMs = 0
         let gapStream: AsyncStream<EventGap>
         let gapContinuation: AsyncStream<EventGap>.Continuation
         let eventStream: AsyncStream<ConversationEvent>
@@ -81,8 +85,12 @@ final class HistoryRefetchRaceTests: XCTestCase {
         func subscribeToGaps() -> AsyncStream<EventGap> { gapStream }
         func fetchSessionHistory(sessionID: String) async throws -> SessionHistory {
             let index = gates.nextIndex()
+            if failIndices.contains(index) { throw ReplayError.rpcFailed("history unavailable") }
             let messages: [SessionMessage]
-            if let immediate { messages = immediate } else { messages = await gates.wait(index) }
+            if let immediate {
+                if immediateDelayMs > 0 { try? await Task.sleep(for: .milliseconds(immediateDelayMs)) }
+                messages = immediate
+            } else { messages = await gates.wait(index) }
             return SessionHistory(sessionID: sessionID, count: messages.count, messages: messages)
         }
         func fetchSessionStatus(sessionID: String) async throws -> SessionStatus {
@@ -192,24 +200,34 @@ final class HistoryRefetchRaceTests: XCTestCase {
 
     // MARK: active streaming
 
-    func testResponseDuringAnActiveTurnIsRejectedAndRefreshesWhenTheTurnCompletes() async throws {
+    func testStreamingThatContinuesDuringTheRequestIsNotOverwrittenAndRefreshesWhenTheTurnCompletes() async throws {
         let (session, model) = try await makeFixture()
         session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
-        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "partial answer", rendered: nil, seq: 2))
-        _ = await waitUntil { model.isStreaming && texts(model).contains { $0.contains("partial answer") } }
-        session.immediate = [msg("STALE-SNAPSHOT")]
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "partial", rendered: nil, seq: 2))
+        _ = await waitUntil { model.isStreaming && texts(model).contains { $0.contains("partial") } }
         let base = session.gates.callCount
-
-        let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
+        let task = Task { await model.refetchAuthoritativeHistory(sessionID: "s1") }
+        _ = await waitUntil { session.gates.callCount == base + 1 }
+        // The turn keeps streaming while the request is in flight, on every attempt.
+        for attempt in 0..<ConversationViewModel.maxRefetchAttempts {
+            session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "+\(attempt)", rendered: nil, seq: 3 + attempt))
+            _ = await waitUntil { texts(model).contains { $0.contains("+\(attempt)") } }
+            session.gates.release(base + attempt, [msg("STALE-SNAPSHOT")])
+            if attempt + 1 < ConversationViewModel.maxRefetchAttempts {
+                _ = await waitUntil { session.gates.callCount == base + attempt + 2 }
+            }
+        }
+        let outcome = await task.value
         XCTAssertEqual(outcome, .rejectedStale)
         XCTAssertEqual(session.gates.callCount - base, ConversationViewModel.maxRefetchAttempts, "bounded attempts")
-        XCTAssertTrue(texts(model).contains { $0.contains("partial answer") }, "the in-flight reply was not wiped")
+        XCTAssertTrue(texts(model).contains { $0.contains("partial") && $0.contains("+2") }, "the streamed reply was not wiped")
+        XCTAssertFalse(texts(model).contains("STALE-SNAPSHOT"))
         XCTAssertTrue(model.historyMayBeIncomplete, "no recovery is claimed")
         XCTAssertTrue(model.integrityNotice?.contains("busy") == true)
 
         // The turn completes: one more governed refresh runs and now succeeds.
         session.immediate = [msg("FINAL-SNAPSHOT")]
-        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "partial answer done", status: nil, error: nil, seq: 3))
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "done", status: nil, error: nil, seq: 9))
         let recovered = await waitUntil { texts(model) == ["FINAL-SNAPSHOT"] && !model.historyMayBeIncomplete }
         XCTAssertTrue(recovered, "armed refresh runs when the conversation settles")
     }
@@ -217,20 +235,48 @@ final class HistoryRefetchRaceTests: XCTestCase {
     func testPerpetuallyBusyConversationNeverLoopsUnbounded() async throws {
         let (session, model) = try await makeFixture()
         session.immediate = [msg("SNAP")]
-        // Every response lands after a fresh live event, forever.
+        session.immediateDelayMs = 40 // a real suspension: live events interleave with every request
         let churn = Task { @MainActor in
             var seq = 1
             while !Task.isCancelled {
-                session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "x\(seq)", rendered: nil, seq: seq))
-                seq += 1
-                try? await Task.sleep(for: .milliseconds(1))
+                session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: seq))
+                session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "", status: nil, error: nil, seq: seq + 1))
+                seq += 2
+                try? await Task.sleep(for: .milliseconds(5))
             }
         }
         let base = session.gates.callCount
         let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
         churn.cancel()
-        XCTAssertLessThanOrEqual(session.gates.callCount - base, ConversationViewModel.maxRefetchAttempts)
-        if outcome == .rejectedStale { XCTAssertTrue(model.historyMayBeIncomplete) }
+        XCTAssertEqual(outcome, .rejectedStale, "every response landed after fresh live activity")
+        XCTAssertEqual(session.gates.callCount - base, ConversationViewModel.maxRefetchAttempts, "bounded: exactly the allowed attempts")
+        XCTAssertTrue(model.historyMayBeIncomplete, "no recovery is claimed")
+        XCTAssertFalse(texts(model).contains("SNAP"), "the stale snapshot was never applied")
+    }
+
+    func testANewerRequestThatFailsDoesNotLeaveRefreshingWithNoPendingPass() async throws {
+        let (session, model) = try await makeFixture()
+        let base = session.gates.callCount
+        // Gap recovery request A is in flight...
+        session.gapContinuation.yield(EventGap(sessionID: "s1", reason: .subscriberOverflow))
+        _ = await waitUntil { session.gates.callCount == base + 1 }
+        // ...a newer request B starts and FAILS...
+        session.failIndices = [base + 1]
+        let b = Task { await model.refetchAuthoritativeHistory(sessionID: "s1") }
+        let bOutcome = await b.value
+        XCTAssertEqual(bOutcome, .failed)
+        // ...then A's (valid but superseded) response arrives and is discarded.
+        session.gates.release(base, [msg("A-DISCARDED")])
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(texts(model).contains("A-DISCARDED"))
+        XCTAssertTrue(model.historyMayBeIncomplete)
+        XCTAssertEqual(model.integrityNotice?.contains("will retry"), true, "the notice promises a retry that is actually armed")
+        // The armed refresh runs at the next live activity and then proves recovery.
+        session.immediate = [msg("RECOVERED")]
+        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "", status: nil, error: nil, seq: 2))
+        let healed = await waitUntil { texts(model) == ["RECOVERED"] && !model.historyMayBeIncomplete }
+        XCTAssertTrue(healed)
     }
 
     // MARK: session change / cancellation

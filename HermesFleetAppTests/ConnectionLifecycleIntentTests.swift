@@ -49,6 +49,8 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         nonisolated(unsafe) var statusValue: GatewayStatus = .offline
         nonisolated(unsafe) var reasonValue: DisconnectReason?
         nonisolated(unsafe) private(set) var connectCount = 0
+        /// Makes connect() suspend, so watch ticks run while it is in flight.
+        nonisolated(unsafe) var connectDelay: TimeInterval = 0
 
         init(gatewayID: GatewayID, scripted: [RecoveryOutcome]) {
             self.gatewayID = gatewayID
@@ -60,6 +62,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
 
         func connect() async throws {
             connectCount += 1
+            if connectDelay > 0 { try? await Task.sleep(for: .seconds(connectDelay)) }
             let outcome: RecoveryOutcome = scripted.isEmpty ? .success : scripted.removeFirst()
             switch outcome {
             case .success:
@@ -439,10 +442,12 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(environment.connectionStates[id], .connected)
         // And the budget really is fresh: two more drops still retry.
         for expected in [5, 6] {
+            // Settle first: toggling status while a connect() is mid-flight races the double.
+            _ = await waitUntil { environment.connectionStates[id] == .connected }
             connection.statusValue = .offline
             connection.reasonValue = .abnormalClosure
             let retried = await waitUntil(timeout: 1) { connection.connectCount == expected }
-            XCTAssertTrue(retried)
+            XCTAssertTrue(retried, "expected \(expected) got \(connection.connectCount) state \(String(describing: environment.connectionStates[id])) status \(connection.statusValue) attempts \(environment.reconnectAttemptsForTesting(id)) pending \(environment.hasPendingRetryForTesting(id))")
         }
     }
 
@@ -463,11 +468,53 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         await environment.reconnect(to: id)                    // explicit user reconnect
         XCTAssertEqual(environment.connectionStates[id], .connected)
         for expected in [3, 4] {
+            _ = await waitUntil(timeout: 2) { environment.connectionStates[id] == .connected }
             connection.statusValue = .offline
             connection.reasonValue = .abnormalClosure
             let retried = await waitUntil(timeout: 1.5) { connection.connectCount == expected }
             XCTAssertTrue(retried, "the budget was reset by the deliberate reconnect")
         }
+    }
+
+    /// The UI's Connect button calls `connect(to:)` directly: after the budget
+    /// is spent it must restore the budget, otherwise the next drop is never retried.
+    func testManualConnectAfterExhaustionRestoresTheBudget() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: Array(
+            repeating: .failure(.unreachable, .abnormalClosure), count: 3))
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        _ = await waitUntil { connection.connectCount == 3 }
+        _ = await waitUntil(timeout: 0.3) { false }
+        XCTAssertEqual(connection.connectCount, 3, "budget spent")
+        connection.scripted = []
+        await environment.connect(to: id)                       // the user taps Connect
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        connection.statusValue = .offline
+        connection.reasonValue = .abnormalClosure
+        let retried = await waitUntil(timeout: 1) { connection.connectCount == 5 }
+        XCTAssertTrue(retried, "a manual Connect restored the budget, so the next drop retries")
+    }
+
+    /// While a retry's connect() is in flight, watch ticks still see the old
+    /// failed status. They must not schedule another retry and burn budget.
+    func testWatchTicksDuringAnInFlightConnectDoNotBurnTheBudget() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: Array(
+            repeating: .failure(.unreachable, .abnormalClosure), count: 3))
+        connection.connectDelay = 0.12
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        let exhausted = await waitUntil(timeout: 3) { connection.connectCount == 3 }
+        XCTAssertTrue(exhausted, "initial attempt + BOTH retries ran: no attempt was burned by a duplicate schedule")
+        _ = await waitUntil(timeout: 0.5) { false }
+        XCTAssertEqual(connection.connectCount, 3)
     }
 
     func testManualDisconnectCancelsPendingRetry() async {
