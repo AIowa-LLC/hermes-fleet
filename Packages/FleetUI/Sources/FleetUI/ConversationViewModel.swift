@@ -2219,7 +2219,9 @@ public final class ConversationViewModel {
                     }
                     // else: a newer gap arrived meanwhile; its pass is pending.
                 case .failed:
-                    integrityNotice = "History may be incomplete — refresh failed. Reopen the conversation to retry."
+                    if !settleRefreshArmed {
+                        integrityNotice = "History may be incomplete — refresh failed. Reopen the conversation to retry."
+                    }
                 case .rejectedStale:
                     break // notice + settle refresh armed inside the refetch
                 case .superseded, .cancelled:
@@ -2351,13 +2353,13 @@ public final class ConversationViewModel {
         } catch ConversationError.gapUnrecoverable(let gsid, let gAfter) {
             guard isCurrent(token) else { return }
             integrityNotice = "Some events after #\(gAfter) are no longer retained — reloading full history."
-            await refetchAuthoritativeHistory(sessionID: gsid, fencedBy: token)
+            await refetchAuthoritativeHistory(sessionID: gsid, fencedBy: token, allowDuringStream: true)
         } catch {
             guard isCurrent(token) else { return }
             // Replay attempt failed (transport-level): surface it explicitly
             // and rehydrate from history rather than rendering a hole.
             integrityNotice = "Stream gap could not be recovered — reloading full history."
-            await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
+            await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token, allowDuringStream: true)
         }
     }
 
@@ -2397,11 +2399,20 @@ public final class ConversationViewModel {
     /// the next quiet moment (turn completion), still governed by
     /// `GapRecoveryGovernor`.
     @discardableResult
-    func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async -> HistoryRefetchOutcome {
+    func refetchAuthoritativeHistory(
+        sessionID: String, fencedBy token: Int? = nil, allowDuringStream: Bool = false
+    ) async -> HistoryRefetchOutcome {
         let originRevision = transcriptMutationRevision
         for _ in 0..<Self.maxRefetchAttempts {
             guard !Task.isCancelled else { return .cancelled }
-            let outcome = await refetchHistoryOnce(sessionID: sessionID, fencedBy: token, originRevision: originRevision)
+            // A turn is streaming: the snapshot may lack the in-progress reply
+            // and later deltas would attach to the wrong row. Do not fetch;
+            // flag and re-arm for turn completion. The unrecoverable-gap path
+            // opts out: its stream is already broken and history IS the repair.
+            if isStreaming, !allowDuringStream { break }
+            let outcome = await refetchHistoryOnce(
+                sessionID: sessionID, fencedBy: token, originRevision: originRevision,
+                allowDuringStream: allowDuringStream)
             if outcome == .failed, historyMayBeIncomplete {
                 // A failed refresh (possibly the newer request that superseded
                 // an earlier valid one) must not leave "refreshing…" with no
@@ -2421,7 +2432,9 @@ public final class ConversationViewModel {
     }
 
     @MainActor
-    private func refetchHistoryOnce(sessionID: String, fencedBy token: Int?, originRevision: UInt64) async -> HistoryRefetchOutcome {
+    private func refetchHistoryOnce(
+        sessionID: String, fencedBy token: Int?, originRevision: UInt64, allowDuringStream: Bool
+    ) async -> HistoryRefetchOutcome {
         refetchSequence += 1
         let sequence = refetchSequence
         let revisionAtRequest = transcriptMutationRevision
@@ -2439,6 +2452,9 @@ public final class ConversationViewModel {
             guard openedSessionID == sessionAtRequest,
                   openedSessionID == nil || openedSessionID == sessionID else { return .superseded }
             guard transcriptMutationRevision == revisionAtRequest else { return .rejectedStale }
+            // A turn that began in flight is already covered by the revision
+            // (messageStart bumps it); one still open now must not be replaced.
+            if isStreaming, !allowDuringStream { return .rejectedStale }
             if history.messages.isEmpty {
                 // An empty snapshot is authoritative only for the moment the CALL
                 // began: if live rows arrived since (even between retries), a
@@ -2447,7 +2463,10 @@ public final class ConversationViewModel {
                     hydratedFromCache = false
                     isHistoryHydrationInProgress = false
                     historyLoadError = nil
-                    return .superseded
+                    // Not proven: the server may simply not have persisted the
+                    // live rows yet. Treat as stale so the incomplete flag and
+                    // the armed refresh stay accurate.
+                    return .rejectedStale
                 }
                 // Authoritative empty (session.history always carries the
                 // persisted rows) — the session genuinely has no messages.

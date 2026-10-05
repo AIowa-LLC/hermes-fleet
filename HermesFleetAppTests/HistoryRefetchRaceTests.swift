@@ -200,36 +200,81 @@ final class HistoryRefetchRaceTests: XCTestCase {
 
     // MARK: active streaming
 
-    func testStreamingThatContinuesDuringTheRequestIsNotOverwrittenAndRefreshesWhenTheTurnCompletes() async throws {
+    /// A turn is open (quiet: no event arrives while the request would be in
+    /// flight). The snapshot may lack the in-progress reply and later deltas
+    /// would attach to the previous turn's row, so nothing is fetched or applied.
+    func testQuietOpenTurnIsNeverReplacedAndRefreshesWhenTheTurnCompletes() async throws {
         let (session, model) = try await makeFixture()
         session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
         session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "partial", rendered: nil, seq: 2))
         _ = await waitUntil { model.isStreaming && texts(model).contains { $0.contains("partial") } }
+        session.immediate = [msg("OLD-HISTORY-WITHOUT-THE-REPLY")]
+        let base = session.gates.callCount
+
+        let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
+        XCTAssertEqual(outcome, .rejectedStale)
+        XCTAssertEqual(session.gates.callCount, base, "no request is wasted while a turn is open")
+        XCTAssertTrue(texts(model).contains { $0.contains("partial") }, "the in-flight reply is intact")
+        XCTAssertTrue(model.historyMayBeIncomplete)
+        XCTAssertEqual(model.integrityNotice?.contains("busy"), true)
+
+        // A later delta still extends the SAME reply (not a previous turn's row).
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: " more", rendered: nil, seq: 3))
+        _ = await waitUntil { texts(model).contains { $0.contains("partial more") } }
+
+        // Completion re-arms exactly one governed refresh, which now applies.
+        session.immediate = [msg("FINAL-SNAPSHOT")]
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "partial more", status: nil, error: nil, seq: 4))
+        let recovered = await waitUntil { texts(model) == ["FINAL-SNAPSHOT"] && !model.historyMayBeIncomplete }
+        XCTAssertTrue(recovered)
+    }
+
+    /// The turn starts WHILE the request is in flight: the revision moved, so
+    /// the response is rejected, and the retries do not fetch into an open turn.
+    func testStreamingThatStartsDuringTheRequestIsNotOverwritten() async throws {
+        let (session, model) = try await makeFixture()
         let base = session.gates.callCount
         let task = Task { await model.refetchAuthoritativeHistory(sessionID: "s1") }
         _ = await waitUntil { session.gates.callCount == base + 1 }
-        // The turn keeps streaming while the request is in flight, on every attempt.
-        for attempt in 0..<ConversationViewModel.maxRefetchAttempts {
-            session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "+\(attempt)", rendered: nil, seq: 3 + attempt))
-            _ = await waitUntil { texts(model).contains { $0.contains("+\(attempt)") } }
-            session.gates.release(base + attempt, [msg("STALE-SNAPSHOT")])
-            if attempt + 1 < ConversationViewModel.maxRefetchAttempts {
-                _ = await waitUntil { session.gates.callCount == base + attempt + 2 }
-            }
-        }
+        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "streamed during flight", rendered: nil, seq: 2))
+        _ = await waitUntil { model.isStreaming && texts(model).contains { $0.contains("streamed during flight") } }
+        session.gates.release(base, [msg("STALE-SNAPSHOT")])
         let outcome = await task.value
         XCTAssertEqual(outcome, .rejectedStale)
-        XCTAssertEqual(session.gates.callCount - base, ConversationViewModel.maxRefetchAttempts, "bounded attempts")
-        XCTAssertTrue(texts(model).contains { $0.contains("partial") && $0.contains("+2") }, "the streamed reply was not wiped")
+        XCTAssertLessThanOrEqual(session.gates.callCount - base, ConversationViewModel.maxRefetchAttempts)
+        XCTAssertTrue(texts(model).contains { $0.contains("streamed during flight") })
         XCTAssertFalse(texts(model).contains("STALE-SNAPSHOT"))
-        XCTAssertTrue(model.historyMayBeIncomplete, "no recovery is claimed")
-        XCTAssertTrue(model.integrityNotice?.contains("busy") == true)
+        XCTAssertTrue(model.historyMayBeIncomplete)
+    }
 
-        // The turn completes: one more governed refresh runs and now succeeds.
-        session.immediate = [msg("FINAL-SNAPSHOT")]
-        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "done", status: nil, error: nil, seq: 9))
-        let recovered = await waitUntil { texts(model) == ["FINAL-SNAPSHOT"] && !model.historyMayBeIncomplete }
-        XCTAssertTrue(recovered, "armed refresh runs when the conversation settles")
+    /// Attempt 1 is stale; attempt 2 returns an EMPTY history because the server
+    /// has not persisted the live rows yet. The live rows survive, the call does
+    /// not claim recovery, and a refresh stays armed (no stranded "refreshing…").
+    func testEmptySnapshotAfterAStaleAttemptNeverStrandsTheNotice() async throws {
+        let (session, model) = try await makeFixture()
+        let base = session.gates.callCount
+        session.gapContinuation.yield(EventGap(sessionID: "s1", reason: .subscriberOverflow))
+        _ = await waitUntil { session.gates.callCount == base + 1 }
+        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
+        session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "LIVE", rendered: nil, seq: 2))
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "LIVE", status: nil, error: nil, seq: 3))
+        _ = await waitUntil { texts(model).contains("LIVE") && !model.isStreaming }
+        session.gates.release(base, [msg("STALE")])                       // attempt 1: stale
+        for i in 1..<ConversationViewModel.maxRefetchAttempts {           // later attempts: empty
+            _ = await waitUntil { session.gates.callCount == base + 1 + i }
+            session.gates.release(base + i, [])
+        }
+        let flagged = await waitUntil { model.integrityNotice?.contains("busy") == true }
+        XCTAssertTrue(flagged, "the notice must say recovery is pending, not stay at 'refreshing'")
+        XCTAssertTrue(texts(model).contains("LIVE"), "an empty snapshot never erases live rows")
+        XCTAssertTrue(model.historyMayBeIncomplete)
+        // The armed refresh runs on the next live activity and proves recovery.
+        session.immediate = [msg("PERSISTED")]
+        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 4))
+        session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "", status: nil, error: nil, seq: 5))
+        let healed = await waitUntil { texts(model) == ["PERSISTED"] && !model.historyMayBeIncomplete }
+        XCTAssertTrue(healed)
     }
 
     func testPerpetuallyBusyConversationNeverLoopsUnbounded() async throws {

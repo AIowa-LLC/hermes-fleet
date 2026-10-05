@@ -2019,6 +2019,10 @@ public final class AppEnvironment {
             // meanwhile. Acting on the stale `live` sample would mark a healthy
             // gateway failed and burn a retry attempt; the next tick re-samples.
             guard connection.status == live else { return }
+            // A connect already in flight owns the state: do not overwrite its
+            // `.connecting` with `.failed` (that would also let a second
+            // concurrent connect through).
+            guard connectionStates[id] != .connecting else { return }
             reconnectBackoffs[id]?.observeFailure() // restart the stability clock
             let retryable = reason.map {
                 ReconnectPolicy.decision(for: $0) == .reconnect

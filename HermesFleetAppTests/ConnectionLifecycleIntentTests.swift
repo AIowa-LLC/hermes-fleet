@@ -51,6 +51,9 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         nonisolated(unsafe) private(set) var connectCount = 0
         /// Makes connect() suspend, so watch ticks run while it is in flight.
         nonisolated(unsafe) var connectDelay: TimeInterval = 0
+        /// Highest number of connect() calls observed at the same time.
+        nonisolated(unsafe) private(set) var maxConcurrentConnects = 0
+        nonisolated(unsafe) private var inFlight = 0
 
         init(gatewayID: GatewayID, scripted: [RecoveryOutcome]) {
             self.gatewayID = gatewayID
@@ -62,6 +65,9 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
 
         func connect() async throws {
             connectCount += 1
+            inFlight += 1
+            maxConcurrentConnects = max(maxConcurrentConnects, inFlight)
+            defer { inFlight -= 1 }
             if connectDelay > 0 { try? await Task.sleep(for: .seconds(connectDelay)) }
             let outcome: RecoveryOutcome = scripted.isEmpty ? .success : scripted.removeFirst()
             switch outcome {
@@ -515,6 +521,8 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertTrue(exhausted, "initial attempt + BOTH retries ran: no attempt was burned by a duplicate schedule")
         _ = await waitUntil(timeout: 0.5) { false }
         XCTAssertEqual(connection.connectCount, 3)
+        XCTAssertEqual(connection.maxConcurrentConnects, 1,
+                       "a watch tick during an in-flight connect must not start a second concurrent connect")
     }
 
     func testManualDisconnectCancelsPendingRetry() async {
