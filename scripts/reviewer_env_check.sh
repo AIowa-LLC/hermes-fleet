@@ -45,9 +45,8 @@ BASE_URL="${REVIEWER_BASE_URL:-}"
 CRED_FILE="${REVIEWER_CRED_FILE:-}"
 # Never let credentials from the legacy reviewer directory silently enter a check.
 . "$(dirname "${BASH_SOURCE[0]}")/private_dir_lib.sh"
-if [ -n "$CRED_FILE" ] && hf_is_legacy_reviewer_path "$CRED_FILE" && [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != "1" ]; then
-  printf 'FAIL: REVIEWER_CRED_FILE is inside the legacy reviewer state directory (old credentials). Provision fresh ones, or set REVIEWER_ALLOW_LEGACY_DIR=1 to use them deliberately.\n' >&2
-  exit 2
+if [ -n "$CRED_FILE" ]; then
+  CRED_FILE=$(hf_reviewer_credential_file "$CRED_FILE") || exit 2
 fi
 LOOPBACK_SMOKE=0
 

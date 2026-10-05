@@ -39,9 +39,8 @@ set -u
 # Old credentials in the legacy reviewer directory must never silently enter a run;
 # checked first, before any docker or file access.
 . "$(dirname "${BASH_SOURCE[0]}")/private_dir_lib.sh"
-if [ -n "${REVIEWER_CRED_FILE:-}" ] && hf_is_legacy_reviewer_path "$REVIEWER_CRED_FILE" && [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != "1" ]; then
-  echo "FAIL: REVIEWER_CRED_FILE is inside the legacy reviewer state directory (old credentials); provision fresh ones or set REVIEWER_ALLOW_LEGACY_DIR=1" >&2
-  exit 2
+if [ -n "${REVIEWER_CRED_FILE:-}" ]; then
+  REVIEWER_CRED_FILE=$(hf_reviewer_credential_file "$REVIEWER_CRED_FILE") || exit 2
 fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONT_NAME="${REVIEWER_CONTAINMENT_CONTAINER:-fleet-reviewer}"
