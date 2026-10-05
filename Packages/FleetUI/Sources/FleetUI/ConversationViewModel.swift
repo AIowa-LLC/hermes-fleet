@@ -469,6 +469,10 @@ public final class ConversationViewModel {
     /// Bumped each time an authoritative snapshot replaces the transcript. A
     /// gap replay that started before a snapshot was applied is covered by it.
     @ObservationIgnored private var snapshotGeneration = 0
+    /// Gap replays currently suspended in `resumeEvents`. A history snapshot is
+    /// never applied meanwhile: the replay may be the only source of events the
+    /// snapshot lacks (the in-flight turn is persisted at completion).
+    @ObservationIgnored private var gapReplaysInFlight = 0
     @ObservationIgnored private var settleRefreshArmed = false
     /// Rate limit for automatic recovery (retry-storm guard).
     @ObservationIgnored var gapGovernor = GapRecoveryGovernor()
@@ -2054,6 +2058,7 @@ public final class ConversationViewModel {
             } else {
                 allRows = authoritative.map { Self.row(from: $0, id: nextRowID()) }
             }
+            snapshotGeneration &+= 1
             adoptHistoryReactions(into: allRows, from: opened.messages)
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
@@ -2340,7 +2345,15 @@ public final class ConversationViewModel {
         guard let sid = openedSessionID else { return }
         let snapshotAtStart = snapshotGeneration
         do {
-            let missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
+            gapReplaysInFlight += 1
+            let missed: [ConversationEvent]
+            do {
+                missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
+                gapReplaysInFlight -= 1
+            } catch {
+                gapReplaysInFlight -= 1
+                throw error
+            }
             guard isCurrent(token) else { return }
             // A history snapshot was applied while the replay was in flight: it
             // already contains these events and reset the continuity cursor, so
@@ -2460,6 +2473,8 @@ public final class ConversationViewModel {
             guard openedSessionID == sessionAtRequest,
                   openedSessionID == nil || openedSessionID == sessionID else { return .superseded }
             guard transcriptMutationRevision == revisionAtRequest else { return .rejectedStale }
+            // A gap replay is in flight and may carry events this snapshot lacks.
+            guard gapReplaysInFlight == 0 else { return .rejectedStale }
             // A turn that began in flight is already covered by the revision
             // (messageStart bumps it); one still open now must not be replaced.
             if isStreaming, !allowDuringStream { return .rejectedStale }

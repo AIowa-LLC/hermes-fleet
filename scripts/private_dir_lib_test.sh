@@ -78,7 +78,7 @@ grep -q 'hf_private_dir "$(hf_private_name hermes-fleet-live)"' scripts/c_artifa
 LT="$T/legacytmp"; mkdir -p "$LT/hermes-fleet-reviewer"; chmod 700 "$LT/hermes-fleet-reviewer"
 printf 'password=synthetic\n' > "$LT/hermes-fleet-reviewer/credentials"; chmod 600 "$LT/hermes-fleet-reviewer/credentials"
 BEFORE=$(cat "$LT/hermes-fleet-reviewer/credentials")
-out=$(TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/hermes-fleet-reviewer" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/hermes-fleet-reviewer" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
 if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "launcher refuses the legacy directory"; else fail "launcher legacy refusal rc=$rc"; fi
 out=$(TMPDIR="$LT" REVIEWER_BASE_URL=https://example.invalid REVIEWER_CRED_FILE="$LT/hermes-fleet-reviewer/credentials" bash scripts/reviewer_env_check.sh 2>&1); rc=$?
 if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "env check refuses credentials from the legacy directory"; else fail "check legacy refusal rc=$rc"; fi
@@ -86,6 +86,26 @@ out=$(TMPDIR="$LT" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
 if printf '%s' "$out" | grep -q "legacy reviewer state directory exists and is IGNORED"; then pass "default run reports the legacy directory as ignored"; else fail "no ignored-notice"; fi
 [ "$(cat "$LT/hermes-fleet-reviewer/credentials")" = "$BEFORE" ] && [ "$(stat -f %Lp "$LT/hermes-fleet-reviewer/credentials" 2>/dev/null || stat -c %a "$LT/hermes-fleet-reviewer/credentials")" = 600 ] \
   && pass "legacy credentials untouched (content and mode preserved)" || fail "legacy credentials were modified"
+
+# 12. Spellings that used to bypass a lexical match are refused too.
+. scripts/private_dir_lib.sh
+LEG="$LT/hermes-fleet-reviewer"
+ln -s "$LEG" "$T/legacy-link"; ln -s "$LT" "$T/tmp-link"; mkdir -p "$LT/side"
+export TMPDIR="$LT"
+for spelling in "$LEG/credentials" "$LEG//credentials" "$LT//hermes-fleet-reviewer/credentials" \
+                "$LT/side/../hermes-fleet-reviewer/credentials" "$LT/./hermes-fleet-reviewer/credentials" \
+                "$T/legacy-link/credentials" "$T/tmp-link/hermes-fleet-reviewer/credentials"; do
+  if hf_is_legacy_reviewer_path "$spelling"; then pass "legacy path recognised: ${spelling#$T/}"; else fail "legacy bypass: ${spelling#$T/}"; fi
+done
+( cd "$LT" && hf_is_legacy_reviewer_path "./hermes-fleet-reviewer/credentials" ) && pass "relative spelling recognised" || fail "relative spelling bypass"
+UPPER="$(printf '%s' "$LEG/credentials" | tr 'a-z' 'A-Z')"
+if [ "$(uname)" = "Darwin" ]; then hf_is_legacy_reviewer_path "$UPPER" && pass "case-variant recognised on a case-insensitive volume" || fail "case bypass"; fi
+if hf_is_legacy_reviewer_path "$LT/hermes-fleet-reviewer-1234/credentials"; then fail "per-uid sibling wrongly treated as legacy"; else pass "per-uid sibling directory is NOT legacy"; fi
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_BASE_URL=https://example.invalid REVIEWER_CRED_FILE="$LT//hermes-fleet-reviewer/credentials" bash scripts/reviewer_containment_test.sh 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "containment test refuses legacy credentials"; else fail "containment legacy refusal rc=$rc"; fi
+out=$(env -u REVIEWER_ALLOW_LEGACY_DIR TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/side/../hermes-fleet-reviewer" bash scripts/reviewer_env_launch.sh clean --purge 2>&1); rc=$?
+if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory" && [ -f "$LEG/credentials" ]; then pass "purge via a dotted spelling is refused and nothing is deleted"; else fail "purge bypass rc=$rc"; fi
+unset TMPDIR
 
 echo "private_dir: $FAILS failure(s)"
 [ "$FAILS" = 0 ]

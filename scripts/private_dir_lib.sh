@@ -59,9 +59,30 @@ hf_legacy_reviewer_dir() {
   printf '%s/hermes-fleet-reviewer' "${TMPDIR:-/tmp}"
 }
 
-# True when <path> is the legacy directory or inside it.
+# Physical (symlink-free) absolute form of <path>. The longest existing prefix
+# is resolved with `cd -P`; any not-yet-existing tail is appended unchanged.
+hf_canonical_path() {
+  local p="$1" d b
+  [ -n "$p" ] || return 1
+  case "$p" in /*) ;; *) p="$PWD/$p" ;; esac
+  if [ -d "$p" ]; then ( cd -P "$p" 2>/dev/null && pwd -P ); return; fi
+  d="$(dirname "$p")"; b="$(basename "$p")"
+  [ "$d" = "$p" ] && { printf '%s' "$p"; return; }
+  d="$(hf_canonical_path "$d")" || return 1
+  [ "$d" = "/" ] && printf '/%s' "$b" || printf '%s/%s' "$d" "$b"
+}
+
+# True when <path> is the legacy directory or inside it, after resolving
+# symlinks, `.`/`..`, trailing or doubled slashes and (on macOS) case.
 hf_is_legacy_reviewer_path() {
-  local p="${1%/}" legacy
-  legacy="$(hf_legacy_reviewer_dir)"; legacy="${legacy%/}"
-  [ -n "$p" ] && { [ "$p" = "$legacy" ] || case "$p" in "$legacy"/*) true ;; *) false ;; esac; }
+  local p legacy
+  p="$(hf_canonical_path "${1:-}")" || return 1
+  legacy="$(hf_canonical_path "$(hf_legacy_reviewer_dir)")" || return 1
+  if [ "$(uname)" = "Darwin" ]; then
+    p="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
+    legacy="$(printf '%s' "$legacy" | tr '[:upper:]' '[:lower:]')"
+  fi
+  [ "$p" = "$legacy" ] && return 0
+  case "$p" in "$legacy"/*) return 0 ;; esac
+  return 1
 }

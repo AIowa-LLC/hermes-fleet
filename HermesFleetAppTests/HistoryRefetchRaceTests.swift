@@ -52,6 +52,7 @@ final class HistoryRefetchRaceTests: XCTestCase {
         nonisolated(unsafe) var immediateDelayMs = 0
         /// When set, `resumeEvents` (targeted gap replay) suspends on this handler.
         nonisolated(unsafe) var resumeEventsHandler: (@Sendable () async -> [ConversationEvent])?
+        nonisolated(unsafe) var resumeEventsCalls = 0
         let gapStream: AsyncStream<EventGap>
         let gapContinuation: AsyncStream<EventGap>.Continuation
         let eventStream: AsyncStream<ConversationEvent>
@@ -81,6 +82,7 @@ final class HistoryRefetchRaceTests: XCTestCase {
         func submitPrompt(sessionID: String, text: String) async throws -> PromptSubmission { PromptSubmission(status: "streaming") }
         func interrupt(sessionID: String) async throws -> InterruptResult { InterruptResult(status: "ok") }
         func resumeEvents(since lastEventID: Int, sessionID: String) async throws -> [ConversationEvent] {
+            resumeEventsCalls += 1
             if let resumeEventsHandler { return await resumeEventsHandler() }
             return []
         }
@@ -351,46 +353,79 @@ final class HistoryRefetchRaceTests: XCTestCase {
         XCTAssertFalse(texts(model).contains("SHOULD-NOT-APPEAR"))
     }
 
-    // MARK: recoverGap x refetch overlap (pre-existing race, now fenced)
+    // MARK: recoverGap x refetch overlap (pre-existing race, now serialized)
 
-    /// A seq-gap replay (`recoverGap`) is in flight when a history refetch applies
-    /// a snapshot that already contains the "missed" events. The replayed events
-    /// must be discarded, not re-applied on top of the snapshot (the refetch resets
-    /// the continuity cursor, which would otherwise let them apply as new).
-    func testGapReplayThatOverlapsASnapshotIsDiscardedInsteadOfDuplicatingText() async throws {
-        let (session, model) = try await makeFixture()
-        // Establish a cursor with a completed turn (seq 1-3).
+    private func establishCursor(_ session: Session, _ model: ConversationViewModel) async {
         session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 1))
         session.eventContinuation.yield(.messageDelta(sessionID: "s1", text: "first", rendered: nil, seq: 2))
         session.eventContinuation.yield(.messageComplete(sessionID: "s1", text: "first", status: nil, error: nil, seq: 3))
         _ = await waitUntil { texts(model).contains("first") && !model.isStreaming }
+    }
 
-        // The targeted replay will deliver the missed turn (seq 4-6) only when released.
+    /// A seq-gap replay is in flight while a history refetch has a snapshot ready
+    /// that ALREADY contains the replayed turn. Applying both used to render the
+    /// turn twice. Now the snapshot is refused while the replay runs; the replay
+    /// applies once, and the armed refresh later converges on the snapshot.
+    func testSnapshotIsRefusedWhileAGapReplayIsInFlightSoNothingIsDuplicated() async throws {
+        let (session, model) = try await makeFixture()
+        await establishCursor(session, model)
         let replayGate = Gates()
         let missed: [ConversationEvent] = [
             .messageStart(sessionID: "s1", seq: 4),
             .messageDelta(sessionID: "s1", text: "MISSED", rendered: nil, seq: 5),
             .messageComplete(sessionID: "s1", text: "MISSED", status: nil, error: nil, seq: 6),
         ]
-        session.resumeEventsHandler = {
-            _ = await replayGate.wait(0)
-            return missed
-        }
-        // A live event jumps to seq 9: gap -> recoverGap suspends in resumeEvents.
-        session.eventContinuation.yield(.messageStart(sessionID: "s1", seq: 9))
-        _ = await waitUntil { model.integrityNotice != nil || replayGate.callCount >= 0 }
-        try await Task.sleep(for: .milliseconds(150))
+        session.resumeEventsHandler = { _ = await replayGate.wait(0); return missed }
+        session.eventContinuation.yield(.thinkingDelta(sessionID: "s1", text: "trigger", seq: 9))
+        let started = await waitUntil { session.resumeEventsCalls == 1 }
+        XCTAssertTrue(started, "the gap replay is in flight")
 
-        // Meanwhile a history refetch applies a snapshot that ALREADY contains the missed turn.
         session.immediate = [msg("first"), msg("MISSED")]
         let outcome = await model.refetchAuthoritativeHistory(sessionID: "s1")
-        XCTAssertEqual(outcome, .applied)
-        XCTAssertEqual(texts(model), ["first", "MISSED"])
+        XCTAssertEqual(outcome, .rejectedStale, "a snapshot must not be applied while a gap replay is suspended")
+        XCTAssertEqual(texts(model), ["first"], "nothing applied yet")
 
-        // The late replay arrives: it must not duplicate what the snapshot holds.
         replayGate.release(0, [])
-        try await Task.sleep(for: .milliseconds(300))
-        XCTAssertEqual(texts(model), ["first", "MISSED"], "replayed events covered by the snapshot are discarded")
+        _ = await waitUntil { texts(model).contains("MISSED") }
+        var rows = texts(model)
+        XCTAssertEqual(rows.filter { $0 == "MISSED" }.count, 1, "the replayed turn applied exactly once: \(rows)")
+        // The armed refresh converges on the snapshot with no duplicates.
+        let converged = await waitUntil { texts(model) == ["first", "MISSED"] && !model.historyMayBeIncomplete }
+        rows = texts(model)
+        XCTAssertTrue(converged, "final transcript equals the snapshot: \(rows)")
+    }
+
+    /// The snapshot LACKS the in-flight turn (the gateway persists assistant rows
+    /// at completion), and it arrives while the gap replay is suspended. The
+    /// replay is the only source of that turn, so it must not be lost.
+    func testReplayIsNotLostWhenTheSnapshotLacksTheInFlightTurn() async throws {
+        let (session, model) = try await makeFixture()
+        await establishCursor(session, model)
+        let base = session.gates.callCount
+        let refetch = Task { await model.refetchAuthoritativeHistory(sessionID: "s1") }   // request goes out first
+        _ = await waitUntil { session.gates.callCount == base + 1 }
+
+        let replayGate = Gates()
+        let missed: [ConversationEvent] = [
+            .messageStart(sessionID: "s1", seq: 4),
+            .messageDelta(sessionID: "s1", text: "IN-FLIGHT-TURN", rendered: nil, seq: 5),
+            .messageComplete(sessionID: "s1", text: "IN-FLIGHT-TURN", status: nil, error: nil, seq: 6),
+        ]
+        session.resumeEventsHandler = { _ = await replayGate.wait(0); return missed }
+        // A gap trigger arrives AFTER the refetch was requested: the replay starts.
+        session.eventContinuation.yield(.thinkingDelta(sessionID: "s1", text: "trigger", seq: 9))
+        _ = await waitUntil { session.resumeEventsCalls == 1 }
+
+        // The (older) snapshot comes back without the in-flight turn, while the replay is suspended.
+        for i in 0..<ConversationViewModel.maxRefetchAttempts {
+            if i > 0 { _ = await waitUntil { session.gates.callCount == base + 1 + i } }
+            session.gates.release(base + i, [msg("first")])
+        }
+        let outcome = await refetch.value
+        XCTAssertEqual(outcome, .rejectedStale)
+        replayGate.release(0, [])
+        let kept = await waitUntil { texts(model).contains("IN-FLIGHT-TURN") }
+        XCTAssertTrue(kept, "the replayed turn the snapshot lacked must not be discarded")
     }
 
     /// The gateway persists a message and then emits its event, so a snapshot can
