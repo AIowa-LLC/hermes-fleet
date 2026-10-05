@@ -48,6 +48,15 @@ REVIEWER_IMAGE="${REVIEWER_IMAGE:-hermes-agent:0.21.1-reviewer}"
 . "$SCRIPT_DIR/private_dir_lib.sh"
 REVIEWER_ENV_DIR="${REVIEWER_ENV_DIR:-$(hf_private_name hermes-fleet-reviewer)}"
 CREDS_FILE="$REVIEWER_ENV_DIR/credentials"
+# Old credentials in the pre-rename default directory are preserved but never
+# read, moved, overwritten or reused unless the operator opts in explicitly.
+if hf_is_legacy_reviewer_path "$REVIEWER_ENV_DIR" && [ "${REVIEWER_ALLOW_LEGACY_DIR:-0}" != "1" ]; then
+  printf 'FAIL: REVIEWER_ENV_DIR is the legacy reviewer state directory, which may hold old credentials. Use a fresh directory (the default), or set REVIEWER_ALLOW_LEGACY_DIR=1 to reuse it deliberately.\n' >&2
+  exit 1
+fi
+if [ -e "$(hf_legacy_reviewer_dir)" ] && ! hf_is_legacy_reviewer_path "$REVIEWER_ENV_DIR"; then
+  printf '  note: a legacy reviewer state directory exists and is IGNORED (never read, moved or reused)\n' >&2
+fi
 CONT_NAME="fleet-reviewer"
 VOL_NAME="fleet-reviewer-home"
 NET_NAME="fleet-reviewer"

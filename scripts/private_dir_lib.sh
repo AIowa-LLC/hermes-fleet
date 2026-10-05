@@ -52,3 +52,16 @@ hf_private_dir() {
   fi
   printf '%s\n' "$d"
 }
+
+# The pre-rename default reviewer state directory (no uid suffix). It may still
+# hold old reviewer credentials; they must never silently enter a validation run.
+hf_legacy_reviewer_dir() {
+  printf '%s/hermes-fleet-reviewer' "${TMPDIR:-/tmp}"
+}
+
+# True when <path> is the legacy directory or inside it.
+hf_is_legacy_reviewer_path() {
+  local p="${1%/}" legacy
+  legacy="$(hf_legacy_reviewer_dir)"; legacy="${legacy%/}"
+  [ -n "$p" ] && { [ "$p" = "$legacy" ] || case "$p" in "$legacy"/*) true ;; *) false ;; esac; }
+}

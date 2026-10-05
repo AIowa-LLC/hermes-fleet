@@ -74,5 +74,18 @@ grep -q 'hf_private_dir "$(hf_private_name hermes-fleet-live)"' scripts/c_artifa
   && ! grep -q '/tmp}/c-artifact-evidence' scripts/c_artifact_live_check.sh \
   && pass "c_artifact_live_check default evidence path is private" || fail "c_artifact default path"
 
+# 11. Legacy reviewer credentials never enter a run silently.
+LT="$T/legacytmp"; mkdir -p "$LT/hermes-fleet-reviewer"; chmod 700 "$LT/hermes-fleet-reviewer"
+printf 'password=synthetic\n' > "$LT/hermes-fleet-reviewer/credentials"; chmod 600 "$LT/hermes-fleet-reviewer/credentials"
+BEFORE=$(cat "$LT/hermes-fleet-reviewer/credentials")
+out=$(TMPDIR="$LT" REVIEWER_ENV_DIR="$LT/hermes-fleet-reviewer" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "launcher refuses the legacy directory"; else fail "launcher legacy refusal rc=$rc"; fi
+out=$(TMPDIR="$LT" REVIEWER_BASE_URL=https://example.invalid REVIEWER_CRED_FILE="$LT/hermes-fleet-reviewer/credentials" bash scripts/reviewer_env_check.sh 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "legacy reviewer state directory"; then pass "env check refuses credentials from the legacy directory"; else fail "check legacy refusal rc=$rc"; fi
+out=$(TMPDIR="$LT" bash scripts/reviewer_env_launch.sh status 2>&1); rc=$?
+if printf '%s' "$out" | grep -q "legacy reviewer state directory exists and is IGNORED"; then pass "default run reports the legacy directory as ignored"; else fail "no ignored-notice"; fi
+[ "$(cat "$LT/hermes-fleet-reviewer/credentials")" = "$BEFORE" ] && [ "$(stat -f %Lp "$LT/hermes-fleet-reviewer/credentials" 2>/dev/null || stat -c %a "$LT/hermes-fleet-reviewer/credentials")" = 600 ] \
+  && pass "legacy credentials untouched (content and mode preserved)" || fail "legacy credentials were modified"
+
 echo "private_dir: $FAILS failure(s)"
 [ "$FAILS" = 0 ]
