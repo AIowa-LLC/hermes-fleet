@@ -7,6 +7,10 @@
 # message-id independent), secrets scan, git state.
 # Run with: bash scripts/s2_validate.sh
 set -u
+# Private per-run scratch (never a predictable shared /tmp name: a local
+# user could pre-create or symlink it and clobber files).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_s2_validate.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 PASS=0
@@ -65,7 +69,7 @@ if echo "$CORE_REG" | grep -q ', with 0 failures'; then
 else
   bad "FleetCore identity regression tests NOT green"
 fi
-PERS_REG_LOG=/tmp/s2_pers_reg.log
+PERS_REG_LOG=$SCRIPT_TMP/s2_pers_reg.log
 (cd Packages/FleetPersistence && swift test \
   --filter "testFreshContainersRestoreIdenticalMessageIDs" >"$PERS_REG_LOG" 2>&1)
 PERS_EXIT=$?
@@ -80,10 +84,10 @@ fi
 # --- 4. FULL PACKAGE SUITES ----------------------------------------------------
 for PKG in FleetCore FleetNetworking FleetSecurity FleetPersistence; do
   note "$PKG build + full tests"
-  if (cd Packages/$PKG && swift build) >/tmp/s2_${PKG}_build.log 2>&1; then
+  if (cd Packages/$PKG && swift build) >$SCRIPT_TMP/s2_${PKG}_build.log 2>&1; then
     ok "$PKG builds"
   else
-    bad "$PKG build failed"; tail -5 /tmp/s2_${PKG}_build.log
+    bad "$PKG build failed"; tail -5 $SCRIPT_TMP/s2_${PKG}_build.log
   fi
   OUT=$(cd Packages/$PKG && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
   echo "  $OUT"
@@ -111,28 +115,28 @@ fi
 
 # --- 6. XCODEGEN + XCODEBUILD build/test (iOS Simulator, app-level) ------------
 note "xcodegen + xcodebuild build/test (iOS Simulator)"
-if xcodegen generate >/tmp/s2_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+if xcodegen generate >$SCRIPT_TMP/s2_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
   ok "xcodegen regenerated; team 3JS22HX92T present"
 else
-  bad "xcodegen / team missing"; tail -5 /tmp/s2_xcodegen.log
+  bad "xcodegen / team missing"; tail -5 $SCRIPT_TMP/s2_xcodegen.log
 fi
 DEST="platform=iOS Simulator,name=iPhone 17 Pro,OS=latest"
 DD="$REPO/build/DerivedDataS2"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" build >/tmp/s2_xcbuild.log 2>&1; then
+    -destination "$DEST" -derivedDataPath "$DD" build >$SCRIPT_TMP/s2_xcbuild.log 2>&1; then
   ok "xcodebuild BUILD SUCCEEDED (iOS Simulator)"
 else
-  bad "xcodebuild build FAILED"; tail -25 /tmp/s2_xcbuild.log
+  bad "xcodebuild build FAILED"; tail -25 $SCRIPT_TMP/s2_xcbuild.log
 fi
 # App UNIT-test bundle (gateway-independent: ModuleBoundary, seam, app-level
 # persistence) — the repo convention (p3fix_final_validate.sh) gates on this.
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -destination "$DEST" -derivedDataPath "$DD" \
-    -only-testing:HermesFleetAppTests test >/tmp/s2_xctest.log 2>&1; then
-  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/s2_xctest.log | tail -1)
+    -only-testing:HermesFleetAppTests test >$SCRIPT_TMP/s2_xctest.log 2>&1; then
+  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' $SCRIPT_TMP/s2_xctest.log | tail -1)
   ok "xcodebuild app UNIT tests SUCCEEDED — $TESTLINE"
 else
-  bad "xcodebuild app unit tests FAILED"; grep -E 'error:|failed|Test Suite' /tmp/s2_xctest.log | tail -20
+  bad "xcodebuild app unit tests FAILED"; grep -E 'error:|failed|Test Suite' $SCRIPT_TMP/s2_xctest.log | tail -20
 fi
 # Live-gateway UI tests (P3Fix) are environmental: they need a live LAN gateway
 # + clean simulator app state and are NOT part of the deterministic suite. They

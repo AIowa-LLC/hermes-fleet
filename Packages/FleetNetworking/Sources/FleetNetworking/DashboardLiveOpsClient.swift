@@ -33,7 +33,7 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             case .sessionTokenHeader(let token): request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
             case .cookie(let cookie): request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
             }
-            let (data, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.boundedData(for: request)
             guard let http = response as? HTTPURLResponse else { throw SnapshotError.invalid }
             if http.statusCode == 404 {
                 let fallback = await legacy.snapshot()

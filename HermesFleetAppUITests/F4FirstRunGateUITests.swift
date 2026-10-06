@@ -63,14 +63,19 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.descendants(matching: .any)
             .matching(identifier: "fleet.gateways.form.paste.password").firstMatch.tap()
 
-        // The https fixture endpoint requires TLS first-use confirmation.
-        let tlsToggle = app.switches["fleet.gateways.form.tls-first-use-confirm"].firstMatch
-        if !tlsToggle.waitForExistence(timeout: 3) {
-            for _ in 0..<3 where !tlsToggle.exists { app.swipeUp(velocity: .fast) }
+        // The https fixture endpoint requires reviewing and confirming the
+        // certificate fingerprint the endpoint presents before it is trusted.
+        let reviewButton = app.buttons["fleet.gateways.form.tls-review"].firstMatch
+        if !reviewButton.waitForExistence(timeout: 3) {
+            for _ in 0..<3 where !reviewButton.exists { app.swipeUp(velocity: .fast) }
         }
-        if tlsToggle.waitForExistence(timeout: 3) {
-            tlsToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        }
+        XCTAssertTrue(reviewButton.waitForExistence(timeout: 3),
+                      "a secure endpoint must offer the certificate review")
+        reviewButton.tap()
+        let trust = app.buttons["fleet.gateways.form.tls-review.trust"].firstMatch
+        XCTAssertTrue(trust.waitForExistence(timeout: 5),
+                      "the review must present the fingerprint for explicit confirmation")
+        trust.tap()
 
         let save = app.buttons["fleet.gateways.form.save"].firstMatch
         XCTAssertTrue(save.waitForExistence(timeout: 5))

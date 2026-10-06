@@ -31,7 +31,11 @@ struct GatewayFormSheet: View {
     /// P2-6: the save seam now THROWS on failure so the form can distinguish a
     /// successful save (dismiss + clear secrets) from a failure (keep the
     /// sheet open, preserve non-secret fields for retry, surface the error).
-    private let onSave: (GatewayRegistration, GatewayCredential?, Bool) async throws -> Void
+    private let onSave: (GatewayRegistration, GatewayCredential?, TLSKeyReview?) async throws -> Void
+    /// Reads the key the endpoint actually presents (handshake only).
+    private let reviewKey: (URL) async throws -> TLSKeyReview
+    /// True when the edited gateway already has a stored pin.
+    private let tlsPinned: Bool
 
     /// The root-owned draft store this form binds to (P0-2).
     @Bindable private var draftStore: GatewayFormDraftStore
@@ -40,14 +44,22 @@ struct GatewayFormSheet: View {
     @State private var isSaving = false
     /// F2: camera pairing-scanner presentation (fills the draft on success).
     @State private var isShowingScanner = false
+    /// Fingerprint awaiting the user's explicit confirmation.
+    @State private var pendingReview: TLSKeyReview?
+    @State private var isReviewing = false
+    @State private var reviewError: String?
 
     init(
         title: String,
         saveButton: String,
         initial: FleetGateway?,
         draftStore: GatewayFormDraftStore,
-        onSave: @escaping (GatewayRegistration, GatewayCredential?, Bool) async throws -> Void
+        tlsPinned: Bool = false,
+        reviewKey: @escaping (URL) async throws -> TLSKeyReview,
+        onSave: @escaping (GatewayRegistration, GatewayCredential?, TLSKeyReview?) async throws -> Void
     ) {
+        self.tlsPinned = tlsPinned
+        self.reviewKey = reviewKey
         self.title = title
         self.saveButton = saveButton
         self.existing = initial
@@ -126,7 +138,7 @@ struct GatewayFormSheet: View {
                 if secureEndpoint {
                     Section {
                         Label {
-                            Text("Verify this address and certificate with the gateway operator before pairing. Hermes Fleet will store the certificate's public-key fingerprint and block unexpected changes.")
+                            Text("Hermes Fleet reads the certificate this address presents and shows its fingerprint. Compare it with one from a trusted source — the gateway operator or its console — before you trust it. Only that exact key is trusted; any other key is blocked.")
                                 .font(.subheadline)
                                 .fixedSize(horizontal: false, vertical: true)
                         } icon: {
@@ -135,8 +147,36 @@ struct GatewayFormSheet: View {
                         }
                         .accessibilityIdentifier("fleet.gateways.form.tls-first-use-warning")
 
-                        Toggle("I trust this gateway's first certificate", isOn: $draftStore.confirmsTLSFirstUse)
-                            .accessibilityIdentifier("fleet.gateways.form.tls-first-use-confirm")
+                        if let review = confirmedReview {
+                            LabeledContent("Trusted key") {
+                                Text(review.displayFingerprint)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                            .accessibilityIdentifier("fleet.gateways.form.tls-review.confirmed")
+                        } else if !endpointChanged && tlsPinned {
+                            Label("Certificate already trusted for this address.", systemImage: "checkmark.shield")
+                                .font(.subheadline)
+                                .accessibilityIdentifier("fleet.gateways.form.tls-review.pinned")
+                        }
+                        Button {
+                            startReview()
+                        } label: {
+                            if isReviewing {
+                                ProgressView()
+                            } else {
+                                Text(confirmedReview == nil ? "Review Certificate" : "Review Again")
+                            }
+                        }
+                        .disabled(isReviewing || endpointURL == nil)
+                        .accessibilityIdentifier("fleet.gateways.form.tls-review")
+                        if let reviewError {
+                            Text(reviewError)
+                                .font(.footnote)
+                                .foregroundStyle(FleetTheme.statusDestructive)
+                                .accessibilityIdentifier("fleet.gateways.form.tls-review.error")
+                        }
                     } header: {
                         Text("Secure Pairing")
                             .foregroundStyle(theme.textSecondary)
@@ -227,6 +267,28 @@ struct GatewayFormSheet: View {
         .tint(theme.highlight)
         // F2: camera pairing scanner — successful scan fills the draft and
         // returns here for Save.
+        .alert(
+            "Trust this certificate?",
+            isPresented: .init(
+                get: { pendingReview != nil },
+                set: { if !$0 { pendingReview = nil } }
+            ),
+            presenting: pendingReview
+        ) { review in
+            Button("Trust This Key") {
+                // Bind the confirmation to exactly this endpoint and key.
+                draftStore.tlsReview = review
+                pendingReview = nil
+            }
+            .accessibilityIdentifier("fleet.gateways.form.tls-review.trust")
+            Button("Cancel", role: .cancel) {
+                draftStore.tlsReview = nil
+                pendingReview = nil
+            }
+            .accessibilityIdentifier("fleet.gateways.form.tls-review.cancel")
+        } message: { review in
+            Text("\(trimmedName.isEmpty ? "This gateway" : trimmedName) at \(Redaction.redactedURL(review.endpoint)) presented this key (SHA-256):\n\n\(review.displayFingerprint)\n\nCompare it with a trusted source before you trust it. If it does not match, cancel.")
+        }
         .sheet(isPresented: $isShowingScanner) {
             GatewayPairingScannerView(draftStore: draftStore)
         }
@@ -310,7 +372,41 @@ struct GatewayFormSheet: View {
     private var isValid: Bool {
         !trimmedName.isEmpty && endpointURL != nil
             && (!cleartextRisk || draftStore.confirmsCleartextSend)
-            && (!secureEndpoint || draftStore.confirmsTLSFirstUse)
+            && (!secureEndpoint || confirmedReview != nil || (existing != nil && !endpointChanged))
+    }
+
+    /// The user's confirmed review, only while it still matches the endpoint
+    /// in the field (an address edit makes it stale).
+    private var confirmedReview: TLSKeyReview? {
+        guard let review = draftStore.tlsReview, let endpoint = endpointURL,
+              (try? review.validate(for: endpoint)) != nil else { return nil }
+        return review
+    }
+
+    /// Editing an existing gateway to a different address.
+    private var endpointChanged: Bool {
+        guard let existing else { return true }
+        guard let current = endpointURL, let original = existing.endpoint,
+              let originalOrigin = try? GatewayEndpoint.normalizedOrigin(from: original) else { return true }
+        return current.absoluteString.lowercased() != originalOrigin.absoluteString.lowercased()
+    }
+
+    private func startReview() {
+        guard let endpoint = endpointURL, !isReviewing else { return }
+        isReviewing = true
+        reviewError = nil
+        draftStore.tlsReview = nil
+        Task {
+            do {
+                let review = try await reviewKey(endpoint)
+                isReviewing = false
+                pendingReview = review
+            } catch {
+                isReviewing = false
+                reviewError = (error as? TLSKeyReviewError)?.errorDescription
+                    ?? "Could not read a certificate from this address."
+            }
+        }
     }
 
     private var secureEndpoint: Bool {
@@ -347,7 +443,7 @@ struct GatewayFormSheet: View {
                 // P2-6: only dismiss on SUCCESS. On failure the sheet stays
                 // open with the non-secret fields preserved for retry and the
                 // (non-secret) error surfaced inline — no discarded input.
-                try await onSave(registration, credential, draftStore.confirmsTLSFirstUse)
+                try await onSave(registration, credential, confirmedReview)
                 isSaving = false
                 // P0-2: successful save wipes the draft (secret material
                 // included) so nothing lingers after the sheet closes.

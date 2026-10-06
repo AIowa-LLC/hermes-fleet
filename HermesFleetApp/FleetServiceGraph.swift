@@ -224,6 +224,7 @@ enum FleetServiceGraph {
             cache: cache,
             tlsPinStore: pinStore,
             tlsApprovalStore: pinStore,
+            tlsKeyProbe: TLSPresentedKeyProbe(),
             sessionList: sessionList,
             connectionFactory: makeConnectionFactory(
                 credentialStore: credentialStore, health: health, pinStore: pinStore),
@@ -757,7 +758,7 @@ enum FleetServiceGraph {
             trustHandler: PinningTrustHandler(
                 gatewayID: gateway.id,
                 pinStore: pinStore,
-                approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring))
+                approvalStore: pinStore.firstUseApprovalsOrDenyAll()))
     }
 
     /// Build the gateway-scoped URLSession used by credential-bearing REST
@@ -777,7 +778,7 @@ enum FleetServiceGraph {
         let handler = PinningTrustHandler(
             gatewayID: gateway.id,
             pinStore: pinStore,
-            approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring)
+            approvalStore: pinStore.firstUseApprovalsOrDenyAll())
         let delegate = URLSessionPinningDelegate(trustHandler: handler)
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }

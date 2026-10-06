@@ -86,6 +86,7 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
     public init(url: URL, now: @escaping @Sendable () -> Date = { Date() }) {
         self.url = url
         self.now = now
+        BackupExclusion.apply(to: url) // stores written before the exclusion existed
         if let data = try? Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode([Entry].self, from: data) {
             cache = decoded
@@ -212,6 +213,7 @@ public final class FleetContinueIndexStore: @unchecked Sendable {
         cache = entries
         if let data = try? JSONEncoder().encode(entries) {
             try? data.write(to: url, options: [.atomic, .completeFileProtection])
+            BackupExclusion.apply(to: url)
         }
     }
 }

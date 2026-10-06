@@ -157,7 +157,7 @@ final class ServerRequestBox: @unchecked Sendable {
     private struct State {
         var open: [Open] = []
         var subscribers: [UUID: AsyncStream<ServerRequest>.Continuation] = [:]
-        var conversationSubscribers: [UUID: AsyncStream<ConversationEvent>.Continuation] = [:]
+        var conversationSubscribers: [UUID: BoundedQueue<ConversationEvent>] = [:]
         /// Ids answered locally or withdrawn by the gateway, newest last.
         /// A stale `open_requests` snapshot that races the settlement must not
         /// resurrect a prompt the user already answered or the gateway cancelled.
@@ -170,6 +170,13 @@ final class ServerRequestBox: @unchecked Sendable {
     private static let maxSettled = 128
 
     private let lock = OSAllocatedUnfairLock(initialState: State())
+    /// Called (outside the lock's hot path) for every conversation event the
+    /// bounded subscriber queues had to evict.
+    private let onGap: @Sendable (EventGap) -> Void
+
+    init(onGap: @escaping @Sendable (EventGap) -> Void = { _ in }) {
+        self.onGap = onGap
+    }
 
     enum Admission: Sendable {
         case admitted
@@ -182,20 +189,26 @@ final class ServerRequestBox: @unchecked Sendable {
 
     /// Record an open request and deliver it to every subscriber.
     func admit(_ open: Open) -> Admission {
-        lock.withLock { state in
+        let (admission, evicted): (Admission, [BoundedQueue<ConversationEvent>.Entry]) = lock.withLock { state in
             let id = open.request.id
-            if state.settled.contains(id) { return .settled }
-            if state.open.contains(where: { $0.request.id == id }) { return .duplicate }
-            guard state.open.count < Self.maxOpen else { return .full }
+            if state.settled.contains(id) { return (.settled, []) }
+            if state.open.contains(where: { $0.request.id == id }) { return (.duplicate, []) }
+            guard state.open.count < Self.maxOpen else { return (.full, []) }
             state.open.append(open)
             for continuation in state.subscribers.values {
                 continuation.yield(open.request)
             }
-            for continuation in state.conversationSubscribers.values {
-                continuation.yield(.serverRequest(open.request))
+            var evictedEntries: [BoundedQueue<ConversationEvent>.Entry] = []
+            for queue in state.conversationSubscribers.values {
+                // Pinned: an approval prompt is not evicted for overflow, but
+                // admitting it may evict an older ordinary event: report it.
+                evictedEntries += queue.push(.init(value: .serverRequest(open.request), bytes: 256,
+                                                   sessionID: open.request.sessionID, pinned: true))
             }
-            return .admitted
+            return (.admitted, evictedEntries)
         }
+        for e in evicted { onGap(EventGap(sessionID: e.sessionID, reason: .subscriberOverflow)) }
+        return admission
     }
 
     /// Atomically register a subscriber and hand it the currently open
@@ -214,30 +227,45 @@ final class ServerRequestBox: @unchecked Sendable {
 
     /// Requests and withdrawals share one ordered stream. Merging two
     /// independent tasks can deliver a withdrawal before its request.
-    func subscribeConversation(_ continuation: AsyncStream<ConversationEvent>.Continuation) -> UUID {
+    func subscribeConversation(maxCount: Int, maxBytes: Int) -> (token: UUID, queue: BoundedQueue<ConversationEvent>) {
         let token = UUID()
+        let queue = BoundedQueue<ConversationEvent>(maxCount: maxCount, maxBytes: maxBytes)
         lock.withLock { state in
             for open in state.open {
                 let r = open.request
-                continuation.yield(.serverRequest(ServerRequest(
-                    id: r.id, sessionID: r.sessionID, kind: r.kind, replayed: true)))
+                queue.push(.init(value: .serverRequest(ServerRequest(
+                    id: r.id, sessionID: r.sessionID, kind: r.kind, replayed: true)),
+                                 bytes: 256, sessionID: r.sessionID, pinned: true))
             }
-            state.conversationSubscribers[token] = continuation
+            state.conversationSubscribers[token] = queue
         }
-        return token
+        return (token, queue)
     }
 
     func unsubscribeConversation(_ token: UUID) {
-        lock.withLock { _ = $0.conversationSubscribers.removeValue(forKey: token) }
+        let queue = lock.withLock { $0.conversationSubscribers.removeValue(forKey: token) }
+        queue?.finish()
     }
 
-    func forwardConversation(_ event: GatewayEvent) {
+    func forwardConversation(_ event: GatewayEvent, bytes: Int) {
         guard let decoded = GatewayConversationClient.decodeEvent(event) else { return }
-        lock.withLock { state in
-            for continuation in state.conversationSubscribers.values {
-                continuation.yield(decoded)
-            }
+        let pinned = event.type == .requestCancel || event.type == .approvalRequest
+        let queues = lock.withLock { Array($0.conversationSubscribers.values) }
+        let entry = BoundedQueue<ConversationEvent>.Entry(
+            value: decoded, bytes: bytes, sessionID: event.sessionID, pinned: pinned)
+        var evicted: [BoundedQueue<ConversationEvent>.Entry] = []
+        for queue in queues { evicted += queue.push(entry) }
+        // Aggregate budget across conversation subscribers.
+        var total = queues.reduce(0) { $0 + $1.byteCount }
+        var aggregate: [BoundedQueue<ConversationEvent>.Entry] = []
+        while total > GatewayEventBudget.maxAggregateBufferedBytes,
+              let largest = queues.max(by: { $0.byteCount < $1.byteCount }),
+              largest.count > 1, let dropped = largest.dropOldest() {
+            total -= dropped.bytes
+            aggregate.append(dropped)
         }
+        for e in evicted { onGap(EventGap(sessionID: e.sessionID, reason: .subscriberOverflow)) }
+        for e in aggregate { onGap(EventGap(sessionID: e.sessionID, reason: .aggregateOverflow)) }
     }
 
     func unsubscribe(_ token: UUID) {

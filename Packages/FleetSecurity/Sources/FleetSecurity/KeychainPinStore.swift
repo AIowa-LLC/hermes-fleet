@@ -71,6 +71,19 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         }
     }
 
+    public func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
+        // SecItemAdd is the atomic compare-and-set: a duplicate means a pin
+        // already exists and must never be replaced by a first-use accept.
+        var query = Self.baseAttributes(account: gatewayID.rawValue)
+        query[kSecValueData as String] = Data(pin.base64String.utf8)
+        let status = keychain.add(query as CFDictionary)
+        switch status {
+        case errSecSuccess: return true
+        case errSecDuplicateItem: return false
+        default: throw PinStoreError.unexpectedStatus(Int(status))
+        }
+    }
+
     public func syncLoadPin(for gatewayID: GatewayID) throws -> SPKIFingerprint? {
         let account = gatewayID.rawValue
         var query = Self.baseAttributes(account: account)
@@ -97,7 +110,7 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         let status = keychain.delete(Self.baseAttributes(account: gatewayID.rawValue) as CFDictionary)
         switch status {
         case errSecSuccess, errSecItemNotFound:
-            try syncSetFirstUseApproved(false, for: gatewayID)
+            try syncClearFirstUseApproval(for: gatewayID)
         default:
             throw PinStoreError.unexpectedStatus(Int(status))
         }
@@ -105,8 +118,8 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
 
     // MARK: TLSFirstUseApprovalStoring
 
-    public func approveFirstUse(for gatewayID: GatewayID) async throws {
-        try syncSetFirstUseApproved(true, for: gatewayID)
+    public func approveFirstUse(for gatewayID: GatewayID, boundTo fingerprint: SPKIFingerprint) async throws {
+        try syncApproveFirstUse(boundTo: fingerprint, for: gatewayID)
     }
 
     public func isFirstUseApproved(for gatewayID: GatewayID) async throws -> Bool {
@@ -114,12 +127,17 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
     }
 
     public func resetFirstUseApproval(for gatewayID: GatewayID) async throws {
-        try syncSetFirstUseApproved(false, for: gatewayID)
+        try syncClearFirstUseApproval(for: gatewayID)
     }
 
     // MARK: SynchronousTLSFirstUseApprovalStoring
 
-    public func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool {
+    private static let boundApprovalPrefix = "pin:"
+
+    /// The key an approval is bound to; nil when there is none. A value in the
+    /// retired unbound format ("approved") is NOT an approval: it never bound
+    /// to a reviewed key, so it is ignored (and replaced on the next review).
+    private func loadApproval(for gatewayID: GatewayID) throws -> SPKIFingerprint? {
         var query = Self.approvalAttributes(account: gatewayID.rawValue)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -127,26 +145,40 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         let status = keychain.copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
-            guard let data = result as? Data else { throw PinStoreError.malformedData }
-            return data == Data("approved".utf8)
+            guard let data = result as? Data,
+                  let value = String(data: data, encoding: .utf8) else {
+                throw PinStoreError.malformedData
+            }
+            guard value.hasPrefix(Self.boundApprovalPrefix) else { return nil }
+            guard let fp = SPKIFingerprint(base64: String(value.dropFirst(Self.boundApprovalPrefix.count))) else {
+                throw PinStoreError.malformedData
+            }
+            return fp
         case errSecItemNotFound:
-            return false
+            return nil
         default:
             throw PinStoreError.unexpectedStatus(Int(status))
         }
     }
 
-    public func syncSetFirstUseApproved(_ approved: Bool, for gatewayID: GatewayID) throws {
-        let attributes = Self.approvalAttributes(account: gatewayID.rawValue)
-        if !approved {
-            let status = keychain.delete(attributes as CFDictionary)
-            guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw PinStoreError.unexpectedStatus(Int(status))
-            }
-            return
-        }
+    public func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool {
+        try loadApproval(for: gatewayID) != nil
+    }
 
-        let data = Data("approved".utf8)
+    public func syncClearFirstUseApproval(for gatewayID: GatewayID) throws {
+        try deleteApproval(for: gatewayID)
+    }
+
+    private func deleteApproval(for gatewayID: GatewayID) throws {
+        let status = keychain.delete(Self.approvalAttributes(account: gatewayID.rawValue) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw PinStoreError.unexpectedStatus(Int(status))
+        }
+    }
+
+    public func syncApproveFirstUse(boundTo fingerprint: SPKIFingerprint, for gatewayID: GatewayID) throws {
+        let attributes = Self.approvalAttributes(account: gatewayID.rawValue)
+        let data = Data((Self.boundApprovalPrefix + fingerprint.base64String).utf8)
         let updateStatus = keychain.update(
             attributes as CFDictionary,
             [kSecValueData as String: data] as CFDictionary)
@@ -162,6 +194,14 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
         guard updateStatus == errSecSuccess else {
             throw PinStoreError.unexpectedStatus(Int(updateStatus))
         }
+    }
+
+    public func syncConsumeFirstUseApproval(matching presented: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
+        guard let bound = try loadApproval(for: gatewayID), bound == presented else { return false }
+        // Single-use: remove before the caller pins. If removal fails the
+        // approval is not honoured (fail closed).
+        try deleteApproval(for: gatewayID)
+        return true
     }
 
     // MARK: query building (exposed for tests; no secret material)

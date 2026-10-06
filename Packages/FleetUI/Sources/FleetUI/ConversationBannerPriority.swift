@@ -115,7 +115,8 @@ enum ConversationBannerSelector {
         replayNotice: String?,
         hydratedFromCache: Bool,
         historyLoadError: String?,
-        errorMessage: String?
+        errorMessage: String?,
+        historyMayBeIncomplete: Bool = false
     ) -> ConversationBanner? {
         switch phase {
         case .authRequired:
@@ -140,7 +141,8 @@ enum ConversationBannerSelector {
             if let errorMessage {
                 return ConversationBanner(kind: .failed, text: errorMessage)
             }
-            if phase != .streaming, let integrityNotice {
+            // A transcript flagged incomplete must say so even mid-turn.
+            if phase != .streaming || historyMayBeIncomplete, let integrityNotice {
                 return ConversationBanner(kind: .integrity, text: integrityNotice)
             }
             if phase != .streaming, let replayNotice {

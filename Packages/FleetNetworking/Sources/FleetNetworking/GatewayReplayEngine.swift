@@ -31,6 +31,11 @@ public actor GatewayReplayEngine: ReplayProviding {
     /// first). Compared against the fresh epoch after each reconnect.
     private var adoptedEpoch: String?
 
+    /// A replay response larger than this is not injected: it is treated like
+    /// a truncated buffer (authoritative history refetch), so a hostile or
+    /// runaway `session.events.since` cannot force unbounded client work.
+    public static let maxReplayBatchEvents = GatewayEventBudget.maxReplayBatchEvents
+
     public init(
         gatewayID: GatewayID,
         transport: GatewayWebSocketTransport,
@@ -43,6 +48,10 @@ public actor GatewayReplayEngine: ReplayProviding {
 
     // MARK: ReplayProviding
 
+    public nonisolated func subscribeToGaps() -> AsyncStream<EventGap> {
+        transport.subscribeToGaps()
+    }
+
     public func watermarks() async -> [SessionEventWatermark] {
         let all = await transport.allWatermarks()
         return all.map { SessionEventWatermark(sessionID: $0.key, lastSeenSeq: $0.value) }
@@ -50,6 +59,23 @@ public actor GatewayReplayEngine: ReplayProviding {
     }
 
     public func replayAfterReconnect() async throws -> [ReplayOutcome] {
+        var outcomes = try await replayPass()
+        // Sessions whose bounded tracking overflowed (evicted watermark,
+        // refused oversized frame) while connected: never trust their local
+        // transcript. Reported on every path, including "nothing to replay".
+        let incomplete = await transport.takeIncompleteSessions()
+        let already = Set(outcomes.compactMap { outcome -> String? in
+            if case .truncated(let sid) = outcome { return sid }
+            return nil
+        })
+        for sessionID in incomplete.sessions.subtracting(already).sorted() {
+            outcomes.append(.truncated(sessionID: sessionID))
+        }
+        if incomplete.all { outcomes.append(.historyIncomplete) }
+        return outcomes
+    }
+
+    private func replayPass() async throws -> [ReplayOutcome] {
         guard case .connected = transport.state else {
             throw ReplayError.notConnected
         }
@@ -95,6 +121,11 @@ public actor GatewayReplayEngine: ReplayProviding {
             }
         }
         await transport.endReplayHold()
+        // Live frames dropped by the hold cap leave a gap the watermark never
+        // advanced past: report those sessions as needing rehydration.
+        for sessionID in await transport.takeReplayHoldOverflowSessions().sorted() {
+            outcomes.append(.truncated(sessionID: sessionID))
+        }
         return outcomes
     }
 
@@ -114,7 +145,9 @@ public actor GatewayReplayEngine: ReplayProviding {
         // 4. Truncation (§9.5): the ring evicted events between lastSeen and
         // its oldest retained seq — refetch authoritative history instead of
         // trusting a gap. Never invent the missing events.
-        if batch.truncated {
+        let batchBytes = batch.events.reduce(0) { $0 + GatewayEventBudget.estimatedBytes(of: $1) }
+        if batch.truncated || batch.events.count > Self.maxReplayBatchEvents
+            || batchBytes > GatewayEventBudget.maxReplayBatchBytes {
             // Best-effort authoritative refetch; a failure here is recorded on
             // the outcome, not thrown (the client still knows to rehydrate).
             do {
