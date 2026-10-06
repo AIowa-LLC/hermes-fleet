@@ -1,9 +1,8 @@
 import Foundation
 import Observation
-import FleetWatchKit
 
 /// What the UI shows for one approval's most recent action.
-enum ApprovalActionState: Equatable {
+public enum ApprovalActionState: Equatable {
     case sending(WatchApprovalDecision)
     case settled(WatchApprovalOutcome)
     /// Never reached the phone: link was down. Nothing happened.
@@ -12,25 +11,26 @@ enum ApprovalActionState: Equatable {
 
 @MainActor
 @Observable
-final class WatchStore {
+public final class WatchStore {
     // MARK: Observed state
-    private(set) var snapshot: WatchSnapshot?
-    private(set) var link: WatchLinkState
-    private(set) var now: Date
-    private(set) var approvalStates: [String: ApprovalActionState] = [:]
-    private(set) var outbox: WatchMessageOutbox
-    private(set) var isRefreshing = false
-    var selection: WatchContextSelection { didSet { persistSelection() } }
+    public private(set) var snapshot: WatchSnapshot?
+    public private(set) var link: WatchLinkState
+    public private(set) var now: Date
+    public private(set) var approvalStates: [String: ApprovalActionState] = [:]
+    public private(set) var outbox: WatchMessageOutbox
+    public private(set) var isRefreshing = false
+    public var selection: WatchContextSelection { didSet { persistSelection() } }
 
-    let flavor: WatchAppFlavor = .dev
+    public let flavor: WatchAppFlavor = .dev
     private let transport: any WatchTransport
     private let defaults: UserDefaults
     private let outboxURL: URL
     private let clock: () -> Date
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var flushing = false
+    @ObservationIgnored private var refreshesInFlight = 0
 
-    init(transport: any WatchTransport, defaults: UserDefaults = .standard,
+    public init(transport: any WatchTransport, defaults: UserDefaults = .standard,
          outboxURL: URL = WatchStore.defaultOutboxURL(), clock: @escaping () -> Date = Date.init) {
         self.transport = transport
         self.defaults = defaults
@@ -45,19 +45,11 @@ final class WatchStore {
         persistOutbox()
     }
 
-    var isFixture: Bool { transport.isFixture || snapshot?.isFixture == true }
+    public var isFixture: Bool { transport.isFixture || snapshot?.isFixture == true }
 
-    func start() {
+    public func start() {
         transport.onSnapshot = { [weak self] in self?.ingest($0) }
-        transport.onLinkChange = { [weak self] state in
-            guard let self else { return }
-            self.link = state
-            if state == .reachable {
-                Task { await self.refresh(); await self.flushQueuedMessages() }
-            } else {
-                self.markInFlightUncertainOnDisconnect()
-            }
-        }
+        transport.onLinkChange = { [weak self] in self?.simulateLinkChange($0) }
         transport.activate()
         link = transport.linkState
         tickTask = Task { [weak self] in
@@ -83,34 +75,38 @@ final class WatchStore {
         approvalStates = approvalStates.filter { live.contains($0.key) }
     }
 
-    func refresh() async {
-        guard !isRefreshing else { return }
+    public func refresh() async {
+        refreshesInFlight += 1
         isRefreshing = true
-        defer { isRefreshing = false; now = clock() }
+        defer {
+            refreshesInFlight -= 1
+            isRefreshing = refreshesInFlight > 0
+            now = clock()
+        }
         guard let reply = try? await transport.send(.refresh(flavor: flavor)) else { return }
         if case .snapshot(let s) = reply { ingest(s) }
     }
 
-    var resolution: WatchContextResolution {
+    public var resolution: WatchContextResolution {
         guard let snapshot else { return .unselected }
         return WatchContextResolver.resolve(selection, in: snapshot)
     }
 
-    var contextLabel: String { WatchContextResolver.label(for: resolution) }
+    public var contextLabel: String { WatchContextResolver.label(for: resolution) }
 
-    var freshness: WatchFreshness {
-        WatchFreshnessPolicy.freshness(observedAt: snapshot?.builtAt, now: now)
+    public var freshness: WatchFreshness {
+        WatchFreshnessPolicy.freshness(observedAt: snapshot?.builtAt, now: clock())
     }
 
     // MARK: Approvals (always bound to the approval's own identity)
 
-    func affordance(for approval: WatchApproval) -> WatchApprovalAffordance {
+    public func affordance(for approval: WatchApproval) -> WatchApprovalAffordance {
         guard let snapshot else { return .none(reason: "No data yet.") }
         if link != .reachable { return .none(reason: "iPhone not reachable. Nothing can be sent.") }
-        return WatchApprovalPolicy.affordance(for: approval, snapshotBuiltAt: snapshot.builtAt, now: now)
+        return WatchApprovalPolicy.affordance(for: approval, snapshotBuiltAt: snapshot.builtAt, now: clock())
     }
 
-    func decide(_ approval: WatchApproval, _ decision: WatchApprovalDecision) async {
+    public func decide(_ approval: WatchApproval, _ decision: WatchApprovalDecision) async {
         let key = approval.id
         // One action per approval at a time; a settled/uncertain state must be
         // dismissed (after looking again) before another decision is sent.
@@ -151,13 +147,13 @@ final class WatchStore {
     }
 
     /// Clears a settled/failed state so the user can look again after a refresh.
-    func dismissApprovalState(_ key: String) { approvalStates[key] = nil }
+    public func dismissApprovalState(_ key: String) { approvalStates[key] = nil }
 
     // MARK: Messages
 
     /// Composes and queues an explicitly-sent message to the CURRENT selection.
     @discardableResult
-    func send(text: String) -> Bool {
+    public func send(text: String) -> Bool {
         guard case .resolved(let gateway, let bot?, let conversation) = resolution else { return false }
         let request = WatchMessageRequest(
             gatewayID: gateway.id, profileSlug: bot.ref.profileSlug,
@@ -169,7 +165,7 @@ final class WatchStore {
         return true
     }
 
-    func flushQueuedMessages() async {
+    public func flushQueuedMessages() async {
         guard !flushing, link == .reachable else { return }
         flushing = true
         defer { flushing = false }
@@ -193,15 +189,24 @@ final class WatchStore {
         }
     }
 
-    func retry(_ id: String) {
+    public func retry(_ id: String) {
         guard outbox.userRetry(id, now: clock()) else { return }
         persistOutbox()
         Task { await flushQueuedMessages() }
     }
 
-    func discard(_ id: String) {
+    public func discard(_ id: String) {
         outbox.remove(id)
         persistOutbox()
+    }
+
+    func simulateLinkChange(_ state: WatchLinkState) {
+        link = state
+        if state == .reachable {
+            Task { await refresh(); await flushQueuedMessages() }
+        } else {
+            markInFlightUncertainOnDisconnect()
+        }
     }
 
     private func markInFlightUncertainOnDisconnect() {
@@ -225,7 +230,7 @@ final class WatchStore {
         if let data = try? JSONEncoder().encode(selection) { defaults.set(data, forKey: Self.selectionKey) }
     }
 
-    static func defaultOutboxURL() -> URL {
+    public static func defaultOutboxURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("FleetWatchDev/outbox.json")
     }

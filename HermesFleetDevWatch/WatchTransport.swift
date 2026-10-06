@@ -2,25 +2,6 @@ import Foundation
 import WatchConnectivity
 import FleetWatchKit
 
-enum WatchTransportError: Error, Equatable {
-    /// Verified before sending: the phone link is not reachable, nothing left the Watch.
-    case notReachable
-    /// The request may have left the Watch but no valid reply arrived.
-    case noReply
-}
-
-/// The Watch's only way to reach Fleet. There is no other network path and no
-/// credential on this device.
-@MainActor
-protocol WatchTransport: AnyObject {
-    var linkState: WatchLinkState { get }
-    var onSnapshot: ((WatchSnapshot) -> Void)? { get set }
-    var onLinkChange: ((WatchLinkState) -> Void)? { get set }
-    func activate()
-    func send(_ request: WatchRequest) async throws -> WatchReply
-    var isFixture: Bool { get }
-}
-
 // MARK: - WatchConnectivity
 
 @MainActor
@@ -75,15 +56,7 @@ final class ConnectivityTransport: NSObject, WatchTransport {
             throw WatchTransportError.notReachable
         }
         let payload = try WatchCodec.pack(request)
-        let reply: [String: Any] = try await withCheckedThrowingContinuation { continuation in
-            nonisolated(unsafe) let payload = payload
-            session.sendMessage(payload, replyHandler: { reply in
-                nonisolated(unsafe) let reply = reply
-                continuation.resume(returning: reply)
-            }, errorHandler: { _ in
-                continuation.resume(throwing: WatchTransportError.noReply)
-            })
-        }
+        let reply = try await Self.deliver(payload).value
         guard let decoded = try? WatchCodec.unpack(WatchReply.self, from: reply) else {
             throw WatchTransportError.noReply
         }
@@ -91,6 +64,24 @@ final class ConnectivityTransport: NSObject, WatchTransport {
             throw WatchTransportError.noReply
         }
         return decoded
+    }
+}
+
+private struct UncheckedDict: @unchecked Sendable { let value: [String: Any] }
+
+extension ConnectivityTransport {
+    /// Built outside the main actor: WatchConnectivity invokes both handlers on
+    /// its own queue, so they must not be main-actor isolated closures.
+    nonisolated fileprivate static func deliver(_ payload: [String: Any]) async throws -> UncheckedDict {
+        let box = UncheckedDict(value: payload)
+        let session = WCSession.default
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UncheckedDict, Error>) in
+            session.sendMessage(box.value, replyHandler: { reply in
+                continuation.resume(returning: UncheckedDict(value: reply))
+            }, errorHandler: { _ in
+                continuation.resume(throwing: WatchTransportError.noReply)
+            })
+        }
     }
 }
 
