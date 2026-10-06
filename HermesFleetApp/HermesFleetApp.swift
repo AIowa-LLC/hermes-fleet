@@ -22,6 +22,10 @@ struct HermesFleetApp: App {
     // app root (nil = System — defer to the device setting).
     @State private var appearanceController = FleetAppearanceController.shared
     @State private var themeController = FleetThemeController.shared
+    #if FLEET_DEV
+    // Fleet Dev only: phone side of the Apple Watch companion link.
+    @State private var watchLink = FleetWatchLink()
+    #endif
 
     var body: some Scene {
         WindowGroup {
@@ -71,6 +75,9 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
+            #if FLEET_DEV
+            watchLink.scenePhaseChanged(phase, environment: environment, lock: lockController)
+            #endif
             let canRecover = phase == .active && !lockController.isLocked
             environment.setForegroundRecoveryAllowed(canRecover)
             if phase == .background {
