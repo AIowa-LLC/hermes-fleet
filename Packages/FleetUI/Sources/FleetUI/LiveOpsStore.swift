@@ -64,6 +64,9 @@ public final class LiveOpsStore {
         case detail(LiveOperationID)
         case setup(GatewayID)
         case gateway(GatewayID)
+        /// The Apple Watch companion bridge (Fleet Dev only). Registered while
+        /// a paired Watch app is installed so the phone observes fresh state.
+        case watch
     }
 
     // MARK: Observable state
