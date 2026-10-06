@@ -138,7 +138,7 @@ final class WatchStoreTests: XCTestCase {
         await store.decide(a, .deny)
         XCTAssertTrue(transport.sent.isEmpty)
         guard case .notSent? = store.approvalStates[a.id] else { return XCTFail() }
-        XCTAssertEqual(store.freshness, .aging)
+        XCTAssertEqual(store.freshness, .stale)
     }
 
     func testOutOfOrderSnapshotIgnored() {
