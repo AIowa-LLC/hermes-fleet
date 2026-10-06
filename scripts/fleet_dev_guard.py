@@ -13,6 +13,10 @@ BUNDLE = 'com.aiowa.hermesfleet.dev'
 NAME = 'Hermes Fleet Dev'
 SCHEME = 'hermes-fleet-dev'
 VERSION = '0.1.0'
+# Apple Watch companion: embedded in the Dev app only, matching Dev identity.
+WATCH_TARGET = 'HermesFleetDevWatch'
+WATCH_BUNDLE = BUNDLE + '.watchkitapp'
+WATCH_ALLOWED_PACKAGES = {'FleetWatchKit'}
 
 
 def require(condition, message):
@@ -33,11 +37,13 @@ def source(root, sha):
     subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor', 'origin/main', sha], check=True)
     # XcodeGen recursively includes app source: ignored injection is still source.
     ignored = git(root, 'ls-files', '--others', '--ignored', '--exclude-standard', '--',
-                  'HermesFleetApp', 'Config', 'Packages/*/Sources')
+                  'HermesFleetApp', 'Config', 'Packages/*/Sources',
+                  'HermesFleetDevWatch', 'HermesFleetDevWatchBridge')
     require(not ignored, 'ignored files in build inputs are forbidden')
     project = (root / 'project.yml').read_text()
     require(len(re.findall(r'^  HermesFleetDev:\s*$', project, re.M)) == 2,
             'Dev target and scheme are not integrated in authoritative project.yml; coordinate shared ownership')
+    watch_project(project)
     # The package/shortcut identity integration must be present before archives.
     consumers = {
         'HermesFleetApp/FleetConversationShortcuts.swift': 'FleetAppIdentity.conversationURLScheme',
@@ -48,6 +54,32 @@ def source(root, sha):
     }
     for name, expression in consumers.items():
         require(expression in (root / name).read_text(), 'runtime isolation integration missing: ' + name)
+
+
+def watch_project(project):
+    """The Watch target may depend only on FleetWatchKit: no networking or
+    security package (so no credential-capable code) can be linked into it."""
+    match = re.search(r'^  ' + WATCH_TARGET + r':\s*\n(.*?)(?=^  \S|^\S|\Z)', project, re.M | re.S)
+    require(match is not None, 'Watch target missing from authoritative project.yml')
+    block = match.group(1)
+    deps = set(re.findall(r'-\s*package:\s*(\w+)', block))
+    require(deps == WATCH_ALLOWED_PACKAGES, 'Watch target may link only FleetWatchKit: ' + ','.join(sorted(deps)))
+    require(not re.search(r'-\s*target:', block), 'Watch target must not depend on other targets')
+    require('PRODUCT_BUNDLE_IDENTIFIER: ' + WATCH_BUNDLE in block, 'Watch bundle identity drift')
+    require('INFOPLIST_KEY_WKCompanionAppBundleIdentifier: ' + BUNDLE in block, 'Watch companion identity drift')
+    require('application-groups' not in block and 'CODE_SIGN_ENTITLEMENTS' not in block,
+            'Watch capabilities require a coordinated Dev isolation audit')
+
+
+def watch_app(path):
+    info = plistlib.loads((path / 'Info.plist').read_bytes())
+    require(info.get('CFBundleIdentifier') == WATCH_BUNDLE, 'Watch app identity is not the Dev Watch identity')
+    require(info.get('WKCompanionAppBundleIdentifier') == BUNDLE, 'Watch app companion is not the Dev iPhone app')
+    require(info.get('WKApplication') is True, 'Watch app must be a modern watchOS app')
+    require(not info.get('WKWatchOnly') and not info.get('WKRunsIndependentlyOfCompanionApp'),
+            'standalone Watch connectivity is not supported in this build')
+    require(info.get('CFBundleShortVersionString') == VERSION, 'Watch version drift')
+    require(not (path / 'PlugIns').exists(), 'Watch extensions require coordinated identity audit')
 
 
 def export_options(path):
@@ -126,6 +158,10 @@ def app(path, build, sha=None, platform=None, allow_test_bundle=False):
         require(info.get('CFBundleSupportedPlatforms') == [platform], 'artifact platform mismatch')
         require(str(info.get('DTXcode', '')).startswith(('26', '27')) and bool(info.get('DTXcodeBuild')), 'unsupported or missing toolchain provenance')
     require((path / 'PrivacyInfo.xcprivacy').is_file(), 'privacy manifest missing')
+    watch = path / 'Watch'
+    if watch.exists():
+        require([p.name for p in watch.iterdir()] == [WATCH_TARGET + '.app'], 'only the Dev Watch app may be embedded')
+        watch_app(watch / (WATCH_TARGET + '.app'))
     plugins = path / 'PlugIns'
     if plugins.exists():
         require(allow_test_bundle and platform == 'iPhoneSimulator', 'extensions require coordinated identity audit')

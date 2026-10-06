@@ -165,7 +165,7 @@ class DevContract(unittest.TestCase):
             (root/'scripts').mkdir(); (root/'docs/release').mkdir(parents=True)
             shutil.copy(ROOT/'scripts/release_lineage_guard.sh', root/'scripts/release_lineage_guard.sh')
             (root/'docs/release/integration-baseline.sha').write_text(baseline + '\n')
-            (root/'project.yml').write_text('targets:\n  HermesFleetDev:\nschemes:\n  HermesFleetDev:\n')
+            (root/'project.yml').write_text('targets:\n  HermesFleetDev:\nschemes:\n  HermesFleetDev:\n' + (ROOT/'project.yml').read_text().split('  HermesFleetDevWatch:',1)[1].split('  HermesFleetDevWatchTests:',1)[0].join(['  HermesFleetDevWatch:','']))
             for name, expression in {
                 'HermesFleetApp/FleetConversationShortcuts.swift': 'FleetAppIdentity.conversationURLScheme',
                 'HermesFleetApp/FleetServiceGraph.swift': 'FleetAppIdentity.cacheDirectoryName',
@@ -306,6 +306,49 @@ class DevContract(unittest.TestCase):
             with self.assertRaises(ValueError): guard.app(p, '1', 'a'*40, 'iPhoneSimulator')
             (tests/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.synthetic.production.tests'}))
             with self.assertRaises(ValueError): guard.app(p, '1', 'a'*40, 'iPhoneSimulator', allow_test_bundle=True)
+
+    def _watch_info(self):
+        return {'CFBundleIdentifier': guard.WATCH_BUNDLE, 'WKCompanionAppBundleIdentifier': guard.BUNDLE,
+                'WKApplication': True, 'WKRunsIndependentlyOfCompanionApp': False,
+                'CFBundleShortVersionString': guard.VERSION}
+
+    def _watch_app_dir(self, root, info):
+        d = Path(root) / 'W.app'; d.mkdir()
+        (d / 'Info.plist').write_bytes(plistlib.dumps(info))
+        return d
+
+    def test_watch_identity_passes_and_each_drift_fails(self):
+        with tempfile.TemporaryDirectory() as t:
+            guard.watch_app(self._watch_app_dir(t, self._watch_info()))
+        for key, bad in [('CFBundleIdentifier', 'com.aiowa.hermesfleet.watchkitapp'),
+                         ('WKCompanionAppBundleIdentifier', 'com.aiowa.hermesfleet'),
+                         ('WKApplication', False), ('WKRunsIndependentlyOfCompanionApp', True),
+                         ('CFBundleShortVersionString', '0.2.0')]:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as t:
+                info = self._watch_info(); info[key] = bad
+                with self.assertRaises(ValueError): guard.watch_app(self._watch_app_dir(t, info))
+
+    def test_watch_extensions_fail(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = self._watch_app_dir(t, self._watch_info()); (d / 'PlugIns').mkdir()
+            with self.assertRaises(ValueError): guard.watch_app(d)
+
+    def test_embedded_watch_must_be_only_dev_watch(self):
+        with tempfile.TemporaryDirectory() as t:
+            app = Path(t) / 'HermesFleetDev.app'; (app / 'Watch').mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(plistlib.dumps(fixture_info()))
+            (app / 'PrivacyInfo.xcprivacy').write_text('x')
+            (app / 'Watch' / 'Other.app').mkdir()
+            with self.assertRaises(ValueError): guard.app(app, '1')
+
+    def test_watch_project_may_link_only_watchkit(self):
+        text = (ROOT / 'project.yml').read_text()
+        guard.watch_project(text)
+        bad = text.replace('  HermesFleetDevWatch:\n    type: application\n    platform: watchOS\n    deploymentTarget: "26.0"\n    sources:\n      - path: HermesFleetDevWatch\n    dependencies:\n      - package: FleetWatchKit\n',
+                           '  HermesFleetDevWatch:\n    type: application\n    platform: watchOS\n    deploymentTarget: "26.0"\n    sources:\n      - path: HermesFleetDevWatch\n    dependencies:\n      - package: FleetWatchKit\n      - package: FleetSecurity\n')
+        self.assertNotEqual(bad, text)
+        with self.assertRaises(ValueError): guard.watch_project(bad)
+        with self.assertRaises(ValueError): guard.watch_project(text.replace('com.aiowa.hermesfleet.dev.watchkitapp', 'com.aiowa.hermesfleet.watchkitapp'))
 
     def test_version_counter_is_separate_and_production_unchanged(self):
         config = (ROOT/'Config/FleetDev.xcconfig').read_text()

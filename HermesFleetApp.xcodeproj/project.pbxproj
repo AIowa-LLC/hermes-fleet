@@ -44,6 +44,7 @@
 		230ED173C2D04A96779776A2 /* FleetThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D954AF4C3E20AAF3DA5B4F /* FleetThemeTests.swift */; };
 		23AE6D57109A5A842E68F14D /* SlashCommandParityUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77DFE96EBE4581B0C5BF0BDF /* SlashCommandParityUITests.swift */; };
 		250C2114E69390A74CC828E2 /* BotPetAvatarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51A842AB1D50CCE28F36D1E /* BotPetAvatarUITests.swift */; };
+		262EF68A27E5DE9A38A95EA7 /* WatchBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45318AAE6FBD298E9F028E6F /* WatchBridgeTests.swift */; };
 		26780CF557EC175FB73356B9 /* U7GatewayQrLockSettingsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B8E7BB7DE1F553B7F2B2D6 /* U7GatewayQrLockSettingsUITests.swift */; };
 		28FF08C4B275EB4BCEBBA52A /* B1LiveBoardSelectorDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F175C052AB3C3EE845F70CD /* B1LiveBoardSelectorDeviceTests.swift */; };
 		295A3513272B11BB8C207FE2 /* FleetDevWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA10444E97B84B15FB52ABE /* FleetDevWatchApp.swift */; };
@@ -109,7 +110,6 @@
 		6F12EBE51397948FD54E7F2E /* CronManagementUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA4C0E692D2131E0D07EA16 /* CronManagementUITests.swift */; };
 		6F9871E160358940DD836835 /* BotRoutinesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C1AEAA48F89379DD80DE31 /* BotRoutinesUITests.swift */; };
 		700DFE4F228CE222DCF6B3F4 /* GatewayRoomProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAFAC9427FB277EA0C2D8B4 /* GatewayRoomProviders.swift */; };
-		70BC594CE34CD4C5FF01D25F /* WatchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20AFF0F9292A914E9CC66646 /* WatchStore.swift */; };
 		70DBE252BC45F78409C8C733 /* ApprovalFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B652485831E5050A35169A /* ApprovalFlowTests.swift */; };
 		711FD2E69CDFCA5F9463884A /* UnconfiguredGateways.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35E6CE9927E15E78239C062A /* UnconfiguredGateways.swift */; };
 		73E1569DB41A8FD5EC992FE2 /* CronTabUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9885932DF84B44FCF6F4DE15 /* CronTabUITests.swift */; };
@@ -158,7 +158,6 @@
 		A7EE0E2701530A9A184F5BB6 /* RoomChatUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E4A0FF7E8350A8E2BA6F853 /* RoomChatUITests.swift */; };
 		A97BFFDDA3101E30242FF257 /* R10ProjectsBrowserUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E135D8699F0110CA5792B32 /* R10ProjectsBrowserUITests.swift */; };
 		AB02B84E3EE16C4A0E9F47F1 /* ProjectsSnapshotStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261A5784C89B6D7B55044B5F /* ProjectsSnapshotStoreTests.swift */; };
-		ABAA5B76A53DAC7D1AD90DC6 /* Placeholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB9E6C64B689337070CD5356 /* Placeholder.swift */; };
 		ABD9FAEBC67BC5E829AE92F6 /* VoiceIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36FAEE832413ACBA6AF7F206 /* VoiceIO.swift */; };
 		AC4468020B5AA02AF8E20D8C /* ConversationViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C23982F7FEC22CBC94FB2AAB /* ConversationViewModelTests.swift */; };
 		AD528513B5B92118947310F1 /* FleetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4D3FE995567BE48000874C81 /* FleetCore */; };
@@ -322,7 +321,6 @@
 		19C1AEAA48F89379DD80DE31 /* BotRoutinesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotRoutinesUITests.swift; sourceTree = "<group>"; };
 		1AA4C0E692D2131E0D07EA16 /* CronManagementUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronManagementUITests.swift; sourceTree = "<group>"; };
 		20453F5517311CE5FEF577CE /* LiveOpsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveOpsStoreTests.swift; sourceTree = "<group>"; };
-		20AFF0F9292A914E9CC66646 /* WatchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchStore.swift; sourceTree = "<group>"; };
 		21D1C48B297C70782863ECDB /* R9ConversationToolingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ConversationToolingUITests.swift; sourceTree = "<group>"; };
 		2380AC190371692E170A3C23 /* FleetSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSimulator.swift; sourceTree = "<group>"; };
 		260BB18804C7394A2D1C217E /* FleetNetworking */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetNetworking; path = Packages/FleetNetworking; sourceTree = SOURCE_ROOT; };
@@ -355,6 +353,7 @@
 		4003F6DBD81C5CCA2C563A8C /* DiagnosticsRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsRecorderTests.swift; sourceTree = "<group>"; };
 		40AAE38D1E5A86AE61282F5D /* EnvironmentWatchBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentWatchBackend.swift; sourceTree = "<group>"; };
 		44C074CE45D0B5E88EB78568 /* T2FixTailnetGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = T2FixTailnetGatewayUITests.swift; sourceTree = "<group>"; };
+		45318AAE6FBD298E9F028E6F /* WatchBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchBridgeTests.swift; sourceTree = "<group>"; };
 		46C3C05E78BDB589DA18CE17 /* MockFleetTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockFleetTransport.swift; sourceTree = "<group>"; };
 		4799DB925C4D9935D2DD7D21 /* InProcessWebSocketServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InProcessWebSocketServer.swift; sourceTree = "<group>"; };
 		48079C3189B929AEBD7DADAC /* HermesFleetDev.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HermesFleetDev.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -449,7 +448,6 @@
 		B84A83C0CE3D932B92F78AF6 /* HermesFleetReleaseHygieneTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = HermesFleetReleaseHygieneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB5D3EBD6F4D46D0139E63F9 /* ImageGenerationAnimationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageGenerationAnimationUITests.swift; sourceTree = "<group>"; };
 		BB6E5C03C9C964E31771BA70 /* BotsPresenceSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotsPresenceSyncUITests.swift; sourceTree = "<group>"; };
-		BB9E6C64B689337070CD5356 /* Placeholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Placeholder.swift; sourceTree = "<group>"; };
 		BC33663815EEBE751B032DA8 /* ServerPromptFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerPromptFlowTests.swift; sourceTree = "<group>"; };
 		BC9677ED749D08C0E0F64121 /* L1FixLiveGatewayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L1FixLiveGatewayUITests.swift; sourceTree = "<group>"; };
 		BD81D83119A185906F3FABB8 /* GatewayPersistenceRelaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewayPersistenceRelaunchTests.swift; sourceTree = "<group>"; };
@@ -713,7 +711,7 @@
 		8CA3E83B09C8491962E01828 /* HermesFleetDevWatchTests */ = {
 			isa = PBXGroup;
 			children = (
-				BB9E6C64B689337070CD5356 /* Placeholder.swift */,
+				45318AAE6FBD298E9F028E6F /* WatchBridgeTests.swift */,
 			);
 			path = HermesFleetDevWatchTests;
 			sourceTree = "<group>";
@@ -763,7 +761,6 @@
 				FFA10444E97B84B15FB52ABE /* FleetDevWatchApp.swift */,
 				46C3C05E78BDB589DA18CE17 /* MockFleetTransport.swift */,
 				C30BDA96C8FC6257A883D557 /* Views.swift */,
-				20AFF0F9292A914E9CC66646 /* WatchStore.swift */,
 				C39E630C1195C8D76E82C2EC /* WatchTransport.swift */,
 			);
 			path = HermesFleetDevWatch;
@@ -1388,7 +1385,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				ABAA5B76A53DAC7D1AD90DC6 /* Placeholder.swift in Sources */,
+				262EF68A27E5DE9A38A95EA7 /* WatchBridgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1399,7 +1396,6 @@
 				295A3513272B11BB8C207FE2 /* FleetDevWatchApp.swift in Sources */,
 				BAD6D2CAF6465104EF943747 /* MockFleetTransport.swift in Sources */,
 				BAAA5177C2EE07187F54298D /* Views.swift in Sources */,
-				70BC594CE34CD4C5FF01D25F /* WatchStore.swift in Sources */,
 				487B59DBABA8E6B798E74601 /* WatchTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
