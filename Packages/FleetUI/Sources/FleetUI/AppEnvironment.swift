@@ -1890,6 +1890,7 @@ public final class AppEnvironment {
         observedRoomAttention = [:]
         rosterObservedAt = nil
         rosterObservedAtByGateway = [:]
+        canonicalLookupRecords = [:]
         sessionsByRoute = [:]
         sessionReadErrors = [:]
     }
@@ -3107,6 +3108,71 @@ public final class AppEnvironment {
         let seam = factory(gateway)
         botModeChatSeams[gatewayID] = seam
         return seam
+    }
+
+    // MARK: Read-only Main chat state (Apple Watch bridge)
+
+    /// What the phone knows about a bot's Main ("Bot Chat") chat, from sources it
+    /// actually observed. Read-only: nothing here creates, opens or resumes a chat.
+    public enum MainChatState: Equatable, Sendable {
+        /// Roster `canonical_session`, a verified registry row, or a chat this
+        /// phone opened as the canonical chat. Carries every known id.
+        case established(ids: [String])
+        /// A successful registry lookup found no row AND the roster reports none.
+        /// The only state that means "not set up".
+        case notSetUp
+        /// Not looked up yet, or the lookup could not be completed. NOT absence.
+        case unknown(diagnostic: String?)
+    }
+
+    private struct CanonicalLookupRecord {
+        var state: MainChatState
+        var observedAt: Date
+    }
+    @ObservationIgnored private var canonicalLookupRecords: [Route: CanonicalLookupRecord] = [:]
+
+    /// Main chat state for a bot from the roster, an earlier registry lookup and
+    /// canonical opens — never from recency and never by inventing an id.
+    public func mainChatState(for bot: FleetBot) -> MainChatState {
+        var ids: [String] = []
+        if let canonical = bot.canonicalSession {
+            ids += [canonical.id, canonical.resolvedID].compactMap { $0 }
+        }
+        if let opened = canonicalOpenIDs[bot.route] { ids.append(opened) }
+        if case .established(let found)? = canonicalLookupRecords[bot.route]?.state { ids += found }
+        var seen = Set<String>()
+        ids = ids.filter { !$0.isEmpty && seen.insert($0).inserted }
+        if !ids.isEmpty { return .established(ids: ids) }
+        return canonicalLookupRecords[bot.route]?.state ?? .unknown(diagnostic: nil)
+    }
+
+    /// Looks up (read-only `session.list` title-exact) the Main chat of bots the
+    /// roster reports none for, so a chat that exists in the registry resolves the
+    /// same way the iPhone's own Bot Chat does. Fail closed: a lookup error is
+    /// `.unknown`, an empty success with no roster id is `.notSetUp`. NEVER creates.
+    public func refreshMainChatLookups(for bots: [FleetBot], maxAge: TimeInterval = 120, now: Date = Date()) async {
+        for bot in bots where bot.canonicalSession == nil {
+            if let record = canonicalLookupRecords[bot.route], now.timeIntervalSince(record.observedAt) < maxAge,
+               case .established = record.state { continue }
+            if let record = canonicalLookupRecords[bot.route], now.timeIntervalSince(record.observedAt) < 20 { continue }
+            guard connectionStates[bot.route.gatewayID] == .connected,
+                  let seam = makeBotModeChat(for: bot.route.gatewayID) else {
+                canonicalLookupRecords[bot.route] = CanonicalLookupRecord(
+                    state: .unknown(diagnostic: "seamUnavailable"), observedAt: now)
+                continue
+            }
+            do {
+                let lookup = try await seam.lookupCanonicalChat(profile: bot.route.profileSlug.rawValue)
+                let ids = lookup.rows
+                    .filter { $0.title == BotModeContract.canonicalChatTitle }
+                    .compactMap { $0.openID }
+                canonicalLookupRecords[bot.route] = CanonicalLookupRecord(
+                    state: ids.isEmpty ? .notSetUp : .established(ids: ids), observedAt: Date())
+            } catch {
+                canonicalLookupRecords[bot.route] = CanonicalLookupRecord(
+                    state: .unknown(diagnostic: "lookup: \(SafeErrorCategory.of(error))"), observedAt: Date())
+            }
+        }
     }
 
     /// Resolve the canonical Bot Chat open target for a bot tap, applying

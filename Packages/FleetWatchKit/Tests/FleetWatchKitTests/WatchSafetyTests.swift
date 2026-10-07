@@ -187,7 +187,7 @@ final class StoreSafetyTests: XCTestCase {
         transport.push(snapshot(mainChat: false))
         store.selection = .init(gatewayID: "mini", profileSlug: "apple")
         XCTAssertFalse(store.send(text: "hi"))
-        XCTAssertTrue(store.selectedBotLacksMainChat)
+        XCTAssertNotNil(store.selectedMainChatGuidance)
         XCTAssertEqual(store.contextLabel, "Mini Hermes › Apple › Overview")
         XCTAssertTrue(transport.sent.isEmpty)
         XCTAssertTrue(store.outbox.messages.isEmpty, "nothing queued, nothing created")
@@ -436,5 +436,54 @@ final class OutboxPersistenceTests: XCTestCase {
         XCTAssertTrue(store.send(text: "hi"))
         XCTAssertNil(store.outboxPersistenceError)
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("o.json").path))
+    }
+}
+
+final class MainChatStateTests: XCTestCase {
+    private func bot(_ status: WatchMainChatStatus?, main: Bool, diagnostic: String? = nil) -> WatchBot {
+        let chats = main ? [WatchConversation(id: "m", title: "Main chat", isMain: true)] : []
+        return WatchBot(ref: WatchBotRef(gatewayID: "g", profileSlug: "s"), displayName: "S", activity: "idle",
+                        conversations: chats, mainChatStatus: status, mainChatDiagnostic: diagnostic)
+    }
+
+    func testEstablishedHasNoGuidance() {
+        XCTAssertNil(bot(.established, main: true).mainChatGuidance(rosterState: .current))
+    }
+
+    func testNotSetUpIsOnlyClaimedFromACurrentBotList() {
+        let b = bot(.notSetUp, main: false)
+        XCTAssertTrue(b.mainChatGuidance(rosterState: .current)!.contains("isn't set up"))
+        for state in [WatchSourceState.stale, .unavailable, .neverObserved] {
+            let text = b.mainChatGuidance(rosterState: state)!
+            XCTAssertFalse(text.contains("isn't set up"), "a stale list can't prove absence")
+            XCTAssertTrue(text.contains("out of date"))
+        }
+    }
+
+    func testUnknownIsNeverShownAsNotSetUpAndCarriesTheStage() {
+        let text = bot(.unknown, main: false, diagnostic: "lookup: RosterError.notConnected").mainChatGuidance(rosterState: .current)!
+        XCTAssertFalse(text.contains("isn't set up"))
+        XCTAssertTrue(text.contains("lookup: RosterError.notConnected"))
+        XCTAssertFalse(bot(nil, main: false).mainChatGuidance(rosterState: .current)!.contains("isn't set up"),
+                       "a sender that doesn't report status is 'can't tell', not 'missing'")
+    }
+
+    func testPerBotConversationFreshnessIsIndependent() {
+        let seen = WatchBot(ref: WatchBotRef(gatewayID: "g", profileSlug: "a"), displayName: "A", activity: "", conversations: [],
+                            conversationsObservedAt: Fx.t0)
+        let never = WatchBot(ref: WatchBotRef(gatewayID: "g", profileSlug: "b"), displayName: "B", activity: "", conversations: [])
+        let gw = WatchGateway(id: "g", displayName: "G", status: .online, coverage: .reporting, observedAt: Fx.t0,
+                              bots: [seen, never], running: [])
+        XCTAssertEqual(WatchSourcePolicy.state(observedAt: seen.conversationsObservedAt, gatewayStatus: gw.status, now: Fx.t0.addingTimeInterval(5)), .current)
+        XCTAssertEqual(WatchSourcePolicy.state(observedAt: never.conversationsObservedAt, gatewayStatus: gw.status, now: Fx.t0.addingTimeInterval(5)), .neverObserved)
+    }
+
+    func testMainChatFieldsRoundTripAndSurviveTheCap() throws {
+        let b = bot(.unknown, main: false, diagnostic: "lookup: X")
+        let gw = WatchGateway(id: "g", displayName: "G", status: .online, coverage: .reporting, observedAt: Fx.t0, bots: [b], running: [])
+        let snap = WatchSnapshotBudget.trimmed(Fx.snapshot(gateways: [gw]))
+        XCTAssertEqual(snap.gateways[0].bots[0].mainChatStatus, .unknown)
+        XCTAssertEqual(snap.gateways[0].bots[0].mainChatDiagnostic, "lookup: X")
+        XCTAssertEqual(try WatchCodec.unpack(WatchSnapshot.self, from: WatchCodec.pack(snap)), snap)
     }
 }
