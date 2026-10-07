@@ -21,24 +21,24 @@ final class FreshnessTests: XCTestCase {
 
 final class ApprovalPolicyTests: XCTestCase {
     func testShortCommandOffersDenyAndApproveOnce() {
-        XCTAssertEqual(WatchApprovalPolicy.affordance(for: Fx.approval(), snapshotBuiltAt: Fx.t0, now: Fx.t0.addingTimeInterval(10)),
+        XCTAssertEqual(WatchApprovalPolicy.affordance(for: Fx.approval(), now: Fx.t0.addingTimeInterval(10)),
                        .denyOrApproveOnce)
     }
 
     func testLongCommandHandsOffToPhone() {
-        guard case .denyOnly = WatchApprovalPolicy.affordance(for: Fx.approval(full: true), snapshotBuiltAt: Fx.t0, now: Fx.t0) else {
+        guard case .denyOnly = WatchApprovalPolicy.affordance(for: Fx.approval(full: true), now: Fx.t0) else {
             return XCTFail("long command must not be approvable on the Watch")
         }
     }
 
     func testChoicesWithoutOnceHandOff() {
-        guard case .denyOnly = WatchApprovalPolicy.affordance(for: Fx.approval(choices: ["always", "deny"]), snapshotBuiltAt: Fx.t0, now: Fx.t0) else {
+        guard case .denyOnly = WatchApprovalPolicy.affordance(for: Fx.approval(choices: ["always", "deny"]), now: Fx.t0) else {
             return XCTFail("approve-once absent => no Watch approve")
         }
     }
 
     func testStaleSnapshotOffersNothing() {
-        guard case .none = WatchApprovalPolicy.affordance(for: Fx.approval(), snapshotBuiltAt: Fx.t0, now: Fx.t0.addingTimeInterval(600)) else {
+        guard case .none = WatchApprovalPolicy.affordance(for: Fx.approval(), now: Fx.t0.addingTimeInterval(600)) else {
             return XCTFail("stale snapshot must not be actionable")
         }
     }
@@ -90,7 +90,7 @@ final class ContextTests: XCTestCase {
 
     func testSameSlugOnTwoGatewaysIsNotConfused() {
         let r = WatchContextResolver.resolve(.init(gatewayID: "nas", profileSlug: "scout"), in: snapshot())
-        XCTAssertEqual(WatchContextResolver.label(for: r), "NAS › Scout (NAS)")
+        XCTAssertEqual(WatchContextResolver.label(for: r), "NAS › Scout (NAS) › Overview")
     }
 
     func testRemovedTargetsNeverFallBack() {
@@ -114,15 +114,38 @@ final class OutboxTests: XCTestCase {
         XCTAssertEqual(box.messages[0].state, .acknowledged)
     }
 
-    func testUncertainIsNeverAutoTransmittedAndNeedsExplicitRetry() {
+    func testUncertainIsNeverAutoTransmittedNorBlindlyResent() {
         var box = WatchMessageOutbox()
         box.enqueue(Fx.message("m1"), targetLabel: "t", now: Fx.t0)
         box.markSent("m1", now: Fx.t0)
         box.markUncertain("m1", reason: "no reply", now: Fx.t0)
         XCTAssertTrue(box.autoTransmittable.isEmpty)
+        XCTAssertFalse(box.userRetry("m1", now: Fx.t0), "uncertain may already be submitted: no one-tap resend")
+        guard case .uncertain = box.messages[0].state else { return XCTFail() }
+    }
+
+    func testDefiniteFailureMayBeSentAgainUnderSameID() {
+        var box = WatchMessageOutbox()
+        box.enqueue(Fx.message("m1"), targetLabel: "t", now: Fx.t0)
+        box.markSent("m1", now: Fx.t0)
+        box.apply(.init(clientMessageID: "m1", outcome: .failed(reason: "offline"),
+                        diagnostic: WatchSendDiagnostic(stage: "resume", category: "ConversationError.notConnected")), now: Fx.t0)
+        XCTAssertEqual(box.messages[0].diagnostic, "resume · ConversationError.notConnected")
         XCTAssertTrue(box.userRetry("m1", now: Fx.t0))
-        XCTAssertEqual(box.autoTransmittable.map(\.id), ["m1"])
         XCTAssertEqual(box.messages[0].request.clientMessageID, "m1", "retry keeps the idempotency key")
+        XCTAssertEqual(box.autoTransmittable.map(\.id), ["m1"])
+    }
+
+    func testRequeueOnlyWhenStillHandedToPhone() {
+        var box = WatchMessageOutbox()
+        box.enqueue(Fx.message("m1"), targetLabel: "t", now: Fx.t0)
+        box.markSent("m1", now: Fx.t0)
+        box.requeueUnsent("m1", now: Fx.t0)
+        XCTAssertEqual(box.messages[0].state, .queued)
+        box.markSent("m1", now: Fx.t0)
+        box.markUncertain("m1", reason: "x", now: Fx.t0)
+        box.requeueUnsent("m1", now: Fx.t0)
+        guard case .uncertain = box.messages[0].state else { return XCTFail("uncertain never silently becomes queued") }
     }
 
     func testRelaunchTurnsInFlightIntoUncertain() {
@@ -163,16 +186,17 @@ final class OutboxTests: XCTestCase {
 
     func testPhoneLedgerDoesNotRepeatUncertainOrAcked() {
         var ledger = WatchMessageLedger()
-        XCTAssertEqual(ledger.admit("m1"), .admit)
-        XCTAssertEqual(ledger.admit("m1"), .inFlight)
+        let m1 = Fx.message("m1"), m2 = Fx.message("m2"), m3 = Fx.message("m3")
+        XCTAssertEqual(ledger.admit(m1), .admit)
+        XCTAssertEqual(ledger.admit(m1), .inFlight)
         ledger.finish("m1", outcome: .uncertain(reason: "x"))
-        XCTAssertEqual(ledger.admit("m1"), .finished(.uncertain(reason: "x")))
-        XCTAssertEqual(ledger.admit("m2"), .admit)
+        XCTAssertEqual(ledger.admit(m1), .finished(.uncertain(reason: "x")))
+        XCTAssertEqual(ledger.admit(m2), .admit)
         ledger.finish("m2", outcome: .acknowledged)
-        XCTAssertEqual(ledger.admit("m2"), .finished(.alreadyAcknowledged))
-        XCTAssertEqual(ledger.admit("m3"), .admit)
+        XCTAssertEqual(ledger.admit(m2), .finished(.alreadyAcknowledged))
+        XCTAssertEqual(ledger.admit(m3), .admit)
         ledger.finish("m3", outcome: .failed(reason: "offline"))
-        XCTAssertEqual(ledger.admit("m3"), .admit, "definite failure may retry under the same ID")
+        XCTAssertEqual(ledger.admit(m3), .admit, "definite failure may retry under the same ID")
     }
 }
 

@@ -14,6 +14,10 @@ struct WatchFleetObservation {
     var liveOpsAttention: [LiveOpsAttentionItem]
     var fleetAttention: [FleetAttentionItem]
     var rosterObservedAt: Date?
+    /// Per-gateway time of the last SUCCESSFUL roster read.
+    var rosterObservedAtByGateway: [GatewayID: Date] = [:]
+    /// Per-route time of the last SUCCESSFUL conversation-list read.
+    var sessionsObservedAtByRoute: [Route: Date] = [:]
     var routeForSessionKey: (String, GatewayID) -> Route?
 }
 
@@ -22,7 +26,7 @@ struct WatchFleetObservation {
 enum WatchSnapshotBuilder {
     static func build(
         _ obs: WatchFleetObservation, flavor: WatchAppFlavor, generation: Int,
-        now: Date, contentVisible: Bool, isFixture: Bool = false
+        now: Date, contentVisible: Bool, isFixture: Bool = false, pinned: WatchConversationPin? = nil
     ) -> WatchSnapshot {
         guard contentVisible else { return .hidden(flavor: flavor, generation: generation, builtAt: now) }
         let names = Dictionary(obs.gateways.map { ($0.id, $0.displayName) }, uniquingKeysWith: { a, _ in a })
@@ -36,8 +40,10 @@ enum WatchSnapshotBuilder {
             }
             return WatchGateway(
                 id: gateway.id.rawValue, displayName: clip(gateway.displayName, 40), status: status,
-                coverage: coverage(live), observedAt: observedAt(live, obs, status),
-                bots: bots, running: running)
+                coverage: coverage(live), observedAt: liveObservedAt(live),
+                bots: bots, running: running,
+                rosterObservedAt: obs.rosterObservedAtByGateway[gateway.id],
+                conversationsObservedAt: conversationsObservedAt(gateway.id, obs))
         }
         var attention: [WatchAttention] = obs.fleetAttention.map {
             WatchAttention(id: $0.id, gatewayID: $0.gatewayID.rawValue, title: clip($0.title, 60),
@@ -63,7 +69,8 @@ enum WatchSnapshotBuilder {
                 requestID: request.requestID, commandPreview: clip(preview.visibleText, 140),
                 commandDigest: WatchCodec.digest(request.command),
                 requiresFullReview: preview.requiresReview || request.command.count > 140,
-                choices: request.choices, observedAt: obs.liveOps?.gateways.first { $0.gatewayID == gatewayID }?.observedAt ?? now)
+                choices: request.choices,
+                observedAt: liveObservedAt(obs.liveOps?.gateways.first { $0.gatewayID == gatewayID }))
             approvals.append(approval)
             attention.append(WatchAttention(
                 id: "approval|\(approval.id)", gatewayID: gatewayID.rawValue,
@@ -71,14 +78,26 @@ enum WatchSnapshotBuilder {
         }
         return WatchSnapshotBudget.trimmed(WatchSnapshot(
             flavor: flavor, generation: generation, builtAt: now, contentVisible: true,
-            isFixture: isFixture, gateways: gateways, attention: attention, approvals: approvals))
+            isFixture: isFixture, gateways: gateways, attention: attention, approvals: approvals,
+            removedPin: removedPin(pinned, in: gateways)), pinned: pinned)
+    }
+
+    /// The pin is "removed" only when its bot is on the phone and the bot's FULL
+    /// (untrimmed) conversation list lacks it. A bot or machine that is itself
+    /// missing is reported by the Watch's own resolver.
+    private static func removedPin(_ pin: WatchConversationPin?, in gateways: [WatchGateway]) -> WatchConversationPin? {
+        guard let pin,
+              let bot = gateways.first(where: { $0.id == pin.gatewayID })?.bots
+                  .first(where: { $0.ref.profileSlug == pin.profileSlug }) else { return nil }
+        return bot.conversations.contains { $0.id == pin.conversationID } ? nil : pin
     }
 
     static func status(for state: GatewayConnectionState) -> WatchGatewayStatus {
         switch state {
         case .connected: return .online
         case .connecting: return .connecting
-        case .idle, .disconnected: return .offline
+        case .idle: return .notConnected
+        case .disconnected: return .offline
         case .failed(let s):
             switch s {
             case .online: return .online
@@ -100,11 +119,25 @@ enum WatchSnapshotBuilder {
         }
     }
 
-    private static func observedAt(_ live: LiveOpsGatewaySnapshot?, _ obs: WatchFleetObservation,
-                                   _ status: WatchGatewayStatus) -> Date? {
-        if let live { return live.observedAt }
-        // No Live Ops read: only a connected gateway's roster observation counts.
-        return status == .online ? obs.rosterObservedAt : nil
+    /// A Live Ops observation counts only when the gateway actually answered.
+    /// Failure snapshots are stamped with the time of the FAILED attempt, so
+    /// using their `observedAt` would make unreachable data look freshly seen.
+    private static func liveObservedAt(_ live: LiveOpsGatewaySnapshot?) -> Date? {
+        guard let live else { return nil }
+        switch live.coverage {
+        case .reporting, .unsupported: return live.observedAt
+        case .disconnected, .authFailed, .failed: return nil
+        }
+    }
+
+    /// The OLDEST conversation-list read among the gateway's bots, so one
+    /// stale bot cannot hide behind a fresh sibling. Nil when any bot has no
+    /// successful read (or the gateway has no bots).
+    private static func conversationsObservedAt(_ gateway: GatewayID, _ obs: WatchFleetObservation) -> Date? {
+        let bots = obs.botsByGateway[gateway] ?? []
+        guard !bots.isEmpty else { return nil }
+        let times = bots.compactMap { obs.sessionsObservedAtByRoute[$0.route] }
+        return times.count == bots.count ? times.min() : nil
     }
 
     private static func bot(from bot: FleetBot, _ obs: WatchFleetObservation) -> WatchBot {
@@ -112,7 +145,7 @@ enum WatchSnapshotBuilder {
         var seen = Set<String>()
         if let canonical = bot.canonicalSession {
             let id = canonical.resolvedID ?? canonical.id
-            chats.append(WatchConversation(id: id, title: "Main", isMain: true))
+            chats.append(WatchConversation(id: id, title: "Main chat", isMain: true))
             seen.insert(id)
             seen.insert(canonical.id)
         }

@@ -58,22 +58,32 @@ final class MockFleetTransport: WatchTransport {
         let built = Date().addingTimeInterval(scenario == .stale ? -1200 : -4)
         func bot(_ gw: String, _ slug: String, _ name: String, _ activity: String) -> WatchBot {
             WatchBot(ref: WatchBotRef(gatewayID: gw, profileSlug: slug), displayName: name, activity: activity,
-                     conversations: [WatchConversation(id: "main-\(gw)-\(slug)", title: "Main", isMain: true),
+                     conversations: [WatchConversation(id: "main-\(gw)-\(slug)", title: "Main chat", isMain: true),
                                      WatchConversation(id: "c-\(gw)-\(slug)-1", title: "Release notes")])
         }
         let mac = WatchGateway(id: "mock-mac", displayName: "Mac mini (mock)", status: .online, coverage: .reporting,
                                observedAt: built, bots: [bot("mock-mac", "scout", "Scout", "working"), bot("mock-mac", "atlas", "Atlas", "idle")],
-                               running: [WatchRunningWork(id: "op1", gatewayID: "mock-mac", title: "Refactor router", status: "working")])
+                               running: [WatchRunningWork(id: "op1", gatewayID: "mock-mac", title: "Refactor router", status: "working")],
+                               rosterObservedAt: built, conversationsObservedAt: built)
         let nas = WatchGateway(id: "mock-nas", displayName: "NAS (mock)",
                                status: scenario == .offline ? .offline : .online,
                                coverage: scenario == .offline ? .heldOver : .limited,
                                observedAt: scenario == .offline ? built.addingTimeInterval(-900) : built,
-                               bots: [bot("mock-nas", "scout", "Scout", "idle")], running: [])
+                               bots: [bot("mock-nas", "scout", "Scout", "idle")], running: [],
+                               rosterObservedAt: scenario == .offline ? built.addingTimeInterval(-900) : built,
+                               conversationsObservedAt: scenario == .offline ? built.addingTimeInterval(-900) : built)
+        // Each approval carries its own observation time (the mock's gateways report at `built`).
+        let seen = approvals.map { a in
+            WatchApproval(gatewayID: a.gatewayID, gatewayName: a.gatewayName, profileSlug: a.profileSlug, botName: a.botName,
+                          sessionID: a.sessionID, sessionLabel: a.sessionLabel, requestID: a.requestID,
+                          commandPreview: a.commandPreview, commandDigest: a.commandDigest,
+                          requiresFullReview: a.requiresFullReview, choices: a.choices, observedAt: built)
+        }
         let attention = approvals.map {
             WatchAttention(id: "approval|\($0.id)", gatewayID: $0.gatewayID, title: "Approval: \($0.botName ?? $0.gatewayName)", isApproval: true)
         }
         return WatchSnapshot(flavor: .dev, generation: generation, builtAt: built, contentVisible: true, isFixture: true,
-                             gateways: [mac, nas], attention: attention, approvals: approvals)
+                             gateways: [mac, nas], attention: attention, approvals: seen)
     }
 
     func send(_ request: WatchRequest) async throws -> WatchReply {

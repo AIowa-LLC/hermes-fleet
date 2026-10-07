@@ -97,6 +97,38 @@ reported as unknown, not failed. A relaunch turns anything in flight into unknow
   went to the background; the Watch shows the last snapshot with its age. See
   "Decisions to confirm".
 
+## Message path, freshness and delivery (after the first device test)
+
+* **Destinations.** The Watch distinguishes bot *Overview* (status only, never
+  a destination), *Main chat* and a named *conversation*. A message freezes
+  `machine › bot › chat` at compose time. Main chat must already exist in the
+  iPhone's roster; the Watch send path never looks up, creates, resumes by
+  guess or substitutes a chat. A bot without Main chat says "establish it on
+  iPhone".
+* **Staged diagnostics.** A failed send reports its stage (`validate`,
+  `resume`, `submit`) plus a Swift error case name, never a token, URL or
+  message text. iPhone Bot Chat resolution reports `lookup`, `unconfirmed`,
+  `malformedRegistry` or `create` the same way. A failed registry lookup still
+  never becomes an empty registry and never creates a chat.
+* **Connectivity vs freshness.** "Watch ↔ iPhone" is shown separately from
+  "iPhone → machine" (reachable / unreachable / not connected). Bots, chats and
+  running work each carry their own observation time and show
+  Current / Stale / Unavailable · cached / Never observed. A new snapshot never
+  freshens older data. Approvals are actionable only from their own gateway
+  observation time, and an approval missing from a non-reporting machine is
+  "can't confirm", not "resolved".
+* **Delivery.** Queued (never sent) → Handed to iPhone → Accepted by gateway
+  (not a reply) | Not sent (safe to send again) | Unknown (never resent; check
+  the chat on iPhone or discard). The iPhone persists admission (message ID,
+  destination and payload fingerprint, no text) before dispatch, so replay or a
+  phone restart cannot submit twice; an admission with no recorded outcome after
+  a restart is "unknown".
+* **Reply preview: not implemented.** `prompt.submit` returns only
+  `{status}` and conversation events carry no turn or prompt id, so a Watch
+  reply cannot be tied to the Watch's message when the iPhone or another client
+  is also active in that conversation. The Watch shows "accepted" and points to
+  the chat on iPhone.
+
 ## Mock data
 
 DEBUG Watch builds can launch against a scripted mock phone
@@ -109,7 +141,8 @@ fleet and labels its snapshots as mock. Mock paths are compiled out of Release.
 ```sh
 (cd Packages/FleetWatchKit && swift test)            # protocol, policies, Watch store
 python3 scripts/fleet_dev_contract_test.py           # Dev/Watch identity guard
-xcodebuild -scheme HermesFleetDevWatchTests ...      # phone bridge, hosted by Dev app
+xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetDevWatchTests \
+  -destination 'platform=iOS Simulator,name=<iPhone>' -skipMacroValidation test   # phone bridge, hosted by Dev app
 ```
 
 `FleetWatchKit` is not yet registered in the CI package phase

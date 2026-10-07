@@ -58,7 +58,7 @@ final class WatchStoreTests: XCTestCase {
         transport.push(twoMachineSnapshot(approvals: [a]))
         store.selection = .init(gatewayID: "mac-mini", profileSlug: "scout")
         // user switches to a completely different machine/bot while approval is pending
-        store.selection = .init(gatewayID: "nas", profileSlug: "scout")
+        store.selection = .init(gatewayID: "nas", profileSlug: "scout", conversationID: "main")
         transport.handler = { req in
             guard case .approval(let r, _) = req else { return .rejected(reason: "x") }
             return .approval(.init(requestUUID: r.requestUUID, approvalKey: r.approvalKey, outcome: .applied))
@@ -138,7 +138,7 @@ final class WatchStoreTests: XCTestCase {
         await store.decide(a, .deny)
         XCTAssertTrue(transport.sent.isEmpty)
         guard case .notSent? = store.approvalStates[a.id] else { return XCTFail() }
-        XCTAssertEqual(store.freshness, .stale)
+        XCTAssertEqual(store.syncFreshness, .stale)
     }
 
     func testOutOfOrderSnapshotIgnored() {
@@ -164,7 +164,7 @@ final class WatchStoreTests: XCTestCase {
         let msgs = transport.sent.compactMap { r -> WatchMessageRequest? in if case .message(let m, _) = r { return m }; return nil }
         XCTAssertEqual(msgs.map(\.gatewayID), ["mac-mini", "nas"])
         XCTAssertEqual(msgs.map(\.profileSlug), ["atlas", "scout"])
-        XCTAssertEqual(msgs.map(\.conversationID), ["c2", nil], "Main chat is sent as nil = canonical")
+        XCTAssertEqual(msgs.map(\.target), [.conversation(sessionID: "c2"), .mainChat(sessionID: "main")])
         XCTAssertEqual(store.outbox.messages.map(\.state), [.acknowledged, .acknowledged])
         XCTAssertEqual(store.outbox.messages[0].targetLabel, "Mac mini › Atlas › Docs")
     }
@@ -174,6 +174,9 @@ final class WatchStoreTests: XCTestCase {
         XCTAssertFalse(store.send(text: "hi"), "no selection => no default destination")
         store.selection = .init(gatewayID: "mac-mini")
         XCTAssertFalse(store.send(text: "hi"), "machine only => no bot")
+        store.selection = .init(gatewayID: "mac-mini", profileSlug: "scout")
+        XCTAssertFalse(store.send(text: "hi"), "bot overview is not a destination")
+        XCTAssertNotNil(store.sendBlockReason)
         store.selection = .init(gatewayID: "mac-mini", profileSlug: "removed")
         XCTAssertFalse(store.send(text: "hi"), "removed bot => refused, not redirected")
         XCTAssertTrue(transport.sent.isEmpty)
@@ -181,7 +184,7 @@ final class WatchStoreTests: XCTestCase {
 
     func testAcknowledgementOnlyFromReply() async {
         transport.push(twoMachineSnapshot())
-        store.selection = .init(gatewayID: "nas", profileSlug: "scout")
+        store.selection = .init(gatewayID: "nas", profileSlug: "scout", conversationID: "main")
         transport.linkState = .phoneUnreachable
         store.onLinkForTest(.phoneUnreachable)
         XCTAssertTrue(store.send(text: "later"))
@@ -192,7 +195,7 @@ final class WatchStoreTests: XCTestCase {
 
     func testUncertainDeliveryIsNotResentOnReconnect() async {
         transport.push(twoMachineSnapshot())
-        store.selection = .init(gatewayID: "nas", profileSlug: "scout")
+        store.selection = .init(gatewayID: "nas", profileSlug: "scout", conversationID: "main")
         transport.handler = { _ in throw WatchTransportError.noReply }
         XCTAssertTrue(store.send(text: "maybe"))
         await settle()
@@ -207,15 +210,15 @@ final class WatchStoreTests: XCTestCase {
         let id = store.outbox.messages[0].id
         store.retry(id)
         await settle()
-        XCTAssertEqual(transport.sent.count, 1)
-        guard case .message(let m, _) = transport.sent[0] else { return XCTFail() }
-        XCTAssertEqual(m.clientMessageID, id)
-        XCTAssertEqual(store.outbox.messages[0].state, .acknowledged)
+        XCTAssertTrue(transport.sent.isEmpty, "no one-tap resend of an uncertain message")
+        guard case .uncertain = store.outbox.messages[0].state else { return XCTFail() }
+        store.discard(id)
+        XCTAssertTrue(store.outbox.messages.isEmpty)
     }
 
     func testLinkDropWhileAwaitingReplyMarksUncertain() async {
         transport.push(twoMachineSnapshot())
-        store.selection = .init(gatewayID: "nas", profileSlug: "scout")
+        store.selection = .init(gatewayID: "nas", profileSlug: "scout", conversationID: "main")
         transport.handler = { _ in try await Task.sleep(for: .seconds(5)); return .rejected(reason: "late") }
         XCTAssertTrue(store.send(text: "in flight"))
         await settle()
@@ -226,17 +229,20 @@ final class WatchStoreTests: XCTestCase {
 
     func testOutboxSurvivesRelaunchAndInFlightBecomesUncertain() async {
         transport.push(twoMachineSnapshot())
-        store.selection = .init(gatewayID: "nas", profileSlug: "scout")
+        store.selection = .init(gatewayID: "nas", profileSlug: "scout", conversationID: "main")
         transport.handler = { _ in try await Task.sleep(for: .seconds(5)); return .rejected(reason: "late") }
         XCTAssertTrue(store.send(text: "x"))
         await settle()
         makeStore() // simulated relaunch with same persisted file
-        guard case .uncertain = store.outbox.messages[0].state else { return XCTFail("\(store.outbox.messages)") }
+        guard let first = store.outbox.messages.first else {
+            return XCTFail("outbox did not survive relaunch; persistence error: \(String(describing: store.outboxPersistenceError))")
+        }
+        guard case .uncertain = first.state else { return XCTFail("\(store.outbox.messages)") }
     }
 
     func testSelectionPersistsAndRemovedTargetNeverFallsBack() {
         transport.push(twoMachineSnapshot())
-        store.selection = .init(gatewayID: "nas", profileSlug: "scout")
+        store.selection = .init(gatewayID: "nas", profileSlug: "scout", conversationID: "main")
         makeStore()
         XCTAssertEqual(store.selection.gatewayID, "nas")
         transport.push(WatchSnapshot(flavor: .dev, generation: 9, builtAt: clock, contentVisible: true,

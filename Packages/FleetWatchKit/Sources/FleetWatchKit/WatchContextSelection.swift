@@ -6,7 +6,8 @@ import Foundation
 public struct WatchContextSelection: Codable, Sendable, Hashable {
     public var gatewayID: String?
     public var profileSlug: String?
-    /// nil with a bot chosen means the bot's main chat.
+    /// nil with a bot chosen means the bot OVERVIEW (status only; not a
+    /// destination). Main chat is its own conversation entry.
     public var conversationID: String?
 
     public init(gatewayID: String? = nil, profileSlug: String? = nil, conversationID: String? = nil) {
@@ -22,7 +23,11 @@ public enum WatchContextResolution: Equatable, Sendable {
     case unselected
     case gatewayMissing(gatewayID: String)
     case botMissing(gatewayName: String, profileSlug: String)
+    /// Confirmed gone from the phone's full roster.
     case conversationMissing(botName: String, conversationID: String)
+    /// Not in the snapshot, but the bot has more conversations than the
+    /// snapshot carries and the phone has not confirmed it is gone. NOT removal.
+    case conversationNotShown(botName: String, conversationID: String, omitted: Int)
     case resolved(gateway: WatchGateway, bot: WatchBot?, conversation: WatchConversation?)
 
     public var isFullyTargeted: Bool {
@@ -47,6 +52,12 @@ public enum WatchContextResolver {
             return .resolved(gateway: gateway, bot: bot, conversation: nil)
         }
         guard let conversation = bot.conversations.first(where: { $0.id == conversationID }) else {
+            let confirmedGone = snapshot.removedPin == WatchConversationPin(
+                gatewayID: gatewayID, profileSlug: slug, conversationID: conversationID)
+            if !confirmedGone, bot.omittedConversationCount > 0 {
+                return .conversationNotShown(botName: bot.displayName, conversationID: conversationID,
+                                             omitted: bot.omittedConversationCount)
+            }
             return .conversationMissing(botName: bot.displayName, conversationID: conversationID)
         }
         return .resolved(gateway: gateway, bot: bot, conversation: conversation)
@@ -59,10 +70,13 @@ public enum WatchContextResolver {
         case .gatewayMissing: return "Machine removed"
         case .botMissing(let gateway, _): return "\(gateway) › bot removed"
         case .conversationMissing(let bot, _): return "\(bot) › chat removed"
+        case .conversationNotShown(let bot, _, _): return "\(bot) › chat not in list"
         case .resolved(let gateway, let bot, let conversation):
             var parts = [gateway.displayName]
             if let bot { parts.append(bot.displayName) }
-            if let conversation { parts.append(conversation.isMain ? "Main" : conversation.title) }
+            if bot != nil {
+                parts.append(conversation.map { $0.isMain ? "Main chat" : $0.title } ?? "Overview")
+            }
             return parts.joined(separator: " › ")
         }
     }

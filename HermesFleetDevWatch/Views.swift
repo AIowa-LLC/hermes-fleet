@@ -1,19 +1,32 @@
 import SwiftUI
 import FleetWatchKit
 
+// MARK: - Shared
+
+/// Lock-screen / always-on dimmed Watch: names, commands and message text are
+/// shown as placeholders on every screen, not only the root.
+private struct DimRedacted: ViewModifier {
+    @Environment(\.isLuminanceReduced) private var dimmed
+    func body(content: Content) -> some View {
+        content.redacted(reason: dimmed ? .placeholder : [])
+    }
+}
+
+extension View {
+    fileprivate func dimRedacted() -> some View { modifier(DimRedacted()) }
+}
+
 // MARK: - Root
 
 struct RootView: View {
     let store: WatchStore
-    @Environment(\.isLuminanceReduced) private var dimmed
-    @State private var showPicker = false
 
     var body: some View {
         NavigationStack {
             List {
                 if store.isFixture { MockBanner() }
-                ContextHeader(store: store) { showPicker = true }
-                FreshnessRow(store: store)
+                ContextHeader(store: store)
+                ConnectionRows(store: store)
                 if let snapshot = store.snapshot, !snapshot.contentVisible {
                     Label("Locked on iPhone. Unlock Hermes Fleet Dev to see your fleet.", systemImage: "lock.fill")
                         .font(.footnote)
@@ -30,8 +43,7 @@ struct RootView: View {
                 }
             }
             .navigationTitle("Fleet Dev")
-            .redacted(reason: dimmed ? .placeholder : [])
-            .sheet(isPresented: $showPicker) { ContextPickerView(store: store) }
+            .dimRedacted()
         }
     }
 }
@@ -44,45 +56,74 @@ struct MockBanner: View {
     }
 }
 
+/// The current destination. Tapping it opens the machine → bot → chat picker
+/// from every screen, so the destination can be changed where it matters.
 struct ContextHeader: View {
     let store: WatchStore
-    let action: () -> Void
+    @State private var showPicker = false
 
     var body: some View {
-        Button(action: action) {
+        Button { showPicker = true } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Context").font(.caption2).foregroundStyle(.secondary)
-                Text(store.contextLabel).font(.footnote.bold()).lineLimit(2)
+                Text("Destination · tap to change").font(.caption2).foregroundStyle(.secondary)
+                Text(store.contextLabel).font(.footnote.bold()).lineLimit(3)
             }
         }
-        .accessibilityLabel("Context \(store.contextLabel). Change.")
+        .accessibilityLabel("Destination \(store.contextLabel). Change.")
+        .sheet(isPresented: $showPicker) { ContextPickerView(store: store) }
     }
 }
 
-struct FreshnessRow: View {
+/// Two separate facts that must never be merged into one "connected" claim:
+/// the Watch's link to the iPhone, and how recently the iPhone sent a
+/// snapshot. Gateway reachability and per-source freshness are shown where the
+/// machine is shown.
+struct ConnectionRows: View {
     let store: WatchStore
 
     var body: some View {
         let age = WatchFreshnessPolicy.ageLabel(observedAt: store.snapshot?.builtAt, now: store.now)
         VStack(alignment: .leading, spacing: 2) {
             switch store.link {
-            case .reachable: Label("iPhone connected", systemImage: "iphone.gen3")
-            case .phoneUnreachable: Label("iPhone unreachable. Showing saved data.", systemImage: "iphone.slash")
+            case .reachable: Label("Watch ↔ iPhone: connected", systemImage: "iphone.gen3")
+            case .phoneUnreachable: Label("iPhone not reachable. Showing saved data.", systemImage: "iphone.slash")
             case .notActivated: Label("Connecting to iPhone…", systemImage: "iphone")
             case .companionMissing: Label("iPhone app not found", systemImage: "iphone.slash")
             }
-            switch store.freshness {
-            case .fresh: Label("Updated \(age)", systemImage: "checkmark.circle")
-            case .aging: Label("Updated \(age)", systemImage: "clock")
-            case .stale: Label("STALE · updated \(age)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            case .none: EmptyView()
+            if store.snapshot != nil {
+                // When the iPhone SENT this; the machines' own data carries its own ages.
+                Label("Synced from iPhone \(age)", systemImage: store.syncFreshness == .stale ? "exclamationmark.triangle.fill" : "arrow.triangle.2.circlepath")
+                    .foregroundStyle(store.syncFreshness == .stale ? .orange : .secondary)
+            }
+            if store.lastRefreshFailed {
+                Label("Last refresh failed. Showing earlier data.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
             }
         }
         .font(.caption2)
     }
 }
 
-// MARK: - Context picker (Machine → Bot → Conversation)
+struct SourceRow: View {
+    let name: String
+    let state: WatchSourceState
+    let observedAt: Date?
+    let now: Date
+
+    var body: some View {
+        let age = WatchFreshnessPolicy.ageLabel(observedAt: observedAt, now: now)
+        HStack(alignment: .firstTextBaseline) {
+            Text(name)
+            Spacer(minLength: 4)
+            Text(state == .neverObserved ? state.label : "\(state.label) · \(age)")
+                .foregroundStyle(state == .current ? Color.secondary : Color.orange)
+        }
+        .font(.caption2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Context picker (Machine → Bot → Overview / Main chat / Conversation)
 
 struct ContextPickerView: View {
     let store: WatchStore
@@ -99,7 +140,8 @@ struct ContextPickerView: View {
                         } label: {
                             VStack(alignment: .leading) {
                                 Text(gateway.displayName)
-                                Text(statusText(gateway)).font(.caption2).foregroundStyle(.secondary)
+                                Text(gateway.status.reachability).font(.caption2)
+                                    .foregroundStyle(gateway.status == .online ? Color.secondary : Color.orange)
                             }
                         }
                     }
@@ -109,12 +151,8 @@ struct ContextPickerView: View {
                 Text("Machines are managed on iPhone.").font(.caption2).foregroundStyle(.secondary)
             }
             .navigationTitle("Machine")
+            .dimRedacted()
         }
-    }
-
-    private func statusText(_ g: WatchGateway) -> String {
-        let obs = WatchFreshnessPolicy.ageLabel(observedAt: g.observedAt, now: store.now)
-        return "\(g.status.label) · \(g.coverage.label) · \(obs)"
     }
 }
 
@@ -125,7 +163,10 @@ struct BotPickerView: View {
 
     var body: some View {
         List {
-            Button("Whole machine") {
+            Section {
+                SourceRow(name: "Bots", state: store.rosterState(gateway), observedAt: gateway.rosterObservedAt, now: store.now)
+            }
+            Button("Whole machine (status only)") {
                 store.selection = .init(gatewayID: gateway.id)
                 dismissAll()
             }
@@ -142,9 +183,12 @@ struct BotPickerView: View {
             if gateway.bots.isEmpty { Text("No bots reported by this machine.").font(.footnote) }
         }
         .navigationTitle(gateway.displayName)
+        .dimRedacted()
     }
 }
 
+/// Three different things, kept visibly apart: the bot overview (status only,
+/// can't be messaged), the bot's Main chat, and its named conversations.
 struct ConversationPickerView: View {
     let store: WatchStore
     let gateway: WatchGateway
@@ -153,19 +197,43 @@ struct ConversationPickerView: View {
 
     var body: some View {
         List {
-            Button("Bot only") {
-                store.selection = .init(gatewayID: gateway.id, profileSlug: bot.ref.profileSlug)
-                dismissAll()
-            }
-            ForEach(bot.conversations) { conversation in
-                Button(conversation.isMain ? "Main chat" : conversation.title) {
-                    store.selection = .init(gatewayID: gateway.id, profileSlug: bot.ref.profileSlug,
-                                            conversationID: conversation.id)
+            Section("Bot overview") {
+                Button("Overview · status only") {
+                    store.selection = .init(gatewayID: gateway.id, profileSlug: bot.ref.profileSlug)
                     dismissAll()
                 }
             }
+            Section("Main chat") {
+                if let main = bot.mainChat {
+                    Button("Main chat") { choose(main) }
+                } else {
+                    Label("Main chat isn't set up yet. Establish it on iPhone, then refresh.", systemImage: "iphone")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+            }
+            Section("Conversations") {
+                let named = bot.conversations.filter { !$0.isMain }
+                if named.isEmpty { Text("None reported").font(.caption2).foregroundStyle(.secondary) }
+                ForEach(named) { conversation in
+                    Button(conversation.title) { choose(conversation) }
+                }
+                if bot.omittedConversationCount > 0 {
+                    Text("Showing \(bot.conversations.count) of \(bot.totalConversations ?? bot.conversations.count). Others: use iPhone.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                SourceRow(name: "List", state: store.conversationsState(gateway),
+                          observedAt: gateway.conversationsObservedAt, now: store.now)
+            }
         }
         .navigationTitle(bot.displayName)
+        .dimRedacted()
+    }
+
+    private func choose(_ conversation: WatchConversation) {
+        store.selection = .init(gatewayID: gateway.id, profileSlug: bot.ref.profileSlug, conversationID: conversation.id)
+        // Tell the phone, so it keeps this chat in the capped snapshot.
+        Task { await store.refresh() }
+        dismissAll()
     }
 }
 
@@ -176,15 +244,19 @@ struct StatusView: View {
 
     var body: some View {
         List {
-            ContextHeader(store: store) {}.disabled(true)
-            FreshnessRow(store: store)
+            ContextHeader(store: store)
+            ConnectionRows(store: store)
             if let snapshot = store.snapshot {
                 switch store.resolution {
                 case .unselected:
-                    Text("Choose a machine from the context header on the main screen.").font(.footnote)
+                    Text("Tap the destination above to choose a machine.").font(.footnote)
                 case .gatewayMissing, .botMissing, .conversationMissing:
                     Text("Your selected destination is no longer available. Choose another. Nothing was substituted.")
                         .font(.footnote).foregroundStyle(.orange)
+                case .conversationNotShown(_, _, let omitted):
+                    Text("Your chat isn't in the list the iPhone sent (\(omitted) more than shown). It was not removed. Refresh to bring it back.")
+                        .font(.footnote).foregroundStyle(.orange)
+                    Button("Refresh") { Task { await store.refresh() } }
                 case .resolved(let gateway, _, _):
                     gatewaySection(gateway)
                     let others = snapshot.attention.filter { $0.gatewayID != gateway.id }.count
@@ -193,14 +265,21 @@ struct StatusView: View {
             }
         }
         .navigationTitle("Check in")
+        .dimRedacted()
+        .refreshable { await store.refresh() }
     }
 
     @ViewBuilder
     private func gatewaySection(_ gateway: WatchGateway) -> some View {
-        Section("Connection") {
-            Label(gateway.status.label, systemImage: gateway.status.symbol)
-            Text("Observed \(WatchFreshnessPolicy.ageLabel(observedAt: gateway.observedAt, now: store.now))")
-                .font(.caption2)
+        Section("iPhone → \(gateway.displayName)") {
+            Label(gateway.status.reachability, systemImage: gateway.status.symbol)
+            if gateway.status != .online {
+                Text("Cached information below may be out of date. This is the iPhone's connection, not proof the computer is off.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            SourceRow(name: "Bots", state: store.rosterState(gateway), observedAt: gateway.rosterObservedAt, now: store.now)
+            SourceRow(name: "Chats", state: store.conversationsState(gateway), observedAt: gateway.conversationsObservedAt, now: store.now)
+            SourceRow(name: "Running work", state: store.liveState(gateway), observedAt: gateway.observedAt, now: store.now)
             if gateway.coverage != .reporting {
                 Label(gateway.coverage.explanation, systemImage: "eye.slash").font(.caption2).foregroundStyle(.orange)
             }
@@ -232,32 +311,31 @@ struct ApprovalListView: View {
     var body: some View {
         let all = store.snapshot?.approvals ?? []
         let resolution = store.resolution
-        let scoped = all.filter { approval in
-            guard case .resolved(let gateway, let bot, _) = resolution, gateway.id == approval.gatewayID else { return false }
-            if let bot { return approval.profileSlug == bot.ref.profileSlug }
-            return true
-        }
+        let scoped = all.filter { WatchApprovalScope.isInContext($0, resolution) }
         let others = all.filter { a in !scoped.contains { $0.id == a.id } }
         List {
-            ContextHeader(store: store) {}.disabled(true)
-            FreshnessRow(store: store)
+            ContextHeader(store: store)
+            ConnectionRows(store: store)
             Section("This context") {
-                if scoped.isEmpty { Text("No pending approvals").font(.footnote) }
+                if scoped.isEmpty { Text("No pending approvals here").font(.footnote) }
                 ForEach(scoped) { link($0) }
             }
             if !others.isEmpty {
-                Section("Other machines/bots") {
+                Section("Other machines, bots or chats") {
                     ForEach(others) { link($0) }
                 }
             }
         }
         .navigationTitle("Approvals")
+        .dimRedacted()
+        .refreshable { await store.refresh() }
     }
 
     private func link(_ approval: WatchApproval) -> some View {
         NavigationLink { ApprovalDetailView(store: store, approval: approval) } label: {
             VStack(alignment: .leading) {
-                Text("\(approval.gatewayName) › \(approval.botName ?? "unknown bot")").font(.caption2).foregroundStyle(.secondary)
+                Text("\(approval.gatewayName) › \(approval.botName ?? "unknown bot") › \(approval.sessionLabel)")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 Text(approval.commandPreview).font(.footnote).lineLimit(2)
             }
         }
@@ -267,11 +345,10 @@ struct ApprovalListView: View {
 struct ApprovalDetailView: View {
     let store: WatchStore
     let approval: WatchApproval
-    @Environment(\.isLuminanceReduced) private var dimmed
 
     var body: some View {
         let state = store.approvalStates[approval.id]
-        let still = store.snapshot?.approvals.contains { $0.id == approval.id } == true
+        let presence = store.approvalPresence(approval)
         List {
             // Always the ORIGINAL origin, never the picker selection.
             Section("From") {
@@ -285,15 +362,19 @@ struct ApprovalDetailView: View {
                     Label("Long command. Review it in full on iPhone.", systemImage: "iphone").font(.caption2).foregroundStyle(.orange)
                 }
             }
-            FreshnessRow(store: store)
-            actions(state: state, stillPending: still)
+            ConnectionRows(store: store)
+            SourceRow(name: "Approval seen",
+                      state: approval.observedAt == nil ? .neverObserved
+                          : (WatchFreshnessPolicy.approvalActionable(observedAt: approval.observedAt, now: store.now) ? .current : .stale),
+                      observedAt: approval.observedAt, now: store.now)
+            actions(state: state, presence: presence)
         }
-        .redacted(reason: dimmed ? .placeholder : [])
+        .dimRedacted()
         .navigationTitle("Approval")
     }
 
     @ViewBuilder
-    private func actions(state: ApprovalActionState?, stillPending: Bool) -> some View {
+    private func actions(state: ApprovalActionState?, presence: WatchApprovalPresence) -> some View {
         switch state {
         case .sending(let decision):
             ProgressView(decision == .deny ? "Denying…" : "Waiting for iPhone…")
@@ -309,9 +390,14 @@ struct ApprovalDetailView: View {
             Section { Text(message).font(.footnote).foregroundStyle(.orange)
                 Button("Dismiss") { store.dismissApprovalState(approval.id) } }
         case nil:
-            if !stillPending {
-                Text("No longer pending.").font(.footnote)
-            } else {
+            switch presence {
+            case .resolved:
+                Text("No longer pending. The machine is reporting and doesn't list it.").font(.footnote)
+            case .unverifiable(let reason):
+                Label(reason, systemImage: "questionmark.circle").font(.footnote).foregroundStyle(.orange)
+                Text("Not actionable until confirmed. Open on iPhone or refresh.").font(.caption2)
+                Button("Refresh") { Task { await store.refresh() } }
+            case .pending:
                 switch store.affordance(for: approval) {
                 case .denyOrApproveOnce:
                     Button("Approve once") { Task { await store.decide(approval, .approveOnce) } }.tint(.green)
@@ -334,28 +420,34 @@ struct ApprovalDetailView: View {
 struct MessagesView: View {
     let store: WatchStore
     @State private var text = ""
-    @State private var confirmation: String?
 
     var body: some View {
         List {
-            ContextHeader(store: store) {}.disabled(true)
-            FreshnessRow(store: store)
-            let resolution = store.resolution
-            if resolution.isFullyTargeted {
-                Section("To: \(store.contextLabel)") {
+            ContextHeader(store: store)
+            ConnectionRows(store: store)
+            Section("New message") {
+                if let error = store.outboxPersistenceError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.orange)
+                }
+                if let reason = store.sendBlockReason {
+                    Text(reason).font(.footnote)
+                    if store.selectedBotLacksMainChat {
+                        Label("This bot has no Main chat yet. Establish it on iPhone. The Watch never creates one.", systemImage: "iphone")
+                            .font(.caption2).foregroundStyle(.orange)
+                    }
+                } else {
+                    // The exact frozen destination, shown right above the Send button.
+                    Text("To: \(store.contextLabel)").font(.footnote.bold())
                     TextField("Message", text: $text)
                     Button("Send") {
                         if store.send(text: text) { text = "" }
                     }
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if store.link != .reachable {
-                        Text("iPhone not reachable. A message you send now stays queued and goes out when it reconnects. Discard it to cancel.")
+                        Text("iPhone not reachable. A message you send now stays queued, unsent, and goes out when it reconnects. Discard it to cancel.")
                             .font(.caption2).foregroundStyle(.orange)
                     }
                 }
-            } else {
-                Text("Pick a machine and bot from the context header first. Nothing is sent to a default.")
-                    .font(.footnote)
             }
             Section("Delivery") {
                 if store.outbox.messages.isEmpty { Text("No messages yet").font(.footnote) }
@@ -363,6 +455,7 @@ struct MessagesView: View {
             }
         }
         .navigationTitle("Messages")
+        .dimRedacted()
     }
 }
 
@@ -371,25 +464,31 @@ struct OutboxRow: View {
     let message: WatchOutboxMessage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(message.targetLabel).font(.caption2).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            // Frozen at compose time; later context changes never relabel it.
+            Text("To: \(message.targetLabel)").font(.caption2).foregroundStyle(.secondary).lineLimit(3)
             Text(message.request.text).font(.footnote).lineLimit(2)
             Label(message.state.userText, systemImage: message.state.symbol).font(.caption2)
+            if let diagnostic = message.diagnostic, message.state != .acknowledged {
+                Text("Step: \(diagnostic)").font(.caption2).foregroundStyle(.secondary)
+            }
             switch message.state {
+            case .queued:
+                Button("Discard", role: .destructive) { store.discard(message.id) }.font(.caption2)
+            case .sentToPhone:
+                EmptyView()
             case .failed:
-                HStack {
-                    Button("Send again") { store.retry(message.id) }
-                    Button("Discard", role: .destructive) { store.discard(message.id) }
-                }.font(.caption2)
+                Text("Known not to have reached the gateway, so it is safe to send again.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                Button("Send again") { store.retry(message.id) }.font(.caption2)
+                Button("Discard", role: .destructive) { store.discard(message.id) }.font(.caption2)
             case .uncertain:
-                Text("Not resent automatically. Check the chat on iPhone, or send again.").font(.caption2).foregroundStyle(.orange)
-                HStack {
-                    Button("Send again") { store.retry(message.id) }
-                    Button("Discard", role: .destructive) { store.discard(message.id) }
-                }.font(.caption2)
+                Text("It may already have been sent, so the Watch won't resend it. Check this chat on iPhone, or discard.")
+                    .font(.caption2).foregroundStyle(.orange)
+                Button("Discard", role: .destructive) { store.discard(message.id) }.font(.caption2)
             case .acknowledged:
+                Text("Reply isn't shown here. Open this chat on iPhone.").font(.caption2).foregroundStyle(.secondary)
                 Button("Clear") { store.discard(message.id) }.font(.caption2)
-            case .queued, .sentToPhone: EmptyView()
             }
         }
     }
@@ -406,6 +505,19 @@ extension WatchGatewayStatus {
         case .authenticationRequired: return "Sign-in needed (iPhone)"
         case .offline: return "Offline"
         case .unsupported: return "Unsupported"
+        case .notConnected: return "Not connected"
+        }
+    }
+    /// What the status actually means: the iPhone's connection to the gateway.
+    var reachability: String {
+        switch self {
+        case .online: return "Reachable from iPhone"
+        case .connecting: return "iPhone is connecting…"
+        case .degraded: return "Reachable from iPhone, degraded"
+        case .authenticationRequired: return "Sign-in needed on iPhone"
+        case .offline: return "Unreachable from iPhone"
+        case .unsupported: return "Unsupported by this iPhone build"
+        case .notConnected: return "iPhone isn't connected to it"
         }
     }
     var symbol: String {
@@ -415,7 +527,7 @@ extension WatchGatewayStatus {
         case .degraded: return "exclamationmark.circle"
         case .authenticationRequired: return "person.crop.circle.badge.exclamationmark"
         case .offline: return "wifi.slash"
-        case .unsupported: return "questionmark.circle"
+        case .unsupported, .notConnected: return "questionmark.circle"
         }
     }
 }
@@ -459,11 +571,11 @@ extension WatchApprovalOutcome {
 extension WatchMessageState {
     var userText: String {
         switch self {
-        case .queued: return "Queued on Watch. Not sent yet."
-        case .sentToPhone: return "Sent to iPhone. Awaiting confirmation…"
-        case .acknowledged: return "Delivered. The machine acknowledged it."
-        case .failed(let reason): return "Not delivered: \(reason)"
-        case .uncertain(let reason): return "Delivery unknown: \(reason)"
+        case .queued: return "Queued on Watch. Never sent."
+        case .sentToPhone: return "Handed to iPhone. Awaiting the gateway…"
+        case .acknowledged: return "Accepted by the gateway. Not a reply."
+        case .failed(let reason): return "Not sent: \(reason)"
+        case .uncertain(let reason): return "Unknown if sent: \(reason)"
         }
     }
     var symbol: String {
