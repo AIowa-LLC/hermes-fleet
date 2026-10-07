@@ -280,6 +280,11 @@ public final class AppEnvironment {
     /// Anchors "Last checked …" labels (the snapshot itself is timeless).
     public private(set) var rosterObservedAt: Date?
 
+    /// When each gateway's roster was last successfully read (`profiles.list`
+    /// answered). A failed read keeps the previous time, so cached bots are
+    /// never presented as freshly observed.
+    public private(set) var rosterObservedAtByGateway: [GatewayID: Date] = [:]
+
     /// FOS-4 (SPEC §17): the ONE summary scheduler (app seam — never a row
     /// view). Foreground cadence 30s/gateway, failure backoff 30/60/120/300,
     /// coalesced refreshes; observation happens only on explicit triggers
@@ -943,6 +948,9 @@ public final class AppEnvironment {
         guard token == rosterGeneration else { return }
         rosterSnapshot = snapshot
         rosterObservedAt = Date()
+        for (id, outcome) in snapshot.gatewayOutcomes {
+            if case .loaded = outcome { rosterObservedAtByGateway[id] = rosterObservedAt }
+        }
         isRefreshing = false
         // ADR-0012 (W4): a settled LIVE refresh owns the truth — write the
         // cache through and clear the launch-stale flag.
@@ -1881,6 +1889,7 @@ public final class AppEnvironment {
         canCreateRoomsByGateway = [:]
         observedRoomAttention = [:]
         rosterObservedAt = nil
+        rosterObservedAtByGateway = [:]
         sessionsByRoute = [:]
         sessionReadErrors = [:]
     }
@@ -3111,52 +3120,62 @@ public final class AppEnvironment {
         // info; the tap still verifies against a live title-exact lookup so
         // a stale roster can't open a dead id blindly.
         guard let seam = makeBotModeChat(for: bot.route.gatewayID) else {
-            return .failure(BotChatUnavailable(message: "Bot Chat is unavailable on this gateway"))
+            return .failure(BotChatUnavailable(
+                message: "Bot Chat is unavailable on this gateway", stage: .seamUnavailable))
         }
         let rosterID = bot.canonicalSession?.id
+        let profile = bot.route.profileSlug.rawValue
+        // Stage 1: registry lookup. A failure here is NEVER absence and never
+        // proceeds to creation.
+        let lookup: CanonicalLookup
         do {
-            let lookup = try await seam.lookupCanonicalChat(profile: bot.route.profileSlug.rawValue)
-            let rows = lookup.rows.map {
-                SessionSummary(id: $0.id, title: $0.title, preview: $0.preview, messageCount: $0.messageCount)
-            }
-            // resolved_id (compression tip) travels as the row id on the
-            // exact-title wire; attach it so the resolver prefers the tip.
-            let resolution: CanonicalChatResolution
-            if let first = lookup.rows.first, let tip = first.openID, tip != first.id {
-                resolution = CanonicalChatResolver.resolve(
-                    lookupRows: [SessionSummary(id: first.id, title: first.title,
-                                                preview: first.preview, messageCount: first.messageCount)],
-                    rosterCanonicalID: rosterID,
-                    lookupError: nil)
-                // The resolver's existing-ref openID falls back to row id;
-                // the tip (already validated non-empty by openID) wins.
-                if case .existing = resolution {
-                    return .success(tip)
-                }
-            } else {
-                resolution = CanonicalChatResolver.resolve(
-                    lookupRows: rows, rosterCanonicalID: rosterID, lookupError: nil)
-            }
-            switch BotChatPlanner.plan(from: resolution) {
-            case .openCanonical(let ref):
-                if let id = ref.openID { return .success(id) }
-                return .failure(BotChatUnavailable(message: "Bot Chat registry returned a malformed id — not starting a new chat"))
-            case .createThenOpen:
-                // Confirmed miss only: safe hidden creation with eager title.
-                let created = try await seam.createCanonicalChat(profile: bot.route.profileSlug.rawValue)
-                return .success(created)
-            case .unavailable(let message):
-                return .failure(BotChatUnavailable(message: message))
-            }
+            lookup = try await seam.lookupCanonicalChat(profile: profile)
         } catch {
-            // RPC failure of EITHER lookup or creation is retryable — never
-            // mint/fork from the catch path. User-facing copy stays clean:
-            // the internal error chain is logged out-of-band, never shown.
             #if DEBUG
-            print("canonical chat resolve failed for \(bot.route.id): \(error)")
+            print("canonical chat lookup failed for \(bot.route.id): \(SafeErrorCategory.of(error))")
             #endif
             return .failure(BotChatUnavailable(
-                message: "Couldn't check the Bot Chat registry — not starting a new chat"))
+                message: "Couldn't check the Bot Chat registry — not starting a new chat",
+                stage: .lookup, errorCategory: SafeErrorCategory.of(error)))
+        }
+        let rows = lookup.rows.map {
+            SessionSummary(id: $0.id, title: $0.title, preview: $0.preview, messageCount: $0.messageCount)
+        }
+        // resolved_id (compression tip) travels as the row id on the
+        // exact-title wire; attach it so the resolver prefers the tip.
+        let resolution: CanonicalChatResolution
+        if let first = lookup.rows.first, let tip = first.openID, tip != first.id {
+            resolution = CanonicalChatResolver.resolve(
+                lookupRows: [SessionSummary(id: first.id, title: first.title,
+                                            preview: first.preview, messageCount: first.messageCount)],
+                rosterCanonicalID: rosterID,
+                lookupError: nil)
+            // The tip (already validated non-empty by openID) wins.
+            if case .existing = resolution { return .success(tip) }
+        } else {
+            resolution = CanonicalChatResolver.resolve(
+                lookupRows: rows, rosterCanonicalID: rosterID, lookupError: nil)
+        }
+        switch BotChatPlanner.plan(from: resolution) {
+        case .openCanonical(let ref):
+            if let id = ref.openID { return .success(id) }
+            return .failure(BotChatUnavailable(
+                message: "Bot Chat registry returned a malformed id — not starting a new chat",
+                stage: .malformedRegistry))
+        case .createThenOpen:
+            // Stage 2: confirmed miss only — safe hidden creation with eager title.
+            do {
+                return .success(try await seam.createCanonicalChat(profile: profile))
+            } catch {
+                #if DEBUG
+                print("canonical chat creation failed for \(bot.route.id): \(SafeErrorCategory.of(error))")
+                #endif
+                return .failure(BotChatUnavailable(
+                    message: "Couldn't create the Bot Chat — try again",
+                    stage: .create, errorCategory: SafeErrorCategory.of(error)))
+            }
+        case .unavailable(let message):
+            return .failure(BotChatUnavailable(message: message, stage: .unconfirmed))
         }
     }
 

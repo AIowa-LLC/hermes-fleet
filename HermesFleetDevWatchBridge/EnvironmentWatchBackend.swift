@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import os
 import FleetCore
 import FleetUI
 import FleetWatchKit
@@ -12,6 +13,7 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     private let environment: AppEnvironment
     private let lock: AppLockController
     private let flavor: WatchAppFlavor
+    private let log = Logger(subsystem: "com.aiowa.hermesfleet.dev", category: "watch-bridge")
 
     init(environment: AppEnvironment, lock: AppLockController, flavor: WatchAppFlavor) {
         self.environment = environment
@@ -34,24 +36,30 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     func observation() -> WatchFleetObservation {
         var bots: [GatewayID: [FleetBot]] = [:]
         var sessions: [Route: [SessionSummary]] = [:]
+        var sessionsObserved: [Route: Date] = [:]
         for gateway in environment.gateways {
             let list = environment.bots(on: gateway.id)
             bots[gateway.id] = list
-            for bot in list { sessions[bot.route] = environment.sessions(for: bot.route) }
+            for bot in list {
+                sessions[bot.route] = environment.sessions(for: bot.route)
+                sessionsObserved[bot.route] = environment.sessionsLastObserved(bot.route)
+            }
         }
         return WatchFleetObservation(
             gateways: environment.gateways, connectionStates: environment.connectionStates,
             botsByGateway: bots, sessionsByRoute: sessions,
             liveOps: environment.liveOps.snapshot, liveOpsAttention: environment.liveOps.attentionItems,
             fleetAttention: environment.attentionItems(), rosterObservedAt: environment.rosterObservedAt,
+            rosterObservedAtByGateway: environment.rosterObservedAtByGateway,
+            sessionsObservedAtByRoute: sessionsObserved,
             routeForSessionKey: { [environment] key, gateway in
                 environment.route(forLiveOperationSessionKey: key, gatewayID: gateway)
             })
     }
 
-    func snapshot(generation: Int, now: Date) -> WatchSnapshot {
+    func snapshot(generation: Int, now: Date, pinned: WatchConversationPin?) -> WatchSnapshot {
         WatchSnapshotBuilder.build(observation(), flavor: flavor, generation: generation, now: now,
-                                   contentVisible: isContentVisible, isFixture: Self.isScriptedFleet)
+                                   contentVisible: isContentVisible, isFixture: Self.isScriptedFleet, pinned: pinned)
     }
 
     func isGatewayReachable(_ gatewayID: String) -> Bool {
@@ -59,6 +67,16 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     }
 
     func refreshObservation() async { await environment.liveOps.checkReportingNow() }
+
+    /// Refreshes every source the Watch shows (roster, conversation lists and
+    /// Live Ops), not just Live Ops. Each updates its own observation time only
+    /// when its read succeeds.
+    func refreshFleetState() async {
+        await environment.refreshRoster()
+        let routes = environment.gateways.flatMap { environment.bots(on: $0.id).map(\.route) }
+        await environment.refreshSessions(routes: routes, force: true)
+        await environment.liveOps.checkReportingNow()
+    }
 
     private func item(_ gatewayID: String, _ sessionID: String, _ requestID: String) -> LiveOpsAttentionItem? {
         environment.liveOps.attentionItems.first {
@@ -94,53 +112,69 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
         return presenceMessages.contains(message) ? .needsPresence(message) : .failed(message)
     }
 
-    func sendMessage(_ request: WatchMessageRequest) async -> WatchMessageOutcome {
+    /// Sends to the exact destination the Watch froze. It never looks up,
+    /// creates or substitutes a chat: Main chat must already be established
+    /// (reported by the roster), otherwise the user is told to do that on
+    /// iPhone. The registry lookup/creation path is therefore not involved.
+    func sendMessage(_ request: WatchMessageRequest) async -> WatchSendResult {
         let gatewayID = GatewayID(rawValue: request.gatewayID)
         let route = Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: request.profileSlug))
+        func reject(_ reason: String) -> WatchSendResult {
+            WatchSendResult(.rejected(reason: reason), WatchSendDiagnostic(stage: "validate"))
+        }
         // Exact route only; never fall back to another bot or gateway.
         guard let bot = environment.bot(for: route) else {
-            return .rejected(reason: "That bot is no longer on this machine.")
+            return reject("That bot is no longer on this machine.")
         }
-        let listedID: String
-        if let requested = request.conversationID {
+        let sessionID = request.target.sessionID
+        switch request.target {
+        case .mainChat:
             let canonical = bot.canonicalSession.map { [$0.id, $0.resolvedID].compactMap { $0 } } ?? []
-            let known = environment.sessions(for: route)?.contains { $0.id == requested } == true
-            guard known || canonical.contains(requested) else {
-                return .rejected(reason: "That conversation is no longer available.")
+            guard canonical.contains(sessionID) else {
+                return reject(canonical.isEmpty
+                    ? "This bot has no Main chat yet. Establish it on iPhone first."
+                    : "Main chat changed. Choose it again on the Watch.")
             }
-            listedID = requested
-        } else {
-            switch await environment.resolveCanonicalChatTarget(for: bot) {
-            case .success(let id): listedID = id
-            case .failure(let failure): return .rejected(reason: failure.message)
+        case .conversation:
+            guard environment.sessions(for: route)?.contains(where: { $0.id == sessionID }) == true else {
+                return reject("That conversation is no longer available.")
             }
         }
         guard let session = environment.conversationSession(for: gatewayID) else {
-            return .rejected(reason: "Chat isn't available on that machine.")
+            return reject("Chat isn't available on that machine.")
         }
         let opened: ConversationSession
         do {
             opened = try await session.conversation.resumeSession(
-                sessionID: listedID, lastEventID: nil, profile: route.profileSlug.rawValue)
+                sessionID: sessionID, lastEventID: nil, profile: route.profileSlug.rawValue)
         } catch {
             // Nothing was submitted.
-            return .failed(reason: Redaction.safeErrorDescription(error))
+            let category = SafeErrorCategory.of(error)
+            log.error("watch send failed at resume: \(category, privacy: .public)")
+            return WatchSendResult(.failed(reason: Redaction.safeErrorDescription(error)),
+                                   WatchSendDiagnostic(stage: "resume", category: category))
         }
-        let canonical = environment.isCanonicalBotChat(route: route, sessionID: listedID)
+        let canonical = environment.isCanonicalBotChat(route: route, sessionID: sessionID)
         let text = BotConversationDraft.protectingCanonical(request.text, isCanonical: canonical).text
         do {
             _ = try await session.conversation.submitPrompt(sessionID: opened.sessionID, text: text)
-            return .acknowledged
+            return WatchSendResult(.acknowledged, nil)
         } catch let error as ConversationError {
+            let category = SafeErrorCategory.of(error)
+            log.error("watch send failed at submit: \(category, privacy: .public)")
+            let diagnostic = WatchSendDiagnostic(stage: "submit", category: category)
             switch error {
             case .notConnected, .sessionNotFound, .invalidRequest, .invalidSessionKey:
-                return .failed(reason: Redaction.safeErrorDescription(error))
+                return WatchSendResult(.failed(reason: Redaction.safeErrorDescription(error)), diagnostic)
             case .rpcFailed, .malformedPayload, .gapUnrecoverable:
                 // The gateway may have processed it before failing.
-                return .uncertain(reason: Redaction.safeErrorDescription(error))
+                return WatchSendResult(.uncertain(reason: Redaction.safeErrorDescription(error)), diagnostic)
             }
         } catch {
-            return .uncertain(reason: Redaction.safeErrorDescription(error))
+            let category = SafeErrorCategory.of(error)
+            log.error("watch send failed at submit: \(category, privacy: .public)")
+            return WatchSendResult(.uncertain(reason: Redaction.safeErrorDescription(error)),
+                                   WatchSendDiagnostic(stage: "submit", category: category))
         }
     }
 }

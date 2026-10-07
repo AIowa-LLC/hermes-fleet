@@ -10,9 +10,11 @@ public enum WatchApprovalAffordance: Equatable, Sendable {
 }
 
 public enum WatchApprovalPolicy {
-    public static func affordance(for approval: WatchApproval, snapshotBuiltAt: Date, now: Date) -> WatchApprovalAffordance {
-        guard WatchFreshnessPolicy.approvalsActionable(snapshotBuiltAt: snapshotBuiltAt, now: now) else {
-            return .none(reason: "Out of date. Open on iPhone or wait for refresh.")
+    public static func affordance(for approval: WatchApproval, now: Date) -> WatchApprovalAffordance {
+        guard WatchFreshnessPolicy.approvalActionable(observedAt: approval.observedAt, now: now) else {
+            return .none(reason: approval.observedAt == nil
+                ? "Never confirmed by the iPhone. Open on iPhone."
+                : "Out of date. Open on iPhone or wait for refresh.")
         }
         if approval.requiresFullReview {
             return .denyOnly(handOffReason: "Long command. Review it in full on iPhone.")
@@ -100,5 +102,40 @@ public struct WatchApprovalLedger: Sendable, Codable, Equatable {
             byUUID[old] = nil
             byKey = byKey.filter { $0.value != old }
         }
+    }
+}
+
+/// Whether an approval the Watch is looking at can still be confirmed pending.
+public enum WatchApprovalPresence: Equatable, Sendable {
+    case pending
+    /// Gone from a snapshot whose machine is actively reporting approvals.
+    case resolved
+    /// Gone (or never confirmable) but the machine is not reporting now, so
+    /// "resolved" would be a guess. Never actionable.
+    case unverifiable(String)
+}
+
+public enum WatchApprovalScope {
+    public static func presence(of approval: WatchApproval, in snapshot: WatchSnapshot?, now: Date) -> WatchApprovalPresence {
+        guard let snapshot else { return .unverifiable("No data from iPhone yet.") }
+        if snapshot.approvals.contains(where: { $0.id == approval.id }) { return .pending }
+        guard let gateway = snapshot.gateways.first(where: { $0.id == approval.gatewayID }) else {
+            return .unverifiable("That machine is no longer listed, so this can't be confirmed.")
+        }
+        let reporting = (gateway.status == .online || gateway.status == .degraded) && gateway.coverage == .reporting
+        guard reporting, WatchFreshnessPolicy.approvalActionable(observedAt: gateway.observedAt, now: now) else {
+            return .unverifiable("\(gateway.displayName) isn't reporting right now, so Fleet can't confirm this was resolved.")
+        }
+        return .resolved
+    }
+
+    /// "This context": machine, bot AND conversation when one is selected.
+    public static func isInContext(_ approval: WatchApproval, _ resolution: WatchContextResolution) -> Bool {
+        guard case .resolved(let gateway, let bot, let conversation) = resolution,
+              gateway.id == approval.gatewayID else { return false }
+        guard let bot else { return true }
+        guard approval.profileSlug == bot.ref.profileSlug else { return false }
+        guard let conversation else { return true }
+        return approval.sessionID == conversation.id
     }
 }

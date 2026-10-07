@@ -19,7 +19,9 @@ final class FleetWatchLink {
         }
         if service == nil {
             let backend = EnvironmentWatchBackend(environment: environment, lock: lock, flavor: .dev)
-            let coordinator = WatchPhoneCoordinator(backend: backend, flavor: .dev)
+            let coordinator = WatchPhoneCoordinator(
+                backend: backend, flavor: .dev,
+                ledgerStore: FileWatchMessageLedgerStore(url: FileWatchMessageLedgerStore.defaultURL()))
             let service = WatchPhoneService(coordinator: coordinator, flavor: .dev)
             service.setObservingForWatch = { [weak environment] on in
                 if on { environment?.liveOps.beginObserving(.watch) } else { environment?.liveOps.endObserving(.watch) }

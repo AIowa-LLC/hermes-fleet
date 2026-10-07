@@ -17,7 +17,8 @@ enum Fx {
 
     static func gateway(_ id: String, name: String, bots: [WatchBot] = []) -> WatchGateway {
         WatchGateway(id: id, displayName: name, status: .online, coverage: .reporting,
-                     observedAt: t0, bots: bots, running: [])
+                     observedAt: t0, bots: bots, running: [],
+                     rosterObservedAt: t0, conversationsObservedAt: t0)
     }
 
     static func bot(_ gw: String, _ slug: String, name: String, chats: [WatchConversation] = []) -> WatchBot {
@@ -38,6 +39,6 @@ enum Fx {
 
     static func message(_ id: String = UUID().uuidString, text: String = "hello") -> WatchMessageRequest {
         WatchMessageRequest(clientMessageID: id, gatewayID: "mac-mini", profileSlug: "scout",
-                            conversationID: nil, text: text, composedAt: t0)
+                            target: .mainChat(sessionID: "main"), text: text, composedAt: t0)
     }
 }

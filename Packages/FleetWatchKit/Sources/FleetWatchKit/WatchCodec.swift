@@ -62,22 +62,37 @@ public enum WatchSnapshotBudget {
     public static let maxApprovals = 10
     public static let maxAttention = 12
 
-    public static func trimmed(_ snapshot: WatchSnapshot) -> WatchSnapshot {
+    /// `pinned` keeps one conversation in its bot's list even beyond the cap
+    /// (when it still exists in the untrimmed list).
+    public static func trimmed(_ snapshot: WatchSnapshot, pinned: WatchConversationPin? = nil) -> WatchSnapshot {
         let gateways = snapshot.gateways.map { gateway in
             WatchGateway(
                 id: gateway.id, displayName: gateway.displayName, status: gateway.status,
                 coverage: gateway.coverage, observedAt: gateway.observedAt,
-                bots: gateway.bots.map {
-                    WatchBot(ref: $0.ref, displayName: $0.displayName, activity: $0.activity,
-                             conversations: Array($0.conversations.prefix(maxConversationsPerBot)))
+                bots: gateway.bots.map { bot in
+                    let pin = (pinned?.gatewayID == bot.ref.gatewayID && pinned?.profileSlug == bot.ref.profileSlug)
+                        ? pinned?.conversationID : nil
+                    return WatchBot(ref: bot.ref, displayName: bot.displayName, activity: bot.activity,
+                                    conversations: capped(bot.conversations, keeping: pin),
+                                    totalConversations: bot.totalConversations ?? bot.conversations.count)
                 },
-                running: Array(gateway.running.prefix(maxRunningPerGateway)))
+                running: Array(gateway.running.prefix(maxRunningPerGateway)),
+                rosterObservedAt: gateway.rosterObservedAt,
+                conversationsObservedAt: gateway.conversationsObservedAt)
         }
         return WatchSnapshot(
             flavor: snapshot.flavor, generation: snapshot.generation, builtAt: snapshot.builtAt,
             contentVisible: snapshot.contentVisible, isFixture: snapshot.isFixture,
             gateways: gateways,
             attention: Array(snapshot.attention.prefix(maxAttention)),
-            approvals: Array(snapshot.approvals.prefix(maxApprovals)))
+            approvals: Array(snapshot.approvals.prefix(maxApprovals)),
+            removedPin: snapshot.removedPin)
+    }
+
+    static func capped(_ all: [WatchConversation], keeping pinnedID: String?) -> [WatchConversation] {
+        let head = Array(all.prefix(maxConversationsPerBot))
+        guard let pinnedID, !head.contains(where: { $0.id == pinnedID }),
+              let pinned = all.first(where: { $0.id == pinnedID }) else { return head }
+        return Array(head.prefix(maxConversationsPerBot - 1)) + [pinned]
     }
 }

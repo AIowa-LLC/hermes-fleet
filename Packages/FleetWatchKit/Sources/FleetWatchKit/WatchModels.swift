@@ -27,6 +27,9 @@ public struct WatchBotRef: Hashable, Codable, Sendable {
 
 public enum WatchGatewayStatus: String, Codable, Sendable, Hashable {
     case online, connecting, degraded, authenticationRequired, offline, unsupported
+    /// The iPhone has no gateway connection and has not recorded a failure
+    /// (never attempted, or intentionally idle). Not proof the machine is down.
+    case notConnected
 }
 
 /// How much of a gateway's activity the phone can actually observe.
@@ -54,15 +57,43 @@ public struct WatchConversation: Hashable, Codable, Sendable, Identifiable {
     }
 }
 
+/// A conversation the Watch asks the phone to keep in its snapshot. The
+/// snapshot caps conversations per bot, so without this a selected chat beyond
+/// the cap would fall out of the list.
+public struct WatchConversationPin: Hashable, Codable, Sendable {
+    public let gatewayID: String
+    public let profileSlug: String
+    public let conversationID: String
+
+    public init(gatewayID: String, profileSlug: String, conversationID: String) {
+        self.gatewayID = gatewayID
+        self.profileSlug = profileSlug
+        self.conversationID = conversationID
+    }
+}
+
 public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
     public let ref: WatchBotRef
     public let displayName: String
     public let activity: String
     public let conversations: [WatchConversation]
+    /// How many conversations the phone knows for this bot before the snapshot
+    /// cap. Nil from a sender that doesn't report it.
+    public let totalConversations: Int?
+
+    /// Conversations that exist on the phone but are not in `conversations`
+    /// because of the snapshot cap (not because they were removed).
+    public var omittedConversationCount: Int { max(0, (totalConversations ?? conversations.count) - conversations.count) }
 
     public var id: String { "\(ref.gatewayID)#\(ref.profileSlug)" }
 
-    public init(ref: WatchBotRef, displayName: String, activity: String, conversations: [WatchConversation]) {
+    /// The roster-reported Main chat, if the iPhone knows one. Nil means Main
+    /// chat is not established: the Watch never creates or guesses one.
+    public var mainChat: WatchConversation? { conversations.first { $0.isMain } }
+
+    public init(ref: WatchBotRef, displayName: String, activity: String, conversations: [WatchConversation],
+                totalConversations: Int? = nil) {
+        self.totalConversations = totalConversations
         self.ref = ref
         self.displayName = displayName
         self.activity = activity
@@ -105,15 +136,23 @@ public struct WatchGateway: Hashable, Codable, Sendable, Identifiable {
     public let displayName: String
     public let status: WatchGatewayStatus
     public let coverage: WatchCoverage
-    /// When the phone last observed this gateway's state (nil = never).
+    /// When the phone last observed this gateway's running work / approvals
+    /// (Live Ops; nil = never).
     public let observedAt: Date?
     public let bots: [WatchBot]
     public let running: [WatchRunningWork]
+    /// When the phone last successfully read this gateway's bot roster.
+    public let rosterObservedAt: Date?
+    /// When the phone last successfully read this gateway's conversation lists.
+    public let conversationsObservedAt: Date?
 
     public init(
         id: String, displayName: String, status: WatchGatewayStatus, coverage: WatchCoverage,
-        observedAt: Date?, bots: [WatchBot], running: [WatchRunningWork]
+        observedAt: Date?, bots: [WatchBot], running: [WatchRunningWork],
+        rosterObservedAt: Date? = nil, conversationsObservedAt: Date? = nil
     ) {
+        self.rosterObservedAt = rosterObservedAt
+        self.conversationsObservedAt = conversationsObservedAt
         self.id = id
         self.displayName = displayName
         self.status = status
@@ -142,7 +181,10 @@ public struct WatchApproval: Hashable, Codable, Sendable, Identifiable {
     /// preview, so approval needs the phone's full command review.
     public let requiresFullReview: Bool
     public let choices: [String]
-    public let observedAt: Date
+    /// When the phone last observed THIS request's gateway reporting pending
+    /// approvals. Nil (never observed) is never actionable. This is deliberately
+    /// not the snapshot's creation time.
+    public let observedAt: Date?
 
     public var id: String { WatchApproval.key(gatewayID: gatewayID, sessionID: sessionID, requestID: requestID) }
 
@@ -154,7 +196,7 @@ public struct WatchApproval: Hashable, Codable, Sendable, Identifiable {
         gatewayID: String, gatewayName: String, profileSlug: String?, botName: String?,
         sessionID: String, sessionLabel: String, requestID: String,
         commandPreview: String, commandDigest: String, requiresFullReview: Bool,
-        choices: [String], observedAt: Date
+        choices: [String], observedAt: Date?
     ) {
         self.gatewayID = gatewayID
         self.gatewayName = gatewayName
@@ -172,7 +214,7 @@ public struct WatchApproval: Hashable, Codable, Sendable, Identifiable {
 }
 
 public struct WatchSnapshot: Hashable, Codable, Sendable {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     public let schemaVersion: Int
     public let flavor: WatchAppFlavor
@@ -188,12 +230,17 @@ public struct WatchSnapshot: Hashable, Codable, Sendable {
     public let gateways: [WatchGateway]
     public let attention: [WatchAttention]
     public let approvals: [WatchApproval]
+    /// Set when the Watch pinned a conversation and the phone checked its FULL
+    /// roster and found no such conversation: genuinely removed, as opposed to
+    /// merely beyond the snapshot cap.
+    public let removedPin: WatchConversationPin?
 
     public init(
         flavor: WatchAppFlavor, generation: Int, builtAt: Date, contentVisible: Bool,
         isFixture: Bool = false, gateways: [WatchGateway], attention: [WatchAttention],
-        approvals: [WatchApproval]
+        approvals: [WatchApproval], removedPin: WatchConversationPin? = nil
     ) {
+        self.removedPin = removedPin
         self.schemaVersion = Self.schemaVersion
         self.flavor = flavor
         self.generation = generation

@@ -131,6 +131,7 @@
 		862DCA94C0AD61B082B283CD /* FleetServiceGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = F213C8A79CE4B10E5F26F3C5 /* FleetServiceGraph.swift */; };
 		872237CA888F813111175FB7 /* CrossGatewayRoomSetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83B1156EFB5904085409E071 /* CrossGatewayRoomSetupTests.swift */; };
 		8B7BDB1F494E240EFD8C697F /* H2SurfaceDoctorDeviceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7AEF616FC2AC811EB7B575 /* H2SurfaceDoctorDeviceTests.swift */; };
+		8C7049135B72CC1B8FF149B6 /* CanonicalChatStageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22800FEEAB20F293F7392163 /* CanonicalChatStageTests.swift */; };
 		8D5D7A4794C4F5C1DEE340BD /* RT4LogicRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE8C3BBEDA9501678CC9D24 /* RT4LogicRegressionTests.swift */; };
 		8DE7AABDFA7FB8FC07D70A5F /* LaunchOverrideHygieneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9620FDDA804B293B62BF6A1A /* LaunchOverrideHygieneTests.swift */; };
 		8FA7DC93085A162BBD082052 /* FleetChatsPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D50BC1E3E15365C2D66ED2 /* FleetChatsPresentationTests.swift */; };
@@ -322,6 +323,7 @@
 		1AA4C0E692D2131E0D07EA16 /* CronManagementUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronManagementUITests.swift; sourceTree = "<group>"; };
 		20453F5517311CE5FEF577CE /* LiveOpsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveOpsStoreTests.swift; sourceTree = "<group>"; };
 		21D1C48B297C70782863ECDB /* R9ConversationToolingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ConversationToolingUITests.swift; sourceTree = "<group>"; };
+		22800FEEAB20F293F7392163 /* CanonicalChatStageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalChatStageTests.swift; sourceTree = "<group>"; };
 		2380AC190371692E170A3C23 /* FleetSimulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSimulator.swift; sourceTree = "<group>"; };
 		260BB18804C7394A2D1C217E /* FleetNetworking */ = {isa = PBXFileReference; lastKnownFileType = folder; name = FleetNetworking; path = Packages/FleetNetworking; sourceTree = SOURCE_ROOT; };
 		261A5784C89B6D7B55044B5F /* ProjectsSnapshotStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsSnapshotStoreTests.swift; sourceTree = "<group>"; };
@@ -711,6 +713,7 @@
 		8CA3E83B09C8491962E01828 /* HermesFleetDevWatchTests */ = {
 			isa = PBXGroup;
 			children = (
+				22800FEEAB20F293F7392163 /* CanonicalChatStageTests.swift */,
 				45318AAE6FBD298E9F028E6F /* WatchBridgeTests.swift */,
 			);
 			path = HermesFleetDevWatchTests;
@@ -1385,6 +1388,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8C7049135B72CC1B8FF149B6 /* CanonicalChatStageTests.swift in Sources */,
 				262EF68A27E5DE9A38A95EA7 /* WatchBridgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

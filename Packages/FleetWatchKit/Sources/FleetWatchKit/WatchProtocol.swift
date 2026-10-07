@@ -41,13 +41,31 @@ public struct WatchApprovalRequest: Codable, Sendable, Hashable {
     }
 }
 
+/// The exact conversation a message is for. There is deliberately no
+/// "bot only" or "default" destination: the Watch can only send to a Main chat
+/// the iPhone has reported, or to a named conversation, and the phone never
+/// resolves, creates or substitutes a chat on the Watch's behalf.
+public enum WatchMessageTarget: Codable, Sendable, Hashable {
+    /// The bot's established Main chat, identified by the session id the
+    /// iPhone reported for it. The phone re-checks it is still the Main chat.
+    case mainChat(sessionID: String)
+    case conversation(sessionID: String)
+
+    public var sessionID: String {
+        switch self {
+        case .mainChat(let id), .conversation(let id): return id
+        }
+    }
+    public var isMain: Bool { if case .mainChat = self { return true }; return false }
+}
+
 public struct WatchMessageRequest: Codable, Sendable, Hashable {
-    /// Idempotency key. The phone refuses to send the same ID to a gateway twice.
+    /// Idempotency key. The phone refuses to send the same ID to a gateway twice,
+    /// and refuses the same ID with a different destination or text.
     public let clientMessageID: String
     public let gatewayID: String
     public let profileSlug: String
-    /// Target conversation (session) id; nil means the bot's main chat.
-    public let conversationID: String?
+    public let target: WatchMessageTarget
     public let text: String
     public let composedAt: Date
 
@@ -55,25 +73,35 @@ public struct WatchMessageRequest: Codable, Sendable, Hashable {
 
     public init(
         clientMessageID: String = UUID().uuidString, gatewayID: String, profileSlug: String,
-        conversationID: String?, text: String, composedAt: Date
+        target: WatchMessageTarget, text: String, composedAt: Date
     ) {
         self.clientMessageID = clientMessageID
         self.gatewayID = gatewayID
         self.profileSlug = profileSlug
-        self.conversationID = conversationID
+        self.target = target
         self.text = text
         self.composedAt = composedAt
+    }
+
+    /// Binds message ID, destination and payload. The random message ID salts
+    /// the hash so the persisted fingerprint reveals nothing about the text.
+    public var fingerprint: String {
+        let kind = target.isMain ? "main" : "chat"
+        return WatchCodec.digest([clientMessageID, gatewayID, profileSlug, kind, target.sessionID, text]
+            .joined(separator: "\u{1F}"))
     }
 }
 
 public enum WatchRequest: Codable, Sendable, Hashable {
-    case refresh(flavor: WatchAppFlavor)
+    /// `pinned` is the conversation the Watch has selected, so the phone keeps it
+    /// in the (capped) snapshot while it still exists.
+    case refresh(flavor: WatchAppFlavor, pinned: WatchConversationPin? = nil)
     case approval(WatchApprovalRequest, flavor: WatchAppFlavor)
     case message(WatchMessageRequest, flavor: WatchAppFlavor)
 
     public var flavor: WatchAppFlavor {
         switch self {
-        case .refresh(let f), .approval(_, let f), .message(_, let f): return f
+        case .refresh(let f, _), .approval(_, let f), .message(_, let f): return f
         }
     }
 }
@@ -115,7 +143,8 @@ public struct WatchApprovalReply: Codable, Sendable, Hashable {
 }
 
 public enum WatchMessageOutcome: Codable, Sendable, Hashable {
-    /// The gateway accepted the prompt (`submitPrompt` returned).
+    /// The gateway accepted the prompt (`submitPrompt` returned). This is NOT
+    /// an assistant reply or turn completion.
     case acknowledged
     /// Rejected before any gateway call: unknown/removed target, offline, locked…
     case rejected(reason: String)
@@ -127,13 +156,31 @@ public enum WatchMessageOutcome: Codable, Sendable, Hashable {
     case alreadyAcknowledged
 }
 
+/// Which step of the phone's send path produced an outcome. Never carries
+/// tokens, endpoints or message content.
+public struct WatchSendDiagnostic: Codable, Sendable, Hashable {
+    /// "validate", "resume" or "submit".
+    public let stage: String
+    /// A Swift error case name such as "ConversationError.notConnected".
+    public let category: String?
+
+    public init(stage: String, category: String? = nil) {
+        self.stage = stage
+        self.category = category
+    }
+
+    public var text: String { category.map { "\(stage) · \($0)" } ?? stage }
+}
+
 public struct WatchMessageReply: Codable, Sendable, Hashable {
     public let clientMessageID: String
     public let outcome: WatchMessageOutcome
+    public let diagnostic: WatchSendDiagnostic?
 
-    public init(clientMessageID: String, outcome: WatchMessageOutcome) {
+    public init(clientMessageID: String, outcome: WatchMessageOutcome, diagnostic: WatchSendDiagnostic? = nil) {
         self.clientMessageID = clientMessageID
         self.outcome = outcome
+        self.diagnostic = diagnostic
     }
 }
 
