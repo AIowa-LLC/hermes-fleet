@@ -38,7 +38,9 @@ protocol WatchBridgeBackend: AnyObject {
     func refreshObservation() async
     /// Re-read every source the Watch displays: roster, conversation lists and
     /// Live Ops. Used for Watch refreshes; approvals only need Live Ops.
-    func refreshFleetState() async
+    /// `force` re-reads every conversation list; otherwise lists inside their
+    /// freshness TTL are left alone (the periodic foreground cadence).
+    func refreshFleetState(force: Bool) async
     func pendingApproval(gatewayID: String, sessionID: String, requestID: String) -> WatchPendingApproval?
     func deny(gatewayID: String, sessionID: String, requestID: String) async -> String?
     func approveOnce(gatewayID: String, sessionID: String, requestID: String) async -> WatchApproveResult
@@ -82,6 +84,18 @@ final class WatchPhoneCoordinator {
         }
     }
 
+    private var foregroundRefreshInFlight = false
+
+    /// Periodic phone-side fetch for the Watch's sources. Skipped when no Watch is
+    /// installed, the app isn't active, content is hidden (App Lock), or a fetch
+    /// is already running.
+    func refreshForWatchIfForeground(observing: Bool) async {
+        guard observing, backend.isAppActive, backend.isContentVisible, !foregroundRefreshInFlight else { return }
+        foregroundRefreshInFlight = true
+        defer { foregroundRefreshInFlight = false }
+        await backend.refreshFleetState(force: false)
+    }
+
     func makeSnapshot() -> WatchSnapshot {
         generation += 1
         return backend.snapshot(generation: generation, now: now(), pinned: pinnedConversation)
@@ -94,7 +108,7 @@ final class WatchPhoneCoordinator {
         switch request {
         case .refresh(_, let pinned):
             pinnedConversation = pinned
-            await backend.refreshFleetState()
+            await backend.refreshFleetState(force: true)
             return .snapshot(makeSnapshot())
         case .approval(let approval, _):
             return .approval(await handleApproval(approval))

@@ -14,6 +14,7 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     private let lock: AppLockController
     private let flavor: WatchAppFlavor
     private let log = Logger(subsystem: "com.aiowa.hermesfleet.dev", category: "watch-bridge")
+    private var lastGoodLive: [GatewayID: Date] = [:]
 
     init(environment: AppEnvironment, lock: AppLockController, flavor: WatchAppFlavor) {
         self.environment = environment
@@ -37,12 +38,21 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
         var bots: [GatewayID: [FleetBot]] = [:]
         var sessions: [Route: [SessionSummary]] = [:]
         var sessionsObserved: [Route: Date] = [:]
+        var mainChats: [Route: AppEnvironment.MainChatState] = [:]
         for gateway in environment.gateways {
             let list = environment.bots(on: gateway.id)
             bots[gateway.id] = list
             for bot in list {
                 sessions[bot.route] = environment.sessions(for: bot.route)
                 sessionsObserved[bot.route] = environment.sessionsLastObserved(bot.route)
+                mainChats[bot.route] = environment.mainChatState(for: bot)
+            }
+        }
+        for live in environment.liveOps.snapshot?.gateways ?? [] {
+            switch live.coverage {
+            case .reporting, .unsupported:
+                lastGoodLive[live.gatewayID] = max(lastGoodLive[live.gatewayID] ?? .distantPast, live.observedAt)
+            case .disconnected, .authFailed, .failed: break
             }
         }
         return WatchFleetObservation(
@@ -52,6 +62,7 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
             fleetAttention: environment.attentionItems(), rosterObservedAt: environment.rosterObservedAt,
             rosterObservedAtByGateway: environment.rosterObservedAtByGateway,
             sessionsObservedAtByRoute: sessionsObserved,
+            mainChatByRoute: mainChats, lastGoodLiveObservedAt: lastGoodLive,
             routeForSessionKey: { [environment] key, gateway in
                 environment.route(forLiveOperationSessionKey: key, gatewayID: gateway)
             })
@@ -71,11 +82,39 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     /// Refreshes every source the Watch shows (roster, conversation lists and
     /// Live Ops), not just Live Ops. Each updates its own observation time only
     /// when its read succeeds.
-    func refreshFleetState() async {
+    func refreshFleetState(force: Bool) async {
         await environment.refreshRoster()
-        let routes = environment.gateways.flatMap { environment.bots(on: $0.id).map(\.route) }
-        await environment.refreshSessions(routes: routes, force: true)
+        let bots = environment.gateways.flatMap { environment.bots(on: $0.id) }
+        await environment.refreshSessions(routes: bots.map(\.route), force: force)
+        // Read-only Main chat lookup for bots whose roster reports none (the
+        // same registry the iPhone's Bot Chat uses). Never creates a chat.
+        await environment.refreshMainChatLookups(for: bots)
         await environment.liveOps.checkReportingNow()
+        logRefreshSummary(bots)
+    }
+
+    /// Counts only: no hosts, names, ids or content.
+    private func logRefreshSummary(_ bots: [FleetBot]) {
+        let gateways = environment.gateways
+        let connected = gateways.filter { environment.connectionStates[$0.id] == .connected }.count
+        let rosterSeen = gateways.filter { environment.rosterObservedAtByGateway[$0.id] != nil }.count
+        let chatsSeen = bots.filter { environment.sessionsLastObserved($0.route) != nil }.count
+        var established = 0, absent = 0, unknown = 0
+        for bot in bots {
+            switch environment.mainChatState(for: bot) {
+            case .established: established += 1
+            case .notSetUp: absent += 1
+            case .unknown: unknown += 1
+            }
+        }
+        let live = environment.liveOps.snapshot?.gateways ?? []
+        let reporting = live.filter { $0.coverage.isReporting }.count
+        log.info("""
+            watch refresh: gateways=\(gateways.count, privacy: .public) connected=\(connected, privacy: .public) \
+            rosterSeen=\(rosterSeen, privacy: .public) bots=\(bots.count, privacy: .public) \
+            chatListsSeen=\(chatsSeen, privacy: .public) mainChat(est/absent/unknown)=\(established, privacy: .public)/\(absent, privacy: .public)/\(unknown, privacy: .public) \
+            liveReporting=\(reporting, privacy: .public)/\(live.count, privacy: .public)
+            """)
     }
 
     private func item(_ gatewayID: String, _ sessionID: String, _ requestID: String) -> LiveOpsAttentionItem? {
@@ -129,11 +168,15 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
         let sessionID = request.target.sessionID
         switch request.target {
         case .mainChat:
-            let canonical = bot.canonicalSession.map { [$0.id, $0.resolvedID].compactMap { $0 } } ?? []
-            guard canonical.contains(sessionID) else {
-                return reject(canonical.isEmpty
-                    ? "This bot has no Main chat yet. Establish it on iPhone first."
-                    : "Main chat changed. Choose it again on the Watch.")
+            // Same knowledge the snapshot advertised: roster, registry lookup or a
+            // canonical open on this phone. Never an invented id.
+            switch environment.mainChatState(for: bot) {
+            case .established(let ids):
+                guard ids.contains(sessionID) else { return reject("Main chat changed. Choose it again on the Watch.") }
+            case .notSetUp:
+                return reject("This bot has no Main chat yet. Establish it on iPhone first.")
+            case .unknown:
+                return reject("Couldn't confirm this bot's Main chat. Refresh, or use iPhone.")
             }
         case .conversation:
             guard environment.sessions(for: route)?.contains(where: { $0.id == sessionID }) == true else {

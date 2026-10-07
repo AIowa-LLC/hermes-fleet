@@ -74,7 +74,9 @@ public enum WatchSnapshotBudget {
                         ? pinned?.conversationID : nil
                     return WatchBot(ref: bot.ref, displayName: bot.displayName, activity: bot.activity,
                                     conversations: capped(bot.conversations, keeping: pin),
-                                    totalConversations: bot.totalConversations ?? bot.conversations.count)
+                                    totalConversations: bot.totalConversations ?? bot.conversations.count,
+                                    mainChatStatus: bot.mainChatStatus, mainChatDiagnostic: bot.mainChatDiagnostic,
+                                    conversationsObservedAt: bot.conversationsObservedAt)
                 },
                 running: Array(gateway.running.prefix(maxRunningPerGateway)),
                 rosterObservedAt: gateway.rosterObservedAt,

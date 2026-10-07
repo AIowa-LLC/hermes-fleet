@@ -72,6 +72,13 @@ public struct WatchConversationPin: Hashable, Codable, Sendable {
     }
 }
 
+/// What the iPhone actually knows about a bot's Main chat. "Unknown" is never
+/// shown as "not set up": only a successful registry lookup (with no roster
+/// chat) is absence.
+public enum WatchMainChatStatus: String, Codable, Sendable, Hashable {
+    case established, notSetUp, unknown
+}
+
 public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
     public let ref: WatchBotRef
     public let displayName: String
@@ -80,6 +87,12 @@ public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
     /// How many conversations the phone knows for this bot before the snapshot
     /// cap. Nil from a sender that doesn't report it.
     public let totalConversations: Int?
+    /// The phone's Main chat knowledge (nil from a sender that doesn't report it).
+    public let mainChatStatus: WatchMainChatStatus?
+    /// Safe one-line reason when the status is `unknown` (stage + error case name).
+    public let mainChatDiagnostic: String?
+    /// When the phone last successfully read THIS bot's conversation list.
+    public let conversationsObservedAt: Date?
 
     /// Conversations that exist on the phone but are not in `conversations`
     /// because of the snapshot cap (not because they were removed).
@@ -91,9 +104,30 @@ public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
     /// chat is not established: the Watch never creates or guesses one.
     public var mainChat: WatchConversation? { conversations.first { $0.isMain } }
 
+    /// Honest guidance when there is no usable Main chat entry, else nil.
+    /// `rosterState` says whether the bot list itself is trustworthy right now.
+    public func mainChatGuidance(rosterState: WatchSourceState) -> String? {
+        if mainChat != nil { return nil }
+        switch mainChatStatus ?? .unknown {
+        case .established:
+            return "Main chat exists but wasn't included. Refresh."
+        case .notSetUp:
+            return rosterState == .current
+                ? "Main chat isn't set up for this bot. Open it on iPhone to establish it."
+                : "The last check found no Main chat, but this bot list is out of date. Refresh first."
+        case .unknown:
+            let why = mainChatDiagnostic.map { " (\($0))" } ?? ""
+            return "Can't tell whether Main chat exists\(why). Refresh. If it persists, open this bot on iPhone."
+        }
+    }
+
     public init(ref: WatchBotRef, displayName: String, activity: String, conversations: [WatchConversation],
-                totalConversations: Int? = nil) {
+                totalConversations: Int? = nil, mainChatStatus: WatchMainChatStatus? = nil,
+                mainChatDiagnostic: String? = nil, conversationsObservedAt: Date? = nil) {
         self.totalConversations = totalConversations
+        self.mainChatStatus = mainChatStatus
+        self.mainChatDiagnostic = mainChatDiagnostic
+        self.conversationsObservedAt = conversationsObservedAt
         self.ref = ref
         self.displayName = displayName
         self.activity = activity

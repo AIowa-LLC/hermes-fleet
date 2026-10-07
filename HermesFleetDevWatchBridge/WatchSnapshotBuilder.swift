@@ -18,6 +18,12 @@ struct WatchFleetObservation {
     var rosterObservedAtByGateway: [GatewayID: Date] = [:]
     /// Per-route time of the last SUCCESSFUL conversation-list read.
     var sessionsObservedAtByRoute: [Route: Date] = [:]
+    /// Per-bot Main chat knowledge (roster + registry lookup + canonical opens).
+    var mainChatByRoute: [Route: AppEnvironment.MainChatState] = [:]
+    /// The last time each gateway ACTUALLY answered Live Ops. Live Ops stamps a
+    /// failed attempt with the failure time, so the bridge remembers the last
+    /// good one; absent = never observed by this phone session.
+    var lastGoodLiveObservedAt: [GatewayID: Date] = [:]
     var routeForSessionKey: (String, GatewayID) -> Route?
 }
 
@@ -40,7 +46,8 @@ enum WatchSnapshotBuilder {
             }
             return WatchGateway(
                 id: gateway.id.rawValue, displayName: clip(gateway.displayName, 40), status: status,
-                coverage: coverage(live), observedAt: liveObservedAt(live),
+                coverage: coverage(live),
+                observedAt: liveObservedAt(live) ?? obs.lastGoodLiveObservedAt[gateway.id],
                 bots: bots, running: running,
                 rosterObservedAt: obs.rosterObservedAtByGateway[gateway.id],
                 conversationsObservedAt: conversationsObservedAt(gateway.id, obs))
@@ -143,11 +150,26 @@ enum WatchSnapshotBuilder {
     private static func bot(from bot: FleetBot, _ obs: WatchFleetObservation) -> WatchBot {
         var chats: [WatchConversation] = []
         var seen = Set<String>()
-        if let canonical = bot.canonicalSession {
-            let id = canonical.resolvedID ?? canonical.id
-            chats.append(WatchConversation(id: id, title: "Main chat", isMain: true))
-            seen.insert(id)
-            seen.insert(canonical.id)
+        var status: WatchMainChatStatus
+        var diagnostic: String?
+        var knownIDs: [String] = []
+        switch obs.mainChatByRoute[bot.route] {
+        case .established(let ids)?: status = .established; knownIDs = ids
+        case .notSetUp?: status = .notSetUp
+        case .unknown(let why)?: status = .unknown; diagnostic = why
+        case nil:
+            // Legacy/test observation without a lookup: only the roster is known.
+            if let canonical = bot.canonicalSession {
+                status = .established; knownIDs = [canonical.id, canonical.resolvedID].compactMap { $0 }
+            } else { status = .unknown }
+        }
+        if status == .established {
+            let rosterID = bot.canonicalSession.map { $0.resolvedID ?? $0.id }
+            if let id = rosterID ?? knownIDs.first {
+                chats.append(WatchConversation(id: id, title: "Main chat", isMain: true))
+                seen.insert(id)
+            }
+            seen.formUnion(knownIDs)
         }
         for session in (obs.sessionsByRoute[bot.route] ?? []) where !seen.contains(session.id) {
             let title = session.title.isEmpty ? (session.preview.isEmpty ? "Untitled" : session.preview) : session.title
@@ -155,7 +177,9 @@ enum WatchSnapshotBuilder {
             seen.insert(session.id)
         }
         return WatchBot(ref: WatchBotRef(gatewayID: bot.gatewayID.rawValue, profileSlug: bot.profileSlug.rawValue),
-                        displayName: clip(bot.displayName, 40), activity: bot.activity.rawValue, conversations: chats)
+                        displayName: clip(bot.displayName, 40), activity: bot.activity.rawValue, conversations: chats,
+                        mainChatStatus: status, mainChatDiagnostic: diagnostic,
+                        conversationsObservedAt: obs.sessionsObservedAtByRoute[bot.route])
     }
 
     static func clip(_ text: String, _ limit: Int) -> String {

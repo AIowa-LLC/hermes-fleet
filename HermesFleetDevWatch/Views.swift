@@ -207,8 +207,9 @@ struct ConversationPickerView: View {
                 if let main = bot.mainChat {
                     Button("Main chat") { choose(main) }
                 } else {
-                    Label("Main chat isn't set up yet. Establish it on iPhone, then refresh.", systemImage: "iphone")
-                        .font(.caption2).foregroundStyle(.orange)
+                    Label(bot.mainChatGuidance(rosterState: store.rosterState(gateway)) ?? "Main chat unavailable.",
+                          systemImage: "iphone").font(.caption2).foregroundStyle(.orange)
+                    Button("Refresh") { Task { await store.refresh() } }
                 }
             }
             Section("Conversations") {
@@ -221,8 +222,8 @@ struct ConversationPickerView: View {
                     Text("Showing \(bot.conversations.count) of \(bot.totalConversations ?? bot.conversations.count). Others: use iPhone.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                SourceRow(name: "List", state: store.conversationsState(gateway),
-                          observedAt: gateway.conversationsObservedAt, now: store.now)
+                SourceRow(name: "List", state: store.conversationsState(bot, on: gateway),
+                          observedAt: bot.conversationsObservedAt, now: store.now)
             }
         }
         .navigationTitle(bot.displayName)
@@ -278,9 +279,17 @@ struct StatusView: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
             SourceRow(name: "Bots", state: store.rosterState(gateway), observedAt: gateway.rosterObservedAt, now: store.now)
-            SourceRow(name: "Chats", state: store.conversationsState(gateway), observedAt: gateway.conversationsObservedAt, now: store.now)
+            if case .resolved(_, let bot?, _) = store.resolution {
+                SourceRow(name: "Chats (this bot)", state: store.conversationsState(bot, on: gateway),
+                          observedAt: bot.conversationsObservedAt, now: store.now)
+            } else {
+                SourceRow(name: "Chats", state: store.conversationsState(gateway), observedAt: gateway.conversationsObservedAt, now: store.now)
+            }
             SourceRow(name: "Running work", state: store.liveState(gateway), observedAt: gateway.observedAt, now: store.now)
-            if gateway.coverage != .reporting {
+            if gateway.coverage == .heldOver, gateway.observedAt == nil {
+                Label("The machine isn't reporting running work, and this iPhone hasn't seen it report yet.", systemImage: "eye.slash")
+                    .font(.caption2).foregroundStyle(.orange)
+            } else if gateway.coverage != .reporting {
                 Label(gateway.coverage.explanation, systemImage: "eye.slash").font(.caption2).foregroundStyle(.orange)
             }
         }
@@ -431,9 +440,9 @@ struct MessagesView: View {
                 }
                 if let reason = store.sendBlockReason {
                     Text(reason).font(.footnote)
-                    if store.selectedBotLacksMainChat {
-                        Label("This bot has no Main chat yet. Establish it on iPhone. The Watch never creates one.", systemImage: "iphone")
-                            .font(.caption2).foregroundStyle(.orange)
+                    if let guidance = store.selectedMainChatGuidance {
+                        Label(guidance, systemImage: "iphone").font(.caption2).foregroundStyle(.orange)
+                        Text("The Watch never creates a Main chat.").font(.caption2).foregroundStyle(.secondary)
                     }
                 } else {
                     // The exact frozen destination, shown right above the Send button.

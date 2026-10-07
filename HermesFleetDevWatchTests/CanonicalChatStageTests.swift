@@ -133,4 +133,63 @@ final class CanonicalChatStageTests: XCTestCase {
         XCTAssertEqual(SafeErrorCategory.of(ConversationError.rpcFailed("token=abc123")), "ConversationError.rpcFailed")
         XCTAssertEqual(SafeErrorCategory.of(ConversationError.notConnected), "ConversationError.notConnected")
     }
+
+    // MARK: read-only Main chat lookups (Watch bridge)
+
+    private func connected(_ seam: Seam) async -> AppEnvironment {
+        let env = await environment(seam)
+        await env.connect(to: gateway)
+        return env
+    }
+
+    func testLookupFindsExistingMainChatWithoutCreating() async {
+        let seam = Seam(.rows([CanonicalLookupRow(id: "reg-1", resolvedID: "tip-2", title: BotModeContract.canonicalChatTitle)]))
+        let env = await connected(seam)
+        let b = bot()
+        XCTAssertEqual(env.mainChatState(for: b), .unknown(diagnostic: nil), "never looked up")
+        await env.refreshMainChatLookups(for: [b])
+        XCTAssertEqual(env.mainChatState(for: b), .established(ids: ["tip-2"]))
+        XCTAssertEqual(seam.creates, 0)
+    }
+
+    func testEmptyLookupWithNoRosterIdIsNotSetUpAndStillNeverCreates() async {
+        let seam = Seam(.rows([]))
+        let env = await connected(seam)
+        await env.refreshMainChatLookups(for: [bot()])
+        XCTAssertEqual(env.mainChatState(for: bot()), .notSetUp)
+        XCTAssertEqual(seam.creates, 0, "reporting 'not set up' never creates the chat")
+    }
+
+    func testLookupErrorIsUnknownNeverNotSetUp() async {
+        let seam = Seam(.error(RosterError.rpcFailed("boom")))
+        let env = await connected(seam)
+        await env.refreshMainChatLookups(for: [bot()])
+        guard case .unknown(let why) = env.mainChatState(for: bot()) else { return XCTFail("a failed lookup is not absence") }
+        XCTAssertEqual(why, "lookup: RosterError.rpcFailed")
+        XCTAssertEqual(seam.creates, 0)
+    }
+
+    func testRosterKnownBotsAreNotLookedUpAndNotConnectedIsUnknown() async {
+        let seam = Seam(.rows([]))
+        let env = await connected(seam)
+        let known = bot(canonical: "roster-1")
+        await env.refreshMainChatLookups(for: [known])
+        XCTAssertEqual(seam.lookups, 0)
+        XCTAssertEqual(env.mainChatState(for: known), .established(ids: ["roster-1"]))
+        // A gateway that isn't connected can't be asked: unknown, not absent.
+        let cold = await environment(seam)
+        await cold.refreshMainChatLookups(for: [bot()])
+        guard case .unknown = cold.mainChatState(for: bot()) else { return XCTFail() }
+        XCTAssertEqual(seam.lookups, 0)
+    }
+
+    func testLookupStateIsPerRouteAndPerGateway() async {
+        let seam = Seam(.rows([CanonicalLookupRow(id: "reg-1", title: BotModeContract.canonicalChatTitle)]))
+        let env = await connected(seam)
+        let other = FleetBot(route: Route(gatewayID: GatewayID(rawValue: "macbook"), profileSlug: ProfileSlug(rawValue: "apple")),
+                             displayName: "Apple")
+        await env.refreshMainChatLookups(for: [bot()])
+        XCTAssertEqual(env.mainChatState(for: bot()), .established(ids: ["reg-1"]))
+        XCTAssertEqual(env.mainChatState(for: other), .unknown(diagnostic: nil), "same slug on another machine is not inferred")
+    }
 }

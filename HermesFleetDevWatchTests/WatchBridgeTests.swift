@@ -24,7 +24,7 @@ private final class FakeBackend: WatchBridgeBackend {
     func snapshot(generation: Int, now: Date, pinned: WatchConversationPin?) -> WatchSnapshot { lastPin = pinned; return .hidden(flavor: .dev, generation: generation, builtAt: now) }
     func isGatewayReachable(_ g: String) -> Bool { reachable.contains(g) }
     func refreshObservation() async { calls.append("refresh") }
-    func refreshFleetState() async { calls.append("refreshFleet") }
+    func refreshFleetState(force: Bool) async { calls.append(force ? "refreshFleet" : "refreshFleetRoutine") }
     func pendingApproval(gatewayID: String, sessionID: String, requestID: String) -> WatchPendingApproval? {
         pending["\(gatewayID)|\(sessionID)|\(requestID)"]
     }
@@ -411,6 +411,94 @@ final class WatchBridgeTests: XCTestCase {
         XCTAssertEqual(b.lastPin, pin)
         _ = await c.handle(.refresh(flavor: .dev, pinned: nil))
         XCTAssertNil(b.lastPin, "clearing the selection clears the pin")
+    }
+
+    // MARK: Main chat resolution, per-bot freshness, live observation (device-test regressions)
+
+    func testMainChatFromRegistryLookupWhenRosterReportsNone() {
+        var o = observation()
+        let nas = o.gateways[1].id
+        let route = o.botsByGateway[nas]![0].route
+        o.mainChatByRoute[route] = .established(ids: ["reg-1"])
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        let bot = s.gateways[1].bots[0]
+        XCTAssertEqual(bot.mainChat?.id, "reg-1", "exists on the phone => resolved on the Watch")
+        XCTAssertEqual(bot.mainChatStatus, .established)
+    }
+
+    func testMainChatNotSetUpAndUnknownAreDistinctAndNeverInvented() {
+        var o = observation()
+        let nas = o.gateways[1].id
+        let route = o.botsByGateway[nas]![0].route
+        o.mainChatByRoute[route] = .notSetUp
+        var bot = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true).gateways[1].bots[0]
+        XCTAssertNil(bot.mainChat); XCTAssertEqual(bot.mainChatStatus, .notSetUp)
+        o.mainChatByRoute[route] = .unknown(diagnostic: "lookup: RosterError.notConnected")
+        bot = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 2, now: t0, contentVisible: true).gateways[1].bots[0]
+        XCTAssertNil(bot.mainChat); XCTAssertEqual(bot.mainChatStatus, .unknown)
+        XCTAssertEqual(bot.mainChatDiagnostic, "lookup: RosterError.notConnected")
+    }
+
+    func testSameBotSlugOnTwoMachinesResolvesMainChatIndependently() {
+        var o = observation()   // "scout" on both mac (roster canon1) and nas (none)
+        let mac = o.gateways[0].id, nas = o.gateways[1].id
+        o.mainChatByRoute[o.botsByGateway[mac]![0].route] = .established(ids: ["canon1"])
+        o.mainChatByRoute[o.botsByGateway[nas]![0].route] = .notSetUp
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].bots[0].mainChat?.id, "canon1")
+        XCTAssertNil(s.gateways[1].bots[0].mainChat)
+        XCTAssertEqual(s.gateways[1].bots[0].mainChatStatus, .notSetUp)
+    }
+
+    func testLookupFoundIdIsNotDuplicatedAsANamedConversation() {
+        var o = observation()
+        let nas = o.gateways[1].id
+        let route = o.botsByGateway[nas]![0].route
+        o.mainChatByRoute[route] = .established(ids: ["reg-1"])
+        o.sessionsByRoute[route] = [SessionSummary(id: "reg-1", title: "Bot Chat"), SessionSummary(id: "s2", title: "Docs")]
+        let ids = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+            .gateways[1].bots[0].conversations.map(\.id)
+        XCTAssertEqual(ids, ["reg-1", "s2"])
+    }
+
+    func testConversationFreshnessIsPerBotNotAllOrNothing() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        let atlas = FleetBot(route: Route(gatewayID: mac, profileSlug: ProfileSlug(rawValue: "atlas")), displayName: "Atlas")
+        o.botsByGateway[mac]?.append(atlas)
+        let scout = o.botsByGateway[mac]![0].route
+        o.sessionsObservedAtByRoute = [scout: t0.addingTimeInterval(-5)]
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].bots[0].conversationsObservedAt, t0.addingTimeInterval(-5))
+        XCTAssertNil(s.gateways[0].bots[1].conversationsObservedAt, "atlas never read; scout still shows its own time")
+    }
+
+    func testHeldOverRunningWorkKeepsTheLastGoodObservationTime() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        // Live Ops now reports a failure stamped "now"; the bridge remembered the last good read.
+        o.liveOps = LiveOpsSnapshot(gateways: [
+            LiveOpsGatewaySnapshot(gatewayID: mac, coverage: .failed(reason: "x"), operations: [], observedAt: t0.addingTimeInterval(500), hasEverReported: true)])
+        o.lastGoodLiveObservedAt = [mac: t0.addingTimeInterval(-30)]
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0.addingTimeInterval(501), contentVisible: true)
+        XCTAssertEqual(s.gateways[0].coverage, .heldOver)
+        XCTAssertEqual(s.gateways[0].observedAt, t0.addingTimeInterval(-30), "last real observation, not the failure stamp")
+        XCTAssertNil(s.approvals.first?.observedAt, "approvals never use a held-over time")
+    }
+
+    func testForegroundCadenceFetchesOnlyWhenWatchInstalledActiveAndUnlocked() async {
+        let (b, c) = make()
+        await c.refreshForWatchIfForeground(observing: false)
+        XCTAssertTrue(b.calls.isEmpty, "no Watch installed => no fetching")
+        b.isAppActive = false
+        await c.refreshForWatchIfForeground(observing: true)
+        XCTAssertTrue(b.calls.isEmpty, "backgrounded => no fetching")
+        b.isAppActive = true; b.isContentVisible = false
+        await c.refreshForWatchIfForeground(observing: true)
+        XCTAssertTrue(b.calls.isEmpty, "App Lock => no fetching")
+        b.isContentVisible = true
+        await c.refreshForWatchIfForeground(observing: true)
+        XCTAssertEqual(b.calls, ["refreshFleetRoutine"], "routine cadence respects list TTLs (not forced)")
     }
 
     func testLockedSnapshotLeaksNoNames() throws {

@@ -125,6 +125,12 @@ public final class WatchStore {
         WatchSourcePolicy.state(observedAt: gateway.conversationsObservedAt, gatewayStatus: gateway.status, now: clock())
     }
 
+    /// Conversation-list freshness for ONE bot (per-bot, so one bot that was
+    /// never read doesn't make its siblings look unobserved).
+    public func conversationsState(_ bot: WatchBot, on gateway: WatchGateway) -> WatchSourceState {
+        WatchSourcePolicy.state(observedAt: bot.conversationsObservedAt, gatewayStatus: gateway.status, now: clock())
+    }
+
     public func liveState(_ gateway: WatchGateway) -> WatchSourceState {
         WatchSourcePolicy.state(observedAt: gateway.observedAt, gatewayStatus: gateway.status, now: clock())
     }
@@ -148,11 +154,13 @@ public final class WatchStore {
         }
     }
 
-    /// The Main chat for the selected bot is missing from what the iPhone
-    /// reported: it must be established on iPhone, never created here.
-    public var selectedBotLacksMainChat: Bool {
-        if case .resolved(_, let bot?, _) = resolution { return bot.mainChat == nil }
-        return false
+    /// Why the selected bot has no Main chat to send to (accurate: not set up vs
+    /// can't tell vs list out of date), or nil. Never created from the Watch.
+    public var selectedMainChatGuidance: String? {
+        if case .resolved(let gateway, let bot?, _) = resolution {
+            return bot.mainChatGuidance(rosterState: rosterState(gateway))
+        }
+        return nil
     }
 
     public func approvalPresence(_ approval: WatchApproval) -> WatchApprovalPresence {
