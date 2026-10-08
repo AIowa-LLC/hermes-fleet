@@ -338,7 +338,16 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         for record in records {
             let id = GatewayID(rawValue: record.id)
             guard registry.gateway(for: id) == nil else { continue }
-            let hasCredential = (try? await credentials.loadCredential(for: id)) != nil
+            // A credential READ FAILURE (Keychain unavailable, e.g. device
+            // locked on a background launch) is not "no credential": keep the
+            // durable record's flag rather than relabelling a configured
+            // gateway as unconfigured. Only a definitive not-found is false.
+            let hasCredential: Bool
+            do {
+                hasCredential = try await credentials.loadCredential(for: id) != nil
+            } catch {
+                hasCredential = record.authConfigured
+            }
             let gateway = FleetGateway(
                 id: id,
                 displayName: record.displayName,

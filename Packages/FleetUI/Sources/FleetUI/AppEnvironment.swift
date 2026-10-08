@@ -304,6 +304,10 @@ public final class AppEnvironment {
     /// then the phase stays `.loading` — an unresolved registry must never
     /// render the setup surface (the transient onboarding flash this guards).
     @ObservationIgnored private var durableGatewayRestoreCompleted = false
+    /// True only after a launch-time restore exhausted its retries — the one
+    /// state in which a later foreground pass re-attempts the durable read
+    /// (never while the launch `load()` is still in flight).
+    @ObservationIgnored private var durableGatewayRestoreFailed = false
 
     /// First-run gate (hydration model): the root shell distinguishes
     /// "registry not loaded yet" from "loaded and empty" so a brand-new user
@@ -788,6 +792,7 @@ public final class AppEnvironment {
                 restored = (try? await registry.restorePersistedGateways()) != nil
             }
             durableGatewayRestoreCompleted = restored
+            durableGatewayRestoreFailed = !restored
             // A broken record store must not brick launch — log and continue
             // with the (possibly empty) in-memory registry.
             #if DEBUG
@@ -902,9 +907,26 @@ public final class AppEnvironment {
         _ = await (rosterWave, connectionWave)
     }
 
+    /// Re-attempt the durable gateway read after a launch-time failure
+    /// (record store / file protection unavailable while the device was
+    /// locked). Idempotent: the registry skips already-registered records.
+    private func retryDurableGatewayRestore() async {
+        guard (try? await registry.restorePersistedGateways()) != nil else { return }
+        durableGatewayRestoreCompleted = true
+        durableGatewayRestoreFailed = false
+        await reloadGateways()
+    }
+
     private func reloadGateways() async {
         gateways = await registry.allGateways()
-        connectionIntent.prune(to: Set(gateways.map(\.id)))
+        // Intent is pruned only against an AUTHORITATIVE registry: an empty
+        // list from a registry whose durable restore has not answered (or
+        // failed) is "unknown", never "the user has no gateways" — pruning
+        // here would permanently erase the user's connect intent and leave
+        // saved gateways offline until a manual Connect.
+        if durableGatewayRestoreCompleted {
+            connectionIntent.prune(to: Set(gateways.map(\.id)))
+        }
         for gateway in gateways where connectionStates[gateway.id] == nil {
             connectionStates[gateway.id] = .idle
         }
@@ -2222,6 +2244,16 @@ public final class AppEnvironment {
     /// auth/unsupported failures clear only that gateway's intent, while
     /// transient failures remain retryable.
     public func restoreIntendedConnections() async {
+        // A foreground/unlock restore can race the launch `load()` (the
+        // scenePhase `.active` hook fires while hydration is still reading
+        // the record store) or follow a failed durable read. In both cases
+        // the in-memory gateway list is not authoritative: do nothing and,
+        // above all, never prune the persisted intent. Hydration restores
+        // connections itself once the registry has answered.
+        if durableGatewayRestoreFailed, !durableGatewayRestoreCompleted {
+            await retryDurableGatewayRestore()
+        }
+        guard durableGatewayRestoreCompleted else { return }
         guard !gateways.isEmpty else {
             connectionIntent.prune(to: [])
             return

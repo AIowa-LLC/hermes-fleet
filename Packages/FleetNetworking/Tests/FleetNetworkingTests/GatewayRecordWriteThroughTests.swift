@@ -186,6 +186,50 @@ final class GatewayRecordWriteThroughTests: XCTestCase {
         XCTAssertTrue(hasCred, "restored gateway still has its Keychain credential")
     }
 
+    /// A Keychain READ FAILURE (device locked on a background launch) is not
+    /// "no credential": the restored gateway keeps its stored auth flags
+    /// instead of being relabelled unconfigured, and nothing is rewritten.
+    func testRestoreKeepsAuthFlagWhenCredentialReadFails() async throws {
+        struct LockedKeychain: CredentialStoring {
+            func saveCredential(_ credential: GatewayCredential, for gatewayID: GatewayID) async throws {}
+            func loadCredential(for gatewayID: GatewayID) async throws -> GatewayCredential? {
+                throw NSError(domain: "scripted.keychain", code: -25308)
+            }
+            func deleteCredential(for gatewayID: GatewayID) async throws {}
+        }
+        let records = TestRecordStore()
+        try await records.saveGatewayRecord(StoredGatewayRecord(
+            id: gatewayID.rawValue,
+            displayName: "Lab Node",
+            endpoint: endpoint.absoluteString,
+            authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true),
+            authConfigured: true))
+        let savesBefore = records.saveCount
+        let service = GatewayRegistryService(
+            credentials: LockedKeychain(),
+            connectionFactory: { gateway, _ in StubOfflineConnection(gatewayID: gateway.id) },
+            recordStore: records)
+
+        let restored = try await service.restorePersistedGateways()
+
+        XCTAssertEqual(restored.first?.authConfigured, true)
+        XCTAssertEqual(restored.first?.authConfiguration.credentialStored, true)
+        XCTAssertEqual(records.saveCount, savesBefore, "a failed read must not rewrite the saved record")
+    }
+
+    /// A definitive not-found still reports unconfigured (explicitly missing
+    /// credential is not masked by the durable flag).
+    func testRestoreReportsUnconfiguredWhenCredentialDefinitivelyMissing() async throws {
+        let records = TestRecordStore()
+        try await records.saveGatewayRecord(StoredGatewayRecord(
+            id: gatewayID.rawValue, displayName: "Lab Node", endpoint: endpoint.absoluteString,
+            authConfiguration: GatewayAuthConfiguration(strategy: .usernamePassword, credentialStored: true),
+            authConfigured: true))
+        let (service, _, _) = await makeService(records: records)
+        let restored = try await service.restorePersistedGateways()
+        XCTAssertEqual(restored.first?.authConfigured, false)
+    }
+
     func testRestoreIsIdempotentAndNeverDuplicates() async throws {
         let records = TestRecordStore()
         try await records.saveGatewayRecord(StoredGatewayRecord(

@@ -1,4 +1,5 @@
 import XCTest
+import os
 import FleetCore
 import FleetNetworking
 import FleetSecurity
@@ -626,6 +627,124 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertTrue(environment.isConnectionIntended(laptop))
         XCTAssertEqual(connections[workstation]?.connectCount, 1)
         XCTAssertEqual(connections[laptop]?.connectCount, 1)
+    }
+
+    // MARK: Cold-launch persistence races (Fleet Dev build 4 report)
+
+    private final class FlakyRecordStore: GatewayRecordStoring, @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock(initialState: (records: [String: StoredGatewayRecord](), failing: false))
+        var failing: Bool {
+            get { lock.withLock { $0.failing } }
+            set { lock.withLock { $0.failing = newValue } }
+        }
+        func saveGatewayRecord(_ record: StoredGatewayRecord) async throws {
+            lock.withLock { $0.records[record.id] = record }
+        }
+        func deleteGatewayRecord(id: GatewayID) async throws {
+            lock.withLock { _ = $0.records.removeValue(forKey: id.rawValue) }
+        }
+        func loadGatewayRecords() async throws -> [StoredGatewayRecord] {
+            try lock.withLock { state in
+                if state.failing { throw CacheStoreError.storeUnavailable("scripted") }
+                return state.records.values.sorted { $0.id < $1.id }
+            }
+        }
+    }
+
+    /// Relaunch fixture: a fresh registry + runtime over SHARED durable
+    /// state (record store + connect-intent defaults), NOT yet loaded.
+    private func makeRelaunchEnvironment(
+        records: FlakyRecordStore,
+        credentials: InMemoryCredentialStore,
+        defaults: UserDefaults
+    ) -> (AppEnvironment, ScriptedConnection) {
+        let registry = GatewayRegistryService(
+            credentials: credentials,
+            connectionFactory: { gateway, _ in ScriptedConnection(gatewayID: gateway.id) },
+            recordStore: records)
+        let connection = ScriptedConnection(gatewayID: GatewayID(rawValue: "workstation"))
+        let environment = AppEnvironment(
+            registry: registry,
+            roster: FleetRosterService(
+                registry: registry,
+                credentials: credentials,
+                sessionFactory: { gateway, _ in EmptyRosterSession(gatewayID: gateway.id) }),
+            cache: try! SwiftDataCacheStore.makeInMemory(),
+            sessionList: EmptySessions(),
+            connectionFactory: { _, _ in connection },
+            health: TestHealth(),
+            connectionIntentDefaults: defaults)
+        return (environment, connection)
+    }
+
+    /// Session 1: the user adds + connects a gateway; returns the shared state.
+    private func connectedFirstSession() async throws -> (FlakyRecordStore, InMemoryCredentialStore, UserDefaults) {
+        let records = FlakyRecordStore()
+        let credentials = InMemoryCredentialStore()
+        let defaults = suiteDefaults()
+        let (first, _) = makeRelaunchEnvironment(records: records, credentials: credentials, defaults: defaults)
+        _ = try await first.addGateway(registration("workstation"))
+        await first.connect(to: GatewayID(rawValue: "workstation"))
+        XCTAssertTrue(first.isConnectionIntended(GatewayID(rawValue: "workstation")))
+        return (records, credentials, defaults)
+    }
+
+    /// The scenePhase `.active` hook can run while launch `load()` has not
+    /// populated the registry yet. That early restore must not prune the
+    /// persisted intent, or the saved gateway comes back offline with no
+    /// automatic reconnect.
+    func testRestoreBeforeHydrationPreservesPersistedIntent() async throws {
+        let (records, credentials, defaults) = try await connectedFirstSession()
+        let id = GatewayID(rawValue: "workstation")
+        let (second, connection) = makeRelaunchEnvironment(
+            records: records, credentials: credentials, defaults: defaults)
+
+        await second.restoreIntendedConnections()   // racing foreground hook
+        XCTAssertEqual(connection.connectCount, 0)
+        XCTAssertTrue(second.isConnectionIntended(id), "unhydrated restore must not erase intent")
+
+        await second.load()
+        await second.restoreIntendedConnections()
+        XCTAssertEqual(second.gateways.map(\.id), [id], "saved gateway is still present")
+        XCTAssertEqual(second.connectionStates[id], .connected, "automatic recovery without manual Connect")
+    }
+
+    /// A failed durable read is "unknown", not "no gateways": intent survives
+    /// and a later foreground pass restores the saved gateway and reconnects.
+    func testFailedDurableReadPreservesIntentAndForegroundRetryRecovers() async throws {
+        let (records, credentials, defaults) = try await connectedFirstSession()
+        let id = GatewayID(rawValue: "workstation")
+        let (second, connection) = makeRelaunchEnvironment(
+            records: records, credentials: credentials, defaults: defaults)
+
+        records.failing = true                       // e.g. file protection while locked
+        await second.load()
+        XCTAssertTrue(second.gateways.isEmpty)
+        XCTAssertEqual(second.hydrationPhase, .loading, "unresolved read is not 'unconfigured'")
+        XCTAssertTrue(second.isConnectionIntended(id), "failed read must not erase intent")
+
+        await second.restoreIntendedConnections()    // still failing → still no change
+        XCTAssertTrue(second.isConnectionIntended(id))
+
+        records.failing = false                      // store readable again
+        await second.restoreIntendedConnections()    // foreground pass
+        XCTAssertEqual(second.gateways.map(\.id), [id])
+        XCTAssertEqual(second.hydrationPhase, .configured)
+        XCTAssertEqual(second.connectionStates[id], .connected)
+        XCTAssertEqual(connection.connectCount, 1)
+    }
+
+    /// An explicit removal still prunes intent once the registry has
+    /// authoritatively answered (no resurrected connect for a deleted gateway).
+    func testAuthoritativeEmptyRegistryStillPrunesIntent() async throws {
+        let (records, credentials, defaults) = try await connectedFirstSession()
+        let id = GatewayID(rawValue: "workstation")
+        try await records.deleteGatewayRecord(id: id)
+        let (second, _) = makeRelaunchEnvironment(
+            records: records, credentials: credentials, defaults: defaults)
+        await second.load()
+        await second.restoreIntendedConnections()
+        XCTAssertFalse(second.isConnectionIntended(id))
     }
 
     func testZeroGatewayRestoreDoesNoConnectionWork() async {
