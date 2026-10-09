@@ -221,7 +221,8 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
     private func makeRecoveryEnvironment(
         id: GatewayID,
         connection: RecoveringConnection,
-        timing: ConnectionRecoveryTiming
+        timing: ConnectionRecoveryTiming,
+        invalidatorAll: FleetGatewaySessionInvalidatorAll? = nil
     ) async -> AppEnvironment {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
@@ -240,6 +241,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             health: TestHealth(),
             seedRegistrations: [registration(id.rawValue)],
             connectionIntentDefaults: suiteDefaults(),
+            gatewaySessionInvalidatorAll: invalidatorAll,
             recoveryTiming: timing)
         await environment.load()
         return environment
@@ -657,6 +659,36 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
                        "the queued foreground restore should reconnect after teardown")
         XCTAssertEqual(environment.connectionStates[id], .connected)
         XCTAssertTrue(environment.isConnectionIntended(id))
+    }
+
+    /// A manual retry suspended in transport teardown must not slip through
+    /// the local-cache clear: the clear wipes durable intent before its first
+    /// await, so a retry resuming in that window would otherwise re-record
+    /// intent and open a session after the privacy clear removed it.
+    func testCacheClearDuringInFlightReconnectPreventsALateSession() async throws {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30),
+            invalidatorAll: { do { try await Task.sleep(for: .seconds(0.3)) } catch {} })
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let retry = Task { await environment.reconnect(to: id) }
+        let retryStarted = await waitUntil { environment.reconnectingGatewayIDs.contains(id) }
+        XCTAssertTrue(retryStarted)
+
+        // The invalidator's delay spans the retry's teardown window, so an
+        // uncancelled retry would resume and open a session mid-clear.
+        try await environment.clearLocalCache()
+        await retry.value
+
+        XCTAssertEqual(connection.connectCount, 1,
+                       "cache clearing must cancel the in-flight retry before it can open a late session")
+        XCTAssertFalse(environment.isConnectionIntended(id),
+                       "the clear must not leak intent back through a racing retry")
+        XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
     }
 
     /// The UI's Connect button calls `connect(to:)` directly: after the budget

@@ -1919,6 +1919,13 @@ public final class AppEnvironment {
         // in-memory session objects are then discarded so stale transcript
         // rows cannot reappear in the UI after the user confirms deletion.
         connectionIntent.removeAll()
+        // Invalidate in-flight retries before the first suspension: a retry
+        // that resumes during the invalidator/teardown awaits would otherwise
+        // pass its staleness guard, re-record the intent removed above, and
+        // open a late session (mirrors disconnect(from:)'s early invalidation).
+        for id in Array(reconnectOperationIDs.keys) {
+            reconnectOperationIDs[id] = nil
+        }
         deferredReconnectIDsDuringTeardown.removeAll()
         reconnectingGatewayIDs.removeAll()
         await gatewaySessionInvalidatorAll?()
