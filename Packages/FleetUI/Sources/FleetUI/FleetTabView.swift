@@ -146,6 +146,12 @@ public struct FleetTabView: View {
             }
         }
         .tint(theme.highlight)
+        // Add to Fleet: a pairing link opened from outside the app. Held until the app is
+        // unlocked and the registry has loaded, so a cold launch from a link never shows a
+        // gateway's identity over the lock screen or races hydration.
+        .pairingLinkPresenter(
+            environment.pairing,
+            isReady: !lockController.isLocked && environment.hydrationPhase != .loading)
         .onChange(of: lockController.isLocked) { if lockController.isLocked { showingCommandCenter = false; drawerPresented = false } }
         .onChange(of: navigation.selection) { _, _ in
             drawerPresented = false

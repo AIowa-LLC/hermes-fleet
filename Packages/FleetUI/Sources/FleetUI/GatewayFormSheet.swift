@@ -36,6 +36,8 @@ struct GatewayFormSheet: View {
     private let reviewKey: (URL) async throws -> TLSKeyReview
     /// True when the edited gateway already has a stored pin.
     private let tlsPinned: Bool
+    /// Add to Fleet: when set (and available), the form offers "Add with Pairing Link".
+    private let pairing: PairingCoordinator?
 
     /// The root-owned draft store this form binds to (P0-2).
     @Bindable private var draftStore: GatewayFormDraftStore
@@ -44,6 +46,8 @@ struct GatewayFormSheet: View {
     @State private var isSaving = false
     /// F2: camera pairing-scanner presentation (fills the draft on success).
     @State private var isShowingScanner = false
+    /// Add to Fleet pairing-link screen presentation.
+    @State private var isShowingPairing = false
     /// Fingerprint awaiting the user's explicit confirmation.
     @State private var pendingReview: TLSKeyReview?
     @State private var isReviewing = false
@@ -55,10 +59,12 @@ struct GatewayFormSheet: View {
         initial: FleetGateway?,
         draftStore: GatewayFormDraftStore,
         tlsPinned: Bool = false,
+        pairing: PairingCoordinator? = nil,
         reviewKey: @escaping (URL) async throws -> TLSKeyReview,
         onSave: @escaping (GatewayRegistration, GatewayCredential?, TLSKeyReview?) async throws -> Void
     ) {
         self.tlsPinned = tlsPinned
+        self.pairing = pairing
         self.reviewKey = reviewKey
         self.title = title
         self.saveButton = saveButton
@@ -70,6 +76,28 @@ struct GatewayFormSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if existing == nil, let pairing, pairing.isAvailable {
+                    // Add to Fleet: the secure way to add a gateway when you're not at the
+                    // computer. The manual fields and the scanner below stay available.
+                    Section {
+                        Button {
+                            pairing.beginManualEntry()
+                            isShowingPairing = true
+                        } label: {
+                            Label("Add with Pairing Link", systemImage: "link.badge.plus")
+                                .foregroundStyle(theme.textPrimary)
+                        }
+                        .accessibilityIdentifier("fleet.gateways.form.pairing-link")
+                    } header: {
+                        Text("Add to Fleet")
+                            .foregroundStyle(theme.textSecondary)
+                    } footer: {
+                        Text("Ask Hermes for a short-lived, single-use pairing link. You confirm which gateway and what access before anything is added. Or fill in the details below.")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+
                 Section {
                     TextField("Display Name", text: $draftStore.displayName)
                         .foregroundStyle(theme.textPrimary)
@@ -289,8 +317,44 @@ struct GatewayFormSheet: View {
         } message: { review in
             Text("\(trimmedName.isEmpty ? "This gateway" : trimmedName) at \(Redaction.redactedURL(review.endpoint)) presented this key (SHA-256):\n\n\(review.displayFingerprint)\n\nCompare it with a trusted source before you trust it. If it does not match, cancel.")
         }
+        .sheet(isPresented: $isShowingPairing, onDismiss: {
+            // Only end the flow this sheet showed; a link that arrived meanwhile owns the next one.
+            if pairing?.entry == .manual { pairing?.dismiss() }
+        }) {
+            if let pairing {
+                PairingSheet(coordinator: pairing) { added in
+                    isShowingPairing = false
+                    // The gateway is in Fleet: this form has nothing left to do. Dismissing a
+                    // sheet while the sheet it presented is still going away is ignored, so wait.
+                    if added {
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(500))
+                            dismiss()
+                        }
+                    }
+                }
+            }
+        }
+        // A link opened from outside the app takes over: close this sheet so the root
+        // presenter can show it.
+        .onChange(of: pairing?.flowID) { _, _ in
+            if let pairing, pairing.entry == .link, pairing.isActive {
+                isShowingPairing = false
+                dismiss()
+            }
+        }
         .sheet(isPresented: $isShowingScanner) {
-            GatewayPairingScannerView(draftStore: draftStore)
+            GatewayPairingScannerView(draftStore: draftStore, onPairingLink: { raw in
+                guard let pairing, pairing.isAvailable else { return false }
+                pairing.beginManualEntry()
+                pairing.receive(text: raw, entry: .manual)
+                // Let the scanner finish dismissing before the pairing screen presents.
+                Task {
+                    try? await Task.sleep(for: .milliseconds(450))
+                    isShowingPairing = true
+                }
+                return true
+            })
         }
         // P0-2: the form is deliberate — prevent accidental swipe-dismiss so
         // the user is never silently thrown out of an in-progress credential
@@ -336,7 +400,7 @@ struct GatewayFormSheet: View {
         switch draftStore.strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword: return false
+        case .usernamePassword, .deviceCredential: return false
         }
     }
 

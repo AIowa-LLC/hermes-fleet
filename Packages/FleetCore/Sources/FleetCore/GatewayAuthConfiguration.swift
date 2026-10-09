@@ -27,6 +27,12 @@ public struct GatewayAuthConfiguration: Hashable, Sendable, Codable {
         /// credential is the username + password pair (stored as one Keychain
         /// item).
         case usernamePassword
+        /// A device-specific credential issued by redeeming a short-lived,
+        /// single-use pairing invitation (Add to Fleet). The device credential
+        /// is exchanged at `POST /auth/device-login` for a normal session
+        /// cookie, then `POST /api/auth/ws-ticket` → `?ticket=`, exactly like
+        /// the password flow. It is revocable on the gateway and by Remove.
+        case deviceCredential
     }
 
     public var strategy: Strategy

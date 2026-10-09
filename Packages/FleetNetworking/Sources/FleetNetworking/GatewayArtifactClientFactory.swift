@@ -76,6 +76,15 @@ public enum GatewayArtifactRetrieval {
                     baseURL: base, urlSession: loginSession
                 ).login(username: username, password: stored.rawValue)
                 return .cookie(cookie)
+            case .deviceCredential:
+                guard let stored = try? await credentialStore.loadCredential(for: gatewayID) else {
+                    throw ArtifactTransportError.authenticationRequired(
+                        detail: "no stored credential for this gateway")
+                }
+                let cookie = try await DeviceLoginClient(
+                    baseURL: base, urlSession: loginSession
+                ).login(credential: stored.rawValue)
+                return .cookie(cookie)
             }
         }
 

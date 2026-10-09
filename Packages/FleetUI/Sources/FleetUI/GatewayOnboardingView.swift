@@ -120,6 +120,7 @@ public struct GatewayOnboardingView: View {
                 saveButton: "Add",
                 initial: nil,
                 draftStore: environment.gatewayFormDraft,
+                pairing: environment.pairing,
                 reviewKey: { try await environment.reviewTLSKey(for: $0) }
             ) { registration, credential, tlsReview in
                 _ = try await environment.addGateway(

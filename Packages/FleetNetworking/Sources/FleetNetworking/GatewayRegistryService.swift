@@ -291,6 +291,11 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         (try? await credentials.loadCredential(for: id)) != nil
     }
 
+    public func credential(for id: GatewayID) async -> GatewayCredential? {
+        guard registry.gateway(for: id) != nil else { return nil }
+        return try? await credentials.loadCredential(for: id)
+    }
+
     public func testConnection(to id: GatewayID) async throws -> GatewayTestResult {
         guard let gateway = registry.gateway(for: id) else {
             throw GatewayRegistryError.notFound(id)

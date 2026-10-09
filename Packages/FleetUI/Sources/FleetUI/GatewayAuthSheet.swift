@@ -38,55 +38,78 @@ struct GatewayAuthSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("Strategy", selection: $strategy) {
-                        Text("None").tag(GatewayAuthConfiguration.Strategy.none)
-                        Text("Session Token").tag(GatewayAuthConfiguration.Strategy.sessionToken)
-                        Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
-                        Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
-                        Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
+                if strategy == .deviceCredential {
+                    // Paired through Add to Fleet: the credential is specific to this phone and
+                    // managed with the gateway (revocable there); there is nothing to edit here.
+                    Section {
+                        LabeledContent("Sign-in") {
+                            Text("Paired device")
+                                .foregroundStyle(theme.textPrimary)
+                        }
+                        .accessibilityIdentifier("fleet.gateways.auth.paired")
+                        LabeledContent("Credential stored") {
+                            Text(credentialStored ? "Yes" : "No")
+                                .foregroundStyle(credentialStored ? theme.textPrimary : theme.textSecondary)
+                        }
+                    } header: {
+                        Text("Strategy")
+                            .foregroundStyle(theme.textSecondary)
+                    } footer: {
+                        Text("This gateway was added with a pairing link. Its credential belongs to this phone only, is kept in Keychain, and can be revoked on the gateway. To change how this phone signs in, remove the gateway and add it again.")
+                            .foregroundStyle(theme.textSecondary)
                     }
-                    .accessibilityIdentifier("fleet.gateways.auth.strategy")
+                } else {
+                    Section {
+                        Picker("Strategy", selection: $strategy) {
+                            Text("None").tag(GatewayAuthConfiguration.Strategy.none)
+                            Text("Session Token").tag(GatewayAuthConfiguration.Strategy.sessionToken)
+                            Text("Bearer Token").tag(GatewayAuthConfiguration.Strategy.bearerToken)
+                            Text("Loopback Token").tag(GatewayAuthConfiguration.Strategy.loopbackToken)
+                            Text("Username & Password").tag(GatewayAuthConfiguration.Strategy.usernamePassword)
+                        }
+                        .accessibilityIdentifier("fleet.gateways.auth.strategy")
 
-                    LabeledContent("Credential stored") {
-                        Text(credentialStored ? "Yes" : "No")
-                            .foregroundStyle(credentialStored ? theme.textPrimary : theme.textSecondary)
+                        LabeledContent("Credential stored") {
+                            Text(credentialStored ? "Yes" : "No")
+                                .foregroundStyle(credentialStored ? theme.textPrimary : theme.textSecondary)
+                        }
+                    } header: {
+                        Text("Strategy")
+                            .foregroundStyle(theme.textSecondary)
+                    } footer: {
+                        Text("The credential itself lives in Keychain only and is never shown.")
+                            .foregroundStyle(theme.textSecondary)
                     }
-                } header: {
-                    Text("Strategy")
-                        .foregroundStyle(theme.textSecondary)
-                } footer: {
-                    Text("The credential itself lives in Keychain only and is never shown.")
-                        .foregroundStyle(theme.textSecondary)
-                }
 
-                Section("Credential") {
-                    if needsTokenEntry {
-                        SecureField("New token", text: $tokenText)
-                            .textContentType(.password)
-                            .accessibilityIdentifier("fleet.gateways.auth.token")
-                        Button("Save Token") { saveToken() }
-                            .disabled(tokenText.isEmpty || isBusy)
-                            .accessibilityIdentifier("fleet.gateways.auth.save-token")
+                    Section("Credential") {
+                        if needsTokenEntry {
+                            SecureField("New token", text: $tokenText)
+                                .textContentType(.password)
+                                .accessibilityIdentifier("fleet.gateways.auth.token")
+                            Button("Save Token") { saveToken() }
+                                .disabled(tokenText.isEmpty || isBusy)
+                                .accessibilityIdentifier("fleet.gateways.auth.save-token")
+                        }
+                        if needsUsernamePasswordEntry {
+                            TextField("Username", text: $usernameText)
+                                .textContentType(.username)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .accessibilityIdentifier("fleet.gateways.auth.username")
+                            SecureField("Password", text: $passwordText)
+                                .textContentType(.password)
+                                .accessibilityIdentifier("fleet.gateways.auth.password")
+                            Button("Save Username & Password") { saveUsernamePassword() }
+                                .disabled(usernameText.isEmpty || passwordText.isEmpty || isBusy)
+                                .accessibilityIdentifier("fleet.gateways.auth.save-username-password")
+                        }
+                        if credentialStored {
+                            Button("Clear Stored Credential", role: .destructive) { clearCredential() }
+                                .disabled(isBusy)
+                                .accessibilityIdentifier("fleet.gateways.auth.clear-token")
+                        }
                     }
-                    if needsUsernamePasswordEntry {
-                        TextField("Username", text: $usernameText)
-                            .textContentType(.username)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .accessibilityIdentifier("fleet.gateways.auth.username")
-                        SecureField("Password", text: $passwordText)
-                            .textContentType(.password)
-                            .accessibilityIdentifier("fleet.gateways.auth.password")
-                        Button("Save Username & Password") { saveUsernamePassword() }
-                            .disabled(usernameText.isEmpty || passwordText.isEmpty || isBusy)
-                            .accessibilityIdentifier("fleet.gateways.auth.save-username-password")
-                    }
-                    if credentialStored {
-                        Button("Clear Stored Credential", role: .destructive) { clearCredential() }
-                            .disabled(isBusy)
-                            .accessibilityIdentifier("fleet.gateways.auth.clear-token")
-                    }
+
                 }
 
                 if let errorText {
@@ -121,7 +144,7 @@ struct GatewayAuthSheet: View {
         switch strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword: return false
+        case .usernamePassword, .deviceCredential: return false
         }
     }
 

@@ -15,6 +15,17 @@ Review the endpoint before saving. Prefer HTTPS for any network you do not fully
 
 After a successful save, supported credentials are persisted through the app's Keychain-backed security layer rather than ordinary application storage.
 
+## Add to Fleet (pairing link)
+
+The safest way to add a gateway when you are not at the computer. An authenticated
+owner asks the gateway for a short-lived, single-use pairing link; opening it on the
+phone shows which gateway and what access it asks for, and only after you confirm does
+the phone receive its own revocable device credential (kept in Keychain). No username,
+password or long-lived token is ever put in the link. See
+[fleet-device-pairing.md](fleet-device-pairing.md) for the protocol, the checks the
+app makes, revocation, and what must be in place before it can be used against a real
+gateway.
+
 ## QR-assisted pairing
 
 Hermes Fleet supports a versioned QR pairing payload for username/password gateway setup.

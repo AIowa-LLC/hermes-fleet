@@ -35,6 +35,7 @@ the v0.1 document deferred or excluded.
 - [`settings-and-about-tabs.md`](settings-and-about-tabs.md) - Settings and About surfaces
 - [`unread-indicators-and-read-state.md`](unread-indicators-and-read-state.md) - device-local conversation read state
 - [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
+- [`fleet-device-pairing.md`](fleet-device-pairing.md) - Add to Fleet: short-lived single-use pairing links and revocable device credentials
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`connection-recovery.md`](connection-recovery.md) - reconnect backoff, history-refetch rules and known limitations

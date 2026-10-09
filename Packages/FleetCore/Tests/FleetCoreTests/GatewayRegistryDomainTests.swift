@@ -18,7 +18,16 @@ final class GatewayRegistryDomainTests: XCTestCase {
     func testAuthConfigurationStrategyCases() {
         XCTAssertEqual(
             Set(GatewayAuthConfiguration.Strategy.allCases),
-            Set([.none, .sessionToken, .bearerToken, .loopbackToken, .usernamePassword]))
+            Set([.none, .sessionToken, .bearerToken, .loopbackToken, .usernamePassword, .deviceCredential]))
+    }
+
+    /// The strategy a paired device persists as must round-trip by its stable raw value.
+    func testDeviceCredentialStrategyHasAStableRawValue() throws {
+        XCTAssertEqual(GatewayAuthConfiguration.Strategy.deviceCredential.rawValue, "deviceCredential")
+        let config = GatewayAuthConfiguration(strategy: .deviceCredential, credentialStored: true)
+        let decoded = try JSONDecoder().decode(
+            GatewayAuthConfiguration.self, from: try JSONEncoder().encode(config))
+        XCTAssertEqual(decoded, config)
     }
 
     func testAuthConfigurationCodableRoundTrip() throws {

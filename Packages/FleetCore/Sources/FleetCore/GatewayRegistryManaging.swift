@@ -54,9 +54,18 @@ public protocol GatewayRegistryManaging: Sendable {
     /// dynamically dispatched through the existential; the extension below
     /// provides the no-op default for conformers without persistence.
     func restorePersistedGateways() async throws -> [FleetGateway]
+
+    /// The stored credential for a gateway, or `nil` (also `nil` when the store
+    /// cannot be read). Used only to hand a paired device's credential to the
+    /// gateway for revocation while the gateway is being removed; callers must
+    /// not retain, log or display it.
+    func credential(for id: GatewayID) async -> GatewayCredential?
 }
 
 extension GatewayRegistryManaging {
+    /// Default: a registry without a credential store has nothing to return.
+    public func credential(for id: GatewayID) async -> GatewayCredential? { nil }
+
     /// P0-4 default: no persistence wired (scripted fleet, test doubles) —
     /// restore nothing. Overridden by `GatewayRegistryService` when a
     /// `GatewayRecordStoring` is injected.

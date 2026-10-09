@@ -27,7 +27,12 @@ import AVFoundation
 /// re-scannable from a lingering screen.
 struct GatewayPairingScannerView: View {
     @Environment(\.fleetTheme) private var theme
-    @Bindable private var draftStore: GatewayFormDraftStore
+    /// Receives a decoded v1 username/password payload; nil when the scanner is opened only to
+    /// find an Add to Fleet pairing link.
+    private let draftStore: GatewayFormDraftStore?
+    /// Add to Fleet: offered every scanned string first; returns true when it was a pairing
+    /// link and the pairing flow took it (the scanner then closes).
+    private let onPairingLink: ((String) -> Bool)?
     @Environment(\.dismiss) private var dismiss
 
     #if os(iOS)
@@ -47,8 +52,9 @@ struct GatewayPairingScannerView: View {
 
     enum CameraPermission { case undetermined, granted, denied }
 
-    init(draftStore: GatewayFormDraftStore) {
+    init(draftStore: GatewayFormDraftStore?, onPairingLink: ((String) -> Bool)? = nil) {
         self.draftStore = draftStore
+        self.onPairingLink = onPairingLink
     }
 
     var body: some View {
@@ -267,6 +273,16 @@ struct GatewayPairingScannerView: View {
     /// The single entry point for ANY scanned string (camera or simulated):
     /// decode, apply to the draft, dismiss on success.
     private func handleRaw(_ raw: String) {
+        // Add to Fleet: a pairing LINK in the code goes to the pairing flow, which previews it
+        // and asks for confirmation. Nothing is consumed by scanning.
+        if let onPairingLink, Self.looksLikeInvitation(raw), onPairingLink(raw) {
+            dismiss()
+            return
+        }
+        guard let draftStore else {
+            scanError = "That code is not a Hermes pairing link."
+            return
+        }
         do {
             try draftStore.applyPairing(raw)
             // Success: leave the scanner so the QR on the Mac screen is not
@@ -283,6 +299,14 @@ struct GatewayPairingScannerView: View {
         } catch {
             scanError = GatewayFormSheet.nonSecret(error)
         }
+    }
+
+    /// Whether scanned text is shaped like an Add to Fleet link (https, `/pair`), so it should
+    /// reach the pairing flow, which explains any problem with it.
+    static func looksLikeInvitation(_ raw: String) -> Bool {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.lowercased().hasPrefix("http"), let url = URL(string: text) else { return false }
+        return PairingInvitationLink.looksLikePairingLink(url)
     }
 
     /// DEBUG-only deterministic scan source (UI tests / CI). The value is the

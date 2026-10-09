@@ -166,7 +166,9 @@ extension FleetServiceGraph {
             // R10-T4: scripted voice seam (env-knobbed) so the mic button,
             // authorization gate and transcript review are walkable
             // deterministically in the simulator + UI tests — no live speech.
-            voiceEngineFactory: { ScriptedVoiceEngine.shared }
+            voiceEngineFactory: { ScriptedVoiceEngine.shared },
+            // Add to Fleet: scripted gateway pairing endpoints (see ScriptedPairingService).
+            pairingService: ScriptedPairingService()
         )
         // Card D: `HERMES_FLEET_ARTIFACT_FIXTURE=1` seeds a deterministic
         // observed-artifact library (gateway + source conversation) so the
@@ -2933,6 +2935,7 @@ private struct FailingSaveRegistry: GatewayRegistryManaging {
     }
     func clearCredential(for id: GatewayID) async throws { try await inner.clearCredential(for: id) }
     func hasCredential(for id: GatewayID) async -> Bool { await inner.hasCredential(for: id) }
+    func credential(for id: GatewayID) async -> GatewayCredential? { await inner.credential(for: id) }
     func testConnection(to id: GatewayID) async throws -> GatewayTestResult {
         try await inner.testConnection(to: id)
     }

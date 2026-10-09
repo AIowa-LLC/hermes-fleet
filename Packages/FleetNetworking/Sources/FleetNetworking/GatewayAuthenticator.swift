@@ -14,6 +14,9 @@ import FleetCore
 ///   exchange them for a session cookie via `POST /auth/password-login`
 ///   (`PasswordLoginClient`), then mint a single-use ticket with that cookie
 ///   → `?ticket=` (P3 LAN-gateway flow).
+/// - `.deviceCredential` strategy → exchange the paired device's credential at
+///   `POST /auth/device-login` for a session cookie, then mint a single-use
+///   ticket with it (same shape as the password flow).
 /// - `.loopbackToken` strategy → load the stored credential from
 ///   `CredentialStoring` (Keychain) and return `.loopbackToken(StoredToken)`
 ///   → `?token=`.
@@ -142,6 +145,43 @@ public struct GatewayAuthenticator: AuthenticationProviding {
                     try await loginClient.login(username: username, password: credential.rawValue)
                 }
                 return try await mint(cookie: freshCookie)
+            }
+        case .deviceCredential:
+            // Paired device: exchange the device credential for a short-lived session
+            // cookie (POST /auth/device-login), then mint a single-use WS ticket with it,
+            // exactly like the password flow. Any rejection of a cached session is
+            // answered by ONE fresh login; a second rejection is surfaced.
+            guard let credentialStore, let baseURL else {
+                throw AuthenticationError.notConfigured
+            }
+            guard let credential = try await credentialStore.loadCredential(for: gatewayID) else {
+                throw AuthenticationError.missingLoopbackToken
+            }
+            let loginClient = DeviceLoginClient(baseURL: baseURL, urlSession: urlSession)
+
+            func mint(cookie: SessionCookie) async throws -> ConnectionAuthentication {
+                let ticket = try await WSTicketClient(
+                    baseURL: baseURL, sessionCookie: cookie, urlSession: urlSession
+                ).mintTicket()
+                guard !ticket.isExpired() else { throw AuthenticationError.ticketExpired }
+                return .ticket(StoredToken(rawValue: ticket.token))
+            }
+
+            guard let sessionStore else {
+                return try await mint(cookie: try await loginClient.login(credential: credential.rawValue))
+            }
+            do {
+                let cookie = try await sessionStore.lease(gatewayID: gatewayID) {
+                    try await loginClient.login(credential: credential.rawValue)
+                }
+                return try await mint(cookie: cookie)
+            } catch let error as AuthenticationError {
+                guard case .rejected = error else { throw error }
+                await sessionStore.invalidate(gatewayID: gatewayID)
+                let fresh = try await sessionStore.lease(gatewayID: gatewayID) {
+                    try await loginClient.login(credential: credential.rawValue)
+                }
+                return try await mint(cookie: fresh)
             }
         }
     }

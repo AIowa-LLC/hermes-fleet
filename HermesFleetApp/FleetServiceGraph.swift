@@ -273,7 +273,10 @@ enum FleetServiceGraph {
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
             launchCache: launchCache,
-            localCacheRecovery: cacheRecovery
+            localCacheRecovery: cacheRecovery,
+            // Add to Fleet: the HTTPS pairing exchange. System-trust TLS only; the secret-bearing
+            // requests never use the per-gateway pinning session.
+            pairingService: GatewayPairingClient()
         )
     }
 
@@ -405,6 +408,16 @@ enum FleetServiceGraph {
                 }
                 let cookie = try await PasswordLoginClient(baseURL: base, urlSession: urlSession).login(
                     username: username, password: credential.rawValue)
+                return .cookie(cookie)
+            case .deviceCredential:
+                // Paired device: a fresh device-login cookie per resolution, like
+                // the password flow (the device credential stays in the Keychain).
+                guard let base,
+                      let credential = try? await credentialStore.loadCredential(for: gateway.id) else {
+                    throw KanbanBoardError.malformedResponse("no credential stored")
+                }
+                let cookie = try await DeviceLoginClient(baseURL: base, urlSession: urlSession).login(
+                    credential: credential.rawValue)
                 return .cookie(cookie)
             }
         }
@@ -888,6 +901,15 @@ enum FleetServiceGraph {
             return GatewayAuthenticator(
                 gatewayID: gateway.id,
                 strategy: .usernamePassword,
+                credentialStore: credentialStore,
+                baseURL: base,
+                urlSession: urlSession,
+                sessionStore: sessionStore
+            )
+        case .deviceCredential:
+            return GatewayAuthenticator(
+                gatewayID: gateway.id,
+                strategy: .deviceCredential,
                 credentialStore: credentialStore,
                 baseURL: base,
                 urlSession: urlSession,

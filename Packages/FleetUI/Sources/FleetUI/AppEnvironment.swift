@@ -2,6 +2,9 @@ import Foundation
 import Observation
 import FleetCore
 import FleetPersistence
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Builds a single-gateway connection for a registered gateway, so the app
 /// runtime can drive the connect/disconnect/reconnect lifecycle without
@@ -316,6 +319,11 @@ public final class AppEnvironment {
     /// lifecycle state, or its connect intent. Only a deliberate
     /// `addGateway` lifts the fence.
     @ObservationIgnored private var retiredGatewayIDs: Set<GatewayID> = []
+
+    /// Add to Fleet: the pairing exchange (nil in builds/graphs without it) and the flow that
+    /// drives it. The coordinator calls back into this environment to register what it paired.
+    @ObservationIgnored private let pairingService: (any GatewayPairing)?
+    public let pairing: PairingCoordinator
 
     /// First-run gate (hydration model): the root shell distinguishes
     /// "registry not loaded yet" from "loaded and empty" so a brand-new user
@@ -657,8 +665,11 @@ public final class AppEnvironment {
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
-        recoveryTiming: ConnectionRecoveryTiming = .standard
+        recoveryTiming: ConnectionRecoveryTiming = .standard,
+        pairingService: (any GatewayPairing)? = nil
     ) {
+        self.pairingService = pairingService
+        self.pairing = PairingCoordinator(service: pairingService)
         self.registry = registry
         self.roster = roster
         self.cache = cache
@@ -716,6 +727,7 @@ public final class AppEnvironment {
         liveOps.setProviders(
             gateways: { [weak self] in self?.gateways ?? [] },
             connectionState: { [weak self] id in self?.connectionStates[id] ?? .idle })
+        pairing.attach(host: self)
     }
 
     /// FOS-4: swap the Continue index store (tests inject a hermetic one).
@@ -2582,7 +2594,11 @@ public final class AppEnvironment {
     /// record). The gateway is fenced against late async results BEFORE the
     /// first suspension; if the registry cannot complete the removal the fence
     /// is lifted again and the error is rethrown with the gateway untouched.
-    public func removeGateway(_ id: GatewayID) async throws {
+    @discardableResult
+    public func removeGateway(_ id: GatewayID) async throws -> GatewayRemovalReport {
+        // A paired device's credential must reach the gateway so it can be revoked there; read
+        // it BEFORE the removal deletes it, and use it only after the removal succeeded.
+        let revocation = await deviceRevocationAction(for: id)
         retiredGatewayIDs.insert(id)
         do {
             try await registry.removeGateway(id)
@@ -2673,6 +2689,29 @@ public final class AppEnvironment {
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
         await reloadGateways()
+        return GatewayRemovalReport(deviceRevocation: await revocation?() ?? .notApplicable)
+    }
+
+    /// For a gateway paired with a device credential: an action that asks the gateway to revoke
+    /// that credential (so removing the gateway from the phone also removes the phone's access).
+    /// `nil` for every other gateway.
+    private func deviceRevocationAction(
+        for id: GatewayID
+    ) async -> (@Sendable () async -> GatewayRemovalReport.DeviceRevocation)? {
+        guard let gateway = gateways.first(where: { $0.id == id }),
+              gateway.authConfiguration.strategy == .deviceCredential else { return nil }
+        guard let service = pairingService, let origin = gateway.endpoint,
+              let credential = await registry.credential(for: id) else {
+            return { .notConfirmed }
+        }
+        let device = PairingDeviceCredential(credential.rawValue)
+        return {
+            switch await service.revoke(origin: origin, credential: device) {
+            case .revoked: return .revoked
+            case .alreadyRevoked: return .alreadyRevoked
+            case .unreachable, .failed: return .notConfirmed
+            }
+        }
     }
 
     /// P0.3b: delete the device-local data a removed gateway leaves behind that
@@ -3375,5 +3414,84 @@ public final class AppEnvironment {
     /// The projects-tree snapshot store (offline browse), when wired.
     public var projectsSnapshotStore: (any ProjectsSnapshotStoring)? {
         projectsSnapshotStore_
+    }
+}
+
+// MARK: - Add to Fleet (device pairing host)
+
+/// What a removal did beyond the phone: for a gateway paired with a device credential,
+/// whether the gateway confirmed that the credential is revoked.
+public struct GatewayRemovalReport: Sendable, Equatable {
+    public enum DeviceRevocation: Sendable, Equatable {
+        /// Not a paired-device gateway; nothing to revoke.
+        case notApplicable
+        /// The gateway confirmed the device is revoked.
+        case revoked
+        /// The gateway already did not know this device.
+        case alreadyRevoked
+        /// The gateway could not be reached or did not confirm: the owner should revoke this
+        /// device from the gateway's device list.
+        case notConfirmed
+    }
+
+    public let deviceRevocation: DeviceRevocation
+
+    public init(deviceRevocation: DeviceRevocation = .notApplicable) {
+        self.deviceRevocation = deviceRevocation
+    }
+}
+
+extension AppEnvironment: PairingHosting {
+    public func existingGateway(forPairedInstance instanceID: String, origin: URL) -> FleetGateway? {
+        if let id = GatewayID(pairedInstanceID: instanceID),
+           let byIdentity = gateways.first(where: { $0.id == id }) {
+            return byIdentity
+        }
+        // A gateway added by hand (identity = its address) is the same gateway.
+        return gateways.first { Self.sameEndpoint($0.endpoint, origin) }
+    }
+
+    public func addPairedGateway(_ grant: PairingGrant) async throws -> FleetGateway {
+        guard let id = GatewayID(pairedInstanceID: grant.gateway.instanceID) else {
+            throw GatewayRegistryError.invalidGatewayID("paired gateway identity")
+        }
+        // Never touch a gateway that is already here: the host check ran at preview time, but
+        // another path could have added it since. The coordinator revokes the unsaved device.
+        guard !gateways.contains(where: { $0.id == id }) else {
+            throw GatewayRegistryError.duplicate(id)
+        }
+        let name = grant.gateway.displayName.isEmpty
+            ? (grant.gateway.origin.host ?? "Hermes gateway") : grant.gateway.displayName
+        // The key was validated by the system trust store during pairing; pin exactly that key.
+        let review = TLSKeyReview(endpoint: grant.gateway.origin, fingerprint: grant.tlsFingerprint)
+        do {
+            return try await addGateway(
+                GatewayRegistration(
+                    id: id, displayName: name, endpoint: grant.gateway.origin,
+                    authConfiguration: GatewayAuthConfiguration(
+                        strategy: .deviceCredential, credentialStored: false)),
+                credential: GatewayCredential(rawValue: grant.credential.rawValue),
+                tlsReview: review)
+        } catch {
+            // We created this gateway in this call (it was absent above), so undo it: leave
+            // nothing registered without a credential, and nothing pinned without a gateway.
+            _ = try? await registry.removeGateway(id)
+            retiredGatewayIDs.insert(id)
+            await reloadGateways()
+            throw error
+        }
+    }
+
+    public func revokeUnsavedDevice(_ grant: PairingGrant) async {
+        _ = await pairingService?.revoke(origin: grant.gateway.origin, credential: grant.credential)
+    }
+
+    public var pairingDeviceName: String {
+        #if canImport(UIKit)
+        let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? UIDevice.current.model : name
+        #else
+        return "Mac"
+        #endif
     }
 }

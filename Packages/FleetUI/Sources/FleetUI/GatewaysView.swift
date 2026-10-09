@@ -26,6 +26,9 @@ public struct GatewaysView: View {
     @State private var gatewayPendingRemoval: FleetGateway?
     /// P1-8: the most recently removed gateway, for a bounded undo.
     @State private var lastRemovedGateway: FleetGateway?
+    /// Outcome shown after removing a paired-device gateway (whether the gateway confirmed the
+    /// phone's access is revoked). Plain information: there is nothing to undo.
+    @State private var removalNotice: String?
     /// T3: secure trust reset awaiting explicit re-pair confirmation.
     @State private var gatewayPendingTLSTrustReset: FleetGateway?
 
@@ -106,6 +109,7 @@ public struct GatewaysView: View {
                     saveButton: "Add",
                     initial: nil,
                     draftStore: environment.gatewayFormDraft,
+                    pairing: environment.pairing,
                     reviewKey: { try await environment.reviewTLSKey(for: $0) }
                 ) { registration, credential, tlsReview in
                     _ = try await environment.addGateway(
@@ -117,6 +121,22 @@ public struct GatewaysView: View {
                 EditGatewayFormHost(environment: environment, gateway: gateway)
             case .auth(let id):
                 GatewayAuthSheet(environment: environment, gatewayID: id)
+            }
+        }
+        .alert("Gateway Removed", isPresented: .init(
+            get: { removalNotice != nil },
+            set: { if !$0 { removalNotice = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+                .accessibilityIdentifier("fleet.gateways.remove.notice.ok")
+        } message: {
+            Text(removalNotice ?? "")
+        }
+        // A pairing link opened from outside the app is presented by the root; clear any
+        // Gateways sheet that would otherwise block it.
+        .onChange(of: environment.pairing.flowID) { _, _ in
+            if environment.pairing.entry == .link, environment.pairing.isActive {
+                presentedSheet = nil
             }
         }
         .alert("Gateway Error", isPresented: .init(
@@ -415,8 +435,15 @@ public struct GatewaysView: View {
         gatewayPendingRemoval = nil
         Task {
             do {
-                try await environment.removeGateway(gateway.id)
-                lastRemovedGateway = gateway
+                let report = try await environment.removeGateway(gateway.id)
+                switch report.deviceRevocation {
+                case .notApplicable:
+                    lastRemovedGateway = gateway
+                case .revoked, .alreadyRevoked:
+                    removalNotice = "\(gateway.displayName) was removed from this phone, and the gateway confirmed this phone's access is revoked."
+                case .notConfirmed:
+                    removalNotice = "\(gateway.displayName) was removed from this phone, but the gateway couldn't be reached to revoke this phone's access. Revoke this device from the gateway's device list so its credential can't be used."
+                }
             } catch {
                 operationError = Self.describe(error)
             }
