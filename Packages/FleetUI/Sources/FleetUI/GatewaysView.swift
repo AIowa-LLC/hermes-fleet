@@ -501,7 +501,7 @@ private struct GatewayRowView: View {
     }
 
     private func fullRow(state: GatewayConnectionState) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Image(systemName: "server.rack")
                 .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
@@ -519,7 +519,7 @@ private struct GatewayRowView: View {
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 140, alignment: .leading)
                 if gateway.authConfiguration.credentialStored || gateway.authConfigured {
                     Label("Auth configured", systemImage: "key")
                         .font(.caption2)
@@ -551,7 +551,7 @@ private struct GatewayRowView: View {
     /// Compact variant for large Dynamic Type: name + endpoint + a status
     /// ICON only (no text badge), so the name still has room to wrap.
     private func compactRow(state: GatewayConnectionState) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Image(systemName: "server.rack")
                 .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
@@ -568,7 +568,7 @@ private struct GatewayRowView: View {
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 140, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
@@ -631,7 +631,10 @@ private struct GatewayRowView: View {
 
     /// A direct, clearly-targeted retry remains visible outside the overflow
     /// menu. Its in-flight state is owned by AppEnvironment, so rapid taps and
-    /// lifecycle races are serialized with the underlying transport.
+    /// lifecycle races are serialized with the underlying transport. The
+    /// compact borderless size plus the tightened row spacing and endpoint
+    /// column keep the row's measured width inside the pre-control budget, so
+    /// the full row (and its status badge) still fits wherever it did before.
     @ViewBuilder
     private func reconnectControl(state: GatewayConnectionState) -> some View {
         let isReconnecting = environment.reconnectingGatewayIDs.contains(gateway.id)
@@ -646,10 +649,10 @@ private struct GatewayRowView: View {
                     Image(systemName: "arrow.clockwise")
                 }
             }
-            .frame(minWidth: 28, minHeight: 28)
+            .frame(width: 30, height: 30)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderless)
         .tint(theme.highlight)
         .disabled(isReconnecting || state == .connecting || !environment.gateways.contains(where: { $0.id == gateway.id }))
         .accessibilityLabel(isReconnecting ? "Reconnecting to \(gateway.displayName)" : "Reconnect \(gateway.displayName)")
