@@ -145,7 +145,7 @@ public struct GatewaysView: View {
             Button("Cancel", role: .cancel) {}
                 .accessibilityIdentifier("fleet.gateways.remove.cancel")
         } message: {
-            Text("Remove \(gatewayPendingRemoval?.displayName ?? "this gateway") from Fleet? Its saved connection and credentials will be removed from this phone. Bots and data on the gateway will remain.")
+            Text("Remove \(gatewayPendingRemoval?.displayName ?? "this gateway") from Fleet? Its saved connection and credentials will be removed from this phone, and it will not come back unless you add it again. Bots and data on the gateway will remain. To keep it but stop connecting, choose Disconnect instead.")
         }
         // P1-8: bounded undo for the most recent removal (registry only — the
         // credential is intentionally gone per the confirmation above).

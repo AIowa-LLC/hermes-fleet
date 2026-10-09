@@ -36,14 +36,26 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// T3: per-gateway TLS pin store (TOFU SPKI pinning). `nil` keeps the
     /// registry pin-unaware (scripted fleet / legacy tests).
     private let pinStore: (any TLSPinStoring)?
+    /// Durable "removal in progress" markers (nil keeps removal in-memory only).
+    private let removalLedger: (any GatewayRemovalLedgering)?
+    /// Gateways whose removal is in flight. Actor reentrancy lets other calls
+    /// (a launch restore, a late credential save) run at every `await` inside
+    /// a removal; this set is what keeps them from reviving or touching it.
+    private var removing: Set<GatewayID> = []
+    /// Gateways explicitly removed during this process. A stale record
+    /// snapshot taken before the removal must never re-register one of them;
+    /// only a deliberate `addGateway` lifts the fence.
+    private var retired: Set<GatewayID> = []
 
     public init(
         registry: GatewayRegistry = GatewayRegistry(),
         credentials: any CredentialStoring,
         connectionFactory: @escaping GatewayConnectionFactory,
         recordStore: (any GatewayRecordStoring)? = nil,
-        pinStore: (any TLSPinStoring)? = nil
+        pinStore: (any TLSPinStoring)? = nil,
+        removalLedger: (any GatewayRemovalLedgering)? = nil
     ) {
+        self.removalLedger = removalLedger
         self.registry = registry
         self.credentials = credentials
         self.connectionFactory = connectionFactory
@@ -78,7 +90,21 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard id.isRoutingSafe else {
             throw GatewayRegistryError.invalidGatewayID(id.rawValue)
         }
-        guard registry.gateway(for: id) == nil else {
+        guard registry.gateway(for: id) == nil, !removing.contains(id) else {
+            throw GatewayRegistryError.duplicate(id)
+        }
+        // A deliberate Add is the only way a removed gateway returns: lift the
+        // removal marker FIRST so a crash between the marker and the record
+        // write cannot make the next launch delete the freshly added record.
+        if let removalLedger {
+            do {
+                try await removalLedger.clear(id)
+            } catch {
+                throw GatewayRegistryError.removalStateStoreFailed(Redaction.safeErrorDescription(error))
+            }
+        }
+        // Re-check: another call may have registered this ID while we awaited.
+        guard registry.gateway(for: id) == nil, !removing.contains(id) else {
             throw GatewayRegistryError.duplicate(id)
         }
         let gateway = FleetGateway(
@@ -87,6 +113,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             endpoint: endpoint,
             authConfiguration: registration.authConfiguration
         )
+        retired.remove(id)
         registry.register(gateway)
         // P0-4: persist IMMEDIATELY on Add — the record survives app close /
         // relaunch regardless of connection state. A persistence failure must
@@ -102,7 +129,7 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     }
 
     public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
-        guard registry.gateway(for: id) != nil else {
+        guard registry.gateway(for: id) != nil, !removing.contains(id) else {
             throw GatewayRegistryError.notFound(id)
         }
         // P1-6: same origin boundary on endpoint edits.
@@ -130,43 +157,91 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         return updated
     }
 
+    /// Remove a gateway for good.
+    ///
+    /// The removal is all-or-nothing from the user's point of view:
+    /// 1. A durable removal marker is written first; if that fails nothing is
+    ///    touched and the error is reported.
+    /// 2. The reversible step (the saved record) goes before the irreversible
+    ///    ones (the Keychain credential, the TLS pin). A failure at any later
+    ///    step restores everything already deleted, clears the marker, and
+    ///    reports the failure; the gateway stays listed and intact.
+    /// 3. Only when every store agrees is the gateway dropped from memory and
+    ///    fenced against stale restores.
+    ///
+    /// A process kill after step 1 leaves the marker behind, so the next
+    /// launch finishes the removal instead of reviving the gateway.
     public func removeGateway(_ id: GatewayID) async throws {
-        guard registry.gateway(for: id) != nil else {
+        guard let gateway = registry.gateway(for: id), !removing.contains(id) else {
             throw GatewayRegistryError.notFound(id)
         }
-        // P1-8: credential cleanup failure must surface — never silently
-        // swallowed. Delete the credential first; only on success is the
-        // gateway removed, so a cleanup failure leaves the gateway registered
-        // (no "removed" UI while a secret may still exist).
+        removing.insert(id)
+        defer { removing.remove(id) }
+
+        if let removalLedger {
+            do {
+                try await removalLedger.markRemoving(id)
+            } catch {
+                throw GatewayRegistryError.removalStateStoreFailed(Redaction.safeErrorDescription(error))
+            }
+        }
+        // Held only to undo a later failure; never logged or persisted here.
+        let savedCredential = try? await credentials.loadCredential(for: id)
+
+        var recordDeleted = false
+        var credentialDeleted = false
+        func abort(_ failure: GatewayRegistryError) async -> GatewayRegistryError {
+            var restored = true
+            if recordDeleted {
+                do { try await persist(gateway) } catch { restored = false }
+            }
+            if credentialDeleted, let savedCredential {
+                do { try await credentials.saveCredential(savedCredential, for: id) } catch { restored = false }
+            }
+            if restored {
+                try? await removalLedger?.clear(id)
+                return failure
+            }
+            // The rollback itself failed: keep the marker so the next launch
+            // completes the removal rather than leaving a half-deleted
+            // gateway, and say so.
+            return GatewayRegistryError.removalStateStoreFailed(
+                "removal could not be undone; it will finish when Fleet restarts")
+        }
+
+        if let recordStore {
+            do {
+                try await recordStore.deleteGatewayRecord(id: id)
+                recordDeleted = true
+            } catch {
+                throw await abort(.recordStoreFailed(Redaction.safeErrorDescription(error)))
+            }
+        }
+        // P1-8: credential cleanup failure must surface — never swallowed.
         do {
             try await credentials.deleteCredential(for: id)
+            credentialDeleted = true
         } catch {
-            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
+            throw await abort(.credentialStoreFailed(Redaction.safeErrorDescription(error)))
         }
-        // T3: retire the TLS pin with the credential — a removed gateway
-        // must leave no orphaned trust material. Failures surface (same
-        // P1-8 contract); missing pin is a no-op at the store level.
+        // T3: retire the TLS pin with the credential — a removed gateway must
+        // leave no orphaned trust material.
         if let pinStore {
             do {
                 try await pinStore.deletePin(for: id)
             } catch {
-                throw GatewayRegistryError.pinStoreFailed(Redaction.safeErrorDescription(error))
-            }
-        }
-        // P0-4: remove the durable record too — a removed gateway must not
-        // resurrect on relaunch.
-        if let recordStore {
-            do {
-                try await recordStore.deleteGatewayRecord(id: id)
-            } catch {
-                throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
+                throw await abort(.pinStoreFailed(Redaction.safeErrorDescription(error)))
             }
         }
         registry.remove(id)
+        retired.insert(id)
+        // Best effort: a marker that outlives a completed removal is harmless
+        // (restore skips it and re-runs idempotent cleanup).
+        try? await removalLedger?.clear(id)
     }
 
     public func saveCredential(_ credential: GatewayCredential, for id: GatewayID) async throws {
-        guard registry.gateway(for: id) != nil else {
+        guard registry.gateway(for: id) != nil, !removing.contains(id) else {
             throw GatewayRegistryError.notFound(id)
         }
         do {
@@ -333,11 +408,15 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             _ = try? await GatewayEndpointMigrationService(recordStore: recordStore)
                 .migrateAll(defaultEndpoint: defaultEndpoint)
         }
+        // A removal that was interrupted (force-quit, crash) is finished here,
+        // before anything is restored; an unreadable marker file fails the
+        // restore (the caller retries) instead of reviving a removed gateway.
+        let interrupted = try await finishInterruptedRemovals()
         let records = try await recordStore.loadGatewayRecords()
         var restored: [FleetGateway] = []
         for record in records {
             let id = GatewayID(rawValue: record.id)
-            guard registry.gateway(for: id) == nil else { continue }
+            guard isRestorable(id, interrupted: interrupted) else { continue }
             // A credential READ FAILURE (Keychain unavailable, e.g. device
             // locked on a background launch) is not "no credential": keep the
             // durable record's flag rather than relabelling a configured
@@ -348,6 +427,9 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             } catch {
                 hasCredential = record.authConfigured
             }
+            // The credential read suspended this actor: the record snapshot
+            // above may now describe a gateway the user has since removed.
+            guard isRestorable(id, interrupted: interrupted) else { continue }
             let gateway = FleetGateway(
                 id: id,
                 displayName: record.displayName,
@@ -363,6 +445,38 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             restored.append(gateway)
         }
         return restored
+    }
+
+    /// Whether a saved record may be (re)registered right now. Re-evaluated
+    /// after every suspension point of a restore.
+    private func isRestorable(_ id: GatewayID, interrupted: Set<GatewayID>) -> Bool {
+        registry.gateway(for: id) == nil
+            && !removing.contains(id)
+            && !retired.contains(id)
+            && !interrupted.contains(id)
+    }
+
+    /// Finish removals that a previous process started but did not complete:
+    /// delete whatever the marker's gateway still has in each store, then drop
+    /// the marker. Idempotent and best effort per store; a store that still
+    /// fails keeps its marker so the next launch tries again. Returns every
+    /// marked ID so the caller never restores it meanwhile.
+    private func finishInterruptedRemovals() async throws -> Set<GatewayID> {
+        guard let removalLedger else { return [] }
+        let marked = try await removalLedger.pendingRemovals()
+        for id in marked where registry.gateway(for: id) == nil && !removing.contains(id) {
+            retired.insert(id)
+            var complete = true
+            if let recordStore {
+                do { try await recordStore.deleteGatewayRecord(id: id) } catch { complete = false }
+            }
+            do { try await credentials.deleteCredential(for: id) } catch { complete = false }
+            if let pinStore {
+                do { try await pinStore.deletePin(for: id) } catch { complete = false }
+            }
+            if complete { try? await removalLedger.clear(id) }
+        }
+        return marked
     }
 
     /// Write one gateway's non-secret record through to the durable store.

@@ -198,7 +198,11 @@ enum FleetServiceGraph {
             credentials: credentialStore,
             connectionFactory: makeProbeFactory(credentialStore: credentialStore, pinStore: pinStore),
             recordStore: cacheStore,
-            pinStore: pinStore
+            pinStore: pinStore,
+            // Durable "removal in progress" markers: a force-quit mid-removal
+            // is finished on the next launch instead of reviving the gateway.
+            removalLedger: FileGatewayRemovalLedger(
+                url: cacheDirectoryURL().appendingPathComponent(FileGatewayRemovalLedger.fileName))
         )
         let roster: any FleetRosterProviding = FleetRosterService(
             registry: registry,

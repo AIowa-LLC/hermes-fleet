@@ -84,6 +84,9 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
     /// The TLS pin-store operation failed (T3; detail is non-secret — pins
     /// are public key material anyway).
     case pinStoreFailed(String)
+    /// The durable removal marker could not be written, so the removal was
+    /// refused before anything was deleted (detail is non-secret).
+    case removalStateStoreFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -95,6 +98,7 @@ public enum GatewayRegistryError: Error, Sendable, Equatable, LocalizedError {
         case .invalidGatewayID(let detail): return "invalid gateway ID: \(detail)"
         case .recordStoreFailed(let detail): return "gateway record store failed: \(detail)"
         case .pinStoreFailed(let detail): return "TLS pin store failed: \(detail)"
+        case .removalStateStoreFailed(let detail): return "gateway removal could not be saved: \(detail)"
         }
     }
 }

@@ -309,6 +309,14 @@ public final class AppEnvironment {
     /// (never while the launch `load()` is still in flight).
     @ObservationIgnored private var durableGatewayRestoreFailed = false
 
+    /// Gateways the user has removed (or is removing) in this process. Every
+    /// asynchronous result keyed by a gateway — a roster refresh, a connect, a
+    /// probe, a registry reload — re-checks this set after each suspension so
+    /// a late completion can never restore a removed gateway, its bots, its
+    /// lifecycle state, or its connect intent. Only a deliberate
+    /// `addGateway` lifts the fence.
+    @ObservationIgnored private var retiredGatewayIDs: Set<GatewayID> = []
+
     /// First-run gate (hydration model): the root shell distinguishes
     /// "registry not loaded yet" from "loaded and empty" so a brand-new user
     /// lands on setup BEFORE the normal tab UI, without a fragile
@@ -918,7 +926,9 @@ public final class AppEnvironment {
     }
 
     private func reloadGateways() async {
-        gateways = await registry.allGateways()
+        // The registry read suspends: a removal may commit meanwhile, so the
+        // (now stale) list must not put a retired gateway back.
+        gateways = await registry.allGateways().filter { !retiredGatewayIDs.contains($0.id) }
         // Intent is pruned only against an AUTHORITATIVE registry: an empty
         // list from a registry whose durable restore has not answered (or
         // failed) is "unknown", never "the user has no gateways" — pruning
@@ -949,6 +959,18 @@ public final class AppEnvironment {
         return rosterGeneration
     }
 
+    /// Drop every retired gateway (and its bots/outcome) from a roster
+    /// snapshot that was assembled before the removal committed.
+    private func snapshotExcludingRetiredGateways(_ snapshot: FleetRosterSnapshot) -> FleetRosterSnapshot {
+        guard !retiredGatewayIDs.isEmpty else { return snapshot }
+        var filtered = snapshot
+        for id in retiredGatewayIDs {
+            filtered.roster.removeGateway(id)
+            filtered.gatewayOutcomes[id] = nil
+        }
+        return filtered
+    }
+
     /// Refresh the union fleet roster (M8). Never throws for a single-gateway
     /// outage (partial-availability contract).
     ///
@@ -964,10 +986,14 @@ public final class AppEnvironment {
         let token = beginRosterRefresh()
         isRefreshing = true
         let previousOutcomes = rosterSnapshot?.gatewayOutcomes ?? [:]
-        let snapshot = await roster.refreshRoster()
+        let rawSnapshot = await roster.refreshRoster()
         // Stale completion: a newer refresh owns settlement — silently drop
         // the result (observable state stays what the newest refresh set).
         guard token == rosterGeneration else { return }
+        // The refresh probed the registry as it was when it began. A gateway
+        // removed while it was in flight must not reappear on the Fleet screen
+        // (sections are built from this snapshot) or in the ghost caches.
+        let snapshot = snapshotExcludingRetiredGateways(rawSnapshot)
         rosterSnapshot = snapshot
         rosterObservedAt = Date()
         for (id, outcome) in snapshot.gatewayOutcomes {
@@ -1937,7 +1963,8 @@ public final class AppEnvironment {
     private func performConnect(to id: GatewayID) async {
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
-        guard let gateway = gateways.first(where: { $0.id == id }) else { return }
+        guard !retiredGatewayIDs.contains(id),
+              let gateway = gateways.first(where: { $0.id == id }) else { return }
         connectionIntent.record(id)
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
@@ -1945,11 +1972,21 @@ public final class AppEnvironment {
         startConnectionWatchIfNeeded(for: id)
         do {
             try await connection.connect()
+            // Removed while connecting: the removal already tore down what it
+            // knew about, so release this late transport and record nothing.
+            guard !retiredGatewayIDs.contains(id) else {
+                await connection.disconnect()
+                return
+            }
             connectionStates[id] = GatewayConnectionState(status: connection.status)
             if connectionStates[id] == .connected {
                 scheduleRosterSyncAfterConnectionRepair(for: id)
             }
         } catch let error as GatewayConnectivityError {
+            guard !retiredGatewayIDs.contains(id) else {
+                await connection.disconnect()
+                return
+            }
             let status = GatewayStatus(connectivityError: error)
             connectionStates[id] = .failed(status)
             // P0-A: a failed connect is a recorded fault (one short line —
@@ -1964,6 +2001,10 @@ public final class AppEnvironment {
                 break
             }
         } catch {
+            guard !retiredGatewayIDs.contains(id) else {
+                await connection.disconnect()
+                return
+            }
             connectionStates[id] = .failed(.offline)
             // P0-A: an unclassified connect failure still gets one honest
             // line (no error payload is echoed).
@@ -2019,7 +2060,8 @@ public final class AppEnvironment {
     /// `.disconnected` write stands and no retry is scheduled, so the
     /// background/`disconnectAll` path is untouched.
     private func observeConnectionState(for id: GatewayID) async {
-        guard let connection = activeConnections[id] else { return }
+        guard !retiredGatewayIDs.contains(id),
+              let connection = activeConnections[id] else { return }
         let live = connection.status
         switch live {
         case .online:
@@ -2046,7 +2088,7 @@ public final class AppEnvironment {
             break
         case .offline, .degraded, .authenticationRequired, .unsupported:
             let reason = await connection.lastDisconnectReason()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !retiredGatewayIDs.contains(id) else { return }
             // The await above is a suspension point: a retry may have finished
             // meanwhile. Acting on the stale `live` sample would mark a healthy
             // gateway failed and burn a retry attempt; the next tick re-samples.
@@ -2079,7 +2121,7 @@ public final class AppEnvironment {
     /// the spec §8.6 policy (transient reasons only). After `maxAttempts` the
     /// gateway stays failed until a foreground restore or a manual retry.
     private func scheduleAutoReconnect(for id: GatewayID) {
-        guard connectionIntent.isIntended(id) else { return }
+        guard !retiredGatewayIDs.contains(id), connectionIntent.isIntended(id) else { return }
         guard reconnectRetryTasks[id] == nil else { return }
         // A connect already in flight owns the outcome; scheduling another
         // retry now would only burn budget (its connect would be dropped).
@@ -2091,7 +2133,8 @@ public final class AppEnvironment {
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
             self.reconnectRetryTasks[id] = nil
-            guard self.connectionIntent.isIntended(id) else { return }
+            guard !self.retiredGatewayIDs.contains(id),
+                  self.connectionIntent.isIntended(id) else { return }
             await self.performConnect(to: id)
         }
     }
@@ -2410,6 +2453,8 @@ public final class AppEnvironment {
 
     public func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
+        // A deliberate Add is the only way a removed gateway comes back.
+        retiredGatewayIDs.remove(gateway.id)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
         conversationDrafts.allowWrites(gatewayID: gateway.id)
         await reloadGateways()
@@ -2434,6 +2479,8 @@ public final class AppEnvironment {
     ) async throws -> FleetGateway {
         let review = try Self.validatedReview(tlsReview, for: registration.endpoint, required: true)
         let gateway = try await registry.addGateway(registration)
+        // A deliberate Add is the only way a removed gateway comes back.
+        retiredGatewayIDs.remove(gateway.id)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
         conversationDrafts.allowWrites(gatewayID: gateway.id)
         if let review {
@@ -2530,8 +2577,23 @@ public final class AppEnvironment {
         return gateway
     }
 
+    /// Remove a gateway for good (distinct from `disconnect(from:)`, which only
+    /// stops the transport and keeps the gateway, its credential and its saved
+    /// record). The gateway is fenced against late async results BEFORE the
+    /// first suspension; if the registry cannot complete the removal the fence
+    /// is lifted again and the error is rethrown with the gateway untouched.
     public func removeGateway(_ id: GatewayID) async throws {
-        try await registry.removeGateway(id)
+        retiredGatewayIDs.insert(id)
+        do {
+            try await registry.removeGateway(id)
+        } catch {
+            retiredGatewayIDs.remove(id)
+            throw error
+        }
+        // The registry committed: the observable list must agree before the
+        // (possibly slow) transport teardown below, so no UI or restore path
+        // can still see or reconnect it.
+        gateways.removeAll { $0.id == id }
         connectionIntent.clear(id)
         cancelConnectionRecovery(for: id)
         await gatewaySessionInvalidator?(id)
@@ -2827,6 +2889,7 @@ public final class AppEnvironment {
         testingGatewayIDs.insert(id)
         defer { testingGatewayIDs.remove(id) }
         let result = try await registry.testConnection(to: id)
+        guard !retiredGatewayIDs.contains(id) else { return }
         testResults[id] = result
         testResultObservedAt[id] = Date()
         // Reflect the probe into the observable connection lifecycle so the
@@ -2865,7 +2928,8 @@ public final class AppEnvironment {
         defer { loadingRoutes.remove(route) }
         do {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
-            guard sessionReadGenerations[route, default: 0] == generation else { return }
+            guard sessionReadGenerations[route, default: 0] == generation,
+                  !retiredGatewayIDs.contains(route.gatewayID) else { return }
             sessionsByRoute[route] = sessions
             // Dogfood D3/W4: the FIRST observation of a route establishes the
             // device-local baseline — live reads included, not just the launch
