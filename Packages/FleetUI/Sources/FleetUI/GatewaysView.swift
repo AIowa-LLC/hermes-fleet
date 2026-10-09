@@ -542,6 +542,7 @@ private struct GatewayRowView: View {
                     .fixedSize()
             }
 
+            reconnectControl(state: state)
             rowMenu
         }
         .padding(.vertical, 2)
@@ -584,6 +585,7 @@ private struct GatewayRowView: View {
                     .accessibilityLabel("Status: \(statusLabel(state))")
             }
 
+            reconnectControl(state: state)
             rowMenu
         }
         .padding(.vertical, 2)
@@ -625,6 +627,34 @@ private struct GatewayRowView: View {
                 .fixedSize()
         }
         .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue).menu")
+    }
+
+    /// A direct, clearly-targeted retry remains visible outside the overflow
+    /// menu. Its in-flight state is owned by AppEnvironment, so rapid taps and
+    /// lifecycle races are serialized with the underlying transport.
+    @ViewBuilder
+    private func reconnectControl(state: GatewayConnectionState) -> some View {
+        let isReconnecting = environment.reconnectingGatewayIDs.contains(gateway.id)
+        Button {
+            Task { await environment.reconnect(to: gateway.id) }
+        } label: {
+            Group {
+                if isReconnecting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .frame(minWidth: 28, minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .tint(theme.highlight)
+        .disabled(isReconnecting || state == .connecting || !environment.gateways.contains(where: { $0.id == gateway.id }))
+        .accessibilityLabel(isReconnecting ? "Reconnecting to \(gateway.displayName)" : "Reconnect \(gateway.displayName)")
+        .accessibilityHint("Retries this gateway only")
+        .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue).reconnect")
     }
 
     private func statusSymbol(_ state: GatewayConnectionState) -> String {

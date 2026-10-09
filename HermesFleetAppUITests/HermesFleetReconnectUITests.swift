@@ -5,7 +5,7 @@ import XCTest
 ///
 /// Drives the DEBUG build's gateway lifecycle controls on the Gateways screen:
 /// open the per-row menu → Disconnect → the row badge flips to "Disconnected";
-/// open the menu → Reconnect → the row returns to a healthy state. The
+/// tap the visible, gateway-specific Reconnect control → the row returns to a healthy state. The
 /// conversation-level mid-stream drop + reconnect + replay dedupe (no
 /// duplicated assistant rows/text) is proven by the hosted
 /// ConversationFixtureLoopTests (real transport + in-process gateway) — this
@@ -38,12 +38,10 @@ final class HermesFleetReconnectUITests: XCTestCase {
         XCTAssertTrue(disconnected.waitForExistence(timeout: 10),
                       "row badge should show Disconnected after disconnect")
 
-        // Reconnect via the same menu.
-        let menuAgain = app.descendants(matching: .any)["fleet.gateways.row.workstation.menu"]
-        XCTAssertTrue(menuAgain.waitForExistence(timeout: 10))
-        menuAgain.tap()
-        let reconnect = app.buttons["Reconnect"]
-        XCTAssertTrue(reconnect.waitForExistence(timeout: 5), "Reconnect menu item should appear")
+        // Reconnect directly from the row; the accessible label names the target.
+        let reconnect = app.buttons["fleet.gateways.row.workstation.reconnect"]
+        XCTAssertTrue(reconnect.waitForExistence(timeout: 5), "row reconnect button should appear")
+        XCTAssertEqual(reconnect.label, "Reconnect Workstation")
         reconnect.tap()
 
         // Healthy state returns (Online / Connected / Idle badge).

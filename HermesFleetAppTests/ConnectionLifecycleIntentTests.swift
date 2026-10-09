@@ -50,8 +50,10 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         nonisolated(unsafe) var statusValue: GatewayStatus = .offline
         nonisolated(unsafe) var reasonValue: DisconnectReason?
         nonisolated(unsafe) private(set) var connectCount = 0
+        nonisolated(unsafe) private(set) var disconnectCount = 0
         /// Makes connect() suspend, so watch ticks run while it is in flight.
         nonisolated(unsafe) var connectDelay: TimeInterval = 0
+        nonisolated(unsafe) var disconnectDelay: TimeInterval = 0
         /// Highest number of connect() calls observed at the same time.
         nonisolated(unsafe) private(set) var maxConcurrentConnects = 0
         nonisolated(unsafe) private var inFlight = 0
@@ -83,7 +85,11 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         }
 
         func adoptedReady() async -> GatewayReadyAdoption? { nil }
-        func disconnect() async {}
+        func disconnect() async {
+            disconnectCount += 1
+            if disconnectDelay > 0 { try? await Task.sleep(for: .seconds(disconnectDelay)) }
+            statusValue = .offline
+        }
         func currentGateway() async -> FleetGateway {
             FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
         }
@@ -481,6 +487,100 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             let retried = await waitUntil(timeout: 1.5) { connection.connectCount == expected }
             XCTAssertTrue(retried, "the budget was reset by the deliberate reconnect")
         }
+    }
+
+    func testManualReconnectSerializesRepeatedCallsPerGateway() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.connectDelay = 0.12
+
+        let retry = Task { await environment.reconnect(to: id) }
+        let enteredHandshake = await waitUntil { connection.connectCount == 2 }
+        XCTAssertTrue(enteredHandshake)
+        XCTAssertTrue(environment.reconnectingGatewayIDs.contains(id))
+
+        // A second tap during the teardown/handshake window is ignored.
+        await environment.reconnect(to: id)
+        XCTAssertEqual(connection.connectCount, 2)
+        XCTAssertEqual(connection.maxConcurrentConnects, 1)
+
+        await retry.value
+        XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+    }
+
+    func testExplicitDisconnectCancelsReconnectDuringTeardown() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let retry = Task { await environment.reconnect(to: id) }
+        let retryStarted = await waitUntil { environment.reconnectingGatewayIDs.contains(id) }
+        XCTAssertTrue(retryStarted)
+
+        await environment.disconnect(from: id)
+        await retry.value
+
+        XCTAssertEqual(connection.connectCount, 1, "explicit Disconnect must prevent a late retry")
+        XCTAssertEqual(environment.connectionStates[id], .disconnected)
+        XCTAssertFalse(environment.isConnectionIntended(id))
+        XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
+    }
+
+    func testRemovalDuringReconnectTeardownPreventsALateSession() async throws {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let retry = Task { await environment.reconnect(to: id) }
+        let retryStarted = await waitUntil { environment.reconnectingGatewayIDs.contains(id) }
+        XCTAssertTrue(retryStarted)
+
+        _ = try await environment.removeGateway(id)
+        await retry.value
+
+        XCTAssertEqual(connection.connectCount, 1, "removed gateways must not receive a late reconnect")
+        XCTAssertNil(environment.gateway(for: id))
+        XCTAssertNil(environment.connectionStates[id])
+        XCTAssertFalse(environment.isConnectionIntended(id))
+    }
+
+    func testForegroundRestoreWaitsForBackgroundTeardownToFinish() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let teardown = Task { await environment.disconnectAll() }
+        let teardownStarted = await waitUntil { connection.disconnectCount == 1 }
+        XCTAssertTrue(teardownStarted)
+        XCTAssertEqual(environment.connectionStates[id], .connected,
+                       "the fixture keeps the stale observable state during transport shutdown")
+
+        // This models `.active` arriving while the background scene teardown
+        // is suspended in the transport's async disconnect.
+        await environment.restoreIntendedConnections()
+        await teardown.value
+
+        XCTAssertEqual(connection.connectCount, 2,
+                       "the queued foreground restore should reconnect after teardown")
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        XCTAssertTrue(environment.isConnectionIntended(id))
     }
 
     /// The UI's Connect button calls `connect(to:)` directly: after the budget

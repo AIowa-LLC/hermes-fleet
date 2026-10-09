@@ -185,6 +185,9 @@ public final class AppEnvironment {
     public private(set) var cachedWatermarkCount = 0
     /// Per-gateway connection lifecycle, observable.
     public private(set) var connectionStates: [GatewayID: GatewayConnectionState] = [:]
+    /// Manual reconnects are serialized per gateway so repeated UI actions
+    /// cannot tear down or create overlapping transport sessions.
+    public private(set) var reconnectingGatewayIDs: Set<GatewayID> = []
 
     /// H2: latest per-gateway connection-health snapshots (uptime %,
     /// reconnects, last-disconnect reason, ping RTT). Updated by
@@ -565,6 +568,9 @@ public final class AppEnvironment {
     /// Active connection per gateway (owned by the runtime; survives view
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
+    private var reconnectOperationIDs: [GatewayID: UUID] = [:]
+    private var connectionTeardownCount = 0
+    private var connectionRestoreRequestedDuringTeardown = false
 
     /// Dogfood r2 (2026-09-23): per-gateway auto-recovery. A watch loop per
     /// gateway with recorded connection intent samples the transport state
@@ -1963,6 +1969,7 @@ public final class AppEnvironment {
     /// idempotent from `.open`, but the guard also prevents redundant work and
     /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
+        guard reconnectOperationIDs[id] == nil else { return }
         // A user-initiated connect (Connect button, reconnect, restore) is an
         // explicit fresh start for the retry budget. The auto-retry task calls
         // `performConnect` directly so it can never reset its own budget.
@@ -2198,6 +2205,11 @@ public final class AppEnvironment {
 
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
+        // Explicit Disconnect is authoritative even if a manual reconnect is
+        // between teardown and handshake. Invalidate that operation before
+        // the first suspension point so it cannot restore connection intent.
+        reconnectOperationIDs[id] = nil
+        reconnectingGatewayIDs.remove(id)
         connectionIntent.clear(id)
         cancelConnectionRecovery(for: id)
         // Manual Disconnect is transport control, not sign-out. Keep the
@@ -2223,7 +2235,14 @@ public final class AppEnvironment {
         // restore. Cancel observers and retry timers before the first awaited
         // disconnect so a racing watch cannot schedule another connection.
         // Desired connection intent remains untouched.
+        connectionTeardownCount += 1
         cancelAllConnectionRecovery()
+        // Suspension/lock teardown supersedes any user-initiated retry in
+        // its teardown gap while preserving each gateway's saved intent.
+        for id in Array(reconnectOperationIDs.keys) {
+            reconnectOperationIDs[id] = nil
+            reconnectingGatewayIDs.remove(id)
+        }
 
         let connections = Array(activeConnections.values)
         let conversations = Array(conversationSessions.values)
@@ -2284,13 +2303,50 @@ public final class AppEnvironment {
             .union(self.roomLinks.keys) {
             connectionStates[id] = .disconnected
         }
+
+        connectionTeardownCount = max(0, connectionTeardownCount - 1)
+        if connectionTeardownCount == 0, connectionRestoreRequestedDuringTeardown {
+            connectionRestoreRequestedDuringTeardown = false
+            await restoreIntendedConnections()
+        }
     }
 
     /// Reconnect: tear down cleanly, then reconnect. Observable as
     /// `disconnected` → `connecting` → `connected`/`failed`.
     public func reconnect(to id: GatewayID) async {
-        await disconnect(from: id)
-        await connect(to: id)
+        guard reconnectOperationIDs[id] == nil,
+              connectionStates[id] != .connecting,
+              !retiredGatewayIDs.contains(id),
+              gateways.contains(where: { $0.id == id }) else { return }
+
+        let operationID = UUID()
+        reconnectOperationIDs[id] = operationID
+        reconnectingGatewayIDs.insert(id)
+        defer {
+            if reconnectOperationIDs[id] == operationID {
+                reconnectOperationIDs[id] = nil
+                reconnectingGatewayIDs.remove(id)
+            }
+        }
+
+        // A deliberate retry means the user wants this registered gateway to
+        // stay connected. Do not route through `disconnect(from:)`, whose
+        // contract intentionally clears that durable intent.
+        connectionIntent.record(id)
+        resetReconnectBackoff(for: id)
+        cancelConnectionRecovery(for: id)
+        connectionStates[id] = .disconnected
+        if let connection = activeConnections[id] {
+            await connection.disconnect()
+        }
+
+        // Removal or an explicit Disconnect can happen while transport
+        // teardown is suspended. In either case, never create a late session.
+        guard reconnectOperationIDs[id] == operationID,
+              !retiredGatewayIDs.contains(id),
+              gateways.contains(where: { $0.id == id }) else { return }
+        connectionStates[id] = .disconnected
+        await performConnect(to: id)
     }
 
     /// Reconnect only gateways the user explicitly chose to keep connected.
@@ -2299,6 +2355,15 @@ public final class AppEnvironment {
     /// auth/unsupported failures clear only that gateway's intent, while
     /// transient failures remain retryable.
     public func restoreIntendedConnections() async {
+        // A foreground/unlock event can arrive before a background/lock
+        // disconnect wave has finished awaiting transport teardown. Queue the
+        // restore so it runs after the final teardown writes `.disconnected`;
+        // otherwise it can observe stale `.connected`, skip the gateway, and
+        // leave the user needing a manual reconnect until another activation.
+        guard connectionTeardownCount == 0 else {
+            connectionRestoreRequestedDuringTeardown = true
+            return
+        }
         // A foreground/unlock restore can race the launch `load()` (the
         // scenePhase `.active` hook fires while hydration is still reading
         // the record store) or follow a failed durable read. In both cases
