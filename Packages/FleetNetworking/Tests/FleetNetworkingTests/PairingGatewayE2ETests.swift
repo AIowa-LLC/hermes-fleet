@@ -54,7 +54,13 @@ final class PairingGatewayE2ETests: XCTestCase {
             buffer.append(chunk)
             if buffer.contains(UInt8(ascii: "\n")) { break }
         }
-        let line = buffer.split(separator: UInt8(ascii: "\n")).first.map(Data.init) ?? Data()
+        let newline = UInt8(ascii: "\n")
+        let line: Data
+        if let newlineIndex = buffer.firstIndex(of: newline) {
+            line = Data(buffer[..<newlineIndex])
+        } else {
+            line = Data()
+        }
         guard let info = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let originText = info["origin"] as? String, let url = URL(string: originText),
               let password = info["owner_password"] as? String, let certPath = info["cert"] as? String,
