@@ -267,10 +267,15 @@ final class F4FirstRunGateUITests: XCTestCase {
     // MARK: - Helpers
 
     /// Select Username & Password in the strategy picker (menu-style picker
-    /// can need a retry — same pattern as the live-gateway suites).
+    /// can need a retry — same pattern as the live-gateway suites). The strategy
+    /// row can sit below the fold in the lazy form once the pairing and TLS
+    /// sections are present, so scroll it into the AX tree before failing.
     private func selectUsernamePassword(in app: XCUIApplication) {
         let strategy = app.descendants(matching: .any)
             .matching(identifier: "fleet.gateways.form.strategy").firstMatch
+        if !strategy.waitForExistence(timeout: 3) {
+            for _ in 0..<3 where !strategy.exists { app.swipeUp(velocity: .fast) }
+        }
         XCTAssertTrue(strategy.waitForExistence(timeout: 10),
                       "authentication strategy picker should appear")
         let option = app.buttons["Username & Password"].firstMatch
