@@ -535,6 +535,82 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
     }
 
+    func testManualReconnectDuringLifecycleTeardownWaitsForForegroundRestore() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let teardown = Task { await environment.disconnectAll() }
+        let teardownStarted = await waitUntil { connection.disconnectCount == 1 }
+        XCTAssertTrue(teardownStarted)
+
+        await environment.reconnect(to: id)
+        XCTAssertEqual(connection.connectCount, 1, "manual retry must not open a session during teardown")
+        XCTAssertTrue(environment.reconnectingGatewayIDs.contains(id), "the queued row action should remain visibly pending")
+
+        await teardown.value
+        XCTAssertEqual(environment.connectionStates[id], .disconnected)
+        XCTAssertEqual(connection.connectCount, 1, "background/lock teardown alone must not drain a queued retry")
+
+        await environment.restoreIntendedConnections()
+        XCTAssertEqual(connection.connectCount, 2, "foreground/unlock restore should run the queued manual retry")
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
+    }
+
+    func testExplicitDisconnectCancelsDeferredReconnectDuringTeardown() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let teardown = Task { await environment.disconnectAll() }
+        let teardownStarted = await waitUntil { connection.disconnectCount == 1 }
+        XCTAssertTrue(teardownStarted)
+        await environment.reconnect(to: id)
+        XCTAssertTrue(environment.reconnectingGatewayIDs.contains(id))
+
+        await environment.disconnect(from: id)
+        await teardown.value
+        await environment.restoreIntendedConnections()
+
+        XCTAssertEqual(connection.connectCount, 1, "Disconnect must cancel the deferred retry")
+        XCTAssertEqual(environment.connectionStates[id], .disconnected)
+        XCTAssertFalse(environment.isConnectionIntended(id))
+        XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
+    }
+
+    func testRemovalCancelsDeferredReconnectBeforeForegroundRestore() async throws {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.05, maxAttempts: 2, healthyDuration: 30))
+        await environment.connect(to: id)
+        connection.disconnectDelay = 0.12
+
+        let teardown = Task { await environment.disconnectAll() }
+        let teardownStarted = await waitUntil { connection.disconnectCount == 1 }
+        XCTAssertTrue(teardownStarted)
+        await environment.reconnect(to: id)
+        await teardown.value
+
+        _ = try await environment.removeGateway(id)
+        await environment.restoreIntendedConnections()
+
+        XCTAssertEqual(connection.connectCount, 1, "a removed gateway must not receive a deferred retry")
+        XCTAssertNil(environment.gateway(for: id))
+        XCTAssertFalse(environment.isConnectionIntended(id))
+        XCTAssertFalse(environment.reconnectingGatewayIDs.contains(id))
+    }
+
     func testRemovalDuringReconnectTeardownPreventsALateSession() async throws {
         let id = GatewayID(rawValue: "workstation")
         let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])

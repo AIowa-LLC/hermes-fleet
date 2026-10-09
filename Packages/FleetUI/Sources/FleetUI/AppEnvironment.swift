@@ -569,6 +569,7 @@ public final class AppEnvironment {
     /// teardowns so disconnect/reconnect are stable).
     private var activeConnections: [GatewayID: any GatewayConnectivityProviding] = [:]
     private var reconnectOperationIDs: [GatewayID: UUID] = [:]
+    private var deferredReconnectIDsDuringTeardown: Set<GatewayID> = []
     private var connectionTeardownCount = 0
     private var connectionRestoreRequestedDuringTeardown = false
 
@@ -1918,6 +1919,8 @@ public final class AppEnvironment {
         // in-memory session objects are then discarded so stale transcript
         // rows cannot reappear in the UI after the user confirms deletion.
         connectionIntent.removeAll()
+        deferredReconnectIDsDuringTeardown.removeAll()
+        reconnectingGatewayIDs.removeAll()
         await gatewaySessionInvalidatorAll?()
         await disconnectAll()
         try await cache.clearCachedData()
@@ -1969,6 +1972,16 @@ public final class AppEnvironment {
     /// idempotent from `.open`, but the guard also prevents redundant work and
     /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
+        guard !retiredGatewayIDs.contains(id),
+              gateways.contains(where: { $0.id == id }) else { return }
+        if connectionTeardownCount > 0 {
+            // A direct Connect tapped during app background/lock teardown is
+            // resumed only by the next foreground/unlock restore.
+            connectionIntent.record(id)
+            deferredReconnectIDsDuringTeardown.insert(id)
+            reconnectingGatewayIDs.insert(id)
+            return
+        }
         guard reconnectOperationIDs[id] == nil else { return }
         // A user-initiated connect (Connect button, reconnect, restore) is an
         // explicit fresh start for the retry budget. The auto-retry task calls
@@ -1980,6 +1993,7 @@ public final class AppEnvironment {
     }
 
     private func performConnect(to id: GatewayID) async {
+        guard connectionTeardownCount == 0 else { return }
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
         guard !retiredGatewayIDs.contains(id),
@@ -2209,6 +2223,7 @@ public final class AppEnvironment {
         // between teardown and handshake. Invalidate that operation before
         // the first suspension point so it cannot restore connection intent.
         reconnectOperationIDs[id] = nil
+        deferredReconnectIDsDuringTeardown.remove(id)
         reconnectingGatewayIDs.remove(id)
         connectionIntent.clear(id)
         cancelConnectionRecovery(for: id)
@@ -2315,9 +2330,19 @@ public final class AppEnvironment {
     /// `disconnected` → `connecting` → `connected`/`failed`.
     public func reconnect(to id: GatewayID) async {
         guard reconnectOperationIDs[id] == nil,
-              connectionStates[id] != .connecting,
               !retiredGatewayIDs.contains(id),
               gateways.contains(where: { $0.id == id }) else { return }
+
+        if connectionTeardownCount > 0 {
+            // Keep this explicit target pending until foreground/unlock calls
+            // restoreIntendedConnections(). Never open a new session during
+            // the background or App Lock disconnect wave.
+            connectionIntent.record(id)
+            deferredReconnectIDsDuringTeardown.insert(id)
+            reconnectingGatewayIDs.insert(id)
+            return
+        }
+        guard connectionStates[id] != .connecting else { return }
 
         let operationID = UUID()
         reconnectOperationIDs[id] = operationID
@@ -2375,10 +2400,24 @@ public final class AppEnvironment {
         }
         guard durableGatewayRestoreCompleted else { return }
         guard !gateways.isEmpty else {
+            deferredReconnectIDsDuringTeardown.removeAll()
+            reconnectingGatewayIDs.removeAll()
             connectionIntent.prune(to: [])
             return
         }
-        for gateway in gateways where connectionIntent.isIntended(gateway.id) {
+        let deferredRetries = deferredReconnectIDsDuringTeardown
+            .intersection(Set(gateways.map(\.id)))
+            .sorted { $0.rawValue < $1.rawValue }
+        deferredReconnectIDsDuringTeardown.subtract(deferredRetries)
+        for id in deferredRetries {
+            reconnectingGatewayIDs.remove(id)
+            guard connectionIntent.isIntended(id),
+                  !retiredGatewayIDs.contains(id),
+                  gateways.contains(where: { $0.id == id }) else { continue }
+            await reconnect(to: id)
+        }
+        for gateway in gateways where connectionIntent.isIntended(gateway.id)
+            && !deferredRetries.contains(gateway.id) {
             if connectionStates[gateway.id] == .connected || connectionStates[gateway.id] == .connecting {
                 continue
             }
@@ -2661,6 +2700,11 @@ public final class AppEnvironment {
     /// is lifted again and the error is rethrown with the gateway untouched.
     @discardableResult
     public func removeGateway(_ id: GatewayID) async throws -> GatewayRemovalReport {
+        // A retry queued behind lifecycle teardown must not outlive a removal
+        // request, even if registry/revocation work suspends before it commits.
+        if deferredReconnectIDsDuringTeardown.remove(id) != nil {
+            reconnectingGatewayIDs.remove(id)
+        }
         // A paired device's credential must reach the gateway so it can be revoked there; read
         // it BEFORE the removal deletes it, and use it only after the removal succeeded.
         let revocation = await deviceRevocationAction(for: id)
