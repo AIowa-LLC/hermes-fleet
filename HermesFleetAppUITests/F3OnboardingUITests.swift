@@ -221,6 +221,21 @@ final class F3OnboardingUITests: XCTestCase {
         if let raw { app.launchEnvironment["HERMES_FLEET_PAIRING_SIMULATED_SCAN"] = raw }
         if cameraDenied { app.launchEnvironment["HERMES_FLEET_PAIRING_CAMERA_DENIED"] = "1" }
         app.launch()
+        if emptyFleet {
+            // The onboarding hierarchy can exist underneath the launch
+            // artwork. A tap before that overlay leaves can hit the artwork
+            // instead of Scan; wait for the actual interactive surface.
+            let splash = app.descendants(matching: .any)["fleet.splash.artwork"].firstMatch
+            if splash.exists {
+                attachScreenshot(of: app, name: "f3-launch-artwork-before-onboarding")
+            }
+            XCTAssertTrue(splash.waitForNonExistence(timeout: 10),
+                          "launch artwork must release the onboarding surface")
+            let scan = app.buttons["fleet.first-run.scan"]
+            XCTAssertTrue(scan.waitForExistence(timeout: 15))
+            XCTAssertTrue(scan.isEnabled)
+            XCTAssertTrue(scan.isHittable, "Scan must be visible and interactive before tapping")
+        }
         return app
     }
 
