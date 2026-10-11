@@ -198,11 +198,11 @@ struct QRFirstServerView: View {
     }
 
     static let ownerPrompt = """
-    Please verify that this is a private Telegram conversation with the verified owner who can manage this Hermes server, and that the server supports owner-bound Fleet pairing at a publicly reachable HTTPS address. Issue a fresh, single-use invitation with the installed Hermes command:
+    Before issuing anything, verify that this is a private Telegram conversation with the verified owner who can manage this Hermes server. Verify supported owner-bound Fleet pairing, a publicly reachable HTTPS address, installed qrencode with standard-input support, and a supported private local QR display on this host computer. If any prerequisite cannot be verified, stop without issuing an invitation and report that this host is not ready. Only after every check passes, issue a fresh, single-use invitation with the installed Hermes command:
 
     hermes --run-module hermes_cli.fleet_pairing_cli invite --label iPhone --ttl 600
 
-    Pass the exact issued invitation to the installed qrencode program through standard input and display its QR code locally on this host computer. Keep any image private, readable only by the owner, and remove it after the invitation expires. Never put the link or secret in command arguments, shell history, logs, Telegram, or a group. If owner identity, supported issuer, public HTTPS reachability, or local QR display cannot be verified, stop and report that this host is not ready for Fleet pairing.
+    Pass the exact issued invitation to qrencode through standard input and display its QR code locally. Keep any image private, readable only by the owner, and remove it after the invitation expires. Never put the link or secret in command arguments, shell history, logs, Telegram, or a group.
     """
 }
 
