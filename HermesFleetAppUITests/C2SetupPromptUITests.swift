@@ -15,11 +15,10 @@ final class C2SetupPromptUITests: XCTestCase {
         UITabNavigation.openSettings(app)
 
         let row = app.buttons["fleet.settings.connect-server"]
-        if !row.waitForExistence(timeout: 5) {
-            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
-        }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "configured users must have a path to connect another server")
+        for _ in 0..<8 where !row.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(row.isHittable, "the Settings enrollment entry must be onscreen before tapping")
         row.tap()
         XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.onboarding.dismiss"].exists)

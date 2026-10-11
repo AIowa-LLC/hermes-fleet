@@ -189,9 +189,6 @@ public struct FleetSettingsView: View {
                     Text("Use the owner account for the Hermes server you want to connect.")
                         .foregroundStyle(theme.textSecondary)
                 }
-                .sheet(isPresented: $showingOwnerEnrollment) {
-                    GatewayOnboardingView(environment: environment, canDismiss: true)
-                }
             }
 
             // ADR-0011 W8: version + legal + support rows moved to the
@@ -227,6 +224,11 @@ public struct FleetSettingsView: View {
         .tint(theme.highlight)
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
+        .sheet(isPresented: $showingOwnerEnrollment) {
+            if let environment {
+                GatewayOnboardingView(environment: environment, canDismiss: true)
+            }
+        }
     }
 
     // MARK: - Accent picker support (ChatGPT-style)

@@ -45,7 +45,11 @@ public struct DeviceLoginClient: Sendable {
         let session = sessionOverride ?? URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { if ownsSession { session.invalidateAndCancel() } }
         do {
-            let (data, response) = try await session.data(for: request)
+            // Supply redirect policy as a per-task delegate so it also
+            // applies when the caller injects the production pinned session.
+            // That preserves the session's trust delegate while preventing
+            // an hfd1 credential from being forwarded to a redirect target.
+            let (data, response) = try await session.data(for: request, delegate: delegate)
             guard data.count <= AuthREST.maxResponseBytes,
                   let http = response as? HTTPURLResponse else {
                 throw AuthenticationError.ticketMintFailed("device login response malformed")

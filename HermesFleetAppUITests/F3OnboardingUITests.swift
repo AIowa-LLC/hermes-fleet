@@ -95,9 +95,11 @@ final class F3OnboardingUITests: XCTestCase {
     func testCancelDelayedEnrollmentFromAddGatewayKeepsFleetUnchanged() throws {
         let app = launch("delayed-enroll", emptyFleet: false)
         UITabNavigation.openGatewaysTab(app)
-        let gatewayRows = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "fleet.gateways.row."))
-        XCTAssertTrue(app.otherElements["fleet.gateways.row.workstation"].waitForExistence(timeout: 10))
+        let gatewayRows = app.buttons.matching(
+            NSPredicate(format: "identifier MATCHES %@", "^fleet\\.gateways\\.row\\.[^.]+$"))
+        let workstation = app.descendants(matching: .any)
+            .matching(identifier: "fleet.gateways.row.workstation").firstMatch
+        XCTAssertTrue(workstation.waitForExistence(timeout: 10))
         let initialGatewayRowCount = gatewayRows.count
         XCTAssertGreaterThan(initialGatewayRowCount, 0)
 
@@ -122,7 +124,7 @@ final class F3OnboardingUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [lateAdoption], timeout: 11), .completed)
         XCTAssertEqual(gatewayRows.count, initialGatewayRowCount,
                        "canceling Add Gateway must not adopt the delayed phone enrollment")
-        XCTAssertTrue(app.otherElements["fleet.gateways.row.workstation"].exists)
+        XCTAssertTrue(workstation.exists)
     }
 
     func testWrongCredentialsCanBeRetriedSuccessfully() throws {

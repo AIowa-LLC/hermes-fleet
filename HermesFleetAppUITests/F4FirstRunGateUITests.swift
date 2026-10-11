@@ -132,11 +132,10 @@ final class F4FirstRunGateUITests: XCTestCase {
         UITabNavigation.openSettings(app)
 
         let row = app.buttons["fleet.settings.connect-server"]
-        if !row.waitForExistence(timeout: 5) {
-            for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
-        }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
                       "Settings must expose an additional-server enrollment entry")
+        for _ in 0..<8 where !row.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(row.isHittable, "the Settings enrollment entry must be brought onscreen before tapping")
         row.tap()
 
         XCTAssertTrue(
@@ -178,21 +177,12 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.launch()
 
         UITabNavigation.shellReady(app, timeout: 15)
-        UITabNavigation.openGatewaysTab(app)
+        UITabNavigation.openGatewayDetail(app, gateway: "workstation")
 
         // Remove the single gateway through the Connection screen's
-        // confirmed destructive flow: row → gateway detail → Connection.
-        let firstRow = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@",
-                         "fleet.gateways.row.")
-        ).firstMatch
-        XCTAssertTrue(firstRow.waitForExistence(timeout: 10))
-        firstRow.tap()
-        // Gateway detail → Connection (hosts Remove Gateway). The single
-        // seeded gateway is deterministically `workstation` (registrations[0]),
-        // so the resource row's identifier is stable.
+        // confirmed destructive flow: exact workstation detail → Connection.
         let connectionLink = app.descendants(matching: .any)
-            .matching(identifier: "fleet.gateway-detail.workstation.connection").firstMatch
+            .matching(identifier: "fleet.gateway-detail.connection-link.workstation").firstMatch
         if !connectionLink.waitForExistence(timeout: 5) {
             for _ in 0..<3 where !connectionLink.exists { app.swipeUp(velocity: .fast) }
         }

@@ -20,7 +20,7 @@ fi
 package=${PWD##*/}
 case "$package" in
   FleetCore) expected=694 ;;
-  FleetNetworking) expected=633 ;;
+  FleetNetworking) expected=637 ;;
   FleetPersistence) expected=58 ;;
   FleetSecurity) expected=47 ;;
   *) echo "unexpected package: $package" >&2; exit 65 ;;
