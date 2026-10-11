@@ -39,7 +39,7 @@ private final class EnrollmentURLProtocol: URLProtocol, @unchecked Sendable {
            let destination = URL(string: location, relativeTo: request.url)?.absoluteURL {
             var redirected = URLRequest(url: destination)
             redirected.httpMethod = request.httpMethod
-            redirected.httpBody = Self.bodyData(request)
+            redirected.httpBody = request.httpBody
             redirected.allHTTPHeaderFields = request.allHTTPHeaderFields
             client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: response)
             return
@@ -190,7 +190,10 @@ final class OwnerEnrollmentClientTests: XCTestCase {
             if request.url?.path == "/api/auth/providers" {
                 return (429, ["Retry-After": "30"], Data("{}".utf8))
             }
-            return (302, ["Location": "https://other.example.invalid/steal"], Data())
+            if request.url?.path == "/api/fleet/connection" {
+                return (302, ["Location": "https://other.example.invalid/steal"], Data())
+            }
+            return (404, [:], Data())
         }
         do {
             _ = try await client().discoverProviders(at: address)
@@ -199,20 +202,18 @@ final class OwnerEnrollmentClientTests: XCTestCase {
             XCTAssertEqual(error, .rateLimited(retryAfterSeconds: 30))
         }
 
-        let delegate = EnrollmentURLSessionDelegate(trustHandler: nil)
-        let response = try XCTUnwrap(HTTPURLResponse(
-            url: address, statusCode: 302, httpVersion: "HTTP/1.1",
-            headerFields: ["Location": "https://other.example.invalid/steal"]))
-        let redirectedRequest = URLRequest(url: URL(string: "https://other.example.invalid/steal")!)
-        var followedRedirect = true
-        delegate.urlSession(
-            URLSession.shared,
-            task: URLSession.shared.dataTask(with: address),
-            willPerformHTTPRedirection: response,
-            newRequest: redirectedRequest) { request in
-                followedRedirect = request != nil
-            }
-        XCTAssertFalse(followedRedirect, "credential-bearing redirects are never followed")
+        do {
+            _ = try await client().inspectConnection(at: address, authorization: authorization)
+            XCTFail("owner-authenticated metadata must fail closed on redirect")
+        } catch let error as OwnerEnrollmentError {
+            XCTAssertEqual(error, .unreachable)
+        }
+        XCTAssertEqual(EnrollmentURLProtocol.requests.count, 2)
+        XCTAssertEqual(EnrollmentURLProtocol.requests.last?.url?.path, "/api/fleet/connection")
+        XCTAssertEqual(EnrollmentURLProtocol.requests.last?.url?.host, "gateway.example.invalid")
+        XCTAssertEqual(
+            EnrollmentURLProtocol.requests.last?.value(forHTTPHeaderField: "Cookie"),
+            "hermes_session_at=synthetic-owner-cookie")
     }
 
     func testInterruptedRequestRetriesSameIdentityAndPersistsCredential() async throws {

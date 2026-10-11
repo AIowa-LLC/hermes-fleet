@@ -497,6 +497,8 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
         _ request: URLRequest,
         pinningGatewayID override: GatewayID? = nil
     ) async throws -> (Data, URLResponse) {
+        var boundedRequest = request
+        AuthREST.bounded(&boundedRequest)
         let pinningID = override ?? request.url.map(GatewayID.init(endpoint:))
         let handler = fixedTrustHandler ?? pinningID.flatMap { gatewayID in
             if let trustHandlerFactory { return trustHandlerFactory(gatewayID) }
@@ -516,7 +518,11 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
         }
         defer { if ownsSession { session.invalidateAndCancel() } }
         do {
-            let result = try await session.data(for: request)
+            // Apply the owner-credential redirect policy even when this
+            // client uses the app's injected pinned URLSession. A task-level
+            // delegate blocks redirects without replacing that session's
+            // TLS challenge handling.
+            let result = try await session.data(for: boundedRequest, delegate: sessionDelegate)
             guard result.0.count <= AuthREST.maxResponseBytes else { throw OwnerEnrollmentError.malformedResponse }
             return result
         } catch let error as OwnerEnrollmentError { throw error }

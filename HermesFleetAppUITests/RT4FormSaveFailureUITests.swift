@@ -1,5 +1,17 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    let address = app.textFields["fleet.onboarding.address"]
+    XCTAssertTrue(address.waitForExistence(timeout: 10), "owner onboarding should appear after Add Gateway")
+    XCTAssertTrue(address.isHittable, "owner onboarding address should be visible before continuing to Advanced")
+    let advanced = app.buttons["fleet.onboarding.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// RT4 P2-6 UI regression: a gateway-form save failure must NOT dismiss and
 /// discard the entered fields. The sheet stays open, the non-secret fields are
 /// preserved for retry, and a non-secret inline error is surfaced.
@@ -37,6 +49,7 @@ final class RT4FormSaveFailureUITests: XCTestCase {
             XCTAssertTrue(gatewaysEntry.waitForExistence(timeout: 10),
                           "Add Gateway entry should appear (empty state or toolbar)")
             gatewaysEntry.tap()
+            openAdvancedSetup(in: app)
         }
 
         // Enter a name + endpoint in the shared Add Gateway form.

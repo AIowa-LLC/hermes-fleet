@@ -99,11 +99,20 @@ public struct GatewayOnboardingView: View {
         }
         .tint(theme.highlight)
         .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(isWorking)
+        .modifier(ConditionalInteractiveDismissDisabled(isDisabled: canDismiss ? isWorking : nil))
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             invalidateFlow()
             if page == .review { page = .signIn }
+        }
+        .onAppear {
+            // A first-run manual form can outlive this view's @State during
+            // the Face ID lock teardown. The shared draft marker belongs only
+            // to Advanced setup, so restore that presentation without ever
+            // resurrecting owner credentials or sign-in state.
+            if environment.gatewayFormDraft.pendingSheet == .add {
+                isShowingAdvancedForm = true
+            }
         }
         .onDisappear {
             // A successful first-run adoption removes this view as the root
@@ -737,5 +746,19 @@ public struct GatewayOnboardingView: View {
         username = ""
         password = ""
         authorization = nil
+    }
+}
+
+
+private struct ConditionalInteractiveDismissDisabled: ViewModifier {
+    let isDisabled: Bool?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let isDisabled {
+            content.interactiveDismissDisabled(isDisabled)
+        } else {
+            content
+        }
     }
 }

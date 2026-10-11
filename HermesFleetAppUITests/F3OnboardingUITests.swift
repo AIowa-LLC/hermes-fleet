@@ -223,7 +223,16 @@ final class F3OnboardingUITests: XCTestCase {
 
     func testAdvancedGatewayFormRemainsAvailableAndDismissible() throws {
         let app = launch()
-        app.buttons["fleet.onboarding.advanced"].tap()
+        let address = app.textFields["fleet.onboarding.address"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10),
+                      "the onboarding address screen must finish appearing first")
+        XCTAssertTrue(address.isHittable)
+        let advanced = app.buttons["fleet.onboarding.advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10))
+        for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(advanced.isHittable,
+                      "scroll the footer into view before tapping advanced setup")
+        advanced.tap()
         XCTAssertTrue(app.textFields["fleet.gateways.form.endpoint"].waitForExistence(timeout: 10))
         app.buttons["fleet.gateways.form.cancel"].tap()
         XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 5))

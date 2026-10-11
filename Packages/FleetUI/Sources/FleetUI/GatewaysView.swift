@@ -31,11 +31,13 @@ public struct GatewaysView: View {
 
     enum PresentedSheet: Identifiable {
         case add
+        case advancedAdd
         case edit(FleetGateway)
         case auth(GatewayID)
         var id: String {
             switch self {
             case .add: return "add"
+            case .advancedAdd: return "advanced-add"
             case .edit(let gateway): return "edit-\(gateway.id.rawValue)"
             case .auth(let id): return "auth-\(id.rawValue)"
             }
@@ -96,6 +98,8 @@ public struct GatewaysView: View {
             switch sheet {
             case .add:
                 GatewayOnboardingView(environment: environment, canDismiss: true)
+            case .advancedAdd:
+                addGatewayForm
             case .edit(let gateway):
                 GatewayFormSheet(
                     title: "Edit Gateway",
@@ -262,11 +266,24 @@ public struct GatewaysView: View {
 
     // MARK: P0-2 — in-progress form draft (survives the FaceID lock)
 
-    /// Open the Add-Gateway sheet, beginning a fresh draft in the root-owned
-    /// store (so an app background + relock mid-entry is restored on unlock).
+    /// Start the owner-enrollment flow. The advanced manual form owns the
+    /// root-backed draft and starts it only when the user selects Advanced.
     private func presentAddForm() {
-        environment.gatewayFormDraft.begin(pendingSheet: .add, initial: nil)
         presentedSheet = .add
+    }
+
+    private var addGatewayForm: some View {
+        GatewayFormSheet(
+            title: "Add Gateway",
+            saveButton: "Add",
+            initial: nil,
+            draftStore: environment.gatewayFormDraft
+        ) { registration, credential, confirmsTLSFirstUse in
+            _ = try await environment.addGateway(
+                registration,
+                credential: credential,
+                confirmsTLSFirstUse: confirmsTLSFirstUse)
+        }
     }
 
     /// Open the Edit-Gateway sheet, beginning a fresh draft seeded from the
@@ -284,7 +301,7 @@ public struct GatewaysView: View {
         guard draft.isInProgress, presentedSheet == nil else { return }
         switch draft.pendingSheet {
         case .add:
-            presentedSheet = .add
+            presentedSheet = .advancedAdd
         case .edit(let gatewayID):
             // The draft stores only the ID; resolve the current gateway so the
             // edit sheet gets the live registry value. If it was removed while

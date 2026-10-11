@@ -1,5 +1,17 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    let address = app.textFields["fleet.onboarding.address"]
+    XCTAssertTrue(address.waitForExistence(timeout: 10), "owner onboarding should appear after Add Gateway")
+    XCTAssertTrue(address.isHittable, "owner onboarding address should be visible before continuing to Advanced")
+    let advanced = app.buttons["fleet.onboarding.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// B1 QA (t_a0ca4856) — INDEPENDENT live verification of the board selector
 /// against an operator-supplied gateway. Device-only: the scripted simulator
 /// fleet is excluded by targeting this suite explicitly on the physical device.
@@ -204,6 +216,7 @@ final class B1LiveBoardPickerUITests: XCTestCase {
 
     private func addGateway(in app: XCUIApplication, name: String, endpoint: String) {
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")

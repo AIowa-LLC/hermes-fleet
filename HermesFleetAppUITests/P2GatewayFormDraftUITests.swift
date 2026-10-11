@@ -1,6 +1,18 @@
 import XCTest
 import UIKit
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    let address = app.textFields["fleet.onboarding.address"]
+    XCTAssertTrue(address.waitForExistence(timeout: 10), "owner onboarding should appear after Add Gateway")
+    XCTAssertTrue(address.isHittable, "owner onboarding address should be visible before continuing to Advanced")
+    let advanced = app.buttons["fleet.onboarding.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// P0-2 — Add-Gateway form survives the H1 FaceID lock + paste-friendly
 /// credential entry (Tony dogfood defect, TestFlight build 2).
 ///
@@ -51,6 +63,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
         // Open the Add-Gateway form and fill it in (the user's real workflow:
         // long generated credentials copied from elsewhere).
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
@@ -118,6 +131,7 @@ final class P2GatewayFormDraftUITests: XCTestCase {
                       "roster should render (lock disabled)")
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")

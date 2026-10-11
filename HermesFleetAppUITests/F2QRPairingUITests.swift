@@ -1,5 +1,17 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    let address = app.textFields["fleet.onboarding.address"]
+    XCTAssertTrue(address.waitForExistence(timeout: 10), "owner onboarding should appear after Add Gateway")
+    XCTAssertTrue(address.isHittable, "owner onboarding address should be visible before continuing to Advanced")
+    let advanced = app.buttons["fleet.onboarding.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// F2 — QR-code gateway pairing: one scan fills the Add-Gateway form.
 ///
 /// Deterministic on the simulator (and CI): VisionKit's live scanner reports
@@ -31,6 +43,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))
@@ -64,6 +77,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))
@@ -94,6 +108,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15), "Add Gateway toolbar button should appear")
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "Add-Gateway form should appear")
@@ -142,6 +157,7 @@ final class F2QRPairingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 15))
         add.tap()
+        openAdvancedSetup(in: app)
 
         let nameField = app.textFields["fleet.gateways.form.name"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10))

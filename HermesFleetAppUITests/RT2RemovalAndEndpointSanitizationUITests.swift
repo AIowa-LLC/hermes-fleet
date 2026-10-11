@@ -1,5 +1,17 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    let address = app.textFields["fleet.onboarding.address"]
+    XCTAssertTrue(address.waitForExistence(timeout: 10), "owner onboarding should appear after Add Gateway")
+    XCTAssertTrue(address.isHittable, "owner onboarding address should be visible before continuing to Advanced")
+    let advanced = app.buttons["fleet.onboarding.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// RT2 UI regression tests (t_2c13bdb3):
 /// - P1-8: gateway removal requires an explicit, named confirmation that
 ///   explains credential deletion; removal succeeds after confirm; a bounded
@@ -92,6 +104,7 @@ final class RT2RemovalAndEndpointSanitizationUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
