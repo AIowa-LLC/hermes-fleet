@@ -2922,6 +2922,13 @@ private struct FailingSaveRegistry: GatewayRegistryManaging {
     func allGateways() async -> [FleetGateway] { await inner.allGateways() }
     func gateway(for id: GatewayID) async -> FleetGateway? { await inner.gateway(for: id) }
     func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
+        // These fixed registrations represent an already configured fleet.
+        // Seed them before failing user saves so the regression can reach
+        // the additional-gateway form without bypassing QR-first onboarding.
+        if let id = registration.id,
+           ScriptedFleet.registrations.contains(where: { $0.id == id }) {
+            return try await inner.addGateway(registration)
+        }
         throw GatewayRegistryError.credentialStoreFailed("injected save failure")
     }
     func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
