@@ -21,7 +21,7 @@ final class OwnerEnrollmentTests: XCTestCase {
     func testPendingIdentityPrintableFormsAreRedacted() {
         let identity = PendingOwnerDeviceIdentity(
             deviceID: "0123456789abcdef0123456789abcdef",
-            secret: "abcdefghijklmnopqrstuv-0123456789ABCDEFGH")
+            secret: String(repeating: "fixture", count: 6))
         XCTAssertEqual(identity.description, "[REDACTED]")
         XCTAssertFalse(identity.debugDescription.contains(identity.secret))
     }
