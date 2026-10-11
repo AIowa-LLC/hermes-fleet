@@ -275,7 +275,8 @@ enum FleetServiceGraph {
             // the cache store — non-secret posture, shared file protection).
             launchCache: launchCache,
             localCacheRecovery: cacheRecovery,
-            ownerEnrollment: ownerEnrollment
+            ownerEnrollment: ownerEnrollment,
+            pairingService: GatewayPairingClient()
         )
     }
 

@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 import FleetCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Builds a single-gateway connection for a registered gateway, so the app
 /// runtime can drive the connect/disconnect/reconnect lifecycle without
@@ -535,6 +538,8 @@ public final class AppEnvironment {
     /// only — the user manages the real fleet in U2.
     private let seedRegistrations: [GatewayRegistration]
     /// First-run owner enrollment seam supplied by the app composition root.
+    public let pairing: PairingCoordinator
+    @ObservationIgnored private let pairingService: (any GatewayPairing)?
     public let ownerEnrollment: (any OwnerEnrollmentProviding)?
     /// Serializes owner-enrollment requests across onboarding view lifetimes.
     /// Cancellation invalidates UI updates, but the lock remains until the
@@ -648,7 +653,8 @@ public final class AppEnvironment {
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
         recoveryTiming: ConnectionRecoveryTiming = .standard,
-        ownerEnrollment: (any OwnerEnrollmentProviding)? = nil
+        ownerEnrollment: (any OwnerEnrollmentProviding)? = nil,
+        pairingService: (any GatewayPairing)? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -687,6 +693,8 @@ public final class AppEnvironment {
         }
         self.recoveryTiming = recoveryTiming
         self.ownerEnrollment = ownerEnrollment
+        self.pairingService = pairingService
+        self.pairing = PairingCoordinator(service: pairingService)
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -703,6 +711,7 @@ public final class AppEnvironment {
         // captures `self` below — Swift requires every stored property
         // assigned before `self` can be used (even a weak capture).
         self.liveOps = LiveOpsStore(factory: liveOpsFactory ?? { _ in nil }, biometrics: biometrics)
+        pairing.attach(host: self)
         botManagement.setGatewayProvider { [weak self] in self?.gateways ?? [] }
         liveOps.setProviders(
             gateways: { [weak self] in self?.gateways ?? [] },
@@ -3145,5 +3154,55 @@ public final class AppEnvironment {
     /// The projects-tree snapshot store (offline browse), when wired.
     public var projectsSnapshotStore: (any ProjectsSnapshotStoring)? {
         projectsSnapshotStore_
+    }
+}
+
+// MARK: - Invitation enrollment (ongoing authentication remains DeviceLogin)
+extension AppEnvironment: PairingHosting {
+    public func existingGateway(forPairedInstance instanceID: String, origin: URL) -> FleetGateway? {
+        let stableID = GatewayID(pairedInstanceID: instanceID)
+        return gateways.first { gateway in
+            gateway.id == stableID || gateway.endpoint.flatMap { try? GatewayEndpoint.normalizedOrigin(from: $0) } == origin
+        }
+    }
+
+    public var pairingDeviceName: String {
+        #if canImport(UIKit)
+        let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "iPhone" : String(name.prefix(80))
+        #else
+        return "Phone"
+        #endif
+    }
+
+    public func addPairedGateway(_ grant: PairingGrant) async throws -> FleetGateway {
+        guard let id = GatewayID(pairedInstanceID: grant.gateway.instanceID) else { throw PairingFailure.malformedResponse }
+        guard existingGateway(forPairedInstance: grant.gateway.instanceID, origin: grant.gateway.origin) == nil else {
+            throw GatewayRegistryError.duplicate(id)
+        }
+        guard let pairedRegistry = registry as? any GatewayPairingRegistering else { throw PairingFailure.pairingUnavailable }
+        let gateway: FleetGateway
+        do { gateway = try await pairedRegistry.registerPairedGateway(grant) }
+        catch {
+            // Attempt secure local cleanup immediately; the coordinator retries
+            // any failed cleanup together with pinned remote revocation.
+            try? await pairedRegistry.discardUncommittedPairing(grant)
+            throw error
+        }
+        RoomDraftStore.allowWrites(forGateway: id)
+        conversationDrafts.allowWrites(gatewayID: id)
+        await reloadGateways()
+        await connect(to: id)
+        return gateways.first { $0.id == id } ?? gateway
+    }
+
+    public func revokeUnsavedDevice(_ grant: PairingGrant) async -> PairingRevocationOutcome {
+        let outcome = await pairingService?.revoke(
+            origin: grant.gateway.origin, credential: grant.credential, expecting: grant.tlsFingerprint) ?? .failed
+        if let pairedRegistry = registry as? any GatewayPairingRegistering {
+            do { try await pairedRegistry.discardUncommittedPairing(grant) }
+            catch { return .failed }
+        }
+        return outcome
     }
 }

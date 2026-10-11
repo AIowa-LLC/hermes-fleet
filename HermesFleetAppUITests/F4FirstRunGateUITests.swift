@@ -7,8 +7,8 @@ import XCTest
 /// loading → unconfigured (first-run setup) → configured (normal tabs).
 /// This suite proves the lifecycle both ways plus the existing-user paths:
 /// Settings and Fleet both expose owner enrollment for additional servers,
-/// advanced gateway setup remains usable, and removing the final
-/// gateway returns to setup.
+/// Advanced gateway setup remains usable, and removing the final gateway
+/// returns to the QR-first setup.
 final class F4FirstRunGateUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -21,29 +21,18 @@ final class F4FirstRunGateUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_ZERO_GATEWAYS"] = "1"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launchEnvironment["HERMES_FLEET_ONBOARDING_SCENARIO"] = "success"
+        app.launchEnvironment["HERMES_FLEET_PAIRING_SIMULATED_SCAN"] = invitation(id: "ok0123456789abcdef")
         app.launch()
 
-        let address = app.textFields["fleet.onboarding.address"]
-        XCTAssertTrue(address.waitForExistence(timeout: 15), "fresh install must show server address setup")
-        address.tap()
-        address.press(forDuration: 1.1)
-        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
-        address.typeText("https://onboarding.fixture.test")
-        app.buttons["fleet.onboarding.continue"].tap()
-
-        let username = app.textFields["fleet.onboarding.username"]
-        XCTAssertTrue(username.waitForExistence(timeout: 10), "provider detection should lead to sign-in")
-        username.tap()
-        username.typeText("owner")
-        let password = app.secureTextFields["fleet.onboarding.password"]
-        password.tap()
-        password.typeText("synthetic-password")
-        app.buttons["fleet.onboarding.sign-in"].tap()
-
-        let connect = app.buttons["fleet.onboarding.connect-phone"]
-        XCTAssertTrue(connect.waitForExistence(timeout: 10), "owner sign-in should reveal explicit phone enrollment")
-        connect.tap()
+        let scan = app.buttons["fleet.first-run.scan"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 15), "fresh install must start with the QR invitation action")
+        scan.tap()
+        let simulate = app.buttons["fleet.gateways.scan.simulate"]
+        XCTAssertTrue(simulate.waitForExistence(timeout: 10))
+        simulate.tap()
+        XCTAssertTrue(app.buttons["fleet.pairing.confirm"].waitForExistence(timeout: 10),
+                      "scanning must preview the owner-issued invitation")
+        app.buttons["fleet.pairing.confirm"].tap()
 
         // SUCCESS TRANSITION: the sheet dismisses, the registry is non-empty,
         // and the normal four-tab Fleet UI appears — no relaunch, no extra
@@ -51,7 +40,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         UITabNavigation.shellReady(app, timeout: 15)
         XCTAssertTrue(true,
                       "registering the first gateway must transition into the main Fleet UI")
-        XCTAssertFalse(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 2),
+        XCTAssertFalse(app.buttons["fleet.first-run.scan"].waitForExistence(timeout: 2),
                        "onboarding must be gone after the first registration")
 
         attachScreenshot(of: app, name: "f4-first-gateway-transition")
@@ -69,7 +58,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         UITabNavigation.shellReady(app, timeout: 15)
         XCTAssertTrue(true,
                       "a configured (seeded) launch must show the normal tab UI")
-        XCTAssertFalse(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 2),
+        XCTAssertFalse(app.buttons["fleet.first-run.scan"].waitForExistence(timeout: 2),
                        "first-run onboarding must not appear for a configured user")
         attachScreenshot(of: app, name: "f4-configured-launch")
     }
@@ -212,7 +201,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         if ok.waitForExistence(timeout: 5) { ok.tap() }
 
         // EMPTY REGISTRY ⇒ the root gate flips back to setup.
-        XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.buttons["fleet.first-run.scan"].waitForExistence(timeout: 15),
                       "removing the final gateway must return to the setup experience")
         attachScreenshot(of: app, name: "f4-removal-returns-to-setup")
     }
@@ -253,5 +242,9 @@ final class F4FirstRunGateUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func invitation(id: String) -> String {
+        "https://pairing.fixture.test/pair#v=1&i=\(id)&s=\(String(repeating: "S", count: 43))"
     }
 }

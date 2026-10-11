@@ -47,11 +47,15 @@ extension FleetServiceGraph {
     static func makeSimulatorEnvironment() -> AppEnvironment {
         // Scripted registry: in-memory credential store (no Keychain writes).
         let credentials = InMemoryCredentialStore()
+        let cacheStore = try! SwiftDataCacheStore.makeInMemory()
+        let pins = InMemoryPinStore()
         let baseRegistry = GatewayRegistryService(
             credentials: credentials,
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
-            }
+            },
+            recordStore: cacheStore,
+            pinStore: pins
         )
         // P2-6: when the save-fail knob is set, wrap the registry so the
         // add/edit save path throws (the UI test then verifies the form keeps
@@ -76,7 +80,6 @@ extension FleetServiceGraph {
         // Doubles as the health-stats store: scripted connections do not emit
         // transport health events, so the dashboard shows live scripted state
         // with "no data yet" stats — honest for the DEBUG walkthrough.
-        let cacheStore = try! SwiftDataCacheStore.makeInMemory()
         let cache: any CacheStoring = cacheStore
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
@@ -84,6 +87,8 @@ extension FleetServiceGraph {
             registry: registry,
             roster: roster,
             cache: cache,
+            tlsPinStore: pins,
+            tlsApprovalStore: pins,
             sessionList: sessionList,
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
@@ -160,7 +165,8 @@ extension FleetServiceGraph {
             // authorization gate and transcript review are walkable
             // deterministically in the simulator + UI tests — no live speech.
             voiceEngineFactory: { ScriptedVoiceEngine.shared },
-            ownerEnrollment: ScriptedOwnerEnrollment()
+            ownerEnrollment: ScriptedOwnerEnrollment(),
+            pairingService: ScriptedPairingService()
         )
         // Card D: `HERMES_FLEET_ARTIFACT_FIXTURE=1` seeds a deterministic
         // observed-artifact library (gateway + source conversation) so the

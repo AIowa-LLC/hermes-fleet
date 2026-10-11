@@ -25,7 +25,7 @@ public typealias GatewayConnectionFactory = @Sendable (
 ///
 /// No live Hermes gateway is required to construct this service; tests drive
 /// it with in-process fixture servers (consistent with M1–M6).
-public actor GatewayRegistryService: GatewayRegistryManaging {
+public actor GatewayRegistryService: GatewayRegistryManaging, GatewayPairingRegistering {
     private var registry: GatewayRegistry
     private let credentials: any CredentialStoring
     private let connectionFactory: GatewayConnectionFactory
@@ -39,6 +39,20 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// Clears endpoint-scoped owner-enrollment retry secrets and temporary
     /// pin aliases on removal. Optional for legacy/scripted registries.
     private let enrollmentCleanup: (any GatewayEnrollmentCleanupProviding)?
+
+    /// In-flight pairing registrations reserve both the stable gateway ID and
+    /// endpoint before the first suspension point. The configured record is
+    /// written last and is the durable commit marker.
+    private struct PairingReservation {
+        let grant: PairingGrant
+        let gateway: FleetGateway
+        var credentialWriteAttempted = false
+        var pinWriteAttempted = false
+        var recordWriteAttempted = false
+        var registrationInProgress = true
+        var cleanupInProgress = false
+    }
+    private var pairingReservations: [GatewayID: PairingReservation] = [:]
 
     public init(
         registry: GatewayRegistry = GatewayRegistry(),
@@ -83,7 +97,10 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
         guard id.isRoutingSafe else {
             throw GatewayRegistryError.invalidGatewayID(id.rawValue)
         }
-        guard registry.gateway(for: id) == nil else {
+        guard registry.gateway(for: id) == nil,
+              !pairingReservations.values.contains(where: {
+                  $0.gateway.id == id || Self.sameOrigin($0.gateway.endpoint, endpoint)
+              }) else {
             throw GatewayRegistryError.duplicate(id)
         }
         let gateway = FleetGateway(
@@ -104,6 +121,204 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
             throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
         }
         return gateway
+    }
+
+    // MARK: Atomic pairing registration
+
+    /// Commit a paired gateway only after its device credential and confirmed
+    /// SPKI pin are secured. The durable configured record is written last;
+    /// it is never possible for restore to observe a just-added unauthenticated
+    /// pairing row.
+    public func registerPairedGateway(_ grant: PairingGrant) async throws -> FleetGateway {
+        guard let id = GatewayID(pairedInstanceID: grant.gateway.instanceID), id.isRoutingSafe else {
+            throw GatewayRegistryError.invalidGatewayID(grant.gateway.instanceID)
+        }
+        guard Self.isValidDeviceCredential(grant.credential.rawValue, deviceID: grant.deviceID) else {
+            throw GatewayRegistryError.credentialStoreFailed("invalid paired credential")
+        }
+        let endpoint = try GatewayEndpoint.normalizedOrigin(from: grant.gateway.origin)
+        guard endpoint.scheme?.lowercased() == "https",
+              endpoint.path.isEmpty || endpoint.path == "/" else {
+            throw GatewayRegistryError.invalidEndpoint
+        }
+        guard let pinStore else {
+            throw GatewayRegistryError.pinStoreFailed("pin store unavailable")
+        }
+        guard let recordStore else {
+            throw GatewayRegistryError.recordStoreFailed("record store unavailable")
+        }
+        let displayName = grant.gateway.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayName.isEmpty else { throw GatewayRegistryError.emptyDisplayName }
+
+        guard registry.gateway(for: id) == nil,
+              !registry.allGateways.contains(where: { Self.sameOrigin($0.endpoint, endpoint) }),
+              !pairingReservations.values.contains(where: {
+                  $0.gateway.id == id || Self.sameOrigin($0.gateway.endpoint, endpoint)
+              }) else {
+            throw GatewayRegistryError.duplicate(id)
+        }
+
+        let gateway = FleetGateway(
+            id: id,
+            displayName: displayName,
+            endpoint: endpoint,
+            authConfigured: true,
+            authConfiguration: GatewayAuthConfiguration(strategy: .deviceCredential, credentialStored: true)
+        )
+        pairingReservations[id] = PairingReservation(grant: grant, gateway: gateway)
+
+        // All storage reads happen under the reservation so an actor-reentrant
+        // Add or another pairing transaction cannot claim the same identity.
+        let records: [StoredGatewayRecord]
+        do { records = try await recordStore.loadGatewayRecords() }
+        catch {
+            pairingReservations.removeValue(forKey: id)
+            throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
+        }
+        guard !records.contains(where: { record in
+            record.id == id.rawValue || Self.sameOrigin(URL(string: record.endpoint), endpoint)
+        }) else {
+            pairingReservations.removeValue(forKey: id)
+            throw GatewayRegistryError.duplicate(id)
+        }
+        do {
+            guard try await credentials.loadCredential(for: id) == nil else {
+                pairingReservations.removeValue(forKey: id)
+                throw GatewayRegistryError.duplicate(id)
+            }
+        } catch {
+            pairingReservations.removeValue(forKey: id)
+            if let registryError = error as? GatewayRegistryError { throw registryError }
+            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
+        }
+        do {
+            if let existingPin = try await pinStore.loadPin(for: id), existingPin != grant.tlsFingerprint {
+                pairingReservations.removeValue(forKey: id)
+                throw GatewayRegistryError.pinStoreFailed("gateway key changed")
+            }
+        } catch {
+            pairingReservations.removeValue(forKey: id)
+            if let registryError = error as? GatewayRegistryError { throw registryError }
+            throw GatewayRegistryError.pinStoreFailed(Redaction.safeErrorDescription(error))
+        }
+
+        // Each attempted write is marked before its await because a store may
+        // persist successfully and then report an error. Discard is therefore
+        // safe even for an ambiguous write result.
+        pairingReservations[id]?.credentialWriteAttempted = true
+        do {
+            try await credentials.saveCredential(
+                GatewayCredential(rawValue: grant.credential.rawValue), for: id)
+        } catch {
+            pairingReservations[id]?.registrationInProgress = false
+            throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
+        }
+
+        do {
+            let existingPin = try await pinStore.loadPin(for: id)
+            if let existingPin {
+                guard existingPin == grant.tlsFingerprint else {
+                    throw GatewayRegistryError.pinStoreFailed("gateway key changed")
+                }
+            } else {
+                pairingReservations[id]?.pinWriteAttempted = true
+                try await pinStore.savePin(grant.tlsFingerprint, for: id)
+            }
+        } catch {
+            pairingReservations[id]?.registrationInProgress = false
+            if let registryError = error as? GatewayRegistryError { throw registryError }
+            throw GatewayRegistryError.pinStoreFailed(Redaction.safeErrorDescription(error))
+        }
+
+        // Commit marker last. If this throws after writing, discard removes
+        // this transaction's record before touching its secure material.
+        pairingReservations[id]?.recordWriteAttempted = true
+        do {
+            try await recordStore.saveGatewayRecord(StoredGatewayRecord(
+                id: id.rawValue,
+                displayName: gateway.displayName,
+                endpoint: endpoint.absoluteString,
+                authConfiguration: gateway.authConfiguration,
+                authConfigured: true
+            ))
+        } catch {
+            pairingReservations[id]?.registrationInProgress = false
+            throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
+        }
+
+        registry.register(gateway)
+        pairingReservations.removeValue(forKey: id)
+        return gateway
+    }
+
+    /// Remove only material written by an incomplete pairing transaction.
+    /// A committed gateway has no reservation and is therefore untouchable.
+    public func discardUncommittedPairing(_ grant: PairingGrant) async throws {
+        guard let id = GatewayID(pairedInstanceID: grant.gateway.instanceID),
+              var reservation = pairingReservations[id], reservation.grant == grant else { return }
+        guard !reservation.registrationInProgress else {
+            throw GatewayRegistryError.credentialStoreFailed("pairing registration still in progress")
+        }
+        guard !reservation.cleanupInProgress else {
+            throw GatewayRegistryError.credentialStoreFailed("pairing cleanup already in progress")
+        }
+        reservation.cleanupInProgress = true
+        pairingReservations[id] = reservation
+
+        // Remove the possible commit marker first. If it cannot be removed,
+        // retain the credential and pin for a safe retry rather than allowing
+        // a stale durable row to restore without its trust material.
+        if reservation.recordWriteAttempted, let recordStore {
+            do {
+                try await recordStore.deleteGatewayRecord(id: id)
+                pairingReservations[id]?.recordWriteAttempted = false
+            } catch {
+                pairingReservations[id]?.cleanupInProgress = false
+                throw GatewayRegistryError.recordStoreFailed(Redaction.safeErrorDescription(error))
+            }
+        }
+        if reservation.credentialWriteAttempted {
+            do {
+                try await credentials.deleteCredential(for: id)
+                pairingReservations[id]?.credentialWriteAttempted = false
+            } catch {
+                pairingReservations[id]?.cleanupInProgress = false
+                throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
+            }
+        }
+        if reservation.pinWriteAttempted, let pinStore {
+            do {
+                try await pinStore.deletePin(for: id)
+                pairingReservations[id]?.pinWriteAttempted = false
+            } catch {
+                pairingReservations[id]?.cleanupInProgress = false
+                throw GatewayRegistryError.pinStoreFailed(Redaction.safeErrorDescription(error))
+            }
+        }
+        pairingReservations.removeValue(forKey: id)
+    }
+
+    private static func sameOrigin(_ lhs: URL?, _ rhs: URL) -> Bool {
+        guard let lhs, let a = try? GatewayEndpoint.normalizedOrigin(from: lhs),
+              let b = try? GatewayEndpoint.normalizedOrigin(from: rhs) else { return false }
+        return a.scheme?.lowercased() == b.scheme?.lowercased()
+            && a.host?.lowercased() == b.host?.lowercased()
+            && a.port == b.port
+    }
+
+    private static func isValidDeviceCredential(_ credential: String, deviceID: String) -> Bool {
+        let parts = credential.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "hfd1", parts[1] == Substring(deviceID),
+              deviceID.count == 32,
+              deviceID.unicodeScalars.allSatisfy({
+                  ($0.value >= 48 && $0.value <= 57) || ($0.value >= 97 && $0.value <= 102)
+              }), (32...128).contains(parts[2].count) else { return false }
+        return (deviceID + String(parts[2])).unicodeScalars.allSatisfy { scalar in
+            (scalar.value >= 48 && scalar.value <= 57)
+                || (scalar.value >= 65 && scalar.value <= 90)
+                || (scalar.value >= 97 && scalar.value <= 122)
+                || scalar == "-" || scalar == "_"
+        }
     }
 
     public func updateGateway(_ id: GatewayID, edits: GatewayEdit) async throws -> FleetGateway {
