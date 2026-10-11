@@ -28,7 +28,7 @@ final class RT4FormSaveFailureUITests: XCTestCase {
         // configured-fleet launch still reaches the form from Gateways. Keep
         // both paths in the regression so the form contract is tested without
         // assuming a tab that is intentionally unavailable on first run.
-        let onboardingEntry = firstMatch(in: app, identifier: "fleet.onboarding.enter-values")
+        let onboardingEntry = firstMatch(in: app, identifier: "fleet.onboarding.advanced")
         if onboardingEntry.waitForExistence(timeout: 10) {
             onboardingEntry.tap()
         } else {

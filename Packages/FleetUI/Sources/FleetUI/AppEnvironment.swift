@@ -534,6 +534,17 @@ public final class AppEnvironment {
     /// navigation skeleton is walkable in the simulator. Presentation data
     /// only — the user manages the real fleet in U2.
     private let seedRegistrations: [GatewayRegistration]
+    /// First-run owner enrollment seam supplied by the app composition root.
+    public let ownerEnrollment: (any OwnerEnrollmentProviding)?
+    /// Serializes owner-enrollment requests across onboarding view lifetimes.
+    /// Cancellation invalidates UI updates, but the lock remains until the
+    /// request and any required remote rollback have both settled.
+    public private(set) var ownerEnrollmentTransactionID: UUID?
+    /// A cleanup failure after interrupted owner enrollment. The action keeps
+    /// the short-lived owner authorization in memory so the user can retry
+    /// server-side revocation without repeating enrollment.
+    public private(set) var ownerEnrollmentRecoveryMessage: String?
+    private var ownerEnrollmentRecoveryAction: (@MainActor () async throws -> Void)?
 
     /// Active connection per gateway (owned by the runtime; survives view
     /// teardowns so disconnect/reconnect are stable).
@@ -636,7 +647,8 @@ public final class AppEnvironment {
         launchCache: (any FleetLaunchCaching)? = nil,
         diagnosticsRecorder: DiagnosticsRecorder = DiagnosticsRecorder(),
         localCacheRecovery: LocalCacheRecoveryReport? = nil,
-        recoveryTiming: ConnectionRecoveryTiming = .standard
+        recoveryTiming: ConnectionRecoveryTiming = .standard,
+        ownerEnrollment: (any OwnerEnrollmentProviding)? = nil
     ) {
         self.registry = registry
         self.roster = roster
@@ -674,6 +686,7 @@ public final class AppEnvironment {
             self.localCacheNotices = localCacheRecovery.notices
         }
         self.recoveryTiming = recoveryTiming
+        self.ownerEnrollment = ownerEnrollment
         self.roomSourceFactory = roomSourceFactory
         self.roomCommandFactory = roomCommandFactory
         self.roomDriverStatusFactory = roomDriverStatusFactory
@@ -2316,6 +2329,41 @@ public final class AppEnvironment {
 
     // MARK: Registry passthroughs (U2 Gateway management reuses these)
 
+    /// Adopt a phone enrolled through the owner setup flow. The enrollment
+    /// service has already saved its device credential through the shared
+    /// credential store, so this registers only non-secret metadata and never
+    /// writes a second credential item.
+    public func adoptOwnerEnrollment(
+        metadata: OwnerConnectionMetadata,
+        device: OwnerEnrolledDevice
+    ) async throws {
+        guard metadata.gatewayID == device.gatewayID else {
+            throw OwnerEnrollmentError.malformedResponse
+        }
+        guard Set(metadata.scopes) == ["fleet:operator"],
+              Set(device.scopes) == ["fleet:operator"],
+              metadata.origin.scheme?.lowercased() == "https" else {
+            throw OwnerEnrollmentError.malformedResponse
+        }
+        guard !gateways.contains(where: {
+            $0.id == metadata.gatewayID || $0.endpoint == metadata.origin
+        }) else {
+            throw GatewayRegistryError.duplicate(metadata.gatewayID)
+        }
+        let registration = GatewayRegistration(
+            id: metadata.gatewayID,
+            displayName: device.displayName,
+            endpoint: metadata.origin,
+            authConfiguration: GatewayAuthConfiguration(
+                strategy: .deviceCredential,
+                credentialStored: true))
+        let gateway = try await registry.addGateway(registration)
+        RoomDraftStore.allowWrites(forGateway: gateway.id)
+        conversationDrafts.allowWrites(gatewayID: gateway.id)
+        await reloadGateways()
+        await connect(to: gateway.id)
+    }
+
     public func addGateway(_ registration: GatewayRegistration) async throws -> FleetGateway {
         let gateway = try await registry.addGateway(registration)
         RoomDraftStore.allowWrites(forGateway: gateway.id)
@@ -2440,6 +2488,41 @@ public final class AppEnvironment {
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
         await reloadGateways()
+    }
+
+    /// Retain a retryable cleanup operation when a late enrollment could not
+    /// be rolled back. The notice is observable so it remains visible after
+    /// the onboarding sheet disappears or the app returns to the foreground.
+    public func recordOwnerEnrollmentRecovery(
+        message: String,
+        retry: @escaping @MainActor () async throws -> Void
+    ) {
+        ownerEnrollmentRecoveryMessage = message
+        ownerEnrollmentRecoveryAction = retry
+    }
+
+    public func beginOwnerEnrollmentTransaction() -> UUID? {
+        guard ownerEnrollmentTransactionID == nil else { return nil }
+        let transactionID = UUID()
+        ownerEnrollmentTransactionID = transactionID
+        return transactionID
+    }
+
+    public func endOwnerEnrollmentTransaction(_ transactionID: UUID) {
+        guard ownerEnrollmentTransactionID == transactionID else { return }
+        ownerEnrollmentTransactionID = nil
+    }
+
+    public func retryOwnerEnrollmentRecovery() async {
+        guard let retry = ownerEnrollmentRecoveryAction else { return }
+        do {
+            try await retry()
+            ownerEnrollmentRecoveryAction = nil
+            ownerEnrollmentRecoveryMessage = nil
+        } catch {
+            let currentMessage = ownerEnrollmentRecoveryMessage ?? "Phone cleanup is still pending."
+            ownerEnrollmentRecoveryMessage = "\(currentMessage) Try again when the server is reachable."
+        }
     }
 
     /// P0.3b: delete the device-local data a removed gateway leaves behind that

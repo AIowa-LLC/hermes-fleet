@@ -17,6 +17,8 @@ import FleetCore
 ///   (the same path the ws-ticket mint and the kanban board fetch use).
 /// - `usernamePassword`: a fresh `POST /auth/password-login` per retrieval,
 ///   replayed as the login `Cookie`.
+/// - `deviceCredential`: a short-lived `POST /auth/device-login` session,
+///   replayed as the login `Cookie`.
 /// - `none`: anonymous (a 401 from the gateway surfaces honestly).
 /// - A gateway row with no endpoint gets the fail-closed
 ///   `UnsupportedArtifactRetrieval` stub — never a phantom loopback probe.
@@ -28,6 +30,7 @@ public enum GatewayArtifactRetrieval {
         gateway: FleetGateway,
         credentialStore: any CredentialStoring,
         pinStore: (any SynchronousPinStoring)? = nil,
+        sessionStore: (any GatewayAuthenticator.GatewaySessionLeasing)? = nil,
         limits: ArtifactTransferLimits = .standard,
         urlSessionConfiguration: URLSessionConfiguration = .ephemeral
     ) -> any ArtifactRetrieving {
@@ -56,6 +59,7 @@ public enum GatewayArtifactRetrieval {
 
         let strategy = gateway.authConfiguration.strategy
         let gatewayID = gateway.id
+        let enrollmentTrustHandler = trustHandler
         let credential: @Sendable () async throws -> GatewayArtifactClient.HTTPCredential = {
             switch strategy {
             case .none:
@@ -75,6 +79,23 @@ public enum GatewayArtifactRetrieval {
                 let cookie = try await PasswordLoginClient(
                     baseURL: base, urlSession: loginSession
                 ).login(username: username, password: stored.rawValue)
+                return .cookie(cookie)
+            case .deviceCredential:
+                guard let stored = try? await credentialStore.loadCredential(for: gatewayID) else {
+                    throw ArtifactTransportError.authenticationRequired(
+                        detail: "no stored credential for this gateway")
+                }
+                let login: @Sendable () async throws -> SessionCookie = {
+                    try await DeviceLoginClient(
+                        baseURL: base, deviceCredential: stored.rawValue,
+                        trustHandler: enrollmentTrustHandler, urlSession: loginSession).login()
+                }
+                let cookie: SessionCookie
+                if let sessionStore {
+                    cookie = try await sessionStore.lease(gatewayID: gatewayID, login: login)
+                } else {
+                    cookie = try await login()
+                }
                 return .cookie(cookie)
             }
         }

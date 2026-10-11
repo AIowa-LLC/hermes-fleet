@@ -36,19 +36,24 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     /// T3: per-gateway TLS pin store (TOFU SPKI pinning). `nil` keeps the
     /// registry pin-unaware (scripted fleet / legacy tests).
     private let pinStore: (any TLSPinStoring)?
+    /// Clears endpoint-scoped owner-enrollment retry secrets and temporary
+    /// pin aliases on removal. Optional for legacy/scripted registries.
+    private let enrollmentCleanup: (any GatewayEnrollmentCleanupProviding)?
 
     public init(
         registry: GatewayRegistry = GatewayRegistry(),
         credentials: any CredentialStoring,
         connectionFactory: @escaping GatewayConnectionFactory,
         recordStore: (any GatewayRecordStoring)? = nil,
-        pinStore: (any TLSPinStoring)? = nil
+        pinStore: (any TLSPinStoring)? = nil,
+        enrollmentCleanup: (any GatewayEnrollmentCleanupProviding)? = nil
     ) {
         self.registry = registry
         self.credentials = credentials
         self.connectionFactory = connectionFactory
         self.recordStore = recordStore
         self.pinStore = pinStore
+        self.enrollmentCleanup = enrollmentCleanup
     }
 
     // MARK: GatewayRegistryManaging
@@ -131,8 +136,18 @@ public actor GatewayRegistryService: GatewayRegistryManaging {
     }
 
     public func removeGateway(_ id: GatewayID) async throws {
-        guard registry.gateway(for: id) != nil else {
+        guard let gateway = registry.gateway(for: id) else {
             throw GatewayRegistryError.notFound(id)
+        }
+        // Clear the endpoint-scoped pending enrollment secret before any
+        // registry mutation. If secure cleanup fails, keep the gateway
+        // registered so the caller can retry removal.
+        if let enrollmentCleanup {
+            do {
+                try await enrollmentCleanup.removeEnrollmentMaterial(for: gateway)
+            } catch {
+                throw GatewayRegistryError.credentialStoreFailed(Redaction.safeErrorDescription(error))
+            }
         }
         // P1-8: credential cleanup failure must surface — never silently
         // swallowed. Delete the credential first; only on success is the

@@ -95,23 +95,7 @@ public struct GatewaysView: View {
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .add:
-                // P2-6: let the form see save failures — it keeps the sheet
-                // open, preserves the non-secret fields, and surfaces the error
-                // inline for retry (the parent no longer swallows the error into
-                // a post-dismiss alert that races the sheet).
-                // P0-2: the form binds to the root-owned draft store so it
-                // survives the H1 lock / scenePhase teardown.
-                GatewayFormSheet(
-                    title: "Add Gateway",
-                    saveButton: "Add",
-                    initial: nil,
-                    draftStore: environment.gatewayFormDraft
-                ) { registration, credential, confirmsTLSFirstUse in
-                    _ = try await environment.addGateway(
-                        registration,
-                        credential: credential,
-                        confirmsTLSFirstUse: confirmsTLSFirstUse)
-                }
+                GatewayOnboardingView(environment: environment, canDismiss: true)
             case .edit(let gateway):
                 GatewayFormSheet(
                     title: "Edit Gateway",

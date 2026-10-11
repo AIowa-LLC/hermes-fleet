@@ -15,14 +15,21 @@ import FleetCore
 public struct SessionCookie: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
     public let name: String
     public let value: String
+    public let expiresAt: Date?
 
-    public init(name: String, value: String) {
+    public init(name: String, value: String, expiresAt: Date? = nil) {
         self.name = name
         self.value = value
+        self.expiresAt = expiresAt
     }
 
     /// The `Cookie` header value for this single cookie.
     public var headerValue: String { "\(name)=\(value)" }
+
+    public func isUsable(asOf now: Date = Date(), minimumLifetime: TimeInterval = 30) -> Bool {
+        guard let expiresAt else { return true }
+        return expiresAt.timeIntervalSince(now) > minimumLifetime
+    }
 
     public var description: String { "[REDACTED]" }
     public var debugDescription: String { "SessionCookie(redacted)" }
@@ -187,7 +194,7 @@ public struct PasswordLoginClient: Sendable {
         guard let target = cookies.first(where: { $0.name == "hermes_session_at" }) ?? cookies.first else {
             return nil
         }
-        return SessionCookie(name: target.name, value: target.value)
+        return SessionCookie(name: target.name, value: target.value, expiresAt: target.expiresDate)
     }
 }
 

@@ -6,7 +6,7 @@ import SwiftUI
 /// chevron rows pushing sub-screens (`FleetScreen.settingsSecurity` /
 /// `.settingsData` — the Settings stack is typed `[FleetScreen]`, so the
 /// sub-routes are Settings-owned FleetScreen cases), and the always-
-/// reachable Agent Setup Prompt (C2). Version, legal, and support live in
+/// reachable server enrollment door. Version, legal, and support live in
 /// the About tab (`FleetAboutView`). No invented preferences (SPEC §12):
 /// every control maps to implemented behavior.
 public struct FleetSettingsView: View {
@@ -25,8 +25,8 @@ public struct FleetSettingsView: View {
     /// `FleetSettingsDataView` pattern).
     private let environment: AppEnvironment?
 
-    /// C2: presents the always-reachable agent setup prompt sheet.
-    @State private var showingSetupPrompt = false
+    /// Opens owner enrollment for an additional server.
+    @State private var showingOwnerEnrollment = false
     /// P0-A: presents the "Report a Problem" diagnostics report sheet.
     @State private var showingDiagnosticsReport = false
     @Environment(\.fleetTheme) private var theme
@@ -45,6 +45,17 @@ public struct FleetSettingsView: View {
 
     public var body: some View {
         Form {
+            if let recoveryMessage = environment?.ownerEnrollmentRecoveryMessage {
+                Section("Phone enrollment cleanup") {
+                    Text(recoveryMessage)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.settings.enrollment-recovery-message")
+                    Button("Retry cleanup") {
+                        Task { await environment?.retryOwnerEnrollmentRecovery() }
+                    }
+                    .accessibilityIdentifier("fleet.settings.enrollment-recovery-retry")
+                }
+            }
             // ADR-0011 W2: Appearance collapses to ONE Menu row (ChatGPT
             // value-picker anatomy). Same options, same immediate apply
             // through FleetAppearanceController.shared; the identifier
@@ -161,25 +172,26 @@ public struct FleetSettingsView: View {
                     .foregroundStyle(theme.textSecondary)
             }
 
-            // C2: the ALWAYS-REACHABLE door to the agent setup prompt. With
-            // one or more gateways configured this is the add-another-server
-            // path; the sheet itself carries the copy. The row stays
-            // available with 1, 2, or 20 gateways.
-            Section {
-                Button {
-                    showingSetupPrompt = true
-                } label: {
-                    Label("Set Up Another Server", systemImage: "text.badge.star")
-                        .foregroundStyle(theme.textPrimary)
+            if let environment {
+                Section {
+                    Button {
+                        showingOwnerEnrollment = true
+                    } label: {
+                        Label("Connect Another Server", systemImage: "server.rack")
+                            .foregroundStyle(theme.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("fleet.settings.connect-server")
+                } header: {
+                    Text("Servers")
+                        .foregroundStyle(theme.textSecondary)
+                } footer: {
+                    Text("Use the owner account for the Hermes server you want to connect.")
+                        .foregroundStyle(theme.textSecondary)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("fleet.settings.setup-prompt")
-            } header: {
-                Text("Agent")
-                    .foregroundStyle(theme.textSecondary)
-            } footer: {
-                Text("Copy or share the setup prompt to add another Hermes server to Fleet.")
-                    .foregroundStyle(theme.textSecondary)
+                .sheet(isPresented: $showingOwnerEnrollment) {
+                    GatewayOnboardingView(environment: environment, canDismiss: true)
+                }
             }
 
             // ADR-0011 W8: version + legal + support rows moved to the
@@ -190,7 +202,7 @@ public struct FleetSettingsView: View {
             // drawer circle is retired). The chevron reads as "more"; the
             // row selects the About tab.
             Section {
-                // Same Button shape as the proven C2 setup-prompt row
+                // Same Button shape as the established Settings rows
                 // (trailing-closure action, single Label, .plain style) —
                 // the HStack/Spacer/chevron label variant did not fire in
                 // Form on iOS 26 (measured: action never invoked).
@@ -213,10 +225,6 @@ public struct FleetSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(theme.background.ignoresSafeArea())
         .tint(theme.highlight)
-        // C2: the setup-prompt door — standard sheet presentation.
-        .sheet(isPresented: $showingSetupPrompt) {
-            SetupPromptSheet()
-        }
         .navigationTitle("Settings")
         .accessibilityIdentifier("fleet.settings")
     }

@@ -18,7 +18,7 @@ public struct KeychainPinStore: TLSPinStoring, SynchronousPinStoring,
     TLSFirstUseApprovalStoring, SynchronousTLSFirstUseApprovalStoring {
     /// Keychain service name — scoped to this app's TLS pin store (separate
     /// from credentials and tokens so pin lifecycle never collides).
-    public static let serviceName = "com.aiowa.hermesfleet.tlspins"
+    public static let serviceName = FleetAppIdentity.keychainNamespace + ".tlspins"
 
     private let keychain: any KeychainSession
 

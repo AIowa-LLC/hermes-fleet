@@ -6,8 +6,8 @@ import XCTest
 /// The hydration gate (`AppEnvironment.hydrationPhase`) drives the root:
 /// loading → unconfigured (first-run setup) → configured (normal tabs).
 /// This suite proves the lifecycle both ways plus the existing-user paths:
-/// the Settings setup-prompt door stays available with gateways configured,
-/// the direct Add Gateway path remains usable, and removing the final
+/// Settings and Fleet both expose owner enrollment for additional servers,
+/// advanced gateway setup remains usable, and removing the final
 /// gateway returns to setup.
 final class F4FirstRunGateUITests: XCTestCase {
 
@@ -21,62 +21,29 @@ final class F4FirstRunGateUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_ZERO_GATEWAYS"] = "1"
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-        app.launchEnvironment["HERMES_FLEET_UI_TEST_PASTE_FIXTURES"] = "1"
+        app.launchEnvironment["HERMES_FLEET_ONBOARDING_SCENARIO"] = "success"
         app.launch()
 
-        // Fresh install: onboarding at the root, no tab bar.
-        let enter = app.buttons["fleet.onboarding.enter-values"]
-        if !enter.waitForExistence(timeout: 15) {
-            // The steps card can sit below the fold in the lazy ScrollView —
-            // scroll it into the AX tree before failing.
-            for _ in 0..<4 where !enter.exists { app.swipeUp(velocity: .fast) }
-        }
-        XCTAssertTrue(enter.waitForExistence(timeout: 10),
-                      "fresh install must show the setup experience")
-        enter.tap()
+        let address = app.textFields["fleet.onboarding.address"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15), "fresh install must show server address setup")
+        address.tap()
+        address.press(forDuration: 1.1)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        address.typeText("https://onboarding.fixture.test")
+        app.buttons["fleet.onboarding.continue"].tap()
 
-        // Fill the REAL Add-Gateway form using the deterministic paste
-        // fixtures (endpoint + username/password via the paste buttons).
-        let endpoint = app.textFields["fleet.gateways.form.endpoint"]
-        XCTAssertTrue(endpoint.waitForExistence(timeout: 10))
-        let pasteEndpoint = app.descendants(matching: .any)
-            .matching(identifier: "fleet.gateways.form.paste.endpoint").firstMatch
-        pasteEndpoint.tap()
-
-        // Display name.
-        let name = app.textFields["fleet.gateways.form.name"]
-        name.tap()
-        name.typeText("First Server")
-
-        // Username & Password strategy reveals the credential rows (retry
-        // loop — the menu picker can need a second attempt).
-        selectUsernamePassword(in: app)
-
-        let username = app.textFields["fleet.gateways.form.username"]
-        XCTAssertTrue(username.waitForExistence(timeout: 5),
-                      "Username & Password strategy must reveal credential rows")
+        let username = app.textFields["fleet.onboarding.username"]
+        XCTAssertTrue(username.waitForExistence(timeout: 10), "provider detection should lead to sign-in")
         username.tap()
-        app.descendants(matching: .any)
-            .matching(identifier: "fleet.gateways.form.paste.username").firstMatch.tap()
-        let password = app.secureTextFields["fleet.gateways.form.password"]
+        username.typeText("owner")
+        let password = app.secureTextFields["fleet.onboarding.password"]
         password.tap()
-        app.descendants(matching: .any)
-            .matching(identifier: "fleet.gateways.form.paste.password").firstMatch.tap()
+        password.typeText("synthetic-password")
+        app.buttons["fleet.onboarding.sign-in"].tap()
 
-        // The https fixture endpoint requires TLS first-use confirmation.
-        let tlsToggle = app.switches["fleet.gateways.form.tls-first-use-confirm"].firstMatch
-        if !tlsToggle.waitForExistence(timeout: 3) {
-            for _ in 0..<3 where !tlsToggle.exists { app.swipeUp(velocity: .fast) }
-        }
-        if tlsToggle.waitForExistence(timeout: 3) {
-            tlsToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
-        }
-
-        let save = app.buttons["fleet.gateways.form.save"].firstMatch
-        XCTAssertTrue(save.waitForExistence(timeout: 5))
-        waitUntilEnabled(save, timeout: 5)
-        if !save.isHittable { app.swipeUp() }
-        save.tap()
+        let connect = app.buttons["fleet.onboarding.connect-phone"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 10), "owner sign-in should reveal explicit phone enrollment")
+        connect.tap()
 
         // SUCCESS TRANSITION: the sheet dismisses, the registry is non-empty,
         // and the normal four-tab Fleet UI appears — no relaunch, no extra
@@ -84,7 +51,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         UITabNavigation.shellReady(app, timeout: 15)
         XCTAssertTrue(true,
                       "registering the first gateway must transition into the main Fleet UI")
-        XCTAssertFalse(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 2),
+        XCTAssertFalse(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 2),
                        "onboarding must be gone after the first registration")
 
         attachScreenshot(of: app, name: "f4-first-gateway-transition")
@@ -102,7 +69,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         UITabNavigation.shellReady(app, timeout: 15)
         XCTAssertTrue(true,
                       "a configured (seeded) launch must show the normal tab UI")
-        XCTAssertFalse(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 2),
+        XCTAssertFalse(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 2),
                        "first-run onboarding must not appear for a configured user")
         attachScreenshot(of: app, name: "f4-configured-launch")
     }
@@ -158,38 +125,28 @@ final class F4FirstRunGateUITests: XCTestCase {
 
     // MARK: Existing users keep their doors
 
-    func testSettingsExposesSetupPromptWithGatewaysConfigured() throws {
+    func testSettingsOpensOwnerEnrollmentWithGatewaysConfigured() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
         UITabNavigation.openSettings(app)
 
-        let row = app.buttons["fleet.settings.setup-prompt"]
+        let row = app.buttons["fleet.settings.connect-server"]
         if !row.waitForExistence(timeout: 5) {
             for _ in 0..<4 where !row.exists { app.swipeUp(velocity: .fast) }
         }
         XCTAssertTrue(row.waitForExistence(timeout: 10),
-                      "Settings must expose the setup-prompt row with gateways configured")
+                      "Settings must expose an additional-server enrollment entry")
         row.tap()
 
-        // Same universal prompt (v4), reachable after configuration.
-        let copy = app.buttons["fleet.setup-prompt.copy"]
-        XCTAssertTrue(copy.waitForExistence(timeout: 10),
-                      "the setup-prompt sheet must show the Copy button")
-        let toggle = app.buttons["fleet.setup-prompt.toggle-prompt"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        toggle.tap()
         XCTAssertTrue(
-            app.descendants(matching: .any)
-                .matching(identifier: "fleet.setup-prompt.prompt-text").firstMatch.waitForExistence(timeout: 10),
-            "the universal prompt text must render from Settings"
+            app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10),
+            "Settings must open the same owner enrollment flow used at first run"
         )
-
-        // Copy works.
-        copy.tap()
-        XCTAssertTrue(app.staticTexts["Copied — paste it in chat"].waitForExistence(timeout: 10),
-                      "copy must confirm visibly from the Settings door")
-        attachScreenshot(of: app, name: "f4-settings-setup-prompt")
+        XCTAssertTrue(app.buttons["fleet.onboarding.dismiss"].exists,
+                      "existing users can cancel enrollment and return to the fleet")
+        app.buttons["fleet.onboarding.dismiss"].tap()
+        attachScreenshot(of: app, name: "f4-settings-owner-enrollment")
     }
 
     func testAddGatewayRemainsUsableFromGatewaysTab() throws {
@@ -202,9 +159,13 @@ final class F4FirstRunGateUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
         add.tap()
+        XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10),
+                      "Add Gateway must open owner enrollment from the Gateways tab")
+        app.buttons["fleet.onboarding.advanced"].tap()
         XCTAssertTrue(app.textFields["fleet.gateways.form.endpoint"].waitForExistence(timeout: 10),
-                      "Add Gateway must remain usable from the Gateways tab")
+                      "advanced gateway strategies remain available")
         app.buttons["fleet.gateways.form.cancel"].tap()
+        app.buttons["fleet.onboarding.dismiss"].tap()
         attachScreenshot(of: app, name: "f4-add-gateway-still-works")
     }
 
@@ -254,7 +215,7 @@ final class F4FirstRunGateUITests: XCTestCase {
         if ok.waitForExistence(timeout: 5) { ok.tap() }
 
         // EMPTY REGISTRY ⇒ the root gate flips back to setup.
-        XCTAssertTrue(app.buttons["fleet.onboarding.copy"].waitForExistence(timeout: 15),
+        XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 15),
                       "removing the final gateway must return to the setup experience")
         attachScreenshot(of: app, name: "f4-removal-returns-to-setup")
     }

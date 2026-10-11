@@ -34,7 +34,7 @@ the v0.1 document deferred or excluded.
 - [`groups-tab.md`](groups-tab.md) - Groups destination and room ownership
 - [`settings-and-about-tabs.md`](settings-and-about-tabs.md) - Settings and About surfaces
 - [`unread-indicators-and-read-state.md`](unread-indicators-and-read-state.md) - device-local conversation read state
-- [`gateway-pairing.md`](gateway-pairing.md) - gateway setup, manual entry, and QR pairing
+- [`gateway-pairing.md`](gateway-pairing.md) - phone enrollment, manual entry, and legacy QR setup
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - short-lived work branches, pull requests, and the `main` merge queue

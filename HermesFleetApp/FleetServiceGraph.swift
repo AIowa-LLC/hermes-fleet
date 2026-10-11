@@ -188,6 +188,11 @@ enum FleetServiceGraph {
         // transport the graph builds so all four connection surfaces (probe,
         // roster, lifecycle, conversation) enforce the SAME pin per gateway.
         let pinStore = KeychainPinStore(keychain: keychain)
+        let ownerEnrollment = OwnerEnrollmentClient(
+            credentialStore: credentialStore,
+            identityStore: KeychainOwnerEnrollmentIdentityStore(keychain: keychain),
+            pinStore: pinStore,
+            approvalStore: pinStore)
 
         // P0-4: the SAME file-backed SwiftData cache that holds transcripts +
         // health stats also backs the durable gateway-record store — a
@@ -198,7 +203,8 @@ enum FleetServiceGraph {
             credentials: credentialStore,
             connectionFactory: makeProbeFactory(credentialStore: credentialStore, pinStore: pinStore),
             recordStore: cacheStore,
-            pinStore: pinStore
+            pinStore: pinStore,
+            enrollmentCleanup: ownerEnrollment
         )
         let roster: any FleetRosterProviding = FleetRosterService(
             registry: registry,
@@ -268,7 +274,8 @@ enum FleetServiceGraph {
             // ADR-0012: SwiftData-backed launch cache (same container as
             // the cache store — non-secret posture, shared file protection).
             launchCache: launchCache,
-            localCacheRecovery: cacheRecovery
+            localCacheRecovery: cacheRecovery,
+            ownerEnrollment: ownerEnrollment
         )
     }
 
@@ -279,7 +286,7 @@ enum FleetServiceGraph {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("HermesFleetCache", isDirectory: true)
+        return base.appendingPathComponent(FleetAppIdentity.cacheDirectoryName, isDirectory: true)
     }
 
     /// True when an earlier launch of this app already created its cache
@@ -392,6 +399,19 @@ enum FleetServiceGraph {
                     return .sessionTokenHeader(credential.rawValue)
                 }
                 return .none
+            case .deviceCredential:
+                guard let base,
+                      let credential = try? await credentialStore.loadCredential(for: gateway.id) else {
+                    throw KanbanBoardError.malformedResponse("no credential stored")
+                }
+                let handler = PinningTrustHandler(
+                    gatewayID: gateway.id, pinStore: pinStore,
+                    approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring)
+                let cookie = try await FleetServiceGraph.sharedSessionStore.lease(gatewayID: gateway.id) {
+                    try await DeviceLoginClient(
+                        baseURL: base, deviceCredential: credential.rawValue, trustHandler: handler).login()
+                }
+                return .cookie(cookie)
             case .usernamePassword:
                 guard let base,
                       let credential = try? await credentialStore.loadCredential(for: gateway.id),
@@ -441,7 +461,8 @@ enum FleetServiceGraph {
             GatewayArtifactRetrieval.make(
                 gateway: gateway,
                 credentialStore: credentialStore,
-                pinStore: pinStore)
+                pinStore: pinStore,
+                sessionStore: FleetServiceGraph.sharedSessionStore)
         }
     }
 
@@ -878,6 +899,15 @@ enum FleetServiceGraph {
                 credentialStore: credentialStore,
                 baseURL: base,
                 urlSession: urlSession
+            )
+        case .deviceCredential:
+            return GatewayAuthenticator(
+                gatewayID: gateway.id,
+                strategy: .deviceCredential,
+                credentialStore: credentialStore,
+                baseURL: base,
+                urlSession: urlSession,
+                sessionStore: sessionStore
             )
         case .usernamePassword:
             return GatewayAuthenticator(

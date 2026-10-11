@@ -65,9 +65,9 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
         // dashboard at all — it lands on the first-server setup experience.
         // The old guarantee (never fabricate "0/0" stats for an empty fleet)
         // is now structural: the dashboard is unreachable with zero gateways.
-        let copy = app.buttons["fleet.onboarding.copy"]
+        let address = app.textFields["fleet.onboarding.address"]
         XCTAssertTrue(
-            copy.waitForExistence(timeout: 15),
+            address.waitForExistence(timeout: 15),
             "an empty fleet must land on setup, never a dashboard with fabricated 0/0 stats"
         )
         XCTAssertFalse(

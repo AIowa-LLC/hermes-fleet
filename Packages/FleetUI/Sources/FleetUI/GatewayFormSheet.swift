@@ -274,7 +274,7 @@ struct GatewayFormSheet: View {
         switch draftStore.strategy {
         case .none: return false
         case .sessionToken, .bearerToken, .loopbackToken: return true
-        case .usernamePassword: return false
+        case .usernamePassword, .deviceCredential: return false
         }
     }
 

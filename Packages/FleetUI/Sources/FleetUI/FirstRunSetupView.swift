@@ -4,10 +4,9 @@ import FleetCore
 /// Root wrapper for the unconfigured first-run state (see
 /// `AppEnvironment.hydrationPhase`).
 ///
-/// Deliberately thin: the experience is `GatewayOnboardingView`; this wrapper
-/// gives the root a single stable accessibility identifier
-/// (`fleet.root.onboarding`) for UI tests and keeps the hydration-gate
-/// presentation logic in `FleetTabView` free of product copy.
+/// Deliberately thin: the owner-enrollment experience is
+/// `GatewayOnboardingView`; this wrapper gives the root a stable accessibility
+/// identifier for UI tests and keeps hydration-gate logic in `FleetTabView`.
 public struct FirstRunSetupView: View {
     private let environment: AppEnvironment
 
