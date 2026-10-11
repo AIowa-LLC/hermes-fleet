@@ -92,6 +92,39 @@ final class F3OnboardingUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [requestSettled], timeout: 5), .completed)
     }
 
+    func testCancelDelayedEnrollmentFromAddGatewayKeepsFleetUnchanged() throws {
+        let app = launch("delayed-enroll", emptyFleet: false)
+        UITabNavigation.openGatewaysTab(app)
+        let gatewayRows = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "fleet.gateways.row."))
+        XCTAssertTrue(app.otherElements["fleet.gateways.row.workstation"].waitForExistence(timeout: 10))
+        let initialGatewayRowCount = gatewayRows.count
+        XCTAssertGreaterThan(initialGatewayRowCount, 0)
+
+        app.buttons["fleet.gateways.add"].tap()
+        enterFixtureAddress(in: app)
+        app.buttons["fleet.onboarding.continue"].tap()
+        signIn(in: app, username: "owner", password: "synthetic-password")
+        let connect = app.buttons["fleet.onboarding.connect-phone"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 10))
+        connect.tap()
+        let connecting = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Connecting…"),
+            object: connect)
+        XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 5), .completed)
+        app.buttons["fleet.onboarding.dismiss"].tap()
+
+        let lateGateway = app.descendants(matching: .any)["fleet.gateways.row.onboarding-fixture"]
+        let lateAdoption = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"),
+            object: lateGateway)
+        lateAdoption.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [lateAdoption], timeout: 11), .completed)
+        XCTAssertEqual(gatewayRows.count, initialGatewayRowCount,
+                       "canceling Add Gateway must not adopt the delayed phone enrollment")
+        XCTAssertTrue(app.otherElements["fleet.gateways.row.workstation"].exists)
+    }
+
     func testWrongCredentialsCanBeRetriedSuccessfully() throws {
         let app = launch()
         enterFixtureAddress(in: app)

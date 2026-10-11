@@ -79,7 +79,7 @@ public struct GatewayOnboardingView: View {
             .toolbar {
                 if canDismiss {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel", action: { dismiss() })
+                        Button("Cancel", action: dismissAndCancelFlow)
                             .accessibilityIdentifier("fleet.onboarding.dismiss")
                     }
                 } else {
@@ -99,6 +99,7 @@ public struct GatewayOnboardingView: View {
         }
         .tint(theme.highlight)
         .preferredColorScheme(.dark)
+        .interactiveDismissDisabled(isWorking)
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             invalidateFlow()
@@ -719,6 +720,11 @@ public struct GatewayOnboardingView: View {
         metadata = nil
         errorMessage = nil
         focusedField = nil
+    }
+
+    private func dismissAndCancelFlow() {
+        invalidateFlow()
+        dismiss()
     }
 
     private func isCurrent(_ generation: Int) -> Bool {
