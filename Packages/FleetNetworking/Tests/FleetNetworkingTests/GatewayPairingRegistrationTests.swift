@@ -178,9 +178,17 @@ final class GatewayPairingRegistrationTests: XCTestCase {
 
         do {
             _ = try await service.addGateway(GatewayRegistration(
-                id: GatewayID(pairedInstanceID: instanceID), displayName: "Manual",
+                id: GatewayID(rawValue: "different-id"), displayName: "Manual",
                 endpoint: endpoint))
-            XCTFail("an in-flight pairing must reserve its ID and origin")
+            XCTFail("an in-flight pairing must reserve its origin")
+        } catch let error as GatewayRegistryError {
+            guard case .duplicate = error else { return XCTFail("unexpected error: \(error)") }
+        }
+        do {
+            _ = try await service.addGateway(GatewayRegistration(
+                id: GatewayID(pairedInstanceID: instanceID), displayName: "Manual",
+                endpoint: URL(string: "https://another.example.invalid")!))
+            XCTFail("an in-flight pairing must reserve its stable ID")
         } catch let error as GatewayRegistryError {
             guard case .duplicate = error else { return XCTFail("unexpected error: \(error)") }
         }
