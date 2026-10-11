@@ -177,12 +177,19 @@ final class F4FirstRunGateUITests: XCTestCase {
         app.launch()
 
         UITabNavigation.shellReady(app, timeout: 15)
-        UITabNavigation.openGatewayDetail(app, gateway: "workstation")
+        UITabNavigation.openGatewaysTab(app)
+
+        let firstRow = app.buttons.matching(
+            NSPredicate(format: "identifier MATCHES %@",
+                         "fleet\\.gateways\\.row\\.[^.]+")
+        ).firstMatch
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 10))
+        firstRow.tap()
 
         // Remove the single gateway through the Connection screen's
-        // confirmed destructive flow: exact workstation detail → Connection.
+        // confirmed destructive flow: gateway row → detail → Connection.
         let connectionLink = app.descendants(matching: .any)
-            .matching(identifier: "fleet.gateway-detail.connection-link.workstation").firstMatch
+            .matching(identifier: "fleet.gateway-detail.workstation.connection").firstMatch
         if !connectionLink.waitForExistence(timeout: 5) {
             for _ in 0..<3 where !connectionLink.exists { app.swipeUp(velocity: .fast) }
         }
