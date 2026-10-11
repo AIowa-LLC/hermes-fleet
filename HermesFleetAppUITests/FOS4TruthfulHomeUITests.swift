@@ -65,11 +65,16 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
         // dashboard at all — it lands on the first-server setup experience.
         // The old guarantee (never fabricate "0/0" stats for an empty fleet)
         // is now structural: the dashboard is unreachable with zero gateways.
-        let address = app.textFields["fleet.onboarding.address"]
+        let setup = app.otherElements["fleet.root.onboarding"]
         XCTAssertTrue(
-            address.waitForExistence(timeout: 15),
+            setup.waitForExistence(timeout: 15),
             "an empty fleet must land on setup, never a dashboard with fabricated 0/0 stats"
         )
+        let scan = app.buttons["fleet.first-run.scan"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 15), "first-server setup offers QR scanning")
+        XCTAssertTrue(scan.isEnabled)
+        XCTAssertFalse(app.textFields["fleet.onboarding.address"].exists,
+                       "the normal first-server flow must not expose the retired address form")
         XCTAssertFalse(
             app.staticTexts["fleet.dashboard.glance.connected"].waitForExistence(timeout: 2),
             "the glance strip must not render for an unconfigured fleet"
