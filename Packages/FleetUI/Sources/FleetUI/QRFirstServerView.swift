@@ -10,8 +10,12 @@ struct QRFirstServerView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @Bindable private var pairing: PairingCoordinator
-    @State private var isShowingScanner = false
-    @State private var isShowingPairingReview = false
+    private enum SetupSheet: String, Identifiable {
+        case scanner, review
+        var id: String { rawValue }
+    }
+
+    @State private var presentedSheet: SetupSheet?
     @State private var didCopyOwnerPrompt = false
 
     init(pairing: PairingCoordinator) {
@@ -37,13 +41,15 @@ struct QRFirstServerView: View {
         }
         .tint(theme.highlight)
         .preferredColorScheme(.dark)
-        .sheet(isPresented: $isShowingScanner, onDismiss: scannerDidDismiss) {
-            GatewayPairingScannerView { rawInvitation in
-                _ = pairing.receive(text: rawInvitation)
+        .sheet(item: $presentedSheet, onDismiss: sheetDidDismiss) { sheet in
+            switch sheet {
+            case .scanner:
+                GatewayPairingScannerView { rawInvitation in
+                    _ = pairing.receive(text: rawInvitation)
+                }
+            case .review:
+                PairingInvitationReviewSheet(coordinator: pairing)
             }
-        }
-        .sheet(isPresented: $isShowingPairingReview) {
-            PairingInvitationReviewSheet(coordinator: pairing)
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .background else { return }
@@ -51,11 +57,10 @@ struct QRFirstServerView: View {
             // coordinator owns its completion and the review must stay up.
             guard pairing.canCancel, !requiresCleanupRecovery else { return }
             pairing.cancel()
-            isShowingScanner = false
-            isShowingPairingReview = false
+            presentedSheet = nil
         }
         .onChange(of: pairing.isActive) { _, active in
-            if !active { isShowingPairingReview = false }
+            if !active { presentedSheet = nil }
         }
     }
 
@@ -159,7 +164,7 @@ struct QRFirstServerView: View {
     private var scanAction: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Button {
-                isShowingScanner = true
+                presentedSheet = .scanner
             } label: {
                 Label("Scan QR code", systemImage: "qrcode.viewfinder")
                     .font(.headline)
@@ -181,10 +186,10 @@ struct QRFirstServerView: View {
         }
     }
 
-    private func scannerDidDismiss() {
+    private func sheetDidDismiss() {
         // The scanner hands the raw link to the coordinator and dismisses
         // itself. Present the preview only after the camera sheet is gone.
-        isShowingPairingReview = pairing.isActive
+        if pairing.isActive { presentedSheet = .review }
     }
 
     private var requiresCleanupRecovery: Bool {
