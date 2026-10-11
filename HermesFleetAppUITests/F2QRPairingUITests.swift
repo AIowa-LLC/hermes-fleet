@@ -145,6 +145,14 @@ final class F2QRPairingUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["127.0.0.1"].waitForExistence(timeout: 15),
                       "saved gateway row should appear in the list")
+        let ownerAddress = app.textFields["fleet.onboarding.address"]
+        let ownerFlowDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: ownerAddress)
+        XCTAssertEqual(XCTWaiter.wait(for: [ownerFlowDismissed], timeout: 10), .completed,
+                       "saving Advanced setup from Add Gateway should return to the fleet")
+        XCTAssertTrue(app.buttons["fleet.gateways.add"].isHittable,
+                      "the fleet should be usable after the manual server is added")
         attachScreenshotF2(of: app, name: "f2-paired-gateway-row")
     }
 

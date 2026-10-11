@@ -26,6 +26,7 @@ public struct GatewayOnboardingView: View {
     @State private var tlsFingerprint: SPKIFingerprint?
     @State private var isWorking = false
     @State private var isShowingAdvancedForm = false
+    @State private var didSaveAdvancedGateway = false
     @State private var flowGeneration = 0
     @State private var adoptionInFlight = false
     @State private var ownerEnrollmentTransactionID: UUID?
@@ -124,7 +125,7 @@ public struct GatewayOnboardingView: View {
                 && metadata.map { expected in environment.gateways.contains(where: { $0.id == expected.gatewayID }) } == true
             if !completedFirstRunAdoption { invalidateFlow() }
         }
-        .sheet(isPresented: $isShowingAdvancedForm) {
+        .sheet(isPresented: $isShowingAdvancedForm, onDismiss: advancedFormDidDismiss) {
             GatewayFormSheet(
                 title: "Advanced Gateway Setup",
                 saveButton: "Add",
@@ -135,8 +136,17 @@ public struct GatewayOnboardingView: View {
                     registration,
                     credential: credential,
                     confirmsTLSFirstUse: confirmsTLSFirstUse)
+                didSaveAdvancedGateway = true
             }
         }
+    }
+
+    private func advancedFormDidDismiss() {
+        let shouldDismissOwnerSheet = canDismiss && didSaveAdvancedGateway
+        didSaveAdvancedGateway = false
+        guard shouldDismissOwnerSheet else { return }
+        invalidateFlow()
+        dismiss()
     }
 
     private var header: some View {
