@@ -60,7 +60,8 @@ class InstallerTests(unittest.TestCase):
             "added.py": {"before_sha256": None, "after_sha256": sha(self.after_added)},
             "changed.py": {"before_sha256": sha(self.before), "after_sha256": sha(self.after)},
         }
-        self.supported_preimages = {"added.py": sha(self.after_added), "changed.py": sha(self.intermediate)}
+        self.supported_preimages = {"added.py": {"sha256": sha(self.after_added)},
+                                    "changed.py": {"sha256": sha(self.intermediate)}}
         self.upgrade_paths = {"changed.py": {"before_sha256": sha(self.intermediate),
                                               "after_sha256": sha(self.after)}}
         self.git("checkout", "-q", self.base)

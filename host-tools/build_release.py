@@ -158,9 +158,10 @@ def main() -> None:
         earlier = file_at(repo, overlay_base, rel)
         hashes[rel] = {"before_sha256": hashlib.sha256(before).hexdigest() if before is not None else None,
                        "after_sha256": hashlib.sha256(after).hexdigest() if after is not None else None}
-        supported_preimages[rel] = hashlib.sha256(earlier).hexdigest() if earlier is not None else None
+        prior_digest = hashlib.sha256(earlier).hexdigest() if earlier is not None else None
+        supported_preimages[rel] = {"sha256": prior_digest}
         if rel in upgrade_changed:
-            upgrade_paths[rel] = {"before_sha256": supported_preimages[rel],
+            upgrade_paths[rel] = {"before_sha256": prior_digest,
                                   "after_sha256": hashes[rel]["after_sha256"]}
     history = run(repo, "rev-list", "--reverse", f"{base}..{target}").decode().splitlines()
     commit_rows = []

@@ -110,6 +110,12 @@ def load_release(trusted_manifest_sha256: str) -> tuple[dict, bytes, str]:
     upgrade_paths = manifest.get("upgrade_paths")
     if not isinstance(supported, dict) or set(supported) != set(paths):
         raise Refusal("manifest lacks a complete prior-overlay preimage map")
+    for rel, record in supported.items():
+        if (not isinstance(record, dict) or set(record) != {"sha256"}
+                or (record["sha256"] is not None
+                    and (not isinstance(record["sha256"], str)
+                         or len(record["sha256"]) != 64))):
+            raise Refusal(f"invalid prior-overlay digest record: {rel}")
     if not isinstance(upgrade_paths, dict) or not set(upgrade_paths).issubset(paths):
         raise Refusal("manifest has an invalid upgrade path map")
     support = manifest.get("support_files")
@@ -172,7 +178,8 @@ def source_kind(root: Path, manifest: dict) -> str:
         verify_files(root, manifest, "before")
         return "base"
     except Refusal:
-        for rel, expected in manifest["supported_preimages"].items():
+        for rel, preimage in manifest["supported_preimages"].items():
+            expected = preimage["sha256"]
             actual = file_hash(safe_file(root, rel))
             if actual != expected:
                 raise Refusal(f"capability digest mismatch for supported preimage {rel}")
@@ -396,7 +403,8 @@ def apply(args: argparse.Namespace) -> None:
     if record["install_mode"] == "base":
         verify_files(source, manifest, "before")
     else:
-        for rel, expected in manifest["supported_preimages"].items():
+        for rel, preimage in manifest["supported_preimages"].items():
+            expected = preimage["sha256"]
             if file_hash(safe_file(source, rel)) != expected:
                 raise Refusal(f"upgrade preimage changed for {rel}")
     state_root = Path(args.state).expanduser().resolve()
