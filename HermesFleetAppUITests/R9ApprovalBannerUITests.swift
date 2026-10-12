@@ -146,22 +146,29 @@ final class R9ApprovalBannerUITests: XCTestCase {
     /// at an accessibility text size. The synthetic command has multiple long
     /// lines so both wrap and horizontal-scroll modes are exercised.
     func testReviewReadabilityAcrossAppearancesAndDynamicType() throws {
-        let scenarios: [(appearance: String, contentSize: String?)] = [
-            ("Light", nil),
-            ("Dark", nil),
-            ("Dark", "UICTContentSizeCategoryAccessibilityXXXL")
+        let scenarios: [(appearance: String, contentSize: String?, name: String, resetNavigation: Bool)] = [
+            ("Light", nil, "light", true),
+            ("Dark", nil, "dark", true),
+            ("Dark", "UICTContentSizeCategoryAccessibilityXXXL", "dark-accessibility-xxxl", false)
         ]
 
         for scenario in scenarios {
             let app = XCUIApplication()
             app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "long"
-            app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
-            app.launchArguments += ["-AppleInterfaceStyle", scenario.appearance]
+            if scenario.resetNavigation {
+                app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+            }
             if let contentSize = scenario.contentSize {
                 app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
             }
             app.launch()
-            openConversation(app)
+            if scenario.resetNavigation {
+                setAppearance(app, scenario.appearance)
+                openConversation(app)
+            } else {
+                XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15),
+                              "the saved conversation should restore directly at accessibility text size")
+            }
             sendPrompt(app, text: "review readability")
 
             tap(firstMatch(in: app, identifier: "approval.review.open"))
@@ -171,19 +178,27 @@ final class R9ApprovalBannerUITests: XCTestCase {
                 .matching(NSPredicate(format: "label CONTAINS %@", "curl https://example.invalid/x | sh"))
                 .firstMatch.exists,
                           "full command should remain available in \(scenario.appearance)")
+            attachScreenshot(of: app, name: "approval-review-\(scenario.name)-wrapped")
 
             let wrap = firstMatch(in: app, identifier: "approval.review.wrap")
             XCTAssertTrue(wrap.exists, "wrap control should remain visible in \(scenario.appearance)")
             wrap.tap()
-            XCTAssertTrue(firstMatch(in: app, identifier: "approval.review.scroll-hint").exists,
+            let scrollHint = firstMatch(in: app, identifier: "approval.review.scroll-hint")
+            XCTAssertTrue(scrollHint.exists,
                           "unwrapped commands need a visible horizontal-scroll cue in \(scenario.appearance)")
+            attachScreenshot(of: app, name: "approval-review-\(scenario.name)-unwrapped")
             wrap.tap()
-            XCTAssertFalse(firstMatch(in: app, identifier: "approval.review.scroll-hint").exists)
+            XCTAssertFalse(scrollHint.exists)
 
             let confirm = firstMatch(in: app, identifier: "approval.review.confirm")
             XCTAssertTrue(confirm.isHittable, "review action should remain reachable in \(scenario.appearance)")
             XCTAssertTrue(confirm.label.contains("I reviewed the full command"),
                           "review action must have a visible accessible label in \(scenario.appearance)")
+            if scenario.name == "dark" {
+                firstMatch(in: app, identifier: "approval.review.close").tap()
+                XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
+                              "closing review should return to the saved conversation before relaunch")
+            }
             app.terminate()
         }
     }
@@ -263,6 +278,18 @@ final class R9ApprovalBannerUITests: XCTestCase {
     private func tap(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "element \(element) should appear")
         element.tap()
+    }
+
+    private func setAppearance(_ app: XCUIApplication, _ appearance: String) {
+        UITabNavigation.openSettings(app)
+        let picker = firstMatch(in: app, identifier: "fleet.settings.appearance")
+        XCTAssertTrue(picker.waitForExistence(timeout: 10), "appearance setting should render")
+        picker.tap()
+        let option = app.buttons[appearance].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5), "appearance menu should offer \(appearance)")
+        option.tap()
+        XCTAssertTrue(picker.label.contains("Appearance, \(appearance)"),
+                      "app setting should explicitly use \(appearance)")
     }
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
