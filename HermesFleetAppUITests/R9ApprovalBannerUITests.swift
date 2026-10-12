@@ -182,15 +182,66 @@ final class R9ApprovalBannerUITests: XCTestCase {
 
             let wrap = firstMatch(in: app, identifier: "approval.review.wrap")
             XCTAssertTrue(wrap.exists, "wrap control should remain visible in \(scenario.appearance)")
+            let confirm = firstMatch(in: app, identifier: "approval.review.confirm")
+
+            // At accessibility XXXL the origin metadata can consume most of
+            // the initial viewport. Verify that a real vertical scroll brings
+            // at least one complete command line above the pinned action bar.
+            // The bounded loop waits on geometry rather than timing guesses.
+            let verticalScroll = app.scrollViews.firstMatch
+            if scenario.contentSize != nil {
+                XCTAssertTrue(verticalScroll.waitForExistence(timeout: 5),
+                              "review content should expose its vertical scroll view")
+                XCTAssertTrue(verticalScroll.isHittable)
+                for _ in 0..<8 where visibleCommandHeight(command, in: verticalScroll, above: confirm) < 44 {
+                    verticalScroll.swipeUp()
+                }
+                XCTAssertGreaterThanOrEqual(
+                    visibleCommandHeight(command, in: verticalScroll, above: confirm), 44,
+                    "a full command line should be visible above the fixed review action at XXXL"
+                )
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-wrapped-command-visible")
+
+                // Return to the wrap control with real, bounded downward
+                // gestures before changing its state.
+                for _ in 0..<8 where !wrap.isHittable {
+                    verticalScroll.swipeDown()
+                }
+                XCTAssertTrue(wrap.isHittable, "wrap control should remain reachable after scrolling")
+            }
+
             wrap.tap()
             let scrollHint = firstMatch(in: app, identifier: "approval.review.scroll-hint")
             XCTAssertTrue(scrollHint.exists,
                           "unwrapped commands need a visible horizontal-scroll cue in \(scenario.appearance)")
             attachScreenshot(of: app, name: "approval-review-\(scenario.name)-unwrapped")
+
+            if scenario.contentSize != nil {
+                for _ in 0..<8 where visibleCommandHeight(command, in: verticalScroll, above: confirm) < 44 {
+                    verticalScroll.swipeUp()
+                }
+                XCTAssertGreaterThanOrEqual(
+                    visibleCommandHeight(command, in: verticalScroll, above: confirm), 44,
+                    "the unwrapped command viewport should be visible above the fixed review action at XXXL"
+                )
+                let horizontalScroll = command.descendants(matching: .scrollView).firstMatch
+                XCTAssertTrue(horizontalScroll.waitForExistence(timeout: 5),
+                              "unwrapped command should expose its horizontal scroll view")
+                XCTAssertTrue(horizontalScroll.isHittable,
+                              "horizontal command scrolling should be reachable at XXXL")
+                horizontalScroll.swipeLeft()
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-unwrapped-command-scrolled")
+                horizontalScroll.swipeRight()
+
+                for _ in 0..<8 where !wrap.isHittable {
+                    verticalScroll.swipeDown()
+                }
+                XCTAssertTrue(wrap.isHittable, "wrap control should be reachable after horizontal review")
+            }
+
             wrap.tap()
             XCTAssertFalse(scrollHint.exists)
 
-            let confirm = firstMatch(in: app, identifier: "approval.review.confirm")
             XCTAssertTrue(confirm.isHittable, "review action should remain reachable in \(scenario.appearance)")
             XCTAssertTrue(confirm.label.contains("I reviewed the full command"),
                           "review action must have a visible accessible label in \(scenario.appearance)")
@@ -321,5 +372,18 @@ final class R9ApprovalBannerUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    /// Returns only the command area visible within the review scroll viewport
+    /// and above the pinned confirmation footer. This avoids treating content
+    /// hidden beneath the footer as readable.
+    private func visibleCommandHeight(_ command: XCUIElement, in scrollView: XCUIElement,
+                                     above footer: XCUIElement) -> CGFloat {
+        let scrollFrame = scrollView.frame
+        let visibleBottom = min(scrollFrame.maxY, footer.frame.minY)
+        let viewport = CGRect(x: scrollFrame.minX, y: scrollFrame.minY,
+                              width: scrollFrame.width,
+                              height: max(0, visibleBottom - scrollFrame.minY))
+        return command.frame.intersection(viewport).height
     }
 }
