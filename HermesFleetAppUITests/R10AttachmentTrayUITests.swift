@@ -29,6 +29,54 @@ final class R10AttachmentTrayUITests: XCTestCase {
         element.tap()
     }
 
+    /// System document and photo pickers can take longer than five seconds to
+    /// finish presenting on a cold simulator. Their Cancel control can also be
+    /// exposed as a generic accessibility element before UIKit finishes
+    /// publishing it as a Button. Wait for a visible, hittable Cancel element
+    /// after the selected Add action has left the hierarchy.
+    private func waitForSystemPicker(
+        in app: XCUIApplication,
+        selectedAction: XCUIElement,
+        pickerName: String
+    ) -> XCUIElement {
+        let startedAt = Date()
+        let diagnosticBoundary = startedAt.addingTimeInterval(5)
+        let deadline = startedAt.addingTimeInterval(20)
+        let cancelElements = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Cancel"))
+        var capturedSlowPresentation = false
+
+        while Date() < deadline {
+            if !selectedAction.exists,
+               let cancel = cancelElements.allElementsBoundByIndex.first(where: \.isHittable) {
+                return cancel
+            }
+
+            if !capturedSlowPresentation && Date() >= diagnosticBoundary {
+                capturedSlowPresentation = true
+                XCTContext.runActivity(named: "\(pickerName) picker still presenting after 5 seconds") { activity in
+                    let screenshot = XCTAttachment(screenshot: app.screenshot())
+                    screenshot.name = "\(pickerName) picker at 5-second boundary"
+                    screenshot.lifetime = .keepAlways
+                    activity.add(screenshot)
+
+                    let hierarchy = XCTAttachment(
+                        data: Data(app.debugDescription.utf8),
+                        uniformTypeIdentifier: "public.plain-text"
+                    )
+                    hierarchy.name = "\(pickerName) picker accessibility hierarchy at 5-second boundary"
+                    hierarchy.lifetime = .keepAlways
+                    activity.add(hierarchy)
+                }
+            }
+
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+
+        XCTFail("\(pickerName) picker should dismiss Add and expose a hittable Cancel control within 20 seconds")
+        return cancelElements.firstMatch
+    }
+
     private func openConversation(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.workstation").firstMatch)
@@ -116,27 +164,27 @@ final class R10AttachmentTrayUITests: XCTestCase {
         let add = firstMatch(in: app, identifier: "fleet.conversation.attach")
 
         tap(add)
-        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.file"))
-        let cancelFile = app.buttons["Cancel"]
-        XCTAssertTrue(cancelFile.waitForExistence(timeout: 5), "file picker should open from Add")
+        let fileAction = firstMatch(in: app, identifier: "fleet.conversation.attach.file")
+        tap(fileAction)
+        let cancelFile = waitForSystemPicker(in: app, selectedAction: fileAction, pickerName: "File")
         tap(cancelFile)
 
         tap(add)
-        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.file"))
-        let cancelRepeatedFile = app.buttons["Cancel"]
-        XCTAssertTrue(cancelRepeatedFile.waitForExistence(timeout: 5), "file picker should open again after cancellation")
+        let repeatedFileAction = firstMatch(in: app, identifier: "fleet.conversation.attach.file")
+        tap(repeatedFileAction)
+        let cancelRepeatedFile = waitForSystemPicker(in: app, selectedAction: repeatedFileAction, pickerName: "File")
         tap(cancelRepeatedFile)
 
         tap(add)
-        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.photo"))
-        let cancelPhoto = app.buttons["Cancel"]
-        XCTAssertTrue(cancelPhoto.waitForExistence(timeout: 5), "photo picker should open from Add")
+        let photoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
+        tap(photoAction)
+        let cancelPhoto = waitForSystemPicker(in: app, selectedAction: photoAction, pickerName: "Photo")
         tap(cancelPhoto)
 
         tap(add)
-        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.photo"))
-        let cancelRepeatedPhoto = app.buttons["Cancel"]
-        XCTAssertTrue(cancelRepeatedPhoto.waitForExistence(timeout: 5), "photo picker should open again after cancellation")
+        let repeatedPhotoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
+        tap(repeatedPhotoAction)
+        let cancelRepeatedPhoto = waitForSystemPicker(in: app, selectedAction: repeatedPhotoAction, pickerName: "Photo")
         tap(cancelRepeatedPhoto)
     }
 }
