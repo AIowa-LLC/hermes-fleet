@@ -388,7 +388,8 @@ final class ConversationViewModelTests: XCTestCase {
 
     private func makeFixture(
         sessionID: String? = nil,
-        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth()
+        biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
+        prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil
     ) async throws -> (ScriptedSession, ConversationViewModel) {
         let scripted = ScriptedSession()
         cache = try SwiftDataCacheStore.makeInMemory()
@@ -402,7 +403,8 @@ final class ConversationViewModelTests: XCTestCase {
             route: route,
             sessionID: sessionID,
             biometrics: biometrics,
-            statusInterval: .milliseconds(10)
+            statusInterval: .milliseconds(10),
+            prepareForegroundRecovery: prepareForegroundRecovery
         )
         return (scripted, viewModel)
     }
@@ -549,6 +551,46 @@ final class ConversationViewModelTests: XCTestCase {
         await viewModel.appBecameActive()
         XCTAssertEqual(scripted.connectCount, before,
                        "authRequired must not auto-reconnect")
+    }
+
+    func testForegroundRecoveryGateFalsePreventsReconnect() async throws {
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1",
+            prepareForegroundRecovery: { false })
+        await viewModel.start()
+        scripted.statusValue = .offline
+        await viewModel.forceDisconnectedForTesting()
+        let before = scripted.connectCount
+
+        await viewModel.appBecameActive()
+
+        XCTAssertEqual(scripted.connectCount, before,
+                       "a foreground gate refusal must preserve manual recovery intent")
+    }
+
+    func testCanceledForegroundRecoveryGateDoesNotReconnect() async throws {
+        let gate = OneShotGate()
+        var enteredGate = false
+        let (scripted, viewModel) = try await makeFixture(
+            sessionID: "s-1",
+            prepareForegroundRecovery: {
+                enteredGate = true
+                await gate.wait()
+                return true
+            })
+        await viewModel.start()
+        scripted.statusValue = .offline
+        await viewModel.forceDisconnectedForTesting()
+        let before = scripted.connectCount
+
+        let activation = Task { await viewModel.appBecameActive() }
+        while !enteredGate { await Task.yield() }
+        activation.cancel()
+        gate.open()
+        await activation.value
+
+        XCTAssertEqual(scripted.connectCount, before,
+                       "cancellation while app-level recovery is suspended must fence reconnect")
     }
 
     func testStartConnectsAndCreatesSession() async throws {

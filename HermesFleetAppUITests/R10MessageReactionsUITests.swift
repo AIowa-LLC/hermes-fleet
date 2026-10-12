@@ -138,6 +138,52 @@ final class R10MessageReactionsUITests: XCTestCase {
         XCTAssertFalse(chip.exists, "optimistic reaction must roll back on wire failure")
     }
 
+    func testAssistantReplyCopyCanBePastedAsTheRawVisibleText() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_REACTION_FIXTURE"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let copy = firstMatch(in: app, identifier: "fleet.conversation.footer.row-2.copy")
+        tap(copy)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        composer.tap()
+        composer.press(forDuration: 1.0)
+        let paste = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Paste")).firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5), "the copied reply should be available to paste")
+        tap(paste)
+        XCTAssertEqual(composer.value as? String, "Fixture answer with a seeded reaction.",
+                       "copy carries the literal visible reply text")
+    }
+
+    func testLongPressCopiesUserMessageAsRawText() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_REACTION_FIXTURE"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let row = firstMatch(in: app, identifier: "fleet.conversation.row.row-1")
+        row.press(forDuration: 1.0)
+        tap(firstMatch(in: app, identifier: "fleet.conversation.reaction.copy"))
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "fleet.conversation.row.row-1.copied").waitForExistence(timeout: 5),
+            "long-press copy should show a visible confirmation")
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        composer.tap()
+        composer.press(forDuration: 1.0)
+        let paste = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Paste")).firstMatch
+        XCTAssertTrue(paste.waitForExistence(timeout: 5), "copied text should be available to paste")
+        tap(paste)
+        XCTAssertEqual(composer.value as? String, "Reaction fixture row — long-press me",
+                       "copy carries the literal visible user message")
+    }
+
     /// QA round-1 defect regression (live path): react to a LIVE row — one
     /// streamed this session with no durable row_id (newest_role on the
     /// wire). The chip must SURVIVE the settle, so a second long-press

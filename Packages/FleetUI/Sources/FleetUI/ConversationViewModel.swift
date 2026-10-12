@@ -487,7 +487,8 @@ public final class ConversationViewModel {
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         statusInterval: Duration = .milliseconds(400),
         maxDisplayRows: Int = 200,
-        voice: (any VoiceTranscribing)? = nil
+        voice: (any VoiceTranscribing)? = nil,
+        prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil
     ) {
         self.session = session
         self.cache = cache
@@ -496,6 +497,7 @@ public final class ConversationViewModel {
         self.biometrics = biometrics
         self.statusInterval = statusInterval
         self.maxDisplayRows = maxDisplayRows
+        self.prepareForegroundRecovery = prepareForegroundRecovery
         // R10-T4: fail-closed voice default when no engine is injected.
         self.voice = voice ?? UnsupportedVoiceTranscriber()
         // Stage 1: the footer's Read Aloud renders only where a real engine
@@ -1438,7 +1440,10 @@ public final class ConversationViewModel {
                 name: name, sizeBytes: byteCount, capBytes: AttachmentStagingRules.clientCapBytes))
             return
         }
-        guard !isUploadingAttachment else { return } // one upload at a time
+        guard !isUploadingAttachment else {
+            attachmentError = "An attachment is already being added — try again when it finishes"
+            return
+        }
         isUploadingAttachment = true
         defer { isUploadingAttachment = false }
         do {
@@ -1601,7 +1606,13 @@ public final class ConversationViewModel {
     /// Voice mode toggle: turning OFF cuts any in-flight speech immediately
     /// (never talks over the user reading).
     public func setVoiceMode(_ enabled: Bool) async {
+        guard !enabled || voiceCanSpeak else {
+            isVoiceModeEnabled = false
+            voiceError = VoiceError.unsupported.description
+            return
+        }
         isVoiceModeEnabled = enabled
+        voiceError = nil
         if !enabled {
             readAloudCompletionTask?.cancel()
             readAloudCompletionTask = nil
@@ -1934,11 +1945,19 @@ public final class ConversationViewModel {
     nonisolated(unsafe) private var foregroundObserver: Task<Void, Never>?
     nonisolated(unsafe) private var foregroundRetryTask: Task<Void, Never>?
     private var isHealingFromForeground = false
+    /// Optional app-level foreground recovery gate. The composition root uses
+    /// this to wait for shared resume/lock policy before a conversation may
+    /// reconnect; independent view-model users keep the historical default.
+    private let prepareForegroundRecovery: (@MainActor () async -> Bool)?
 
     public func appBecameActive() async {
         guard phase == .disconnected, !isHealingFromForeground else { return }
         isHealingFromForeground = true
         defer { isHealingFromForeground = false }
+        if let prepareForegroundRecovery {
+            let mayReconnect = await prepareForegroundRecovery()
+            guard !Task.isCancelled, mayReconnect, phase == .disconnected else { return }
+        }
         await reconnect()
         guard phase == .disconnected else { return }
         // One bounded retry after a short grace period — never a loop (F1's
@@ -1946,11 +1965,14 @@ public final class ConversationViewModel {
         foregroundRetryTask?.cancel()
         foregroundRetryTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, let self else { return }
-            await MainActor.run {
-                guard self.phase == .disconnected else { return }
-                Task { await self.reconnect() }
+            guard !Task.isCancelled, let self, self.phase == .disconnected else { return }
+            if let prepareForegroundRecovery = self.prepareForegroundRecovery {
+                let mayReconnect = await prepareForegroundRecovery()
+                guard !Task.isCancelled, mayReconnect, self.phase == .disconnected else { return }
             }
+            // Keep the retry inside its stored task so teardown/deinit can
+            // cancel the reconnect itself, not just an abandoned launcher.
+            await self.reconnect()
         }
     }
 
@@ -2786,6 +2808,10 @@ public final class ConversationViewModel {
             reactionError = "Reactions need an open session"
             return
         }
+        if reactionSeam is UnsupportedReactionProviding {
+            reactionError = "Reactions aren't supported by this gateway"
+            return
+        }
         // Resolve the wire target.
         let target: MessageReactionTarget
         if let rowID {
@@ -2836,6 +2862,10 @@ public final class ConversationViewModel {
         reactionError = nil
         guard let sid = openedSessionID else {
             reactionError = "Reactions need an open session"
+            return
+        }
+        if reactionSeam is UnsupportedReactionProviding {
+            reactionError = "Reactions aren't supported by this gateway"
             return
         }
         let target: MessageReactionTarget

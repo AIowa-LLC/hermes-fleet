@@ -308,4 +308,13 @@ final class ConversationVoiceViewModelTests: XCTestCase {
         }
         XCTAssertNotNil(viewModel.voiceError)
     }
+
+    func testEnablingReplySpeechWithoutEngineExplainsWhyItStayedOff() async {
+        let (_, _, viewModel) = await makeFixture(voice: nil)
+
+        await viewModel.setVoiceMode(true)
+
+        XCTAssertFalse(viewModel.isVoiceModeEnabled)
+        XCTAssertEqual(viewModel.voiceError, VoiceError.unsupported.description)
+    }
 }

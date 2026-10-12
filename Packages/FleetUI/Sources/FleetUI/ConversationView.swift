@@ -3,6 +3,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import FleetCore
 import FleetPersistence
+import UIKit
 
 /// B87 follow-up ("Cannot open chat"): what `ConversationView.body` should
 /// render for a given (VM presence, fleet hydration, gateway registration)
@@ -141,7 +142,11 @@ public struct ConversationView: View {
     @State private var newChatTargetSessionID: String?
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotoPicker = false
     @State private var showingFileImporter = false
+    @State private var showingAddActions = false
+    @State private var pendingAddPresentation: PendingAddPresentation?
+    @State private var isResolvingPickedAttachment = false
     @FocusState private var composerFocused: Bool
     /// Dogfood r6 (G1): the focus signal driving the pill→card morph. (The
     /// composer's adaptive glass + shadow no longer read the color scheme
@@ -198,6 +203,11 @@ public struct ConversationView: View {
     private struct OpenTrigger: Equatable {
         let hydrationPhase: AppEnvironment.HydrationPhase
         let gatewayPresent: Bool
+    }
+
+    private enum PendingAddPresentation {
+        case photo
+        case file
     }
 
     private var openTrigger: OpenTrigger {
@@ -297,6 +307,8 @@ public struct ConversationView: View {
             #endif
         }
         .onDisappear {
+            pendingAddPresentation = nil
+            showingAddActions = false
             viewModel?.teardown()
             environment.conversationDrafts.flush()
         }
@@ -305,6 +317,10 @@ public struct ConversationView: View {
         .onChange(of: scenePhase) { _, phase in
             // Active also retries a protected-file write deferred while locked.
             environment.conversationDrafts.flush()
+            if phase != .active {
+                pendingAddPresentation = nil
+                showingAddActions = false
+            }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .background(theme.background.ignoresSafeArea())
@@ -376,6 +392,66 @@ public struct ConversationView: View {
                 ContextBreakdownSheet(model: toolingModel)
             }
         }
+        // Keep system pickers and action dialogs attached to the stable
+        // conversation canvas. Menu content is transient and SwiftUI can
+        // dismiss it before a nested presentation request is delivered.
+        .confirmationDialog("Add to message", isPresented: $showingAddActions, titleVisibility: .visible) {
+            Button("Photo…", systemImage: "photo") {
+                pendingAddPresentation = .photo
+            }
+            .accessibilityIdentifier("fleet.conversation.attach.photo")
+            Button("File or PDF…", systemImage: "doc") {
+                pendingAddPresentation = .file
+            }
+            .accessibilityIdentifier("fleet.conversation.attach.file")
+            let previousPrompts = model.transcript
+                .filter { $0.kind == .user && !$0.text.isEmpty }
+                .suffix(10)
+            ForEach(previousPrompts.reversed()) { row in
+                Button("Reuse: \(String(row.text.prefix(64)))") {
+                    composerText = row.text
+                    composerFocused = true
+                }
+                .accessibilityIdentifier("fleet.conversation.reusePrompt.\(row.id)")
+            }
+            Button {
+                Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
+            } label: {
+                Label(
+                    model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
+                    systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
+                )
+            }
+            .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: showingAddActions) { _, isPresented in
+            if !isPresented { presentPendingAddPresentation() }
+        }
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhoto, matching: .images)
+        .onChange(of: selectedPhoto) { _, item in
+            guard let item else { return }
+            selectedPhoto = nil
+            isResolvingPickedAttachment = true
+            Task { await loadPickedPhoto(item, model: model) }
+        }
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
+            switch result {
+            case .success(let url):
+                isResolvingPickedAttachment = true
+                Task { await loadPickedFile(url, model: model) }
+            case .failure(let error):
+                let nsError = error as NSError
+                guard nsError.domain != NSCocoaErrorDomain || nsError.code != CocoaError.userCancelled.rawValue else {
+                    return
+                }
+                Task {
+                    await model.stageAttachment(
+                        name: "file", mime: nil, byteCount: 0,
+                        loadBytes: { throw error })
+                }
+            }
+        }
         // R9-T4: navigate to a successfully forked session.
         .onChange(of: model.forkedSession?.storedSessionID ?? model.forkedSession?.sessionID) { _, newID in
             guard let newID, newID != forkTargetSessionID else { return }
@@ -425,6 +501,25 @@ public struct ConversationView: View {
             floatingLatestChevron
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showingJumpToLatest)
+    }
+
+    /// Consume the attachment action only after the Add dialog has closed.
+    /// Keeping this as pending state avoids competing system presentations;
+    /// disappearance or backgrounding clears it before a picker can appear.
+    private func presentPendingAddPresentation() {
+        guard scenePhase == .active else {
+            pendingAddPresentation = nil
+            return
+        }
+        guard let pending = pendingAddPresentation else { return }
+        pendingAddPresentation = nil
+        switch pending {
+        case .photo:
+            selectedPhoto = nil
+            showingPhotoPicker = true
+        case .file:
+            showingFileImporter = true
+        }
     }
 
     /// Floating jump-to-latest chevron — zero permanent chrome: it renders
@@ -1543,35 +1638,8 @@ enum ConversationHeaderChips {
                 // gateway queues attaches for the NEXT submit; allowing
                 // mid-stream picks invites orphaned uploads).
                 if model.phase == .ready {
-                    Menu {
-                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                            Label("Photo…", systemImage: "photo")
-                        }
-                        Button {
-                            showingFileImporter = true
-                        } label: {
-                            Label("File or PDF…", systemImage: "doc")
-                        }
-                        let previousPrompts = model.transcript.filter { $0.kind == .user && !$0.text.isEmpty }.suffix(10)
-                        if !previousPrompts.isEmpty {
-                            Menu("Reuse a prompt", systemImage: "clock.arrow.circlepath") {
-                                ForEach(previousPrompts.reversed()) { row in
-                                    Button(String(row.text.prefix(80))) { composerText = row.text }
-                                }
-                            }
-                        }
-                        // R10-T4: voice-mode toggle rides the "+" menu. ON =
-                        // assistant replies spoken via local TTS; turning
-                        // OFF cuts speech immediately.
-                        Button {
-                            Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
-                        } label: {
-                            Label(
-                                model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
-                                systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
-                            )
-                        }
-                        .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+                    Button {
+                        showingAddActions = true
                     } label: {
                         // r6: bare glyph inside the pill (the pill is the
                         // surface; 44pt target via the frame).
@@ -1582,7 +1650,8 @@ enum ConversationHeaderChips {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Attach")
+                    .disabled(isResolvingPickedAttachment || model.isUploadingAttachment)
+                    .accessibilityLabel("Add to message")
                     .accessibilityIdentifier("fleet.conversation.attach")
                 }
 
@@ -1698,22 +1767,9 @@ enum ConversationHeaderChips {
         // r6: the composer floats on the canvas — no full-width surface
         // band, no top hairline (the de-glass contract).
         .background(theme.background.ignoresSafeArea())
-        // R10-T1: pickers.
-        .onChange(of: selectedPhoto) { _, item in
-            guard let item else { return }
-            selectedPhoto = nil
-            Task { await loadPickedPhoto(item, model: model) }
-        }
         .onChange(of: composerText) { _, newValue in
             model.updateSlashSuggestions(for: newValue)
             persistDraft(newValue)
-        }
-        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
-            guard case .success(let url) = result else {
-                // User-cancelled picker: not an error.
-                return
-            }
-            Task { await loadPickedFile(url, model: model) }
         }
     }
 
@@ -2098,10 +2154,14 @@ enum ConversationHeaderChips {
     /// via ImageIO first (the vision pipeline can't read them, cli.py:3954);
     /// unconvertible data fails honestly pre-upload.
     private func loadPickedPhoto(_ item: PhotosPickerItem, model: ConversationViewModel) async {
+        defer { isResolvingPickedAttachment = false }
         let data: Data
         do {
             guard let loaded = try await item.loadTransferable(type: Data.self), !loaded.isEmpty else {
-                return // user-cancelled / empty pick — not an error
+                await model.stageAttachment(
+                    name: "photo", mime: nil, byteCount: 0,
+                    loadBytes: { throw AttachmentStagingError.rpcFailed("photo could not be read — choose it again") })
+                return
             }
             data = loaded
         } catch {
@@ -2148,6 +2208,7 @@ enum ConversationHeaderChips {
 
     /// Load a picked file URL (PDF or any type) via security-scoped access.
     private func loadPickedFile(_ url: URL, model: ConversationViewModel) async {
+        defer { isResolvingPickedAttachment = false }
         let gotAccess = url.startAccessingSecurityScopedResource()
         defer { if gotAccess { url.stopAccessingSecurityScopedResource() } }
         let name = url.lastPathComponent
@@ -2429,6 +2490,8 @@ private struct ToolActivityGroupView: View {
 private struct ConversationBubbleView: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @State private var showingCopyConfirmation = false
+    @State private var copyConfirmationResetTask: Task<Void, Never>?
     let row: ConversationRow
     /// Card D: needed to retrieve/render inline generated-image artifacts on
     /// the row that cited them. Optional so previews/tests that only exercise
@@ -2481,6 +2544,13 @@ private struct ConversationBubbleView: View {
                     Text(timestampText)
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
+                }
+                if showingCopyConfirmation {
+                    Text("Copied")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.conversation.row.\(row.id).copied")
+                        .accessibilityAddTraits(.updatesFrequently)
                 }
                 // Stage 1: action footer on COMPLETED assistant replies only
                 // (policy gate — streaming/failed/empty rows never render
@@ -2553,6 +2623,14 @@ private struct ConversationBubbleView: View {
     @ViewBuilder
     private var reactionMenu: some View {
         if row.kind == .user || row.kind == .assistant {
+            if !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    copyVisibleMessage()
+                } label: {
+                    Label("Copy Message", systemImage: "doc.on.doc")
+                }
+                .accessibilityIdentifier("fleet.conversation.reaction.copy")
+            }
             ForEach(MessageReactionPalette.standard.emojis, id: \.self) { emoji in
                 Button {
                     react(emoji)
@@ -2570,6 +2648,20 @@ private struct ConversationBubbleView: View {
                 }
                 .accessibilityIdentifier("fleet.conversation.reaction.clear")
             }
+        }
+    }
+
+    private func copyVisibleMessage() {
+        // Copy exactly the visible row's raw text, including Markdown and
+        // intentional surrounding whitespace.
+        UIPasteboard.general.string = row.text
+        withAnimation(.easeIn(duration: 0.15)) { showingCopyConfirmation = true }
+        UIAccessibility.post(notification: .announcement, argument: "Message copied")
+        copyConfirmationResetTask?.cancel()
+        copyConfirmationResetTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { showingCopyConfirmation = false }
         }
     }
 

@@ -335,7 +335,7 @@ final class MessageReactionsViewModelTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
 
         XCTAssertNotNil(viewModel.reactionError, "fail-closed seam surfaces an honest error")
-        XCTAssertTrue(viewModel.reactionError?.contains("gateway not configured") ?? false)
+        XCTAssertEqual(viewModel.reactionError, "Reactions aren't supported by this gateway")
     }
 
     /// Minimal non-capable session double — ConversationSessionProviding

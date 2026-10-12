@@ -106,4 +106,37 @@ final class R10AttachmentTrayUITests: XCTestCase {
         XCTAssertTrue(banner.label.contains("too large") || banner.label.contains("fixture"),
                       "banner carries the honest failure: \(banner.label)")
     }
+
+    func testAddActionsPresentAndCanReopenSystemPickers() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let add = firstMatch(in: app, identifier: "fleet.conversation.attach")
+
+        tap(add)
+        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.file"))
+        let cancelFile = app.buttons["Cancel"]
+        XCTAssertTrue(cancelFile.waitForExistence(timeout: 5), "file picker should open from Add")
+        tap(cancelFile)
+
+        tap(add)
+        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.file"))
+        let cancelRepeatedFile = app.buttons["Cancel"]
+        XCTAssertTrue(cancelRepeatedFile.waitForExistence(timeout: 5), "file picker should open again after cancellation")
+        tap(cancelRepeatedFile)
+
+        tap(add)
+        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.photo"))
+        let cancelPhoto = app.buttons["Cancel"]
+        XCTAssertTrue(cancelPhoto.waitForExistence(timeout: 5), "photo picker should open from Add")
+        tap(cancelPhoto)
+
+        tap(add)
+        tap(firstMatch(in: app, identifier: "fleet.conversation.attach.photo"))
+        let cancelRepeatedPhoto = app.buttons["Cancel"]
+        XCTAssertTrue(cancelRepeatedPhoto.waitForExistence(timeout: 5), "photo picker should open again after cancellation")
+        tap(cancelRepeatedPhoto)
+    }
 }
