@@ -48,7 +48,7 @@ final class R10AttachmentTrayUITests: XCTestCase {
 
         while Date() < deadline {
             if !selectedAction.exists,
-               let cancel = cancelElements.allElementsBoundByIndex.first(where: \.isHittable) {
+               let cancel = cancelElements.allElementsBoundByIndex.first(where: { $0.isHittable }) {
                 return cancel
             }
 
