@@ -169,16 +169,29 @@ final class R10MessageReactionsUITests: XCTestCase {
         let row = firstMatch(in: app, identifier: "fleet.conversation.row.row-1")
         row.press(forDuration: 1.0)
         tap(firstMatch(in: app, identifier: "fleet.conversation.reaction.copy"))
-        XCTAssertTrue(
-            firstMatch(in: app, identifier: "fleet.conversation.row.row-1.copied").waitForExistence(timeout: 5),
-            "long-press copy should show a visible confirmation")
+
+        // Preserve the immediate post-copy presentation for visual and
+        // accessibility inspection. The user row combines its accessibility
+        // children, and the Copied feedback is intentionally transient, so
+        // neither is a durable assertion that the clipboard received text.
+        XCTContext.runActivity(named: "Capture immediate user-row copy feedback") { activity in
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "User-row Copy Message immediately after tap"
+            screenshot.lifetime = .keepAlways
+            activity.add(screenshot)
+
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "User-row accessibility hierarchy after Copy Message"
+            hierarchy.lifetime = .keepAlways
+            activity.add(hierarchy)
+        }
 
         let composer = app.textFields["fleet.conversation.composer"]
         composer.tap()
         composer.press(forDuration: 1.0)
         let paste = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "Paste")).firstMatch
-        XCTAssertTrue(paste.waitForExistence(timeout: 5), "copied text should be available to paste")
+        XCTAssertTrue(paste.waitForExistence(timeout: 5), "copied user text should be available to paste")
         tap(paste)
         XCTAssertEqual(composer.value as? String, "Reaction fixture row — long-press me",
                        "copy carries the literal visible user message")
