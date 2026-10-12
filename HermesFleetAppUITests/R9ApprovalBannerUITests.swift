@@ -183,15 +183,25 @@ final class R9ApprovalBannerUITests: XCTestCase {
             let wrap = firstMatch(in: app, identifier: "approval.review.wrap")
             XCTAssertTrue(wrap.exists, "wrap control should remain visible in \(scenario.appearance)")
             let confirm = firstMatch(in: app, identifier: "approval.review.confirm")
+            let reviewSheet = firstMatch(in: app, identifier: "approval.review.sheet")
+            XCTAssertTrue(reviewSheet.waitForExistence(timeout: 5), "review sheet should be present")
 
             // At accessibility XXXL the origin metadata can consume most of
             // the initial viewport. Verify that a real vertical scroll brings
             // at least one complete command line above the pinned action bar.
             // The bounded loop waits on geometry rather than timing guesses.
-            let verticalScroll = app.scrollViews.firstMatch
+            let globalFirstScrollView = app.scrollViews.firstMatch
+            let verticalScroll = reviewSheet.scrollViews.firstMatch
             if scenario.contentSize != nil {
                 XCTAssertTrue(verticalScroll.waitForExistence(timeout: 5),
                               "review content should expose its vertical scroll view")
+                attachScrollQueryDiagnostic(
+                    app: app,
+                    sheet: reviewSheet,
+                    global: globalFirstScrollView,
+                    scoped: verticalScroll,
+                    name: "approval-review-\(scenario.name)-scroll-query"
+                )
                 XCTAssertTrue(verticalScroll.isHittable)
                 for _ in 0..<8 where visibleCommandHeight(command, in: verticalScroll, above: confirm) < 44 {
                     verticalScroll.swipeUp()
@@ -224,9 +234,22 @@ final class R9ApprovalBannerUITests: XCTestCase {
                     visibleCommandHeight(command, in: verticalScroll, above: confirm), 44,
                     "the unwrapped command viewport should be visible above the fixed review action at XXXL"
                 )
-                let horizontalScroll = command.descendants(matching: .scrollView).firstMatch
+                // SwiftUI can surface the command's accessibility identifier
+                // directly on its horizontal ScrollView. In other hierarchies
+                // the same view is a descendant of the labelled command node.
+                let horizontalDescendant = command.descendants(matching: .scrollView).firstMatch
+                let horizontalScroll = command.elementType == .scrollView
+                    ? command
+                    : horizontalDescendant
                 XCTAssertTrue(horizontalScroll.waitForExistence(timeout: 5),
                               "unwrapped command should expose its horizontal scroll view")
+                attachScrollQueryDiagnostic(
+                    app: app,
+                    sheet: reviewSheet,
+                    global: globalFirstScrollView,
+                    scoped: horizontalScroll,
+                    name: "approval-review-\(scenario.name)-horizontal-scroll-query"
+                )
                 XCTAssertTrue(horizontalScroll.isHittable,
                               "horizontal command scrolling should be reachable at XXXL")
                 horizontalScroll.swipeLeft()
@@ -385,5 +408,30 @@ final class R9ApprovalBannerUITests: XCTestCase {
                               width: scrollFrame.width,
                               height: max(0, visibleBottom - scrollFrame.minY))
         return command.frame.intersection(viewport).height
+    }
+
+    private func attachScrollQueryDiagnostic(app: XCUIApplication, sheet: XCUIElement,
+                                             global: XCUIElement, scoped: XCUIElement,
+                                             name: String) {
+        func summary(_ element: XCUIElement) -> String {
+            let hierarchy = element.debugDescription
+            let excerpt = hierarchy.count > 2_400 ? String(hierarchy.prefix(2_400)) : hierarchy
+            return "type=\(element.elementType), exists=\(element.exists), frame=\(element.frame)\n\(excerpt)"
+        }
+        let attachment = XCTAttachment(string: """
+        App frame: \(app.frame)
+
+        App scroll-view query:
+        \(summary(global))
+
+        Review-sheet scroll-view query:
+        \(summary(scoped))
+
+        Review-sheet node:
+        \(summary(sheet))
+        """)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }
