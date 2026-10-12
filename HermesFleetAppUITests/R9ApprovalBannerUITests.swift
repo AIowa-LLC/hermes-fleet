@@ -296,7 +296,14 @@ final class R9ApprovalBannerUITests: XCTestCase {
                 let dragEnd = horizontalScroll.coordinate(
                     withNormalizedOffset: CGVector(dx: 0.12, dy: normalizedLineY)
                 )
-                dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                // The first bounded drag can expose the URL's middle without
+                // reaching the shell suffix at accessibility XXXL. Repeat
+                // the same real gesture on the still-visible curl row until
+                // the right edge is in view; the captured pixels below verify
+                // the resulting text rather than trusting gesture delivery.
+                for _ in 0..<4 {
+                    dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                }
                 attachScreenshot(of: app, name: "approval-review-\(scenario.name)-long-line-right-suffix")
                 horizontalScroll.swipeRight()
 
