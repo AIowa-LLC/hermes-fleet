@@ -201,6 +201,12 @@ final class R9ApprovalBannerUITests: XCTestCase {
             }
             app.terminate()
         }
+
+        let cleanup = XCUIApplication()
+        cleanup.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        cleanup.launch()
+        setAppearance(cleanup, "System", accent: "Purple")
+        cleanup.terminate()
     }
 
     func testYoloToggleShowsDangerConfirmation() throws {
@@ -280,7 +286,7 @@ final class R9ApprovalBannerUITests: XCTestCase {
         element.tap()
     }
 
-    private func setAppearance(_ app: XCUIApplication, _ appearance: String) {
+    private func setAppearance(_ app: XCUIApplication, _ appearance: String, accent: String = "White") {
         UITabNavigation.openSettings(app)
         let picker = firstMatch(in: app, identifier: "fleet.settings.appearance")
         XCTAssertTrue(picker.waitForExistence(timeout: 10), "appearance setting should render")
@@ -290,6 +296,13 @@ final class R9ApprovalBannerUITests: XCTestCase {
         option.tap()
         XCTAssertTrue(picker.label.contains("Appearance, \(appearance)"),
                       "app setting should explicitly use \(appearance)")
+        let accentPicker = firstMatch(in: app, identifier: "fleet.settings.accent")
+        accentPicker.tap()
+        let accentOption = app.buttons[accent].firstMatch
+        XCTAssertTrue(accentOption.waitForExistence(timeout: 5))
+        accentOption.tap()
+        XCTAssertTrue(accentPicker.label.contains("Accent, \(accent)"),
+                      "review regression must exercise explicit \(accent) highlight ink")
     }
 
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {

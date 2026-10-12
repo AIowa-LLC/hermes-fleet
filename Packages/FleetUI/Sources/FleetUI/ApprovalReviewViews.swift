@@ -184,8 +184,6 @@ struct ApprovalReviewSheet: View {
                         .frame(minHeight: 44)
                         .accessibilityIdentifier("approval.review.wrap")
 
-                    commandView
-
                     if !wraps {
                         Label("Scroll horizontally to read every character", systemImage: "arrow.left.and.right")
                             .font(.caption.weight(.medium))
@@ -193,6 +191,8 @@ struct ApprovalReviewSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("approval.review.scroll-hint")
                     }
+
+                    commandView
 
                     if let detail, !detail.isEmpty {
                         ApprovalUntrustedDetail(detail: detail, startsExpanded: true)
