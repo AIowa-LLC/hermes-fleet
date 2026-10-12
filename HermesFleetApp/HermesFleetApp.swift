@@ -32,8 +32,10 @@ struct HermesFleetApp: App {
                             // Authenticate before touching the registry,
                             // cache, or roster. Protected content must not
                             // be hydrated while the lock screen is showing.
+                            environment.setForegroundRecoveryAllowed(false)
                             await lockController.authenticateIfNeeded()
                             guard !lockController.isLocked else { return }
+                            environment.setForegroundRecoveryAllowed(true)
                             await environment.hydrateIfNeeded()
                             #if DEBUG && targetEnvironment(simulator)
                             if ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" {
@@ -79,9 +81,11 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
+            let canRecover = phase == .active && !lockController.isLocked
+            environment.setForegroundRecoveryAllowed(canRecover)
             if phase == .background {
                 environment.beginBackgroundSuspension()
-            } else if phase == .active && !lockController.isLocked {
+            } else if canRecover {
                 Task {
                     await environment.resumeAfterForeground()
                 }
@@ -89,9 +93,11 @@ struct HermesFleetApp: App {
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
             if isLocked {
+                environment.setForegroundRecoveryAllowed(false)
                 // App Lock gates presentation. It is not a user disconnect
                 // and must not clear desired gateway connection intent.
             } else {
+                environment.setForegroundRecoveryAllowed(true)
                 // Biometric failure enters passcode fallback. The initial
                 // launch task has already returned at that point, so the
                 // unlock transition must resume protected hydration.

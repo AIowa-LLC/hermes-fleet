@@ -304,6 +304,10 @@ public final class AppEnvironment {
     @ObservationIgnored private var connectionGenerations: [GatewayID: UInt64] = [:]
     @ObservationIgnored private var activeConnectionAttemptGenerations: [GatewayID: UInt64] = [:]
     @ObservationIgnored private var gatewayRemovalInProgress: Set<GatewayID> = []
+    // Standalone environments (not composed under HermesFleetApp's lock
+    // controller) retain their historical behavior. The app root explicitly
+    // closes this gate before authentication and while inactive/locked.
+    @ObservationIgnored private var foregroundRecoveryAllowed = true
     @ObservationIgnored private var lifecycleGeneration: UInt64 = 0
     @ObservationIgnored private var conversationRestoreGeneration: UInt64 = 0
     @ObservationIgnored private var backgroundTeardownTask: Task<Void, Never>?
@@ -1935,7 +1939,7 @@ public final class AppEnvironment {
     /// idempotent from `.open`, but the guard also prevents redundant work and
     /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
-        guard !connectionsSuspended, !Task.isCancelled,
+        guard foregroundRecoveryAllowed, !connectionsSuspended, !Task.isCancelled,
               !gatewayRemovalInProgress.contains(id) else { return }
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
@@ -1951,6 +1955,7 @@ public final class AppEnvironment {
         do {
             try await connection.connect()
             guard connectionGenerations[id] == generation,
+                  foregroundRecoveryAllowed,
                   !connectionsSuspended,
                   !Task.isCancelled,
                   gateways.contains(where: { $0.id == id }) else {
@@ -2100,7 +2105,7 @@ public final class AppEnvironment {
     /// the spec §8.6 policy (transient reasons only). After `maxAttempts` the
     /// gateway stays failed until a foreground restore or a manual retry.
     private func scheduleAutoReconnect(for id: GatewayID) {
-        guard !connectionsSuspended else { return }
+        guard foregroundRecoveryAllowed, !connectionsSuspended else { return }
         guard !gatewayRemovalInProgress.contains(id) else { return }
         guard connectionIntent.isIntended(id) else { return }
         guard reconnectRetryTasks[id] == nil else { return }
@@ -2114,7 +2119,8 @@ public final class AppEnvironment {
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
             self.reconnectRetryTasks[id] = nil
-            guard !self.connectionsSuspended,
+            guard self.foregroundRecoveryAllowed,
+                  !self.connectionsSuspended,
                   self.connectionIntent.isIntended(id),
                   self.gateways.contains(where: { $0.id == id }) else { return }
             await self.connect(to: id)
@@ -2165,11 +2171,10 @@ public final class AppEnvironment {
 
     /// Tear down all live gateway sessions at a lifecycle boundary.
     ///
-    /// The app lock protects presentation, not already-open sockets. This
-    /// method is therefore called when the app backgrounds and before a lock
-    /// screen is shown. Conversation sessions own their own connectivity
-    /// seam, so they are explicitly disconnected in addition to the base
-    /// gateway connections.
+    /// Conversation sessions own their own connectivity seam, so they are
+    /// explicitly disconnected in addition to the base gateway connections.
+    /// The app's scene lifecycle invokes this for background teardown; App
+    /// Lock separately gates protected presentation until authentication.
     public func disconnectAll() async {
         if connectionsSuspended, let backgroundTeardownTask {
             await backgroundTeardownTask.value
@@ -2271,13 +2276,13 @@ public final class AppEnvironment {
     /// auth/unsupported failures clear only that gateway's intent, while
     /// transient failures remain retryable.
     public func restoreIntendedConnections() async {
-        guard !Task.isCancelled, !connectionsSuspended else { return }
+        guard !Task.isCancelled, foregroundRecoveryAllowed, !connectionsSuspended else { return }
         guard !gateways.isEmpty else {
             connectionIntent.prune(to: [])
             return
         }
         for gateway in gateways where connectionIntent.isIntended(gateway.id) {
-            guard !Task.isCancelled, !connectionsSuspended else { return }
+            guard !Task.isCancelled, foregroundRecoveryAllowed, !connectionsSuspended else { return }
             guard gateways.contains(where: { $0.id == gateway.id }) else { continue }
             if connectionStates[gateway.id] == .connected || connectionStates[gateway.id] == .connecting {
                 continue
@@ -2307,6 +2312,7 @@ public final class AppEnvironment {
         lifecycleGeneration &+= 1
         let generation = lifecycleGeneration
         connectionsSuspended = true
+        foregroundRecoveryAllowed = false
         foregroundResumeTask?.cancel()
         foregroundResumeTask = nil
         conversationDrafts.flush()
@@ -2330,6 +2336,7 @@ public final class AppEnvironment {
     /// runtime restores connections and refreshes stale session data.
     public func resumeAfterForeground() async {
         guard !Task.isCancelled else { return }
+        guard foregroundRecoveryAllowed else { return }
         if let foregroundResumeTask {
             await foregroundResumeTask.value
             return
@@ -2350,23 +2357,32 @@ public final class AppEnvironment {
         if let backgroundTeardownTask {
             await backgroundTeardownTask.value
         }
-        guard !Task.isCancelled, generation == lifecycleGeneration else { return }
+        guard !Task.isCancelled, foregroundRecoveryAllowed,
+              generation == lifecycleGeneration else { return }
         await hydrateIfNeeded()
-        guard !Task.isCancelled, generation == lifecycleGeneration else { return }
+        guard !Task.isCancelled, foregroundRecoveryAllowed,
+              generation == lifecycleGeneration else { return }
         connectionsSuspended = false
         await restoreIntendedConnections()
-        guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
-        await restoreConversationSessions()
-        guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+        guard !Task.isCancelled, foregroundRecoveryAllowed,
+              generation == lifecycleGeneration, !connectionsSuspended else { return }
+        await restoreConversationSessions(onlyIntendedGateways: true)
+        guard !Task.isCancelled, foregroundRecoveryAllowed,
+              generation == lifecycleGeneration, !connectionsSuspended else { return }
         await refreshRoster()
-        guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+        guard !Task.isCancelled, foregroundRecoveryAllowed,
+              generation == lifecycleGeneration, !connectionsSuspended else { return }
         let currentRosterRoutes = Set(rosterSnapshot?.roster.allBots.map(\.route) ?? [])
         let cachedRoutes = Set(sessionsByRoute.keys)
         let retainedRoutes = Set(gateways.flatMap { sessionRoutes(on: $0.id) })
         let routes = currentRosterRoutes.union(cachedRoutes).union(retainedRoutes)
-            .filter { route in gateways.contains(where: { $0.id == route.gatewayID }) }
+            .filter { route in
+                gateways.contains(where: { $0.id == route.gatewayID })
+                    && connectionIntent.isIntended(route.gatewayID)
+            }
         for route in routes {
-            guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+            guard !Task.isCancelled, foregroundRecoveryAllowed,
+                  generation == lifecycleGeneration, !connectionsSuspended else { return }
             invalidateSessions(for: route)
         }
         await refreshSessions(routes: Array(routes), force: true)
@@ -2397,6 +2413,25 @@ public final class AppEnvironment {
         connectionIntent.isIntended(id)
     }
 
+    /// App Lock is owned by the composition root; this narrow gate prevents a
+    /// retained conversation view's foreground observer from reopening its
+    /// transport before that root authenticates protected content.
+    public func setForegroundRecoveryAllowed(_ allowed: Bool) {
+        foregroundRecoveryAllowed = allowed
+        guard !allowed else { return }
+        // A lock transition invalidates pending foreground reconciliation
+        // without canceling its connect task (which would clear user intent).
+        // Generation checks make it stop at the next suspension boundary.
+        lifecycleGeneration &+= 1
+        foregroundResumeTask = nil
+        let routes = Set(loadingRoutes)
+            .union(sessionsByRoute.keys)
+            .union(sessionsObservedAt.keys)
+        for route in routes {
+            invalidateSessions(for: route)
+        }
+    }
+
     #if DEBUG
     /// Test harness: runs the restore decision over an explicit session list
     /// (the lazily-built `conversationSessions` dictionary is unreachable
@@ -2417,19 +2452,21 @@ public final class AppEnvironment {
     /// whose transport is no longer reachable reconnects. Sessions in
     /// `.authenticationRequired` are surfaced, NOT silently re-authenticated
     /// (M11 — the conversation screen owns the re-auth UX).
-    public func restoreConversationSessions() async {
-        guard !Task.isCancelled, !connectionsSuspended else { return }
+    public func restoreConversationSessions(onlyIntendedGateways: Bool = false) async {
+        guard !Task.isCancelled, foregroundRecoveryAllowed, !connectionsSuspended else { return }
         let generation = conversationRestoreGeneration
         for (id, session) in conversationSessions {
-            guard !Task.isCancelled, !connectionsSuspended,
+            guard !Task.isCancelled, foregroundRecoveryAllowed, !connectionsSuspended,
                   generation == conversationRestoreGeneration,
                   gateways.contains(where: { $0.id == id }) else { return }
+            if onlyIntendedGateways && !connectionIntent.isIntended(id) { continue }
             let status = session.status
             if status.isReachable { continue }
             if status == .authenticationRequired { continue }
             try? await session.connect()
             guard generation == conversationRestoreGeneration,
                   !Task.isCancelled,
+                  foregroundRecoveryAllowed,
                   !connectionsSuspended,
                   gateways.contains(where: { $0.id == id }) else {
                 await session.disconnect()
@@ -3209,7 +3246,17 @@ public final class AppEnvironment {
             route: route,
             sessionID: sessionID,
             biometrics: biometrics,
-            voice: voiceEngineFactory?()
+            voice: voiceEngineFactory?(),
+            prepareForegroundRecovery: { [weak self] in
+                guard let self,
+                      self.foregroundRecoveryAllowed,
+                      self.connectionIntent.isIntended(route.gatewayID) else { return false }
+                await self.resumeAfterForeground()
+        return !self.connectionsSuspended
+                    && self.foregroundRecoveryAllowed
+                    && self.connectionIntent.isIntended(route.gatewayID)
+                    && self.gateways.contains(where: { $0.id == route.gatewayID })
+            }
         )
         model.prepareBotDraft = { [weak self] text, openedID in
             guard let self else { return BotConversationDraft(text: text) }

@@ -174,6 +174,14 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { [] }
     }
 
+    private final class RecordingSessions: SessionListProviding, @unchecked Sendable {
+        nonisolated(unsafe) private(set) var fetchedRoutes: [Route] = []
+        func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
+            fetchedRoutes.append(route)
+            return []
+        }
+    }
+
     private struct FailingGatewayDeleteRecordStore: GatewayRecordStoring {
         func saveGatewayRecord(_ record: StoredGatewayRecord) async throws {}
         func deleteGatewayRecord(id: GatewayID) async throws {
@@ -224,8 +232,8 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
     /// transport). Mirrors the suite's ScriptedConnection shape.
     private final class ScriptedConversationSession: ConversationSessionProviding, @unchecked Sendable {
         let gatewayID: GatewayID
-        var statusValue: GatewayStatus = .online
-        var connectCount = 0
+        nonisolated(unsafe) var statusValue: GatewayStatus = .offline
+        nonisolated(unsafe) var connectCount = 0
         let conversation: any ConversationProviding = UnreachableConversation()
         let replay: any ReplayProviding = UnreachableReplay()
         let history: any SessionHistoryProviding = UnreachableHistory()
@@ -236,8 +244,11 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         var liveness: ConnectionLivenessSnapshot? { nil }
 
         func adoptedReady() async -> GatewayReadyAdoption? { nil }
-        func connect() async throws { connectCount += 1 }
-        func disconnect() async {}
+        func connect() async throws {
+            connectCount += 1
+            statusValue = .online
+        }
+        func disconnect() async { statusValue = .offline }
         func currentGateway() async -> FleetGateway {
             FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
         }
@@ -279,7 +290,9 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
     private func makeEnvironment(
         ids: [String],
         errors: [String: GatewayConnectivityError] = [:],
-        defaults: UserDefaults? = nil
+        defaults: UserDefaults? = nil,
+        sessionList: any SessionListProviding = EmptySessions(),
+        conversationFactory: FleetConversationFactory? = nil
     ) async -> (AppEnvironment, [GatewayID: ScriptedConnection]) {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
@@ -297,14 +310,16 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             registry: registry,
             roster: roster,
             cache: try! SwiftDataCacheStore.makeInMemory(),
-            sessionList: EmptySessions(),
+            sessionList: sessionList,
             connectionFactory: { gateway, _ in
                 connections[gateway.id] ?? ScriptedConnection(gatewayID: gateway.id)
             },
+            conversationFactory: conversationFactory,
             health: TestHealth(),
             seedRegistrations: ids.map(registration),
             connectionIntentDefaults: defaults)
         await environment.load()
+        environment.setForegroundRecoveryAllowed(true)
         return (environment, connections)
     }
 
@@ -314,7 +329,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
 
     private func makeRecoveryEnvironment(
         id: GatewayID,
-        connection: RecoveringConnection,
+        connection: any GatewayConnectivityProviding,
         timing: ConnectionRecoveryTiming,
         sessionList: any SessionListProviding = EmptySessions(),
         profiles: [ProfileDescriptor] = [],
@@ -340,6 +355,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             connectionIntentDefaults: suiteDefaults(),
             recoveryTiming: timing)
         await environment.load()
+        environment.setForegroundRecoveryAllowed(true)
         return environment
     }
 
@@ -457,6 +473,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(connection.disconnectCount, 2,
                        "background teardown and stale handshake both leave transport closed")
 
+        environment.setForegroundRecoveryAllowed(true)
         await environment.resumeAfterForeground()
         XCTAssertEqual(connection.connectCount, 2)
         XCTAssertEqual(environment.connectionStates[id], .connected,
@@ -533,6 +550,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(connection.connectCount, 1,
                        "an interrupted foreground reconciliation cannot start a stale connect")
 
+        environment.setForegroundRecoveryAllowed(true)
         await environment.resumeAfterForeground()
         XCTAssertEqual(connection.connectCount, 2)
         XCTAssertEqual(environment.connectionStates[id], .connected)
@@ -556,6 +574,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         let started = await waitUntil { sessionList.firstReadStarted }
         XCTAssertTrue(started)
         await environment.suspendForBackground()
+        environment.setForegroundRecoveryAllowed(true)
         await environment.resumeAfterForeground()
         XCTAssertEqual(environment.sessionsByRoute[route]?.map(\.id), ["fresh"])
 
@@ -584,8 +603,91 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             ConversationDraftStore(url: url).draft(route: route, sessionID: "session-1"),
             "keep this thought")
 
+        environment.setForegroundRecoveryAllowed(true)
         await environment.resumeAfterForeground()
         XCTAssertEqual(environment.connectionStates[id], .connected)
+    }
+
+    func testForegroundResumeHonorsManualDisconnectForConversationAndSessionReads() async {
+        let intendedID = GatewayID(rawValue: "intended")
+        let optedOutID = GatewayID(rawValue: "optedout")
+        let intendedConversation = ScriptedConversationSession(gatewayID: intendedID)
+        let optedOutConversation = ScriptedConversationSession(gatewayID: optedOutID)
+        let conversations = [intendedID: intendedConversation, optedOutID: optedOutConversation]
+        let sessionList = RecordingSessions()
+        let (environment, _) = await makeEnvironment(
+            ids: [intendedID.rawValue, optedOutID.rawValue],
+            sessionList: sessionList,
+            conversationFactory: { gateway, _ in conversations[gateway.id]! })
+
+        _ = environment.conversationSession(for: intendedID)
+        _ = environment.conversationSession(for: optedOutID)
+        await environment.connect(to: intendedID)
+        await environment.connect(to: optedOutID)
+        await environment.disconnect(from: optedOutID)
+        XCTAssertTrue(environment.isConnectionIntended(intendedID))
+        XCTAssertFalse(environment.isConnectionIntended(optedOutID))
+
+        let intendedRoute = Route(gatewayID: intendedID, profileSlug: ProfileSlug(rawValue: "default"))
+        let optedOutRoute = Route(gatewayID: optedOutID, profileSlug: ProfileSlug(rawValue: "default"))
+        await environment.loadSessions(for: intendedRoute)
+        await environment.loadSessions(for: optedOutRoute)
+        XCTAssertEqual(sessionList.fetchedRoutes.count, 2)
+
+        await environment.suspendForBackground()
+        environment.setForegroundRecoveryAllowed(true)
+        await environment.resumeAfterForeground()
+
+        XCTAssertEqual(intendedConversation.connectCount, 1,
+                       "foreground restores conversation transport for the intended gateway")
+        XCTAssertEqual(optedOutConversation.connectCount, 0,
+                       "manual disconnect remains authoritative across backgrounding")
+        XCTAssertEqual(sessionList.fetchedRoutes.filter { $0 == intendedRoute }.count, 2,
+                       "the intended gateway session list is refreshed after resume")
+        XCTAssertEqual(sessionList.fetchedRoutes.filter { $0 == optedOutRoute }.count, 1,
+                       "automatic forced refresh skips a manually disconnected gateway")
+        XCTAssertFalse(environment.isConnectionIntended(optedOutID))
+    }
+
+    func testConversationModelForegroundRecoveryGateHonorsManualDisconnect() async {
+        let id = GatewayID(rawValue: "optedout")
+        let conversation = ScriptedConversationSession(gatewayID: id)
+        let (environment, _) = await makeEnvironment(
+            ids: [id.rawValue],
+            conversationFactory: { _, _ in conversation })
+        let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
+        let model = environment.makeConversationViewModel(route: route, sessionID: "session")!
+        await environment.connect(to: id)
+        await environment.disconnect(from: id)
+
+        model.forceDisconnectedForTesting()
+        await model.appBecameActive()
+
+        XCTAssertFalse(environment.isConnectionIntended(id))
+        XCTAssertEqual(conversation.connectCount, 0,
+                       "view-level foreground healing also respects explicit manual opt-out")
+    }
+
+    func testConversationModelForegroundRecoveryWaitsForUnlock() async {
+        let id = GatewayID(rawValue: "workstation")
+        let conversation = ScriptedConversationSession(gatewayID: id)
+        let (environment, _) = await makeEnvironment(
+            ids: [id.rawValue],
+            conversationFactory: { _, _ in conversation })
+        let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
+        let model = environment.makeConversationViewModel(route: route, sessionID: "session")!
+        await environment.connect(to: id)
+        await environment.suspendForBackground()
+
+        model.forceDisconnectedForTesting()
+        await model.appBecameActive()
+        XCTAssertEqual(conversation.connectCount, 0,
+                       "a view callback cannot resume protected transports while App Lock is active")
+
+        environment.setForegroundRecoveryAllowed(true)
+        await environment.resumeAfterForeground()
+        XCTAssertEqual(conversation.connectCount, 1,
+                       "the authenticated app root resumes the intended conversation session")
     }
 
     func testAuthRequiredFailureDoesNotAutoRetry() async {
@@ -764,7 +866,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         })
     }
 
-    func testAppRootDoesNotDisconnectOnLifecycleTransitions() throws {
+    func testAppRootWiresBackgroundSuspensionAndForegroundResume() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(
@@ -773,6 +875,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertFalse(source.contains("environment.disconnectAll()"))
         XCTAssertTrue(source.contains("beginBackgroundSuspension()"))
         XCTAssertTrue(source.contains("resumeAfterForeground()"))
+        XCTAssertTrue(source.contains("phase == .background"))
         XCTAssertTrue(source.contains("phase == .active"))
     }
 
