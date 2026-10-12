@@ -101,7 +101,7 @@ final class HermesFleetReconnectUITests: XCTestCase {
         app.terminate()
         app.launch()
         UITabNavigation.shellReady(app, timeout: 30)
-        openDefaultFixtureConversation(app)
+        openDefaultFixtureConversation(app, expectedRestoredDraft: draft)
         let relaunchedComposer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(relaunchedComposer.waitForExistence(timeout: 20))
         XCTAssertTrue(relaunchedComposer.isEnabled)
@@ -132,7 +132,7 @@ final class HermesFleetReconnectUITests: XCTestCase {
         app.terminate()
         app.launch()
         UITabNavigation.shellReady(app, timeout: 30)
-        openDefaultFixtureConversation(app)
+        openDefaultFixtureConversation(app, expectedRestoredTranscriptPrompt: draft)
         let afterSendComposer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(afterSendComposer.waitForExistence(timeout: 20))
         XCTAssertTrue(afterSendComposer.isEnabled)
@@ -178,7 +178,50 @@ final class HermesFleetReconnectUITests: XCTestCase {
         XCTAssertTrue(isHealthy, "explicit Reconnect should establish intended gateway connectivity")
     }
 
-    private func openDefaultFixtureConversation(_ app: XCUIApplication) {
+    private func openDefaultFixtureConversation(
+        _ app: XCUIApplication,
+        expectedRestoredDraft: String? = nil,
+        expectedRestoredTranscriptPrompt: String? = nil
+    ) {
+        // Normal launch restoration keeps the Chats stack, which can already
+        // place the app on the exact conversation. Accept that restored route
+        // before touching another destination: selecting Fleet alone retains
+        // its deeper navigation stack and is not a root-pop gesture.
+        let restoredComposer = app.textFields["fleet.conversation.composer"].firstMatch
+        if restoredComposer.waitForExistence(timeout: 8) {
+            XCTAssertTrue(restoredComposer.isEnabled,
+                          "the restored workstation/default conversation should be ready")
+            let profile = app.buttons["fleet.conversation.header.profile"].firstMatch
+            XCTAssertTrue(profile.waitForExistence(timeout: 10),
+                          "the restored conversation should expose its profile identity")
+            XCTAssertEqual(profile.value as? String, "default",
+                           "the restored conversation must remain on the default profile")
+            let routeIdentity = app.staticTexts["fleet.conversation.header.title"].firstMatch
+            XCTAssertTrue(routeIdentity.waitForExistence(timeout: 10),
+                          "the restored conversation should expose its route identity")
+            XCTAssertEqual(routeIdentity.label, "workstation#default",
+                           "the restored conversation must remain on workstation/default")
+            if let expectedRestoredDraft {
+                let expectedValue = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "value == %@", expectedRestoredDraft),
+                    object: restoredComposer)
+                XCTAssertEqual(XCTWaiter.wait(for: [expectedValue], timeout: 10), .completed,
+                               "the exact unsent draft should be restored in its conversation")
+            }
+            if let expectedRestoredTranscriptPrompt {
+                let submittedPrompt = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label CONTAINS %@", expectedRestoredTranscriptPrompt))
+                    .firstMatch
+                XCTAssertTrue(submittedPrompt.waitForExistence(timeout: 10),
+                              "the relaunched route should show the prompt sent in this session")
+            }
+            return
+        }
+
+        // If no route was restored, use the shell's explicit root helper. It
+        // handles retained deeper stacks through the product's reselect-root
+        // affordance before opening Gateways.
+        UITabNavigation.openTabToFleet(app)
         UITabNavigation.openGatewaysTab(app)
         let gateway = app.descendants(matching: .any)
             .matching(identifier: "fleet.gateways.row.workstation").firstMatch
