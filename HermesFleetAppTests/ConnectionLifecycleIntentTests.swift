@@ -551,12 +551,20 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         XCTAssertEqual(connection.connectCount, 1,
                        "an interrupted foreground reconciliation cannot start a stale connect")
 
+        // The newer background event is chained after the first teardown.
+        // Check both lifecycle teardowns before foreground recovery, which
+        // separately retires the stored offline transport before reconnecting.
+        let bothBackgroundTeardownsCompleted = await waitUntil {
+            connection.disconnectCount == 2
+        }
+        XCTAssertTrue(bothBackgroundTeardownsCompleted)
+        XCTAssertEqual(connection.disconnectCount, 2,
+                       "the newer background teardown follows the earlier one in order")
+
         environment.setForegroundRecoveryAllowed(true)
         await environment.resumeAfterForeground()
         XCTAssertEqual(connection.connectCount, 2)
         XCTAssertEqual(environment.connectionStates[id], .connected)
-        XCTAssertEqual(connection.disconnectCount, 2,
-                       "the newer background teardown follows the earlier one in order")
     }
 
     func testForegroundCanRefreshRouteWhilePreLockSessionReadIsStillPending() async {
