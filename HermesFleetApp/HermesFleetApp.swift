@@ -79,10 +79,11 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
-            if phase == .active && !lockController.isLocked {
+            if phase == .background {
+                environment.beginBackgroundSuspension()
+            } else if phase == .active && !lockController.isLocked {
                 Task {
-                    await environment.restoreIntendedConnections()
-                    await environment.restoreConversationSessions()
+                    await environment.resumeAfterForeground()
                 }
             }
         }
@@ -95,9 +96,7 @@ struct HermesFleetApp: App {
                 // launch task has already returned at that point, so the
                 // unlock transition must resume protected hydration.
                 Task {
-                    await environment.hydrateIfNeeded()
-                    await environment.restoreIntendedConnections()
-                    await environment.restoreConversationSessions()
+                    await environment.resumeAfterForeground()
                 }
             }
         }

@@ -79,8 +79,86 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         }
     }
 
+    /// First connect can be held open while the app backgrounds. A later
+    /// attempt succeeds immediately so the test can verify ownership passed
+    /// back to foreground restore.
+    private final class InterruptedConnection: GatewayConnectivityProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        nonisolated(unsafe) private(set) var connectCount = 0
+        nonisolated(unsafe) private(set) var disconnectCount = 0
+        nonisolated(unsafe) private(set) var firstConnectStarted = false
+        nonisolated(unsafe) var statusValue: GatewayStatus = .offline
+        nonisolated(unsafe) private var firstConnectContinuation: CheckedContinuation<Void, Never>?
+
+        init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
+        var status: GatewayStatus { statusValue }
+
+        func connect() async throws {
+            connectCount += 1
+            if connectCount == 1 {
+                await withCheckedContinuation { continuation in
+                    firstConnectStarted = true
+                    firstConnectContinuation = continuation
+                }
+            }
+            statusValue = .online
+        }
+
+        func releaseFirstConnect() {
+            firstConnectContinuation?.resume()
+            firstConnectContinuation = nil
+        }
+
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func disconnect() async {
+            disconnectCount += 1
+            statusValue = .offline
+        }
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
+        }
+    }
+
+    private final class DelayedDisconnectConnection: GatewayConnectivityProviding, @unchecked Sendable {
+        let gatewayID: GatewayID
+        nonisolated(unsafe) private(set) var connectCount = 0
+        nonisolated(unsafe) private(set) var disconnectCount = 0
+        nonisolated(unsafe) private(set) var firstDisconnectStarted = false
+        nonisolated(unsafe) private var firstDisconnectContinuation: CheckedContinuation<Void, Never>?
+        nonisolated(unsafe) var statusValue: GatewayStatus = .offline
+
+        init(gatewayID: GatewayID) { self.gatewayID = gatewayID }
+        var status: GatewayStatus { statusValue }
+
+        func connect() async throws {
+            connectCount += 1
+            statusValue = .online
+        }
+
+        func releaseFirstDisconnect() {
+            firstDisconnectContinuation?.resume()
+            firstDisconnectContinuation = nil
+        }
+
+        func adoptedReady() async -> GatewayReadyAdoption? { nil }
+        func disconnect() async {
+            disconnectCount += 1
+            if disconnectCount == 1 {
+                await withCheckedContinuation { continuation in
+                    firstDisconnectStarted = true
+                    firstDisconnectContinuation = continuation
+                }
+            }
+            statusValue = .offline
+        }
+        func currentGateway() async -> FleetGateway {
+            FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
+        }
+    }
+
     private struct EmptyRosterSession: GatewayRosterSession {
         let gatewayID: GatewayID
+        var descriptors: [ProfileDescriptor] = []
         var status: GatewayStatus { .online }
         func adoptedReady() async -> GatewayReadyAdoption? { nil }
         func connect() async throws {}
@@ -88,12 +166,44 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         func currentGateway() async -> FleetGateway {
             FleetGateway(id: gatewayID, displayName: gatewayID.rawValue)
         }
-        func fetchProfiles() async throws -> [ProfileDescriptor] { [] }
+        func fetchProfiles() async throws -> [ProfileDescriptor] { descriptors }
         func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { [] }
     }
 
     private struct EmptySessions: SessionListProviding {
         func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] { [] }
+    }
+
+    private struct FailingGatewayDeleteRecordStore: GatewayRecordStoring {
+        func saveGatewayRecord(_ record: StoredGatewayRecord) async throws {}
+        func deleteGatewayRecord(id: GatewayID) async throws {
+            throw GatewayRegistryError.recordStoreFailed("synthetic delete failure")
+        }
+        func loadGatewayRecords() async throws -> [StoredGatewayRecord] { [] }
+    }
+
+    private final class DelayedFirstSessionList: SessionListProviding, @unchecked Sendable {
+        nonisolated(unsafe) private(set) var callCount = 0
+        nonisolated(unsafe) private(set) var firstReadStarted = false
+        nonisolated(unsafe) private var firstReadContinuation: CheckedContinuation<[SessionSummary], Never>?
+
+        func fetchSessions(for route: Route, limit: Int) async throws -> [SessionSummary] {
+            callCount += 1
+            if callCount == 1 {
+                return await withCheckedContinuation { continuation in
+                    firstReadStarted = true
+                    firstReadContinuation = continuation
+                }
+            }
+            return [SessionSummary(id: "fresh", title: "Fresh after unlock", startedAt: 2, lastActive: 2, messageCount: 1)]
+        }
+
+        func releaseFirstRead() {
+            firstReadContinuation?.resume(returning: [
+                SessionSummary(id: "stale", title: "Stale pre-lock response", startedAt: 1, lastActive: 1, messageCount: 1)
+            ])
+            firstReadContinuation = nil
+        }
     }
 
     private struct TestHealth: ConnectionHealthAccumulating {
@@ -205,21 +315,25 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
     private func makeRecoveryEnvironment(
         id: GatewayID,
         connection: RecoveringConnection,
-        timing: ConnectionRecoveryTiming
+        timing: ConnectionRecoveryTiming,
+        sessionList: any SessionListProviding = EmptySessions(),
+        profiles: [ProfileDescriptor] = [],
+        recordStore: (any GatewayRecordStoring)? = nil
     ) async -> AppEnvironment {
         let credentials = InMemoryCredentialStore()
         let registry = GatewayRegistryService(
             credentials: credentials,
-            connectionFactory: { _, _ in connection })
+            connectionFactory: { _, _ in connection },
+            recordStore: recordStore)
         let roster = FleetRosterService(
             registry: registry,
             credentials: credentials,
-            sessionFactory: { gateway, _ in EmptyRosterSession(gatewayID: gateway.id) })
+            sessionFactory: { gateway, _ in EmptyRosterSession(gatewayID: gateway.id, descriptors: profiles) })
         let environment = AppEnvironment(
             registry: registry,
             roster: roster,
             cache: try! SwiftDataCacheStore.makeInMemory(),
-            sessionList: EmptySessions(),
+            sessionList: sessionList,
             connectionFactory: { _, _ in connection },
             health: TestHealth(),
             seedRegistrations: [registration(id.rawValue)],
@@ -319,6 +433,159 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         }
         XCTAssertTrue(restored, "foreground restore reconnects the intended gateway")
         XCTAssertEqual(connection.connectCount, 2)
+    }
+
+    func testBackgroundInvalidatesLateConnectAndForegroundOwnsRecovery() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = InterruptedConnection(gatewayID: id)
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.02, maxAttempts: 2))
+
+        let connecting = Task { await environment.connect(to: id) }
+        let started = await waitUntil { connection.firstConnectStarted }
+        XCTAssertTrue(started)
+        XCTAssertEqual(environment.connectionStates[id], .connecting)
+
+        await environment.suspendForBackground()
+        XCTAssertTrue(environment.isConnectionIntended(id))
+        connection.releaseFirstConnect()
+        await connecting.value
+        XCTAssertEqual(environment.connectionStates[id], .disconnected,
+                       "a late handshake cannot reclaim ownership after background teardown")
+        XCTAssertEqual(connection.disconnectCount, 2,
+                       "background teardown and stale handshake both leave transport closed")
+
+        await environment.resumeAfterForeground()
+        XCTAssertEqual(connection.connectCount, 2)
+        XCTAssertEqual(environment.connectionStates[id], .connected,
+                       "unlocked foreground restore owns the next connection attempt")
+    }
+
+    func testGatewayRemovalInvalidatesAnInFlightConnect() async throws {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = InterruptedConnection(gatewayID: id)
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.02, maxAttempts: 2))
+        let connecting = Task { await environment.connect(to: id) }
+        let started = await waitUntil { connection.firstConnectStarted }
+        XCTAssertTrue(started)
+
+        try await environment.removeGateway(id)
+        connection.releaseFirstConnect()
+        await connecting.value
+
+        XCTAssertFalse(environment.isConnectionIntended(id))
+        XCTAssertNil(environment.connectionStates[id])
+        XCTAssertFalse(environment.gateways.contains { $0.id == id })
+        XCTAssertEqual(connection.disconnectCount, 2,
+                       "gateway removal and late handshake both leave the transport closed")
+    }
+
+    func testFailedGatewayRemovalPreservesRecoveryIntent() async throws {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success])
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.02, maxAttempts: 2),
+            recordStore: FailingGatewayDeleteRecordStore())
+        await environment.connect(to: id)
+
+        do {
+            try await environment.removeGateway(id)
+            XCTFail("synthetic durable delete failure should preserve the gateway")
+        } catch {
+            XCTAssertTrue(error is GatewayRegistryError)
+        }
+
+        XCTAssertTrue(environment.gateways.contains { $0.id == id })
+        XCTAssertTrue(environment.isConnectionIntended(id),
+                      "failed removal does not clear user intent")
+        XCTAssertEqual(environment.connectionStates[id], .connected,
+                       "failed removal does not tear down the live transport")
+    }
+
+    func testForegroundWaitsForBackgroundTeardownAndNewerBackgroundWins() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = DelayedDisconnectConnection(gatewayID: id)
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.02, maxAttempts: 2))
+        await environment.connect(to: id)
+
+        let firstBackground = Task { await environment.suspendForBackground() }
+        let teardownStarted = await waitUntil { connection.firstDisconnectStarted }
+        XCTAssertTrue(teardownStarted)
+        let staleForeground = Task { await environment.resumeAfterForeground() }
+        _ = await waitUntil(timeout: 0.1) { false }
+        XCTAssertEqual(connection.connectCount, 1,
+                       "foreground cannot reconnect before background teardown finishes")
+
+        environment.beginBackgroundSuspension()
+        connection.releaseFirstDisconnect()
+        await firstBackground.value
+        await staleForeground.value
+        XCTAssertEqual(connection.connectCount, 1,
+                       "an interrupted foreground reconciliation cannot start a stale connect")
+
+        await environment.resumeAfterForeground()
+        XCTAssertEqual(connection.connectCount, 2)
+        XCTAssertEqual(environment.connectionStates[id], .connected)
+        XCTAssertEqual(connection.disconnectCount, 2,
+                       "the newer background teardown follows the earlier one in order")
+    }
+
+    func testForegroundCanRefreshRouteWhilePreLockSessionReadIsStillPending() async {
+        let id = GatewayID(rawValue: "workstation")
+        let connection = RecoveringConnection(gatewayID: id, scripted: [.success, .success])
+        let sessionList = DelayedFirstSessionList()
+        let environment = await makeRecoveryEnvironment(
+            id: id, connection: connection,
+            timing: ConnectionRecoveryTiming(
+                watchInterval: 0.01, baseDelay: 0.02, maxDelay: 0.02, maxAttempts: 2),
+            sessionList: sessionList,
+            profiles: [ProfileDescriptor(name: "default", path: "/profiles/default", isDefault: true)])
+        let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
+
+        let oldRead = Task { await environment.loadSessions(for: route) }
+        let started = await waitUntil { sessionList.firstReadStarted }
+        XCTAssertTrue(started)
+        await environment.suspendForBackground()
+        await environment.resumeAfterForeground()
+        XCTAssertEqual(environment.sessionsByRoute[route]?.map(\.id), ["fresh"])
+
+        sessionList.releaseFirstRead()
+        await oldRead.value
+        XCTAssertEqual(environment.sessionsByRoute[route]?.map(\.id), ["fresh"],
+                       "a late pre-lock response cannot overwrite the fresh session list")
+    }
+
+    func testBackgroundFlushesPendingDraftAndRepeatedLifecycleKeepsIntent() async {
+        let id = GatewayID(rawValue: "workstation")
+        let (environment, _) = await makeEnvironment(ids: [id.rawValue])
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lifecycle-draft-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let drafts = ConversationDraftStore(url: url, debounce: 60)
+        environment.attachConversationDrafts(drafts)
+        let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
+
+        await environment.connect(to: id)
+        drafts.scheduleSave("keep this thought", route: route, sessionID: "session-1")
+        await environment.suspendForBackground()
+        await environment.suspendForBackground()
+        XCTAssertTrue(environment.isConnectionIntended(id))
+        XCTAssertEqual(
+            ConversationDraftStore(url: url).draft(route: route, sessionID: "session-1"),
+            "keep this thought")
+
+        await environment.resumeAfterForeground()
+        XCTAssertEqual(environment.connectionStates[id], .connected)
     }
 
     func testAuthRequiredFailureDoesNotAutoRetry() async {
@@ -504,7 +771,8 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             contentsOf: root.appendingPathComponent("HermesFleetApp/HermesFleetApp.swift"),
             encoding: .utf8)
         XCTAssertFalse(source.contains("environment.disconnectAll()"))
-        XCTAssertTrue(source.contains("restoreIntendedConnections()"))
+        XCTAssertTrue(source.contains("beginBackgroundSuspension()"))
+        XCTAssertTrue(source.contains("resumeAfterForeground()"))
         XCTAssertTrue(source.contains("phase == .active"))
     }
 

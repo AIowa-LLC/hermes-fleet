@@ -295,6 +295,19 @@ public final class AppEnvironment {
     /// those paths from restoring the registry or refreshing the roster twice
     /// when automatic authentication succeeds.
     @ObservationIgnored private var didHydrateEnvironment = false
+    @ObservationIgnored private var hydrationTask: Task<Void, Never>?
+
+    /// Background owns teardown until an unlocked foreground lifecycle
+    /// explicitly resumes it. This prevents delayed recovery from reopening
+    /// gateways after the app has been suspended.
+    @ObservationIgnored private var connectionsSuspended = false
+    @ObservationIgnored private var connectionGenerations: [GatewayID: UInt64] = [:]
+    @ObservationIgnored private var activeConnectionAttemptGenerations: [GatewayID: UInt64] = [:]
+    @ObservationIgnored private var gatewayRemovalInProgress: Set<GatewayID> = []
+    @ObservationIgnored private var lifecycleGeneration: UInt64 = 0
+    @ObservationIgnored private var conversationRestoreGeneration: UInt64 = 0
+    @ObservationIgnored private var backgroundTeardownTask: Task<Void, Never>?
+    @ObservationIgnored private var foregroundResumeTask: Task<Void, Never>?
 
     /// Build-88 first-run invariant: "zero gateways" is authoritative only
     /// after the durable record store has ANSWERED for this launch. Until
@@ -438,6 +451,7 @@ public final class AppEnvironment {
     /// route fresh and never removes its cached sessions.
     @ObservationIgnored private var sessionsObservedAt: [Route: Date] = [:]
     @ObservationIgnored private var sessionReadGenerations: [Route: Int] = [:]
+    @ObservationIgnored private var loadingSessionGenerations: [Route: Int] = [:]
 
     /// Chats session-list freshness window.
     public static let sessionFreshnessTTL: TimeInterval = 30
@@ -904,7 +918,18 @@ public final class AppEnvironment {
     /// separate SwiftUI task.
     public func hydrateIfNeeded() async {
         guard !didHydrateEnvironment else { return }
+        if let hydrationTask {
+            await hydrationTask.value
+            return
+        }
+        let task = Task { await self.performHydration() }
+        hydrationTask = task
+        await task.value
         didHydrateEnvironment = true
+        hydrationTask = nil
+    }
+
+    private func performHydration() async {
         await load()
         // ADR-0012 (W6): the two launch waves are INDEPENDENT (the registry
         // gates both; neither gates the other) — run them concurrently so
@@ -1910,21 +1935,48 @@ public final class AppEnvironment {
     /// idempotent from `.open`, but the guard also prevents redundant work and
     /// keeps the observable lifecycle from flapping.)
     public func connect(to id: GatewayID) async {
+        guard !connectionsSuspended, !Task.isCancelled,
+              !gatewayRemovalInProgress.contains(id) else { return }
         guard connectionStates[id] != .connecting,
               connectionStates[id] != .connected else { return }
         guard let gateway = gateways.first(where: { $0.id == id }) else { return }
         connectionIntent.record(id)
+        let generation = (connectionGenerations[id] ?? 0) &+ 1
+        connectionGenerations[id] = generation
+        activeConnectionAttemptGenerations[id] = generation
         connectionStates[id] = .connecting
         let connection = activeConnections[id] ?? connectionFactory(gateway, nil)
         activeConnections[id] = connection
         startConnectionWatchIfNeeded(for: id)
         do {
             try await connection.connect()
+            guard connectionGenerations[id] == generation,
+                  !connectionsSuspended,
+                  !Task.isCancelled,
+                  gateways.contains(where: { $0.id == id }) else {
+                await retireStaleConnection(connection, gatewayID: id, attemptGeneration: generation)
+                if connectionGenerations[id] == generation {
+                    if Task.isCancelled && !connectionsSuspended {
+                        connectionIntent.clear(id)
+                        cancelConnectionRecovery(for: id)
+                    }
+                    connectionStates[id] = .disconnected
+                }
+                return
+            }
             connectionStates[id] = GatewayConnectionState(status: connection.status)
             if connectionStates[id] == .connected {
                 scheduleRosterSyncAfterConnectionRepair(for: id)
             }
         } catch let error as GatewayConnectivityError {
+            guard connectionGenerations[id] == generation, !connectionsSuspended else { return }
+            if Task.isCancelled {
+                connectionIntent.clear(id)
+                cancelConnectionRecovery(for: id)
+                await connection.disconnect()
+                connectionStates[id] = .disconnected
+                return
+            }
             let status = GatewayStatus(connectivityError: error)
             connectionStates[id] = .failed(status)
             // P0-A: a failed connect is a recorded fault (one short line —
@@ -1939,6 +1991,14 @@ public final class AppEnvironment {
                 break
             }
         } catch {
+            guard connectionGenerations[id] == generation, !connectionsSuspended else { return }
+            if Task.isCancelled {
+                connectionIntent.clear(id)
+                cancelConnectionRecovery(for: id)
+                await connection.disconnect()
+                connectionStates[id] = .disconnected
+                return
+            }
             connectionStates[id] = .failed(.offline)
             // P0-A: an unclassified connect failure still gets one honest
             // line (no error payload is echoed).
@@ -2040,6 +2100,8 @@ public final class AppEnvironment {
     /// the spec §8.6 policy (transient reasons only). After `maxAttempts` the
     /// gateway stays failed until a foreground restore or a manual retry.
     private func scheduleAutoReconnect(for id: GatewayID) {
+        guard !connectionsSuspended else { return }
+        guard !gatewayRemovalInProgress.contains(id) else { return }
         guard connectionIntent.isIntended(id) else { return }
         guard reconnectRetryTasks[id] == nil else { return }
         let attempt = reconnectAttempts[id, default: 0] + 1
@@ -2052,7 +2114,9 @@ public final class AppEnvironment {
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
             self.reconnectRetryTasks[id] = nil
-            guard self.connectionIntent.isIntended(id) else { return }
+            guard !self.connectionsSuspended,
+                  self.connectionIntent.isIntended(id),
+                  self.gateways.contains(where: { $0.id == id }) else { return }
             await self.connect(to: id)
         }
     }
@@ -2085,6 +2149,7 @@ public final class AppEnvironment {
 
     /// Disconnect cleanly and safely from every state (spec §31).
     public func disconnect(from id: GatewayID) async {
+        invalidateConnectionAttempt(for: id)
         connectionIntent.clear(id)
         cancelConnectionRecovery(for: id)
         // Manual Disconnect is transport control, not sign-out. Keep the
@@ -2106,10 +2171,30 @@ public final class AppEnvironment {
     /// seam, so they are explicitly disconnected in addition to the base
     /// gateway connections.
     public func disconnectAll() async {
+        if connectionsSuspended, let backgroundTeardownTask {
+            await backgroundTeardownTask.value
+            return
+        }
+        await performDisconnectAll()
+    }
+
+    private func performDisconnectAll() async {
         // A background/lock teardown hands recovery ownership to foreground
         // restore. Cancel observers and retry timers before the first awaited
         // disconnect so a racing watch cannot schedule another connection.
         // Desired connection intent remains untouched.
+        conversationDrafts.flush()
+        conversationRestoreGeneration &+= 1
+        let sessionRoutesToInvalidate = Set(loadingRoutes)
+            .union(sessionsByRoute.keys)
+            .union(sessionsObservedAt.keys)
+            .union(sessionReadGenerations.keys)
+        for route in sessionRoutesToInvalidate {
+            invalidateSessions(for: route)
+        }
+        for id in activeConnections.keys {
+            invalidateConnectionAttempt(for: id)
+        }
         cancelAllConnectionRecovery()
 
         let connections = Array(activeConnections.values)
@@ -2186,11 +2271,14 @@ public final class AppEnvironment {
     /// auth/unsupported failures clear only that gateway's intent, while
     /// transient failures remain retryable.
     public func restoreIntendedConnections() async {
+        guard !Task.isCancelled, !connectionsSuspended else { return }
         guard !gateways.isEmpty else {
             connectionIntent.prune(to: [])
             return
         }
         for gateway in gateways where connectionIntent.isIntended(gateway.id) {
+            guard !Task.isCancelled, !connectionsSuspended else { return }
+            guard gateways.contains(where: { $0.id == gateway.id }) else { continue }
             if connectionStates[gateway.id] == .connected || connectionStates[gateway.id] == .connecting {
                 continue
             }
@@ -2199,6 +2287,109 @@ public final class AppEnvironment {
                 activeConnections[gateway.id] = nil
             }
             await connect(to: gateway.id)
+        }
+    }
+
+    /// Background teardown boundary. Drafts are flushed before the protected
+    /// file may become unavailable, then connection/recovery ownership is
+    /// suspended until an unlocked foreground restore.
+    public func suspendForBackground() async {
+        beginBackgroundSuspension()
+        if let backgroundTeardownTask {
+            await backgroundTeardownTask.value
+        }
+    }
+
+    /// Synchronously close the reconnect gate before the app schedules async
+    /// transport teardown. The scene callback can be followed quickly by an
+    /// active/unlock callback.
+    public func beginBackgroundSuspension() {
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        connectionsSuspended = true
+        foregroundResumeTask?.cancel()
+        foregroundResumeTask = nil
+        conversationDrafts.flush()
+        cancelAllConnectionRecovery()
+        for id in activeConnections.keys {
+            invalidateConnectionAttempt(for: id)
+        }
+        let previousTeardown = backgroundTeardownTask
+        backgroundTeardownTask = Task { [weak self] in
+            await previousTeardown?.value
+            guard let self else { return }
+            await self.performDisconnectAll()
+            if self.lifecycleGeneration == generation {
+                self.backgroundTeardownTask = nil
+            }
+        }
+    }
+
+    /// Foreground work runs only after App Lock permits protected content.
+    /// Hydration is shared across simultaneous launch/unlock paths; then the
+    /// runtime restores connections and refreshes stale session data.
+    public func resumeAfterForeground() async {
+        guard !Task.isCancelled else { return }
+        if let foregroundResumeTask {
+            await foregroundResumeTask.value
+            return
+        }
+        let generation = lifecycleGeneration
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performForegroundResume(generation: generation)
+        }
+        foregroundResumeTask = task
+        await task.value
+        if lifecycleGeneration == generation {
+            foregroundResumeTask = nil
+        }
+    }
+
+    private func performForegroundResume(generation: UInt64) async {
+        if let backgroundTeardownTask {
+            await backgroundTeardownTask.value
+        }
+        guard !Task.isCancelled, generation == lifecycleGeneration else { return }
+        await hydrateIfNeeded()
+        guard !Task.isCancelled, generation == lifecycleGeneration else { return }
+        connectionsSuspended = false
+        await restoreIntendedConnections()
+        guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+        await restoreConversationSessions()
+        guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+        await refreshRoster()
+        guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+        let currentRosterRoutes = Set(rosterSnapshot?.roster.allBots.map(\.route) ?? [])
+        let cachedRoutes = Set(sessionsByRoute.keys)
+        let retainedRoutes = Set(gateways.flatMap { sessionRoutes(on: $0.id) })
+        let routes = currentRosterRoutes.union(cachedRoutes).union(retainedRoutes)
+            .filter { route in gateways.contains(where: { $0.id == route.gatewayID }) }
+        for route in routes {
+            guard !Task.isCancelled, generation == lifecycleGeneration, !connectionsSuspended else { return }
+            invalidateSessions(for: route)
+        }
+        await refreshSessions(routes: Array(routes), force: true)
+    }
+
+    private func invalidateConnectionAttempt(for id: GatewayID) {
+        connectionGenerations[id] = (connectionGenerations[id] ?? 0) &+ 1
+    }
+
+    /// Retire an obsolete transport attempt without disconnecting a newer
+    /// attempt that reuses the same connectivity object.
+    private func retireStaleConnection(
+        _ connection: any GatewayConnectivityProviding,
+        gatewayID: GatewayID,
+        attemptGeneration: UInt64
+    ) async {
+        let sameTransportIsOwnedByNewerAttempt =
+            activeConnectionAttemptGenerations[gatewayID, default: 0] > attemptGeneration
+            && activeConnections[gatewayID].map {
+                ObjectIdentifier($0 as AnyObject) == ObjectIdentifier(connection as AnyObject)
+            } == true
+        if !sameTransportIsOwnedByNewerAttempt {
+            await connection.disconnect()
         }
     }
 
@@ -2227,11 +2418,23 @@ public final class AppEnvironment {
     /// `.authenticationRequired` are surfaced, NOT silently re-authenticated
     /// (M11 — the conversation screen owns the re-auth UX).
     public func restoreConversationSessions() async {
+        guard !Task.isCancelled, !connectionsSuspended else { return }
+        let generation = conversationRestoreGeneration
         for (id, session) in conversationSessions {
+            guard !Task.isCancelled, !connectionsSuspended,
+                  generation == conversationRestoreGeneration,
+                  gateways.contains(where: { $0.id == id }) else { return }
             let status = session.status
             if status.isReachable { continue }
             if status == .authenticationRequired { continue }
             try? await session.connect()
+            guard generation == conversationRestoreGeneration,
+                  !Task.isCancelled,
+                  !connectionsSuspended,
+                  gateways.contains(where: { $0.id == id }) else {
+                await session.disconnect()
+                continue
+            }
         }
     }
 
@@ -2417,9 +2620,27 @@ public final class AppEnvironment {
     }
 
     public func removeGateway(_ id: GatewayID) async throws {
-        try await registry.removeGateway(id)
-        connectionIntent.clear(id)
+        gatewayRemovalInProgress.insert(id)
+        defer { gatewayRemovalInProgress.remove(id) }
+        do {
+            try await registry.removeGateway(id)
+        } catch {
+            // Registry removal may fail after a durable-store error. Keep the
+            // existing transport and user intent authoritative, and ensure a
+            // watcher remains to resume policy-gated recovery once the
+            // transient removal fence is lifted.
+            if connectionIntent.isIntended(id), !connectionsSuspended {
+                startConnectionWatchIfNeeded(for: id)
+            }
+            throw error
+        }
+        invalidateConnectionAttempt(for: id)
         cancelConnectionRecovery(for: id)
+        connectionIntent.clear(id)
+        let removedRoutes = sessionRoutes(on: id)
+        for route in removedRoutes {
+            invalidateSessions(for: route)
+        }
         await gatewaySessionInvalidator?(id)
         // P1-8: retire session resources with the gateway — tear down the
         // live connection (not just drop the reference), release the
@@ -2489,10 +2710,6 @@ public final class AppEnvironment {
         await purgeLocalData(forRemovedGateway: id)
         observedRoomAttention[id] = nil
         summarySourceStates[id] = nil
-        let removedRoutes = sessionRoutes(on: id)
-        for route in removedRoutes {
-            invalidateSessions(for: route)
-        }
         // H2: drop the gateway's accumulated + persisted health stats.
         await health.forget(gatewayID: id)
         healthStats = await health.snapshot()
@@ -2777,13 +2994,20 @@ public final class AppEnvironment {
     /// is recorded (non-secret) so the UI renders an error state, never a
     /// crash.
     public func loadSessions(for route: Route) async {
-        guard !loadingRoutes.contains(route) else { return }
         let generation = sessionReadGenerations[route, default: 0]
+        guard loadingSessionGenerations[route] != generation else { return }
+        loadingSessionGenerations[route] = generation
         loadingRoutes.insert(route)
-        defer { loadingRoutes.remove(route) }
+        defer {
+            if loadingSessionGenerations[route] == generation {
+                loadingSessionGenerations[route] = nil
+                loadingRoutes.remove(route)
+            }
+        }
         do {
             let sessions = try await sessionList.fetchSessions(for: route, limit: 200)
-            guard sessionReadGenerations[route, default: 0] == generation else { return }
+            guard !Task.isCancelled,
+                  sessionReadGenerations[route, default: 0] == generation else { return }
             sessionsByRoute[route] = sessions
             // Dogfood D3/W4: the FIRST observation of a route establishes the
             // device-local baseline — live reads included, not just the launch
@@ -2798,10 +3022,12 @@ public final class AppEnvironment {
             try? await launchCache.saveSessionListCache(
                 CachedSessionList(route: route, sessions: sessions))
         } catch let error as RosterError {
-            guard sessionReadGenerations[route, default: 0] == generation else { return }
+            guard !Task.isCancelled,
+                  sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         } catch {
-            guard sessionReadGenerations[route, default: 0] == generation else { return }
+            guard !Task.isCancelled,
+                  sessionReadGenerations[route, default: 0] == generation else { return }
             sessionReadErrors[route] = Redaction.safeErrorDescription(error)
         }
     }
@@ -2880,6 +3106,8 @@ public final class AppEnvironment {
     public func invalidateSessions(for route: Route) {
         sessionReadGenerations[route, default: 0] += 1
         sessionsObservedAt[route] = nil
+        loadingSessionGenerations[route] = nil
+        loadingRoutes.remove(route)
     }
 
     /// Narrowly invalidate observations owned by one gateway.
@@ -2898,6 +3126,7 @@ public final class AppEnvironment {
         Set(sessionReadGenerations.keys)
             .union(sessionsObservedAt.keys)
             .union(sessionsByRoute.keys)
+            .union(loadingRoutes)
             .filter { $0.gatewayID == gatewayID }
     }
 
