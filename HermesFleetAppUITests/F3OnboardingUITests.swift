@@ -18,7 +18,22 @@ final class F3OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["fleet.first-run.expiry"].exists)
         let ownerPrompt = app.staticTexts["fleet.first-run.owner-prompt"]
         XCTAssertTrue(ownerPrompt.exists, "the Telegram setup instructions must be selectable text")
-        XCTAssertTrue(ownerPrompt.label.contains("hermes --run-module hermes_cli.fleet_pairing_cli invite --label iPhone --ttl 600"))
+        XCTAssertTrue(ownerPrompt.label.contains("actual incoming event is a private Telegram message"))
+        XCTAssertTrue(ownerPrompt.label.contains("exact source, runtime source, and Hermes home"))
+        XCTAssertTrue(ownerPrompt.label.contains("This report proves host capability only"))
+        XCTAssertTrue(ownerPrompt.label.contains("does not prove authority for this Telegram event"))
+        XCTAssertTrue(ownerPrompt.label.contains("ready for that selection"))
+        XCTAssertTrue(ownerPrompt.label.contains("reachable from this phone"))
+        XCTAssertTrue(ownerPrompt.label.contains("trusted by iOS"))
+        XCTAssertTrue(ownerPrompt.label.contains("public internet access and Funnel are not required"))
+        XCTAssertTrue(ownerPrompt.label.contains("require explicit owner authority"))
+        XCTAssertFalse(ownerPrompt.label.contains("hermes --run-module hermes_cli.fleet_pairing_cli invite"),
+                       "the prompt must not tell every Hermes install to run a legacy issuer")
+
+        let copyPrompt = app.buttons["fleet.first-run.copy-owner-prompt"]
+        XCTAssertTrue(copyPrompt.exists)
+        copyPrompt.tap()
+        XCTAssertTrue(app.buttons["fleet.first-run.copy-owner-prompt"].label.contains("Copied"))
 
         let scan = app.buttons["fleet.first-run.scan"]
         XCTAssertTrue(scan.exists)

@@ -93,9 +93,9 @@ struct QRFirstServerView: View {
                     .font(FleetTheme.sectionHeaderFont)
                     .foregroundStyle(theme.textPrimary)
 
-                prerequisiteRow(number: "1", text: "Run a compatible Hermes server that is reachable from this phone at a public HTTPS address.")
+                prerequisiteRow(number: "1", text: "Run a compatible Hermes host with an HTTPS address this phone can reach and a certificate iOS trusts. A private tailnet address works when this phone is a member and trusts the certificate; public internet access or Funnel is not required.")
                 prerequisiteRow(number: "2", text: "Open a private Telegram chat with Hermes from the server owner’s account.")
-                prerequisiteRow(number: "3", text: "The host must support owner-bound Fleet invitations and display its QR code locally on the computer.")
+                prerequisiteRow(number: "3", text: "The maintained Fleet host release must report a ready, owner-bound invitation issuer for the active Hermes home/runtime, and the computer must be able to display the QR locally.")
 
                 Text("Invitations work once and expire after 10 minutes. Scanning only previews the request; this phone is added only after you review and confirm it.")
                     .font(.footnote)
@@ -104,7 +104,7 @@ struct QRFirstServerView: View {
                     .accessibilityIdentifier("fleet.first-run.expiry")
 
                 Label {
-                    Text("If the host cannot verify its owner, issue a supported invitation, or show the code locally, stop: this server is not ready for Fleet pairing.")
+                    Text("If readiness is missing, ask the owner to provide or explicitly approve a trusted maintained Fleet host release and install path. Do not use a stock Hermes update, copy a single file, or guess an issuer command. Stop if the owner-bound request, phone-reachable HTTPS origin, or private local display cannot be verified.")
                         .font(.footnote)
                         .foregroundStyle(theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -153,7 +153,7 @@ struct QRFirstServerView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("fleet.first-run.copy-owner-prompt")
-                Text("Copy this message to Hermes in your private Telegram chat while you are at the host computer. Never share the issued link or its secret.")
+                Text("Copy this message to Hermes in your private Telegram chat while you are at the host computer. The QR stays on that computer; never send the invitation link or secret through Telegram.")
                     .font(.caption)
                     .foregroundStyle(theme.textMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -198,11 +198,13 @@ struct QRFirstServerView: View {
     }
 
     static let ownerPrompt = """
-    Before issuing anything, verify that this is a private Telegram conversation with the verified owner who can manage this Hermes server. Verify supported owner-bound Fleet pairing, a publicly reachable HTTPS address, installed qrencode with standard-input support, and a supported private local QR display on this host computer. If any prerequisite cannot be verified, stop without issuing an invitation and report that this host is not ready. Only after every check passes, issue a fresh, single-use invitation with the installed Hermes command:
+    First verify that this actual incoming event is a private Telegram message from the verified owner who is authorized to manage this Hermes server. A configured allowlist or home channel alone does not prove the sender’s authority. Never accept a group message as authorization.
 
-    hermes --run-module hermes_cli.fleet_pairing_cli invite --label iPhone --ttl 600
+    Use the maintained Hermes Fleet host release’s documented readiness report with the exact source, runtime source, and Hermes home to verify that a compatible owner-bound Fleet invitation issuer is installed and ready for that selection. This report proves host capability only; it does not prove authority for this Telegram event, forwarding, phone reachability or trust, or local QR display. Verify those separately. Do not assume every Hermes install supports this. If capability is missing, report what is missing and ask the owner to provide or explicitly approve a trusted maintained Fleet host release and its install path. Do not install or activate anything, use a stock Hermes update, copy a single file, guess a download URL or command, or improvise an issuer. Installer activation and live invitation issuance each require explicit owner authority. If readiness or authority cannot be verified, stop without issuing anything.
 
-    Pass the exact issued invitation to qrencode through standard input and display its QR code locally. Keep any image private, readable only by the owner, and remove it after the invitation expires. Never put the link or secret in command arguments, shell history, logs, Telegram, or a group.
+    Before issuance, verify the configured HTTPS origin matches the host that will appear in the invitation, is reachable from this phone, and presents a certificate trusted by iOS. A private multi-label DNS or tailnet origin can be used when the phone is on that network and trusts the certificate; public internet access and Funnel are not required. Also verify that this computer can display the QR privately and locally. If any check fails, stop and report the specific blocker.
+
+    Only after readiness, the actual owner-bound request, and explicit authority to issue are verified, use the command documented by the ready host tool for its detected Hermes home/runtime to create a fresh, single-use invitation. Do not blindly run a legacy command on every installation. Pass the exact issued link to the QR renderer through standard input and display the QR locally on this computer. Keep it private and remove it after expiry. Never put the link or secret in command arguments, shell history, logs, Telegram, or a group. Return status only; do not transmit the bearer link or secret.
     """
 }
 

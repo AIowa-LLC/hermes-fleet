@@ -1,0 +1,259 @@
+{
+  "base_commit": "46d7718a52ff33accb15dc0501736fbdb6833cab",
+  "changed_paths": [
+    "docs/fleet-device-pairing.md",
+    "gateway/config_loader.py",
+    "gateway/run_agent_cache.py",
+    "gateway/run_turn.py",
+    "gateway/session.py",
+    "gateway/session_context_security.py",
+    "gateway/slash_access.py",
+    "hermes_cli/config_defaults.py",
+    "hermes_cli/dashboard_auth/audit.py",
+    "hermes_cli/dashboard_auth/body_limit.py",
+    "hermes_cli/dashboard_auth/fleet_device_provider.py",
+    "hermes_cli/dashboard_auth/fleet_devices.py",
+    "hermes_cli/dashboard_auth/fleet_pairing_routes.py",
+    "hermes_cli/dashboard_auth/public_paths.py",
+    "hermes_cli/dashboard_auth/registry.py",
+    "hermes_cli/dashboard_auth/request_utils.py",
+    "hermes_cli/dashboard_auth/routes.py",
+    "hermes_cli/fleet_pairing_cli.py",
+    "hermes_cli/web_server.py",
+    "scripts/fleet_pairing_dev_server.py",
+    "tests/gateway/test_prompt_tail_freeze.py",
+    "tests/gateway/test_slash_access.py",
+    "tests/gateway/test_telegram_pairing_owner_context.py",
+    "tests/hermes_cli/test_dashboard_auth_body_limit.py",
+    "tests/hermes_cli/test_fleet_device_pairing_http.py",
+    "tests/hermes_cli/test_fleet_device_pairing_network.py",
+    "tests/hermes_cli/test_fleet_device_pairing_store.py",
+    "tests/hermes_cli/test_fleet_pairing_cli.py",
+    "website/docs/user-guide/messaging/telegram.md"
+  ],
+  "commits": [
+    {
+      "full": "cbf502659759eb47bf4eb66ab17af4124cd7c54e",
+      "short": "cbf5026597",
+      "subject": "feat(dashboard-auth): short-lived single-use device pairing for Hermes Fleet"
+    },
+    {
+      "full": "7d2c3ea5dc52f2c853a151a902dc4a18a8c509e5",
+      "short": "7d2c3ea5dc",
+      "subject": "docs: Fleet device pairing (gateway side)"
+    },
+    {
+      "full": "b1e250c71caf9d0f3cbd12f88bbd18cc78fbaa10",
+      "short": "b1e250c71c",
+      "subject": "fix(dashboard-auth): use profile config for pairing metadata"
+    },
+    {
+      "full": "4b98998c5a818960187f835a3909060c68f1aba4",
+      "short": "4b98998c5a",
+      "subject": "fix(dashboard-auth): harden fleet pairing routes"
+    },
+    {
+      "full": "c4475eed69d46326839e3785cf74ce847b1e9d9e",
+      "short": "c4475eed69",
+      "subject": "fix(gateway): preserve verified Telegram pairing authority"
+    },
+    {
+      "full": "be9e48928ae9e918e8139e4664e2410f2dae2c17",
+      "short": "be9e48928a",
+      "subject": "fix(gateway): bind Fleet pairing to explicit Telegram owner"
+    },
+    {
+      "full": "ecd22716c35c6993797808cfd9c05feb8fa0193f",
+      "short": "ecd22716c3",
+      "subject": "fix(gateway): recognize trusted host CLI pairing authority"
+    },
+    {
+      "full": "1bffff90b482dba75aeb9c55a5fb704c74c75841",
+      "short": "1bffff90b4",
+      "subject": "Require maintained owner QR readiness and status-only Telegram delivery"
+    }
+  ],
+  "format": 1,
+  "patch_sha256": "1cd5eb1e38d748382a632e8c3ded47e107ab463ab9845b60c4f43e0a654e560c",
+  "paths": {
+    "docs/fleet-device-pairing.md": {
+      "after_sha256": "005884947c8bf8536d19bf9dac62bf0689998774d110ae0a8c6734f45cc90a4f",
+      "before_sha256": null
+    },
+    "gateway/config_loader.py": {
+      "after_sha256": "e3372bd88ce25f243a29a6a4642b877e4e6c8a4d4f550fc65e3e0af7235e9206",
+      "before_sha256": "dd3027d8f55b1871e5b80578538ce5a1cb9d78515cdfb1aa5b4c3c548bbaae43"
+    },
+    "gateway/run_agent_cache.py": {
+      "after_sha256": "435ccf9e4f065cebba4b20b385d0b4edcbc26514c6db69c573fd6f5ffe5ca9e8",
+      "before_sha256": "9a25c38f13ef0a6bf44fa41636b15cd6415a191ecffcd1ee9b4802d12b611bda"
+    },
+    "gateway/run_turn.py": {
+      "after_sha256": "1aee1a16757692d29ee27e6f03777a1f4a900ef7b1ca4736f2d70ee8ced71fc7",
+      "before_sha256": "2db13843bdda12767405e705eb946a0b3c69c5f06aaf8977b7ca43dba294ad07"
+    },
+    "gateway/session.py": {
+      "after_sha256": "72c06e22b8adb40898abcbbf7c64a76540e1d61145773a5986f5427ab62fc2ca",
+      "before_sha256": "6ed3889888349158278547e7a1754dca3ce41e80f433e93c391b01b9080db195"
+    },
+    "gateway/session_context_security.py": {
+      "after_sha256": "6e040244ed89242a03baf8e391bb58f3f43e3b56ead09d11075c28063ec06cae",
+      "before_sha256": null
+    },
+    "gateway/slash_access.py": {
+      "after_sha256": "14d36d118529f7cb00eb59bebf2c70b3f73c1743a03e08bae577841dfde6f5ba",
+      "before_sha256": "9b3edefcf37560d90ce65f16d8aee7d09bb02ca2c8182a6305b28d76172a699d"
+    },
+    "hermes_cli/config_defaults.py": {
+      "after_sha256": "2d38123f4fff9f702ba980db6daefd10f8126f5af136c40d6fc64a1d9efc5aea",
+      "before_sha256": "a2c0f41d58cc0433d39ec7cac35c12f90c38b36c0fcd97d7d8caa0be39028853"
+    },
+    "hermes_cli/dashboard_auth/audit.py": {
+      "after_sha256": "86673545e7e1da1d63c3dfaaf8f4f93936845725319d1bf682d4f1714808e5a5",
+      "before_sha256": "7b19db201facaed87ca2cf531373865cb4838fcc095834935ad1f156c7a3e730"
+    },
+    "hermes_cli/dashboard_auth/body_limit.py": {
+      "after_sha256": "e2f514d21f370ea05ea220e7fbbff9a6602a3f56bae9fa4a8b627e1e2deff2c0",
+      "before_sha256": "17d015467d8b608ebecbfa1b0d1742bd879343f277dc2af5eaabb53fc42759aa"
+    },
+    "hermes_cli/dashboard_auth/fleet_device_provider.py": {
+      "after_sha256": "10acd941d18bf51322fd2eb8fb9ad9c5bee093879ae870e7bbb9318b2a8ba47b",
+      "before_sha256": null
+    },
+    "hermes_cli/dashboard_auth/fleet_devices.py": {
+      "after_sha256": "ace4fd8fe77510e504ad3ed162d425fe78ef17300357c688c32df424de37c75b",
+      "before_sha256": null
+    },
+    "hermes_cli/dashboard_auth/fleet_pairing_routes.py": {
+      "after_sha256": "99ca046a588f4cc60d7df9e455919bd383a6ccce96f658ea5eeb177e21c4377e",
+      "before_sha256": null
+    },
+    "hermes_cli/dashboard_auth/public_paths.py": {
+      "after_sha256": "b4d0d71d22ac0f910510b3a4dabba615672bb0184a7021a606adbca7233eec46",
+      "before_sha256": "534bbb0bbef3f68c88c292014c2bcd975ec54f3f7aa81d6b1ba61dcbdf0665f0"
+    },
+    "hermes_cli/dashboard_auth/registry.py": {
+      "after_sha256": "597cf9974d3c7dc34902762e64fb49afcda62a3edd75786ad11c03a003275c67",
+      "before_sha256": "d4470f431abb83a60a44c865a951fc0a4f419d95938980e46ee3cfb246055ca0"
+    },
+    "hermes_cli/dashboard_auth/request_utils.py": {
+      "after_sha256": "4ddf93883b0500874a0245ca13d035cb0bf80a9f98e11d655ebcb08fd38c76e6",
+      "before_sha256": "243d5a929b8b37f2694263448ff624751f81082755f1a5efda83f0e4bf062f24"
+    },
+    "hermes_cli/dashboard_auth/routes.py": {
+      "after_sha256": "614f5dcba6471b307e104a9f3955b8085d1104f7a5c815d7af5a007af59d1991",
+      "before_sha256": "b942890e1e4f078a801f70ae5c3c571c27383dc179e806668d104ef501e81eb2"
+    },
+    "hermes_cli/fleet_pairing_cli.py": {
+      "after_sha256": "0d18a7d95bcf2aa5a516741d9b0c247ee184c6df63f30cdb58bbb06f40bd2f65",
+      "before_sha256": null
+    },
+    "hermes_cli/web_server.py": {
+      "after_sha256": "e66aa7e7e6d78ff37534f7b2f699abf2950fcd5eca5630d33561002526223f32",
+      "before_sha256": "14428aa34d4297b81f7dbeb7e8fe2abae0e205a3356d9e341eb22d457ae2e55f"
+    },
+    "scripts/fleet_pairing_dev_server.py": {
+      "after_sha256": "a316a97f89060d4c714c2164dc38324581da846d1495e8055d7bf35b3b051871",
+      "before_sha256": null
+    },
+    "tests/gateway/test_prompt_tail_freeze.py": {
+      "after_sha256": "e4918d56485fb42936e356847787da4233896443bdeedd6d7e01a13d620d49c0",
+      "before_sha256": "6dd00b6eef2d17965b26f2df00fdc57400deb9af43cb9e18e751ba0c2ab5233c"
+    },
+    "tests/gateway/test_slash_access.py": {
+      "after_sha256": "0c6cfbf0bca08cada8ef89904d2129dd60101bb48903596d41b4c8abb7cd130c",
+      "before_sha256": "9b0321fecb272407da1e5c5415b82ed51830bd655f443e1821a24bdf913b5219"
+    },
+    "tests/gateway/test_telegram_pairing_owner_context.py": {
+      "after_sha256": "1efd063acbc4fc7a1f572a1282b546d9a15c72b2815df7d74b8d8f9497fada88",
+      "before_sha256": null
+    },
+    "tests/hermes_cli/test_dashboard_auth_body_limit.py": {
+      "after_sha256": "45bd3d37ebab0fe1bf23041c0a73c94f46403ba26605710dbab47859af6152bb",
+      "before_sha256": "92550c14893e1c26496cf4ba1b13391a1d0483ed68a7c2bcd60f8869ace81935"
+    },
+    "tests/hermes_cli/test_fleet_device_pairing_http.py": {
+      "after_sha256": "7f678aefbd6b3264227e0349b1cadaa728280d9b0cb5dfe1b6cd606758cdb5cc",
+      "before_sha256": null
+    },
+    "tests/hermes_cli/test_fleet_device_pairing_network.py": {
+      "after_sha256": "7fd9330a6ad4fbc76b50b313ae69f9063faf1555ac4ca9e1688770184fa7bae7",
+      "before_sha256": null
+    },
+    "tests/hermes_cli/test_fleet_device_pairing_store.py": {
+      "after_sha256": "c30c01254ed2d376d2e6760c8c76527e8da454b3b7ad1027b58cdef95c8c1aa5",
+      "before_sha256": null
+    },
+    "tests/hermes_cli/test_fleet_pairing_cli.py": {
+      "after_sha256": "aa3c40379a6caea79b6ee31d8b4e7dcf0817145f385ef560d00d0f4ce90dcac0",
+      "before_sha256": null
+    },
+    "website/docs/user-guide/messaging/telegram.md": {
+      "after_sha256": "1385369e8f7e1a7430fd8e0f0400de61e22a3c66c000232729746143b030fda6",
+      "before_sha256": "266f2118f12409aede55074fab24ef40a00b2eae25f00495b3c271af2c0f9f74"
+    }
+  },
+  "plugin_bundle_sha256": "0bcf2d58c10c373c1fc61a9717d8222ee89277b6618810bdf97cc2d01f1ce340",
+  "plugin_commit": "7a56d6012c40a013f6aa49deb39166221709f8bd",
+  "release_scope": "offline Fleet pairing source overlay; no runtime or home files",
+  "support_files": {
+    "README.md": "2cdb7b82002851c169063703490ea2d918900a86a80a9b649e1447bc5fca8e68",
+    "build_release.py": "2c671a2f79d6c20f49caed5ec5672ff86899df3b5600aa372de99fb53d97fcc8",
+    "installer.py": "c3868d2e730a45a49184a66efdc9bc8aca9712fa92a52e4d42205be8ea94bd66",
+    "owner_control/__init__.py": "2b3344b3f4fbdeab08a6096ce89ca94676ebbf89d85b0b0c0639749c0d93f169",
+    "owner_control/plugin.yaml": "c288834f2757f15ef44d80efce9aa6fa30ef2cbedc29fdd8e4a9f6b06c17d8c3",
+    "owner_control/qr_display.py": "4f23db18975a6f4aac1e1bc4288d88927806a6844a21386507f5f31fad21f241",
+    "owner_control/readiness.py": "bf7390982f94c150280039371059a9dc74b64331b62f643199aac2d1539ef9bd",
+    "owner_control/tests/test_owner_control.py": "d9bcd1849af74e4d2ba30c66c9d02d803cb75fcab9b7f543de0b4e4f06882f90",
+    "owner_control/tests/test_registration_integration.py": "354de2c31aecec28726ec8e468a8ca9050c3946c8ea05c4339924d3b2d5bdea7",
+    "qr_display.py": "4f23db18975a6f4aac1e1bc4288d88927806a6844a21386507f5f31fad21f241",
+    "readiness.py": "bf7390982f94c150280039371059a9dc74b64331b62f643199aac2d1539ef9bd",
+    "record_observations.py": "894c32260407cb2775ef0838febeb3b6bae170fdb56d25c095fad70567b7d1a6",
+    "tests/test_installer.py": "31f0fdc77fdce4a2fdd920abf2d56f7030a3d25d2d4debc9eb17cc143d7c1dc0",
+    "tests/test_readiness_display.py": "dee2dd73abb3b314ac1613a7696f4f7fb1a60d6e5d2bb7dde6b98bf8bbbbf587"
+  },
+  "supported_overlay_commit": "ecd22716c35c6993797808cfd9c05feb8fa0193f",
+  "supported_preimages": {
+    "docs/fleet-device-pairing.md": "005884947c8bf8536d19bf9dac62bf0689998774d110ae0a8c6734f45cc90a4f",
+    "gateway/config_loader.py": "e3372bd88ce25f243a29a6a4642b877e4e6c8a4d4f550fc65e3e0af7235e9206",
+    "gateway/run_agent_cache.py": "435ccf9e4f065cebba4b20b385d0b4edcbc26514c6db69c573fd6f5ffe5ca9e8",
+    "gateway/run_turn.py": "1aee1a16757692d29ee27e6f03777a1f4a900ef7b1ca4736f2d70ee8ced71fc7",
+    "gateway/session.py": "4344c346548cdd8e6cecd051ae5e5567e43db6d8d6ba1f1a32b0c8053d2da3a8",
+    "gateway/session_context_security.py": "6e040244ed89242a03baf8e391bb58f3f43e3b56ead09d11075c28063ec06cae",
+    "gateway/slash_access.py": "14d36d118529f7cb00eb59bebf2c70b3f73c1743a03e08bae577841dfde6f5ba",
+    "hermes_cli/config_defaults.py": "2d38123f4fff9f702ba980db6daefd10f8126f5af136c40d6fc64a1d9efc5aea",
+    "hermes_cli/dashboard_auth/audit.py": "86673545e7e1da1d63c3dfaaf8f4f93936845725319d1bf682d4f1714808e5a5",
+    "hermes_cli/dashboard_auth/body_limit.py": "e2f514d21f370ea05ea220e7fbbff9a6602a3f56bae9fa4a8b627e1e2deff2c0",
+    "hermes_cli/dashboard_auth/fleet_device_provider.py": "10acd941d18bf51322fd2eb8fb9ad9c5bee093879ae870e7bbb9318b2a8ba47b",
+    "hermes_cli/dashboard_auth/fleet_devices.py": "ace4fd8fe77510e504ad3ed162d425fe78ef17300357c688c32df424de37c75b",
+    "hermes_cli/dashboard_auth/fleet_pairing_routes.py": "99ca046a588f4cc60d7df9e455919bd383a6ccce96f658ea5eeb177e21c4377e",
+    "hermes_cli/dashboard_auth/public_paths.py": "b4d0d71d22ac0f910510b3a4dabba615672bb0184a7021a606adbca7233eec46",
+    "hermes_cli/dashboard_auth/registry.py": "597cf9974d3c7dc34902762e64fb49afcda62a3edd75786ad11c03a003275c67",
+    "hermes_cli/dashboard_auth/request_utils.py": "4ddf93883b0500874a0245ca13d035cb0bf80a9f98e11d655ebcb08fd38c76e6",
+    "hermes_cli/dashboard_auth/routes.py": "614f5dcba6471b307e104a9f3955b8085d1104f7a5c815d7af5a007af59d1991",
+    "hermes_cli/fleet_pairing_cli.py": "0d18a7d95bcf2aa5a516741d9b0c247ee184c6df63f30cdb58bbb06f40bd2f65",
+    "hermes_cli/web_server.py": "e66aa7e7e6d78ff37534f7b2f699abf2950fcd5eca5630d33561002526223f32",
+    "scripts/fleet_pairing_dev_server.py": "a316a97f89060d4c714c2164dc38324581da846d1495e8055d7bf35b3b051871",
+    "tests/gateway/test_prompt_tail_freeze.py": "e4918d56485fb42936e356847787da4233896443bdeedd6d7e01a13d620d49c0",
+    "tests/gateway/test_slash_access.py": "0c6cfbf0bca08cada8ef89904d2129dd60101bb48903596d41b4c8abb7cd130c",
+    "tests/gateway/test_telegram_pairing_owner_context.py": "e91777987606c019cfd015a8f2ec2e83b2fea42df899b2c182fa9c447eff5cd0",
+    "tests/hermes_cli/test_dashboard_auth_body_limit.py": "45bd3d37ebab0fe1bf23041c0a73c94f46403ba26605710dbab47859af6152bb",
+    "tests/hermes_cli/test_fleet_device_pairing_http.py": "7f678aefbd6b3264227e0349b1cadaa728280d9b0cb5dfe1b6cd606758cdb5cc",
+    "tests/hermes_cli/test_fleet_device_pairing_network.py": "7fd9330a6ad4fbc76b50b313ae69f9063faf1555ac4ca9e1688770184fa7bae7",
+    "tests/hermes_cli/test_fleet_device_pairing_store.py": "c30c01254ed2d376d2e6760c8c76527e8da454b3b7ad1027b58cdef95c8c1aa5",
+    "tests/hermes_cli/test_fleet_pairing_cli.py": "aa3c40379a6caea79b6ee31d8b4e7dcf0817145f385ef560d00d0f4ce90dcac0",
+    "website/docs/user-guide/messaging/telegram.md": "1385369e8f7e1a7430fd8e0f0400de61e22a3c66c000232729746143b030fda6"
+  },
+  "target_commit": "1bffff90b482dba75aeb9c55a5fb704c74c75841",
+  "upgrade_patch_sha256": "4b5b5c918da0059c3294b6fdef3288b949715f48811b5237384f4e56cf01811f",
+  "upgrade_paths": {
+    "gateway/session.py": {
+      "after_sha256": "72c06e22b8adb40898abcbbf7c64a76540e1d61145773a5986f5427ab62fc2ca",
+      "before_sha256": "4344c346548cdd8e6cecd051ae5e5567e43db6d8d6ba1f1a32b0c8053d2da3a8"
+    },
+    "tests/gateway/test_telegram_pairing_owner_context.py": {
+      "after_sha256": "1efd063acbc4fc7a1f572a1282b546d9a15c72b2815df7d74b8d8f9497fada88",
+      "before_sha256": "e91777987606c019cfd015a8f2ec2e83b2fea42df899b2c182fa9c447eff5cd0"
+    }
+  }
+}
