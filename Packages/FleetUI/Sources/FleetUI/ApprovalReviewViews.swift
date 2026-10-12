@@ -186,6 +186,14 @@ struct ApprovalReviewSheet: View {
 
                     commandView
 
+                    if !wraps {
+                        Label("Scroll horizontally to read every character", systemImage: "arrow.left.and.right")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("approval.review.scroll-hint")
+                    }
+
                     if let detail, !detail.isEmpty {
                         ApprovalUntrustedDetail(detail: detail, startsExpanded: true)
                     }
@@ -220,19 +228,28 @@ struct ApprovalReviewSheet: View {
     @ViewBuilder
     private var commandView: some View {
         let text = Text(command)
-            .font(FleetTheme.monoFont)
+            // A command is content to inspect, not a compact machine token.
+            // The semantic body style also scales with Dynamic Type.
+            .font(.system(.body, design: .monospaced))
             .foregroundStyle(theme.textPrimary)
             .textSelection(.enabled)
+            .lineSpacing(3)
             .padding(FleetTheme.spacingSm)
         Group {
             if wraps {
-                text.frame(maxWidth: .infinity, alignment: .leading)
+                text
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ScrollView(.horizontal) {
                     text.fixedSize(horizontal: true, vertical: true)
+                        .frame(minHeight: 44, alignment: .leading)
                 }
+                .scrollIndicators(.visible)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.surface, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .overlay(
             RoundedRectangle(cornerRadius: FleetTheme.radiusRow)
@@ -248,26 +265,42 @@ struct ApprovalReviewSheet: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(FleetTheme.statusOnline)
                     .accessibilityIdentifier("approval.review.reviewed")
-                Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("approval.review.done")
+                reviewActionButton("Done", identifier: "approval.review.done") { dismiss() }
             } else {
-                Button {
+                reviewActionButton("I reviewed the full command", identifier: "approval.review.confirm") {
                     onReviewed()
                     dismiss()
-                } label: {
-                    Text("I reviewed the full command")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("approval.review.confirm")
             }
         }
         .padding(.horizontal, FleetTheme.spacingLg)
         .padding(.vertical, FleetTheme.spacingSm)
         .frame(maxWidth: .infinity)
         .background(theme.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(theme.border)
+                .frame(height: 0.5)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func reviewActionButton(
+        _ title: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.body.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(theme.onHighlight)
+                .padding(.horizontal, FleetTheme.spacingSm)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(theme.highlight, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 }

