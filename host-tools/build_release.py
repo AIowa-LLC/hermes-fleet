@@ -77,6 +77,20 @@ def file_at(repo: Path, revision: str, rel: str) -> bytes | None:
     return result.stdout
 
 
+def sync_plugin_helpers(host_tools: Path) -> None:
+    """Keep the standalone plugin's packaged helpers identical to their maintained sources."""
+    package = host_tools / "owner_control"
+    if package.is_symlink() or not package.is_dir():
+        raise RuntimeError("owner-control package is missing or symlinked")
+    pairs = [(host_tools / name, package / name) for name in ("readiness.py", "qr_display.py")]
+    if any(source.is_symlink() or not source.is_file() or target.is_symlink() for source, target in pairs):
+        raise RuntimeError("helper source or package target is missing or symlinked")
+    for source, target in pairs:
+        data = source.read_bytes()
+        if not target.is_file() or target.read_bytes() != data:
+            target.write_bytes(data)
+
+
 def make_plugin_bundle(host_tools: Path, output: Path) -> tuple[str, str]:
     """Build a reproducible, self-contained local Git bundle for Hermes' supported plugin installer."""
     with tempfile.TemporaryDirectory(prefix="fleet-owner-plugin-build-") as temporary:
@@ -172,6 +186,7 @@ def main() -> None:
     if [row["short"] for row in commit_rows[:len(REQUIRED_COMMITS)]] != REQUIRED_COMMITS:
         raise RuntimeError("target history does not begin with the seven pinned Fleet commits")
     host_tools = Path(__file__).resolve().parent
+    sync_plugin_helpers(host_tools)
     support_files = {}
     support_inventory = REQUIRED_ASSETS
     for rel in support_inventory:

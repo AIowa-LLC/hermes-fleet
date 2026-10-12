@@ -12,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import readiness
 import qr_display
+import build_release
 
 
 class ReadinessTests(unittest.TestCase):
@@ -38,6 +39,7 @@ class ReadinessTests(unittest.TestCase):
         self.receipt = self.root / "observation.json"
 
     def inspect(self, **kwargs):
+        kwargs.setdefault("display_probe", lambda: True)
         return readiness.inspect_readiness(
             self.home, self.runtime, source=self.source, manifest=self.manifest,
             trusted_digest=self.pin, origin=self.origin, approval=self.receipt,
@@ -121,6 +123,13 @@ class ReadinessTests(unittest.TestCase):
         self.receipt.symlink_to(moved)
         self.assertFalse(self.inspect()["local_display_ready"])
 
+    def test_recent_observation_cannot_authorize_issuance_after_display_becomes_unavailable(self):
+        self.record()
+        report = self.inspect(display_probe=lambda: False)
+        self.assertFalse(report["local_display_ready"])
+        self.assertIn("local_display_ready", report["blockers"])
+        self.assertFalse((self.home / "dashboard_auth").exists())
+
 
 class QRDisplayTests(unittest.TestCase):
     def setUp(self):
@@ -171,6 +180,26 @@ class QRDisplayTests(unittest.TestCase):
                      self.link.replace(self.identifier, "wrong", 1)):
             with self.assertRaises(qr_display.DisplayFailure):
                 qr_display.validate_link(link, self.identifier)
+
+
+class PackageHelperTests(unittest.TestCase):
+    def test_packaging_refreshes_helpers_without_touching_other_plugin_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "owner_control"; package.mkdir()
+            sentinel = package / "unchanged.py"; sentinel.write_text("preserved")
+            for name in ("readiness.py", "qr_display.py"):
+                (root / name).write_text("new maintained source")
+                (package / name).write_text("old package copy")
+            build_release.sync_plugin_helpers(root)
+            self.assertEqual(sentinel.read_text(), "preserved")
+            for name in ("readiness.py", "qr_display.py"):
+                self.assertEqual((package / name).read_bytes(), (root / name).read_bytes())
+            (package / "readiness.py").unlink()
+            (package / "readiness.py").symlink_to(sentinel)
+            with self.assertRaises(RuntimeError):
+                build_release.sync_plugin_helpers(root)
+            self.assertEqual(sentinel.read_text(), "preserved")
 
 
 if __name__ == "__main__":

@@ -147,6 +147,14 @@ def effective_origin(home: Path, runtime: Path) -> str | None:
         return None
 
 
+def current_display_capability() -> bool:
+    try:
+        from .qr_display import display_capability
+    except ImportError:
+        from qr_display import display_capability
+    return display_capability()
+
+
 def read_approval(path: Path, binding: dict, *, now: float | None = None) -> dict:
     """Owner observations are explicit, short-lived and scoped; no approval is inferred."""
     now = time.time() if now is None else now
@@ -169,7 +177,8 @@ def read_approval(path: Path, binding: dict, *, now: float | None = None) -> dic
 
 def inspect_readiness(home: Path, runtime_dir: Path, *, source: Path, manifest: Path,
                       trusted_digest: str, origin: str, approval: Path | None = None,
-                      network_probe=probe_https, origin_reader=effective_origin) -> dict:
+                      network_probe=probe_https, origin_reader=effective_origin,
+                      display_probe=current_display_capability) -> dict:
     release = load_manifest(manifest, trusted_digest)
     code = integrity(source, release)
     runtime = integrity(runtime_dir, release)
@@ -186,7 +195,7 @@ def inspect_readiness(home: Path, runtime_dir: Path, *, source: Path, manifest: 
         "issuer_ready": code["verified"], "home_matches": home_verified,
         "runtime_matches": runtime["verified"], "https_origin_verified": tls,
         "system_tls_trusted": tls, "phone_reachability_verified": observations.get("phone_https_observed", False),
-        "local_display_ready": observations.get("private_display_observed", False),
+        "local_display_ready": observations.get("private_display_observed", False) and display_probe(),
         "service_runtime_verified": observations.get("service_runtime_observed", False),
         "origin": origin, "release_id": trusted_digest, "home": str(home),
         "runtime_dir": str(runtime_dir), "source_integrity": code, "runtime_integrity": runtime,
