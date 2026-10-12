@@ -538,6 +538,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         let firstBackground = Task { await environment.suspendForBackground() }
         let teardownStarted = await waitUntil { connection.firstDisconnectStarted }
         XCTAssertTrue(teardownStarted)
+        environment.setForegroundRecoveryAllowed(true)
         let staleForeground = Task { await environment.resumeAfterForeground() }
         _ = await waitUntil(timeout: 0.1) { false }
         XCTAssertEqual(connection.connectCount, 1,
@@ -570,6 +571,7 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
             profiles: [ProfileDescriptor(name: "default", path: "/profiles/default", isDefault: true)])
         let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
 
+        await environment.connect(to: id)
         let oldRead = Task { await environment.loadSessions(for: route) }
         let started = await waitUntil { sessionList.firstReadStarted }
         XCTAssertTrue(started)
@@ -606,6 +608,26 @@ final class ConnectionLifecycleIntentTests: XCTestCase {
         environment.setForegroundRecoveryAllowed(true)
         await environment.resumeAfterForeground()
         XCTAssertEqual(environment.connectionStates[id], .connected)
+    }
+
+    func testUnlockedForegroundFlushesDraftWithoutMountedConversation() async {
+        let id = GatewayID(rawValue: "workstation")
+        let (environment, _) = await makeEnvironment(ids: [id.rawValue])
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("foreground-draft-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let drafts = ConversationDraftStore(url: url, debounce: 60)
+        environment.attachConversationDrafts(drafts)
+        let route = Route(gatewayID: id, profileSlug: ProfileSlug(rawValue: "default"))
+
+        await environment.suspendForBackground()
+        drafts.scheduleSave("deferred draft", route: route, sessionID: "session-1")
+        environment.setForegroundRecoveryAllowed(true)
+        await environment.resumeAfterForeground()
+
+        XCTAssertEqual(
+            ConversationDraftStore(url: url).draft(route: route, sessionID: "session-1"),
+            "deferred draft", "foreground retries persistence even before a conversation remounts")
     }
 
     func testForegroundResumeHonorsManualDisconnectForConversationAndSessionReads() async {

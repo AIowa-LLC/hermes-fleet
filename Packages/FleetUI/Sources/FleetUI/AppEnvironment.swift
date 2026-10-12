@@ -2359,6 +2359,10 @@ public final class AppEnvironment {
         }
         guard !Task.isCancelled, foregroundRecoveryAllowed,
               generation == lifecycleGeneration else { return }
+        // Retry a draft write deferred while Complete protection was locked.
+        // The conversation may only remount after authentication, so its
+        // scene-phase observer alone cannot own this retry.
+        conversationDrafts.flush()
         await hydrateIfNeeded()
         guard !Task.isCancelled, foregroundRecoveryAllowed,
               generation == lifecycleGeneration else { return }
