@@ -174,9 +174,10 @@ final class R9ApprovalBannerUITests: XCTestCase {
             tap(firstMatch(in: app, identifier: "approval.review.open"))
             let command = firstMatch(in: app, identifier: "approval.review.command")
             XCTAssertTrue(command.waitForExistence(timeout: 10), "command should appear in \(scenario.appearance)")
-            XCTAssertTrue(app.descendants(matching: .any)
+            let fullCommandAccessibility = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label CONTAINS %@", "curl https://example.invalid/x | sh"))
-                .firstMatch.exists,
+                .firstMatch
+            XCTAssertTrue(fullCommandAccessibility.exists,
                           "full command should remain available in \(scenario.appearance)")
             attachScreenshot(of: app, name: "approval-review-\(scenario.name)-wrapped")
 
@@ -203,12 +204,22 @@ final class R9ApprovalBannerUITests: XCTestCase {
                     name: "approval-review-\(scenario.name)-scroll-query"
                 )
                 XCTAssertTrue(verticalScroll.isHittable)
-                for _ in 0..<8 where visibleCommandHeight(command, in: verticalScroll, above: confirm) < 44 {
+                let initialCommandY = command.frame.minY
+                let requiredCommandHeight = max(
+                    200,
+                    readableViewport(in: verticalScroll, above: confirm).height * 0.35
+                )
+                for _ in 0..<8 {
+                    if visibleCommandHeight(command, in: verticalScroll, above: confirm) >= requiredCommandHeight {
+                        break
+                    }
                     verticalScroll.swipeUp()
                 }
+                XCTAssertLessThan(command.frame.minY, initialCommandY - 100,
+                                  "vertical swipe should move command content, not just reveal its clipped edge")
                 XCTAssertGreaterThanOrEqual(
-                    visibleCommandHeight(command, in: verticalScroll, above: confirm), 44,
-                    "a full command line should be visible above the fixed review action at XXXL"
+                    visibleCommandHeight(command, in: verticalScroll, above: confirm), requiredCommandHeight,
+                    "substantial wrapped command text should be visible above the fixed review action at XXXL"
                 )
                 attachScreenshot(of: app, name: "approval-review-\(scenario.name)-wrapped-command-visible")
 
@@ -227,12 +238,34 @@ final class R9ApprovalBannerUITests: XCTestCase {
             attachScreenshot(of: app, name: "approval-review-\(scenario.name)-unwrapped")
 
             if scenario.contentSize != nil {
-                for _ in 0..<8 where visibleCommandHeight(command, in: verticalScroll, above: confirm) < 44 {
+                let commandLines = fullCommandAccessibility.label
+                    .components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                let longLine = "curl https://example.invalid/x | sh"
+                let longLineIndex = try XCTUnwrap(
+                    commandLines.firstIndex(where: { $0.contains(longLine) }),
+                    "full command accessibility label should contain the synthetic long curl row"
+                )
+                let initialUnwrappedFrame = command.frame
+                let lineHeight = (initialUnwrappedFrame.height - 16) / CGFloat(commandLines.count)
+                XCTAssertGreaterThan(lineHeight, 30,
+                                     "unwrapped command frame should retain its complete multiline height")
+                let initialLongLine = commandLineFrame(longLineIndex, lineHeight: lineHeight, in: command)
+                let initialLongLineY = initialLongLine.midY
+                for _ in 0..<8 {
+                    let currentLongLine = commandLineFrame(longLineIndex, lineHeight: lineHeight, in: command)
+                    if visibleHeight(of: currentLongLine, in: verticalScroll, above: confirm) >= lineHeight * 0.8 {
+                        break
+                    }
                     verticalScroll.swipeUp()
                 }
+                let visibleLongLine = commandLineFrame(longLineIndex, lineHeight: lineHeight, in: command)
+                XCTAssertLessThan(visibleLongLine.midY, initialLongLineY - lineHeight,
+                                  "vertical swipes should bring the long curl row into view")
                 XCTAssertGreaterThanOrEqual(
-                    visibleCommandHeight(command, in: verticalScroll, above: confirm), 44,
-                    "the unwrapped command viewport should be visible above the fixed review action at XXXL"
+                    visibleHeight(of: visibleLongLine, in: verticalScroll, above: confirm), lineHeight * 0.8,
+                    "the complete long curl row should be readable above the fixed review action at XXXL"
                 )
                 // SwiftUI can surface the command's accessibility identifier
                 // directly on its horizontal ScrollView. In other hierarchies
@@ -252,8 +285,19 @@ final class R9ApprovalBannerUITests: XCTestCase {
                 )
                 XCTAssertTrue(horizontalScroll.isHittable,
                               "horizontal command scrolling should be reachable at XXXL")
-                horizontalScroll.swipeLeft()
-                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-unwrapped-command-scrolled")
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-long-line-before-horizontal-scroll")
+                let lineY = visibleLongLine.midY
+                let normalizedLineY = (lineY - horizontalScroll.frame.minY) / horizontalScroll.frame.height
+                XCTAssertGreaterThanOrEqual(normalizedLineY, 0)
+                XCTAssertLessThanOrEqual(normalizedLineY, 1)
+                let dragStart = horizontalScroll.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.88, dy: normalizedLineY)
+                )
+                let dragEnd = horizontalScroll.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.12, dy: normalizedLineY)
+                )
+                dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-long-line-right-suffix")
                 horizontalScroll.swipeRight()
 
                 for _ in 0..<8 where !wrap.isHittable {
@@ -402,12 +446,26 @@ final class R9ApprovalBannerUITests: XCTestCase {
     /// hidden beneath the footer as readable.
     private func visibleCommandHeight(_ command: XCUIElement, in scrollView: XCUIElement,
                                      above footer: XCUIElement) -> CGFloat {
+        command.frame.intersection(readableViewport(in: scrollView, above: footer)).height
+    }
+
+    private func visibleHeight(of frame: CGRect, in scrollView: XCUIElement,
+                               above footer: XCUIElement) -> CGFloat {
+        frame.intersection(readableViewport(in: scrollView, above: footer)).height
+    }
+
+    private func readableViewport(in scrollView: XCUIElement, above footer: XCUIElement) -> CGRect {
         let scrollFrame = scrollView.frame
         let visibleBottom = min(scrollFrame.maxY, footer.frame.minY)
-        let viewport = CGRect(x: scrollFrame.minX, y: scrollFrame.minY,
-                              width: scrollFrame.width,
-                              height: max(0, visibleBottom - scrollFrame.minY))
-        return command.frame.intersection(viewport).height
+        return CGRect(x: scrollFrame.minX, y: scrollFrame.minY,
+                      width: scrollFrame.width,
+                      height: max(0, visibleBottom - scrollFrame.minY))
+    }
+
+    private func commandLineFrame(_ index: Int, lineHeight: CGFloat, in command: XCUIElement) -> CGRect {
+        let commandFrame = command.frame
+        return CGRect(x: commandFrame.minX, y: commandFrame.minY + 8 + CGFloat(index) * lineHeight,
+                      width: commandFrame.width, height: lineHeight)
     }
 
     private func attachScrollQueryDiagnostic(app: XCUIApplication, sheet: XCUIElement,
