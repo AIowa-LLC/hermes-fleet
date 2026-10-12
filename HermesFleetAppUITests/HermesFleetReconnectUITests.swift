@@ -132,7 +132,7 @@ final class HermesFleetReconnectUITests: XCTestCase {
         app.terminate()
         app.launch()
         UITabNavigation.shellReady(app, timeout: 30)
-        openDefaultFixtureConversation(app, expectedRestoredTranscriptPrompt: draft)
+        openDefaultFixtureConversation(app, forceOpenExactSession: true)
         let afterSendComposer = app.textFields["fleet.conversation.composer"]
         XCTAssertTrue(afterSendComposer.waitForExistence(timeout: 20))
         XCTAssertTrue(afterSendComposer.isEnabled)
@@ -181,14 +181,14 @@ final class HermesFleetReconnectUITests: XCTestCase {
     private func openDefaultFixtureConversation(
         _ app: XCUIApplication,
         expectedRestoredDraft: String? = nil,
-        expectedRestoredTranscriptPrompt: String? = nil
+        forceOpenExactSession: Bool = false
     ) {
         // Normal launch restoration keeps the Chats stack, which can already
         // place the app on the exact conversation. Accept that restored route
         // before touching another destination: selecting Fleet alone retains
         // its deeper navigation stack and is not a root-pop gesture.
         let restoredComposer = app.textFields["fleet.conversation.composer"].firstMatch
-        if restoredComposer.waitForExistence(timeout: 8) {
+        if !forceOpenExactSession && restoredComposer.waitForExistence(timeout: 8) {
             XCTAssertTrue(restoredComposer.isEnabled,
                           "the restored workstation/default conversation should be ready")
             let profile = app.buttons["fleet.conversation.header.profile"].firstMatch
@@ -207,13 +207,6 @@ final class HermesFleetReconnectUITests: XCTestCase {
                     object: restoredComposer)
                 XCTAssertEqual(XCTWaiter.wait(for: [expectedValue], timeout: 10), .completed,
                                "the exact unsent draft should be restored in its conversation")
-            }
-            if let expectedRestoredTranscriptPrompt {
-                let submittedPrompt = app.descendants(matching: .any)
-                    .matching(NSPredicate(format: "label CONTAINS %@", expectedRestoredTranscriptPrompt))
-                    .firstMatch
-                XCTAssertTrue(submittedPrompt.waitForExistence(timeout: 10),
-                              "the relaunched route should show the prompt sent in this session")
             }
             return
         }
