@@ -30,51 +30,52 @@ final class R10AttachmentTrayUITests: XCTestCase {
     }
 
     /// System document and photo pickers can take longer than five seconds to
-    /// finish presenting on a cold simulator. Their Cancel control can also be
-    /// exposed as a generic accessibility element before UIKit finishes
-    /// publishing it as a Button. Wait for a visible, hittable Cancel element
-    /// after the selected Add action has left the hierarchy.
+    /// finish presenting on a cold simulator. Wait for a native, hittable
+    /// Cancel button after the selected Add action has left the hierarchy.
     private func waitForSystemPicker(
         in app: XCUIApplication,
         selectedAction: XCUIElement,
         pickerName: String
     ) -> XCUIElement {
-        let startedAt = Date()
-        let diagnosticBoundary = startedAt.addingTimeInterval(5)
-        let deadline = startedAt.addingTimeInterval(20)
-        let cancelElements = app.descendants(matching: .any)
+        let deadline = Date().addingTimeInterval(20)
+        let cancelButton = app.buttons
             .matching(NSPredicate(format: "label == %@", "Cancel"))
-        var capturedSlowPresentation = false
+            .firstMatch
+        let nativeDocumentPicker = app.descendants(matching: .any)
+            .matching(identifier: "Browse View (Picker)")
+            .firstMatch
 
         while Date() < deadline {
+            let nativePickerIsVisible = pickerName != "File" || nativeDocumentPicker.exists
             if !selectedAction.exists,
-               let cancel = cancelElements.allElementsBoundByIndex.first(where: { $0.isHittable }) {
-                return cancel
-            }
-
-            if !capturedSlowPresentation && Date() >= diagnosticBoundary {
-                capturedSlowPresentation = true
-                XCTContext.runActivity(named: "\(pickerName) picker still presenting after 5 seconds") { activity in
-                    let screenshot = XCTAttachment(screenshot: app.screenshot())
-                    screenshot.name = "\(pickerName) picker at 5-second boundary"
-                    screenshot.lifetime = .keepAlways
-                    activity.add(screenshot)
-
-                    let hierarchy = XCTAttachment(
-                        data: Data(app.debugDescription.utf8),
-                        uniformTypeIdentifier: "public.plain-text"
-                    )
-                    hierarchy.name = "\(pickerName) picker accessibility hierarchy at 5-second boundary"
-                    hierarchy.lifetime = .keepAlways
-                    activity.add(hierarchy)
-                }
+               nativePickerIsVisible,
+               cancelButton.exists,
+               cancelButton.isHittable {
+                return cancelButton
             }
 
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
         }
 
+        // Capture expensive diagnostics only after the readiness budget has
+        // expired, so screenshot/hierarchy collection cannot consume the
+        // time reserved for the picker to present.
+        XCTContext.runActivity(named: "\(pickerName) picker readiness failure") { activity in
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "\(pickerName) picker at readiness failure"
+            screenshot.lifetime = .keepAlways
+            activity.add(screenshot)
+
+            let hierarchy = XCTAttachment(
+                data: Data(app.debugDescription.utf8),
+                uniformTypeIdentifier: "public.plain-text"
+            )
+            hierarchy.name = "\(pickerName) picker accessibility hierarchy at readiness failure"
+            hierarchy.lifetime = .keepAlways
+            activity.add(hierarchy)
+        }
         XCTFail("\(pickerName) picker should dismiss Add and expose a hittable Cancel control within 20 seconds")
-        return cancelElements.firstMatch
+        return cancelButton
     }
 
     private func openConversation(_ app: XCUIApplication) {
