@@ -80,9 +80,13 @@ final class S3CleartextWarningUITests: XCTestCase {
 
         let confirm = app.switches["fleet.gateways.form.cleartext-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation toggle should appear")
+        moveAboveKeyboard(confirm, in: app)
         XCTAssertTrue(waitUntilHittable(confirm, timeout: 10),
                       "confirmation toggle should become hittable")
-        confirm.tap()
+        // XCTest resolves the switch as the entire Form row; its default
+        // center tap lands on the text label, which does not flip the switch
+        // on these simulator builds. Tap the actual switch side of that row.
+        confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         // The switch must actually flip to ON (value "1") — proof the user
         // explicitly confirmed the cleartext send.
         XCTAssertTrue(waitUntilValue(confirm, isOn: true, timeout: 10),
@@ -233,10 +237,23 @@ final class S3CleartextWarningUITests: XCTestCase {
         while app.keyboards.count > 0 && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        guard app.keyboards.count > 0 else { return }
-        let window = app.windows.firstMatch
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
-            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)))
+    }
+
+    /// The keyboard can remain visible after Return on some simulator builds.
+    /// XCUITest's synthesized switch tap then lands at the row's center, which
+    /// can be underneath the keyboard even though `isHittable` is true. Scroll
+    /// the form until the whole control is above the keyboard and fail with an
+    /// explicit geometry assertion if it cannot be exposed.
+    private func moveAboveKeyboard(_ element: XCUIElement, in app: XCUIApplication) {
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.exists else { return }
+        for _ in 0..<5 {
+            if element.frame.maxY + 8 < keyboard.frame.minY { break }
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        XCTAssertTrue(element.frame.maxY + 8 < keyboard.frame.minY,
+                      "confirmation control should be fully above the software keyboard before tapping; control=\(element.frame), keyboard=\(keyboard.frame)")
     }
 
 }
