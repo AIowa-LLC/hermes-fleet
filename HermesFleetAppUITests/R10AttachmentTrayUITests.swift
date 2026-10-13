@@ -29,11 +29,10 @@ final class R10AttachmentTrayUITests: XCTestCase {
         element.tap()
     }
 
-    /// System pickers can take longer than five seconds to finish presenting
-    /// on a cold simulator. On iOS 26 the Files browser is exposed through the
-    /// Files app's accessibility tree, with a Close control on its Recents page.
-    /// Require that page and its own hittable dismissal control; do not accept
-    /// an unrelated Close button from the host app or SpringBoard.
+    /// On iOS 26 the document picker is embedded in the host app's accessibility
+    /// tree as a DOC.browsingRoot element. Its visible X is exposed as a Cancel
+    /// button beneath that root; the separate DocumentsApp process is not
+    /// discoverable while this picker is presented.
     private func waitForSystemPicker(
         in app: XCUIApplication,
         selectedAction: XCUIElement,
@@ -44,18 +43,17 @@ final class R10AttachmentTrayUITests: XCTestCase {
             .matching(NSPredicate(format: "label == %@", "Cancel"))
             .firstMatch
         let closePredicate = NSPredicate(format: "label IN %@", ["Cancel", "Close"])
-        let filesApp = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
-        let filesCloseButton = filesApp.buttons.matching(closePredicate).firstMatch
-        let nativeDocumentPicker = app.descendants(matching: .any)
-            .matching(identifier: "Browse View (Picker)")
+        let filesBrowser = app.otherElements
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
             .firstMatch
-        let filesBrowserTitle = filesApp.staticTexts["Recents"]
+        let filesCloseButton = filesBrowser.descendants(matching: .button)
+            .matching(closePredicate)
+            .firstMatch
 
         while Date() < deadline {
             if pickerName == "File" {
-                let nativePickerIsVisible = nativeDocumentPicker.exists || filesBrowserTitle.exists
                 if !selectedAction.exists,
-                   nativePickerIsVisible,
+                   filesBrowser.exists,
                    filesCloseButton.exists,
                    filesCloseButton.isHittable {
                     return filesCloseButton
@@ -79,10 +77,8 @@ final class R10AttachmentTrayUITests: XCTestCase {
             activity.add(screenshot)
 
             let hierarchyText = """
-            Host app:
+            Host app, including the embedded system picker:
             \(app.debugDescription)
-            Files app:
-            \(filesApp.debugDescription)
             """
             let hierarchy = XCTAttachment(
                 data: Data(hierarchyText.utf8),
@@ -94,6 +90,29 @@ final class R10AttachmentTrayUITests: XCTestCase {
         }
         XCTFail("\(pickerName) picker should dismiss Add and expose its hittable Cancel or Close control within 20 seconds")
         return pickerName == "File" ? filesCloseButton : cancelButton
+    }
+
+    private func dismissFilePicker(
+        by tapping: XCUIElement,
+        in app: XCUIApplication,
+        returningTo addButton: XCUIElement
+    ) {
+        let filesBrowser = app.otherElements
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
+            .firstMatch
+
+        tap(tapping)
+
+        let deadline = Date().addingTimeInterval(10)
+        while filesBrowser.exists && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertFalse(filesBrowser.exists, "Files picker should dismiss after tapping its Cancel control")
+
+        while !addButton.isHittable && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertTrue(addButton.isHittable, "conversation Add action should be reachable after the Files picker closes")
     }
 
     private func openConversation(_ app: XCUIApplication) {
@@ -186,13 +205,13 @@ final class R10AttachmentTrayUITests: XCTestCase {
         let fileAction = firstMatch(in: app, identifier: "fleet.conversation.attach.file")
         tap(fileAction)
         let cancelFile = waitForSystemPicker(in: app, selectedAction: fileAction, pickerName: "File")
-        tap(cancelFile)
+        dismissFilePicker(by: cancelFile, in: app, returningTo: add)
 
         tap(add)
         let repeatedFileAction = firstMatch(in: app, identifier: "fleet.conversation.attach.file")
         tap(repeatedFileAction)
         let cancelRepeatedFile = waitForSystemPicker(in: app, selectedAction: repeatedFileAction, pickerName: "File")
-        tap(cancelRepeatedFile)
+        dismissFilePicker(by: cancelRepeatedFile, in: app, returningTo: add)
 
         tap(add)
         let photoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
