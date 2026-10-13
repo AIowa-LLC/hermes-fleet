@@ -29,9 +29,11 @@ final class R10AttachmentTrayUITests: XCTestCase {
         element.tap()
     }
 
-    /// System document and photo pickers can take longer than five seconds to
-    /// finish presenting on a cold simulator. Wait for a native, hittable
-    /// Cancel button after the selected Add action has left the hierarchy.
+    /// System pickers can take longer than five seconds to finish presenting
+    /// on a cold simulator. On iOS 26 the Files browser is exposed through the
+    /// Files app's accessibility tree, with a Close control on its Recents page.
+    /// Require that page and its own hittable dismissal control; do not accept
+    /// an unrelated Close button from the host app or SpringBoard.
     private func waitForSystemPicker(
         in app: XCUIApplication,
         selectedAction: XCUIElement,
@@ -41,16 +43,26 @@ final class R10AttachmentTrayUITests: XCTestCase {
         let cancelButton = app.buttons
             .matching(NSPredicate(format: "label == %@", "Cancel"))
             .firstMatch
+        let closePredicate = NSPredicate(format: "label IN %@", ["Cancel", "Close"])
+        let filesApp = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
+        let filesCloseButton = filesApp.buttons.matching(closePredicate).firstMatch
         let nativeDocumentPicker = app.descendants(matching: .any)
             .matching(identifier: "Browse View (Picker)")
             .firstMatch
+        let filesBrowserTitle = filesApp.staticTexts["Recents"]
 
         while Date() < deadline {
-            let nativePickerIsVisible = pickerName != "File" || nativeDocumentPicker.exists
-            if !selectedAction.exists,
-               nativePickerIsVisible,
-               cancelButton.exists,
-               cancelButton.isHittable {
+            if pickerName == "File" {
+                let nativePickerIsVisible = nativeDocumentPicker.exists || filesBrowserTitle.exists
+                if !selectedAction.exists,
+                   nativePickerIsVisible,
+                   filesCloseButton.exists,
+                   filesCloseButton.isHittable {
+                    return filesCloseButton
+                }
+            } else if !selectedAction.exists,
+                      cancelButton.exists,
+                      cancelButton.isHittable {
                 return cancelButton
             }
 
@@ -66,16 +78,22 @@ final class R10AttachmentTrayUITests: XCTestCase {
             screenshot.lifetime = .keepAlways
             activity.add(screenshot)
 
+            let hierarchyText = """
+            Host app:
+            \(app.debugDescription)
+            Files app:
+            \(filesApp.debugDescription)
+            """
             let hierarchy = XCTAttachment(
-                data: Data(app.debugDescription.utf8),
+                data: Data(hierarchyText.utf8),
                 uniformTypeIdentifier: "public.plain-text"
             )
-            hierarchy.name = "\(pickerName) picker accessibility hierarchy at readiness failure"
+            hierarchy.name = "\(pickerName) picker accessibility hierarchies at readiness failure"
             hierarchy.lifetime = .keepAlways
             activity.add(hierarchy)
         }
-        XCTFail("\(pickerName) picker should dismiss Add and expose a hittable Cancel control within 20 seconds")
-        return cancelButton
+        XCTFail("\(pickerName) picker should dismiss Add and expose its hittable Cancel or Close control within 20 seconds")
+        return pickerName == "File" ? filesCloseButton : cancelButton
     }
 
     private func openConversation(_ app: XCUIApplication) {
