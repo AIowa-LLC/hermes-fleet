@@ -3,8 +3,8 @@ import XCTest
 private func openAdvancedSetup(in app: XCUIApplication) {
     // Additional servers default to the QR-first sheet; the manual form is a
     // secondary path under Advanced setup.
-    let scan = app.buttons["fleet.add-gateway.scan"]
-    XCTAssertTrue(scan.waitForExistence(timeout: 10), "add-server sheet should appear after Add Gateway")
+    let addServerTitle = app.staticTexts["fleet.add-gateway.title"]
+    XCTAssertTrue(addServerTitle.waitForExistence(timeout: 10), "add-server sheet should appear after Add Gateway")
     let advanced = app.buttons["fleet.add-gateway.advanced"]
     XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
     for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
@@ -184,8 +184,62 @@ final class S3CleartextWarningUITests: XCTestCase {
         if !keyboard.waitForExistence(timeout: 2) {
             field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
-        field.typeText(text)
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "keyboard should be visible for text entry")
+        var entered = ""
+        for chunk in textChunks(text, maximumLength: 4) {
+            field.typeText(chunk)
+            entered.append(contentsOf: chunk)
+            completeKeyboardEntry(entered, into: field)
+            XCTAssertEqual(field.value as? String, entered,
+                           "gateway field should retain each typed segment")
+        }
         XCTAssertEqual(field.value as? String, text, "gateway field should retain the typed input")
+    }
+
+    private func textChunks(_ text: String, maximumLength: Int) -> [String] {
+        var chunks: [String] = []
+        var current = ""
+        for character in text {
+            current.append(character)
+            if current.count == maximumLength {
+                chunks.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+
+    /// Short text batches avoid losing trailing keyboard events while the
+    /// SwiftUI field refreshes. On the iOS 26 runner, typeText can return with
+    /// a stable prefix (for example, "Local Gatew" from "Local Gateway").
+    /// Once that prefix is unchanged across accessibility snapshots, enter
+    /// only the missing suffix. The caller checks each segment and the full
+    /// expected string.
+    private func completeKeyboardEntry(_ expected: String, into field: XCUIElement) {
+        let deadline = Date().addingTimeInterval(6)
+        var lastValue: String?
+        var stableSince = Date()
+        var suffixRetries = 0
+
+        while Date() < deadline {
+            let current = field.value as? String ?? ""
+            if current == expected { return }
+
+            if current != lastValue {
+                lastValue = current
+                stableSince = Date()
+            } else if suffixRetries < 2,
+                      expected.hasPrefix(current),
+                      current.count < expected.count,
+                      Date().timeIntervalSince(stableSince) >= 0.5 {
+                field.typeText(String(expected.dropFirst(current.count)))
+                suffixRetries += 1
+                stableSince = Date()
+            }
+
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.1)))
+        }
     }
 
     @discardableResult
