@@ -151,10 +151,7 @@ public struct GatewayOnboardingView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
-            Image(systemName: "circle.hexagongrid.fill")
-                .font(.system(size: 38))
-                .foregroundStyle(theme.highlight)
-                .accessibilityHidden(true)
+            FleetBrandMark(size: 48, decorative: true)
             Text("Hermes Fleet")
                 .font(FleetTheme.titleFont)
                 .foregroundStyle(theme.highlight)

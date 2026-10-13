@@ -97,7 +97,7 @@ public struct GatewaysView: View {
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .add:
-                GatewayOnboardingView(environment: environment, canDismiss: true)
+                AdditionalGatewaySheet(environment: environment)
             case .advancedAdd:
                 addGatewayForm
             case .edit(let gateway):

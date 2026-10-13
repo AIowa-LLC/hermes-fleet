@@ -186,7 +186,7 @@ public struct FleetSettingsView: View {
                     Text("Servers")
                         .foregroundStyle(theme.textSecondary)
                 } footer: {
-                    Text("Use the owner account for the Hermes server you want to connect.")
+                    Text("Scan a pairing QR from the Hermes server you want to add.")
                         .foregroundStyle(theme.textSecondary)
                 }
             }
@@ -226,7 +226,7 @@ public struct FleetSettingsView: View {
         .accessibilityIdentifier("fleet.settings")
         .sheet(isPresented: $showingOwnerEnrollment) {
             if let environment {
-                GatewayOnboardingView(environment: environment, canDismiss: true)
+                AdditionalGatewaySheet(environment: environment)
             }
         }
     }

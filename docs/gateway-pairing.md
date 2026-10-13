@@ -2,9 +2,15 @@
 
 Hermes Fleet connects to gateways chosen by the user. No maintainer endpoint or shared credential is compiled into the default configuration.
 
-## Connect this phone
+## Current flow: QR invitation
 
-Fleet needs a running Hermes server, a reachable HTTPS address, and an owner account. Enter the address, review its TLS key on first use, sign in using the detected username/password provider, then choose **Connect this phone**. Fleet chooses the server display name automatically. There is no nearby discovery or Telegram invitation step.
+The default way to connect a server is the owner-issued QR invitation described in [qr-first-onboarding.md](qr-first-onboarding.md). The first server and every additional server (Settings > Connect Another Server, or **+** on the Gateways tab) use the same guidance: **Copy setup prompt** (a message to send to Hermes in the owner's private Telegram chat), **Scan pairing QR**, then review and **Connect this phone**. Cancelling, retrying or rescanning never removes servers that are already saved.
+
+The sections below describe the **advanced / legacy** routes. For additional servers they are reached from **Advanced setup** in the add-server sheet and are not the default.
+
+## Advanced: owner sign-in (address-first)
+
+Fleet needs a running Hermes server, a reachable HTTPS address, and an owner account. Enter the address, review its TLS key on first use, sign in using the detected username/password provider, then choose **Connect this phone**. Fleet chooses the server display name automatically. This route has no nearby discovery or Telegram invitation step.
 
 Enrollment grants `fleet:operator`: chat with agents, run and review their work, and manage them, with the same access as signing in. The phone creates a random device secret; only its digest is stored on the server. The phone keeps the device credential in Keychain and discards the owner sign-in material. Existing saved gateways open directly into Fleet.
 
@@ -12,7 +18,7 @@ The server must support authenticated `GET /api/fleet/connection` and owner-only
 
 ## Advanced manual setup
 
-Choose **Advanced gateway setup** from the connection screen and provide:
+Choose **Advanced setup** > **Enter gateway details manually** in the add-server sheet (or **Advanced gateway setup** inside owner sign-in) and provide:
 
 - a display name
 - the gateway endpoint
@@ -47,7 +53,7 @@ bash scripts/f2_generate_pairing_qr.sh \
 
 On the iPhone:
 
-1. Open **Add Gateway**, then **Advanced gateway setup**.
+1. Open **Add Gateway**, then **Advanced setup** > **Enter gateway details manually**.
 2. Choose **Scan Pairing Code**.
 3. Scan the newly generated QR code.
 4. Review the populated endpoint and credential fields.
