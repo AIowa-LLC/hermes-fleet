@@ -427,7 +427,7 @@ enum FleetServiceGraph {
                 }
                 let handler = PinningTrustHandler(
                     gatewayID: gateway.id, pinStore: pinStore,
-                    approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring)
+                    approvalStore: pinStore.firstUseApprovalsOrDenyAll())
                 let cookie = try await FleetServiceGraph.sharedSessionStore.lease(gatewayID: gateway.id) {
                     try await DeviceLoginClient(
                         baseURL: base, deviceCredential: credential.rawValue, trustHandler: handler).login()

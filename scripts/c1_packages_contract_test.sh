@@ -19,10 +19,10 @@ fi
 
 package=${PWD##*/}
 case "$package" in
-  FleetCore) expected=719 ;;
-  FleetNetworking) expected=677 ;;
-  FleetPersistence) expected=58 ;;
-  FleetSecurity) expected=47 ;;
+  FleetCore) expected=737 ;;
+  FleetNetworking) expected=722 ;;
+  FleetPersistence) expected=64 ;;
+  FleetSecurity) expected=50 ;;
   *) echo "unexpected package: $package" >&2; exit 65 ;;
 esac
 
