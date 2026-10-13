@@ -19,14 +19,14 @@ final class F3OnboardingUITests: XCTestCase {
         let ownerPrompt = app.staticTexts["fleet.first-run.owner-prompt"]
         XCTAssertTrue(ownerPrompt.exists, "the Telegram setup instructions must be selectable text")
         XCTAssertTrue(ownerPrompt.label.contains("private Telegram message from the verified owner"))
-        XCTAssertTrue(ownerPrompt.label.contains("exact source, runtime source, and Hermes home"))
-        XCTAssertTrue(ownerPrompt.label.contains("This report proves host capability only"))
-        XCTAssertTrue(ownerPrompt.label.contains("does not prove authority for this Telegram event"))
-        XCTAssertTrue(ownerPrompt.label.contains("ready for that selection"))
-        XCTAssertTrue(ownerPrompt.label.contains("reachable from this phone"))
-        XCTAssertTrue(ownerPrompt.label.contains("trusted by iOS"))
-        XCTAssertTrue(ownerPrompt.label.contains("public internet access and Funnel are not required"))
-        XCTAssertTrue(ownerPrompt.label.contains("require explicit owner authority"))
+        XCTAssertTrue(ownerPrompt.label.contains("/fleetsetup"), "owner prompt must mention /fleetsetup")
+        XCTAssertTrue(ownerPrompt.label.contains("/fleetstatus"), "owner prompt must mention /fleetstatus")
+        XCTAssertTrue(ownerPrompt.label.contains("/fleetqr"), "owner prompt must mention /fleetqr")
+        XCTAssertTrue(ownerPrompt.label.contains("/fleetdevices"), "owner prompt must mention /fleetdevices")
+        XCTAssertTrue(ownerPrompt.label.contains("existing owner binding"), "owner prompt must mention existing owner binding")
+        XCTAssertTrue(ownerPrompt.label.contains("expires in two minutes"), "owner prompt must mention expires in two minutes")
+        XCTAssertTrue(ownerPrompt.label.contains("logged-in macOS desktop session"), "owner prompt must mention logged-in macOS desktop session")
+        XCTAssertTrue(ownerPrompt.label.contains("Never send the invitation link"), "owner prompt must mention Never send the invitation link")
         XCTAssertFalse(ownerPrompt.label.contains("hermes --run-module hermes_cli.fleet_pairing_cli invite"),
                        "the prompt must not tell every Hermes install to run a legacy issuer")
 
