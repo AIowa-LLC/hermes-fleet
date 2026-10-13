@@ -886,6 +886,11 @@ public struct ConversationView: View {
             }
     }
 
+    /// DEV14: a toolbelt chip never grows past this (full value remains in
+    /// its accessibility value / popover) so one long model, folder or
+    /// profile name cannot push its neighbours off screen.
+    private static let toolbeltChipMaxWidth: CGFloat = 150
+
     /// Working-project-folder chip: folder glyph + the LAST path component
     /// (full path in the tap popover — phone-width chips must not truncate).
     /// Hidden honestly when the gateway reports no cwd.
@@ -905,7 +910,9 @@ public struct ConversationView: View {
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .frame(maxWidth: Self.toolbeltChipMaxWidth)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(theme.background, in: Capsule())
@@ -952,7 +959,9 @@ public struct ConversationView: View {
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .frame(maxWidth: Self.toolbeltChipMaxWidth)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(theme.background, in: Capsule())
@@ -1046,8 +1055,9 @@ enum ConversationHeaderChips {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .frame(maxWidth: Self.toolbeltChipMaxWidth)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
             .background(theme.background, in: Capsule())
         }
         .buttonStyle(.fleetPressable)
@@ -1757,12 +1767,13 @@ enum ConversationHeaderChips {
             // Scrollable chip zone: model · working folder · profile ·
             // context — the r9 TOOLBELT, docked UNDER the composer (moved
             // from the header in r9; actions live next to the input they
-            // affect). Overflow scrolls (never truncates). Hidden at
-            // accessibility sizes (the ⋯ menu carries model + context
-            // there — established policy).
-            if !dynamicTypeSize.isAccessibilitySize {
-                toolbeltZone(model)
-            }
+            // affect). DEV14: chips cap + truncate (full values stay in the
+            // accessibility value) and the strip scrolls from the LEADING
+            // edge when it still overflows. The zone is no longer hidden at
+            // accessibility sizes — the ⋯ menu never carried model/folder/
+            // profile, so hiding it made them unreachable; instead the
+            // chips' own type size is capped (see `toolbeltZone`).
+            toolbeltZone(model)
         }
         // r6: the composer floats on the canvas — no full-width surface
         // band, no top hairline (the de-glass contract).
@@ -1788,11 +1799,16 @@ enum ConversationHeaderChips {
                 }
                 profileChip(model)
             }
-            .padding(.horizontal, FleetTheme.spacingXs)
-            .frame(minHeight: 32)
+            .padding(.horizontal, FleetTheme.spacingMd)
+            .frame(minHeight: 36)
         }
         .frame(maxWidth: .infinity)
-        .defaultScrollAnchor(.center)
+        // DEV14: `.center` clipped BOTH edges whenever the chips overflowed
+        // (long model/profile names). Start at the leading edge instead.
+        .defaultScrollAnchor(.leading)
+        // Accessibility sizes: keep the strip reachable but bounded — the
+        // composer and transcript keep their space.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityIdentifier("fleet.conversation.header.chipzone")
         .scrollBounceBehavior(.basedOnSize)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -2376,6 +2392,7 @@ private struct ReasoningDisclosure: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .onAppear {
             // Completed-turn default from the persisted preference; a live
@@ -2534,7 +2551,7 @@ private struct ConversationBubbleView: View {
                     // Dogfood r7 (decision 2): the width cap is USER-ONLY
                     // (the capsule stays compact); assistant output spans
                     // the full content width like ChatGPT/Hermex.
-                    .frame(maxWidth: row.kind == .user ? 420 : nil,
+                    .frame(maxWidth: row.kind == .user ? 420 : (row.kind == .assistant ? .infinity : nil),
                            alignment: row.kind == .user ? .trailing : .leading)
                 if let reactions = row.reactions, !reactions.isEmpty {
                     reactionChips(reactions)
@@ -2583,6 +2600,12 @@ private struct ConversationBubbleView: View {
             // message column can still be exactly as flexible
             // (`.frame(maxWidth: .infinity)`) as their trailing spacer.
             .layoutPriority(1)
+            // DEV14: assistant rows claim the full content width and align
+            // leading in EVERY state (streaming, expanded, collapsed, final,
+            // cancelled). Without this the column shrink-wrapped to the
+            // reasoning block's intrinsic width and the row's position moved
+            // as content streamed in / the block collapsed on completion.
+            .frame(maxWidth: row.kind == .assistant ? .infinity : nil, alignment: .leading)
             if row.kind != .user && row.kind != .assistant { Spacer(minLength: 60) }
         }
         .transition(row.kind == .user ? entrance : .identity)
@@ -2737,28 +2760,16 @@ private struct ConversationBubbleView: View {
                         .foregroundStyle(FleetTheme.statusDestructive)
                         .textSelection(.enabled)
                 } else if row.text.isEmpty, row.isStreaming {
-                    Text("…")
-                        .font(.body)
-                        .foregroundStyle(theme.textPrimary)
+                    // DEV14: no in-row placeholder or dots. The turn-level
+                    // "Working for Ns" indicator (`workingIndicator`) is the
+                    // ONE pending-operation indicator for the whole turn;
+                    // a second set of dots under Reasoning duplicated it.
+                    EmptyView()
                 } else {
                     AssistantRichTextView(
                         markdown: row.text,
                         isStreaming: row.isStreaming,
                         identity: row.id)
-                }
-                if row.isStreaming {
-                    // P2-7: decorative streaming dots — hidden from assistive
-                    // tech (the row's accessibilityValue already announces
-                    // "Streaming").
-                    HStack(spacing: 4) {
-                        ForEach(0..<3, id: \.self) { i in
-                            Circle()
-                                .fill(theme.highlight)
-                                .frame(width: 5, height: 5)
-                                .opacity(0.6)
-                        }
-                    }
-                    .accessibilityHidden(true)
                 }
             }
             // Dogfood r7 (decision 1, ChatGPT/Hermex parity): the assistant

@@ -2139,6 +2139,30 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 ))
                 return
             }
+            // DEV14 simulator-only knob: `HERMES_FLEET_REASONING_DEMO=1`
+            // streams reasoning deltas first, then SLOW message deltas, so
+            // UI tests can observe the reasoning block while streaming and
+            // after completion. `_HOLD_MS` (default 700) is the pause
+            // between chunks. Never set in production launches.
+            if ProcessInfo.processInfo.environment["HERMES_FLEET_REASONING_DEMO"] == "1" {
+                let holdMs = Int(ProcessInfo.processInfo.environment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] ?? "") ?? 700
+                for chunk in ["Considering the request. ", "Checking the fleet state. "] {
+                    streamBox.yield(.reasoningDelta(sessionID: sessionID, text: chunk))
+                    try? await Task.sleep(for: .milliseconds(holdMs))
+                }
+                for chunk in ["Here is a slowly ", "streamed reply ", "for layout checks."] {
+                    streamBox.yield(.messageDelta(sessionID: sessionID, text: chunk, rendered: nil))
+                    try? await Task.sleep(for: .milliseconds(holdMs))
+                }
+                streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
+                streamBox.yield(.messageComplete(
+                    sessionID: sessionID,
+                    text: "Here is a slowly streamed reply for layout checks.",
+                    status: nil,
+                    error: nil
+                ))
+                return
+            }
             streamBox.yield(.messageDelta(sessionID: sessionID, text: "Hello from the scripted fleet. ", rendered: nil))
             // D-2 fix (t_9ce36690): echo the PROMPT TEXT only — drop the
             // appended @file:/@folder: ref TOKENS from the echoed text (the
@@ -2177,12 +2201,17 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 // client has no tooling-box reference; the r9 folder-switch
                 // test drives a change through the sheet and asserts the
                 // chip readback before any next-turn fixture fires.
+                // DEV14: `HERMES_FLEET_SESSION_INFO_LONG_NAMES=1` swaps in
+                // long model/folder/profile names to exercise toolbelt
+                // truncation and clipping (simulator-only).
+                let longNames = ProcessInfo.processInfo.environment["HERMES_FLEET_SESSION_INFO_LONG_NAMES"] == "1"
                 streamBox.yield(.sessionInfo(
                     sessionID: sessionID,
-                    model: "glm-4.6-flash", provider: "zai",
+                    model: longNames ? "glm-4.6-flash-extended-reasoning-preview-build-2026" : "glm-4.6-flash",
+                    provider: "zai",
                     title: nil,
-                    cwd: "/home/dev/hermes-fleet",
-                    profileName: "default"))
+                    cwd: longNames ? "/home/dev/an-extremely-long-project-folder-name" : "/home/dev/hermes-fleet",
+                    profileName: longNames ? "a-very-long-profile-name-for-layout" : "default"))
             }
             // UI-journey knob (HERMES_FLEET_SESSION_TITLE_FIXTURE=1): mirror
             // the live gateway's auto-title frame (methods_session.py:1427)
