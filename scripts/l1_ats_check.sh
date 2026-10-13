@@ -2,7 +2,8 @@
 # L1: ATS-vs-auth discriminator. If ATS blocked http://127.0.0.1, the app log
 # shows "App Transport Security has blocked a cleartext HTTP" / -1022.
 set -u
-WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
+. "$(dirname "$0")/private_dir_lib.sh"
+WORK=$(hf_private_dir "${HERMES_FLEET_LIVE_WORKDIR:-$(hf_private_name hermes-fleet-live)}") || exit 2
 
 echo "=== L1: ATS signature hunt ==="
 xcrun simctl spawn booted log show --last 10m 2>/dev/null \

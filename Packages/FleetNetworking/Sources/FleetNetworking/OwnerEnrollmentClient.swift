@@ -423,7 +423,7 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
             try await identities.deleteIdentity(for: endpointID)
             if endpointID != gatewayID, let pinStore {
                 try pinStore.syncDeletePin(for: endpointID)
-                try approvalStore?.syncSetFirstUseApproved(false, for: endpointID)
+                try approvalStore?.syncClearFirstUseApproval(for: endpointID)
             }
         } catch {
             throw OwnerEnrollmentError.identityStorageFailed
@@ -503,7 +503,10 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
         let handler = fixedTrustHandler ?? pinningID.flatMap { gatewayID in
             if let trustHandlerFactory { return trustHandlerFactory(gatewayID) }
             guard let pinStore else { return nil }
-            return PinningTrustHandler(gatewayID: gatewayID, pinStore: pinStore, approvalStore: approvalStore)
+            return PinningTrustHandler(
+                gatewayID: gatewayID,
+                pinStore: pinStore,
+                approvalStore: approvalStore ?? DenyUnconfiguredFirstUseApprovalStore())
         }
         let sessionDelegate = EnrollmentURLSessionDelegate(trustHandler: handler)
         let ownsSession = sessionOverride == nil
@@ -522,7 +525,7 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
             // client uses the app's injected pinned URLSession. A task-level
             // delegate blocks redirects without replacing that session's
             // TLS challenge handling.
-            let result = try await session.data(for: boundedRequest, delegate: sessionDelegate)
+            let result = try await session.boundedData(for: boundedRequest, delegate: sessionDelegate)
             guard result.0.count <= AuthREST.maxResponseBytes else { throw OwnerEnrollmentError.malformedResponse }
             return result
         } catch let error as OwnerEnrollmentError { throw error }
@@ -601,6 +604,18 @@ public struct OwnerEnrollmentClient: OwnerEnrollmentProviding, GatewayEnrollment
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
         return PendingOwnerDeviceIdentity(deviceID: deviceID, secret: encoded)
+    }
+}
+
+/// Keeps pinning fail-closed when an enrollment client has a pin store but
+/// its composition root omitted the first-use approval store. Existing pins
+/// still match; an unpinned gateway cannot be trusted by default.
+private struct DenyUnconfiguredFirstUseApprovalStore: SynchronousTLSFirstUseApprovalStoring {
+    func syncIsFirstUseApproved(for gatewayID: GatewayID) throws -> Bool { false }
+    func syncApproveFirstUse(boundTo fingerprint: SPKIFingerprint, for gatewayID: GatewayID) throws {}
+    func syncClearFirstUseApproval(for gatewayID: GatewayID) throws {}
+    func syncConsumeFirstUseApproval(matching presented: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
+        false
     }
 }
 

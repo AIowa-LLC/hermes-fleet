@@ -130,12 +130,13 @@ public struct GatewayOnboardingView: View {
                 title: "Advanced Gateway Setup",
                 saveButton: "Add",
                 initial: nil,
-                draftStore: environment.gatewayFormDraft
-            ) { registration, credential, confirmsTLSFirstUse in
+                draftStore: environment.gatewayFormDraft,
+                reviewKey: { try await environment.reviewTLSKey(for: $0) }
+            ) { registration, credential, tlsReview in
                 _ = try await environment.addGateway(
                     registration,
                     credential: credential,
-                    confirmsTLSFirstUse: confirmsTLSFirstUse)
+                    tlsReview: tlsReview)
                 didSaveAdvancedGateway = true
             }
         }

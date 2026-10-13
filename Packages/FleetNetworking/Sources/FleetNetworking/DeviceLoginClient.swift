@@ -49,7 +49,7 @@ public struct DeviceLoginClient: Sendable {
             // applies when the caller injects the production pinned session.
             // That preserves the session's trust delegate while preventing
             // an hfd1 credential from being forwarded to a redirect target.
-            let (data, response) = try await session.data(for: request, delegate: delegate)
+            let (data, response) = try await session.boundedData(for: request, delegate: delegate)
             guard data.count <= AuthREST.maxResponseBytes,
                   let http = response as? HTTPURLResponse else {
                 throw AuthenticationError.ticketMintFailed("device login response malformed")

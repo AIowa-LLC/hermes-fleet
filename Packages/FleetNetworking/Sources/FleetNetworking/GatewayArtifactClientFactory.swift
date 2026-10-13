@@ -45,7 +45,7 @@ public enum GatewayArtifactRetrieval {
             trustHandler = PinningTrustHandler(
                 gatewayID: gateway.id,
                 pinStore: pinStore,
-                approvalStore: pinStore as? any SynchronousTLSFirstUseApprovalStoring)
+                approvalStore: pinStore.firstUseApprovalsOrDenyAll())
         }
         let loginSession: URLSession
         if let trustHandler {

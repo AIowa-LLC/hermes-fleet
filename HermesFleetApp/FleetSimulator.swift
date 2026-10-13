@@ -83,12 +83,16 @@ extension FleetServiceGraph {
         let cache: any CacheStoring = cacheStore
         let health = GatewayHealthStatsAccumulator(store: cacheStore)
 
+        // Scripted TLS trust: an in-memory pin/approval store and a probe that
+        // reports one synthetic key, so the first-use certificate review flow
+        // is exercisable without a network peer.
         let environment = AppEnvironment(
             registry: registry,
             roster: roster,
             cache: cache,
             tlsPinStore: pins,
             tlsApprovalStore: pins,
+            tlsKeyProbe: ScriptedTLSKeyProbe(),
             sessionList: sessionList,
             connectionFactory: { gateway, _ in
                 ScriptedGatewayConnection(gatewayID: gateway.id)
@@ -4085,4 +4089,10 @@ extension ScriptedRoomLinkEngine: RoomReplicateSink {
     }
 }
 
+
+/// Reports one fixed synthetic key for any secure endpoint (DEBUG simulator only).
+struct ScriptedTLSKeyProbe: TLSKeyProbing {
+    static let fingerprint = SPKIFingerprint(rawBytes: Array(repeating: 0xAB, count: 32))
+    func presentedKey(for endpoint: URL) async throws -> SPKIFingerprint { Self.fingerprint }
+}
 #endif

@@ -149,6 +149,10 @@ public final class URLSessionWebSocketSession: WebSocketSession, @unchecked Send
         self.delegate = delegate
         self.urlSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         self.task = urlSession.webSocketTask(with: url)
+        // Refuse larger inbound messages at the message boundary: URLSession
+        // fails the receive and closes the socket instead of delivering them.
+        // Explicit (not the platform default) so the budget is documented.
+        self.task.maximumMessageSize = GatewayEventBudget.maxFrameBytes
         delegate.onClose = { [weak self] code, _ in
             self?.lock.withLock { $0 = code }
         }

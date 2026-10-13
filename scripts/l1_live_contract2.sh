@@ -9,7 +9,8 @@ VENV=~/.hermes/hermes-agent/venv/bin
 VENV_PY=$VENV/python
 HERMES=$VENV/hermes
 PORT=9119
-WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
+. "$(dirname "$0")/private_dir_lib.sh"
+WORK=$(hf_private_dir "${HERMES_FLEET_LIVE_WORKDIR:-$(hf_private_name hermes-fleet-live)}") || exit 2
 mkdir -p "$WORK"
 
 echo "=== L1 Phase 1b: real gateway JSON-RPC via ?token= ==="

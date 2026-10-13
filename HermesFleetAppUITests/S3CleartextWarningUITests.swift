@@ -73,16 +73,16 @@ final class S3CleartextWarningUITests: XCTestCase {
         // keyboard and the Toggle silently never commits, which no amount of
         // waiting fixes (merge-group run 34699513638, shard 4). Dismiss the
         // keyboard first: measured locally the row is then ~18pt clear of it.
-        // Tap the switch KNOB (right edge of the Form row) — tapping the
-        // row's center can land on the label area and miss the SwiftUI Toggle
-        // control.
+        // Tap the accessibility switch directly. Coordinate taps at the
+        // row's right edge have repeatedly missed the control on hosted
+        // runners even after the keyboard is dismissed.
         dismissKeyboard(app)
 
         let confirm = app.switches["fleet.gateways.form.cleartext-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation toggle should appear")
         XCTAssertTrue(waitUntilHittable(confirm, timeout: 10),
                       "confirmation toggle should become hittable")
-        confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        confirm.tap()
         // The switch must actually flip to ON (value "1") — proof the user
         // explicitly confirmed the cleartext send.
         XCTAssertTrue(waitUntilValue(confirm, isOn: true, timeout: 10),

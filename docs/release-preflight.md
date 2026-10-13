@@ -175,6 +175,12 @@ bash scripts/public_safety_guard.sh
 gitleaks detect --source . --no-git
 ```
 
+`rc_preflight.sh` runs the public-safety guard with
+`HF_PUBLIC_SAFETY_REQUIRE_PRIVATE=1`: it FAILS unless the private, out-of-repo
+denylist is configured (`HF_PUBLIC_SAFETY_DENYLIST_FILE`, or
+`~/.config/hermes-fleet/public-safety-denylist.txt`). The public script holds
+only generic residue checks; maintainer-specific values are never committed.
+
 They prove repository invariants only. They do not prove distribution signing,
 archive contents, Apple's validation result, backend availability, or
 TestFlight review acceptance.

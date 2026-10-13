@@ -35,7 +35,7 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
         body: (any Encodable & Sendable)? = nil
     ) async throws -> Data {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
-        components?.path = "/api/plugins/kanban\(path)"
+        components?.path = GatewayEndpoint.path(joining: "/api/plugins/kanban\(path)", onto: baseURL)
         var allQuery = query
         if let pinnedBoard, !pinnedBoard.isEmpty {
             allQuery.append(URLQueryItem(name: "board", value: pinnedBoard))
@@ -54,7 +54,7 @@ extension KanbanEventStreamClient: KanbanBoardOperating {
         AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw KanbanMutationError.malformedResponse("response too large")
         }

@@ -43,6 +43,11 @@ skip() { printf 'skip: %s\n' "$1"; }
 
 BASE_URL="${REVIEWER_BASE_URL:-}"
 CRED_FILE="${REVIEWER_CRED_FILE:-}"
+# Never let credentials from the legacy reviewer directory silently enter a check.
+. "$(dirname "${BASH_SOURCE[0]}")/private_dir_lib.sh"
+if [ -n "$CRED_FILE" ]; then
+  CRED_FILE=$(hf_reviewer_credential_file "$CRED_FILE") || exit 2
+fi
 LOOPBACK_SMOKE=0
 
 is_loopback_url() {

@@ -46,7 +46,7 @@ final class PinningTrustHandlerTests: XCTestCase {
     func testChallengeWithMatchingPinIsAccepted() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)
-        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store)
+        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
         let (disposition, credential) = await evaluate(
             handler,
@@ -59,7 +59,7 @@ final class PinningTrustHandlerTests: XCTestCase {
     func testChallengeWithMismatchedPinIsRejected() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)
-        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store)
+        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
         let (disposition, _) = await evaluate(
             handler,
@@ -69,18 +69,22 @@ final class PinningTrustHandlerTests: XCTestCase {
                        "a different key (MITM) must be REJECTED")
     }
 
-    func testFirstUseTOFUAcceptsSelfSignedAndPins() async throws {
+    /// The reviewed key is a DIFFERENT key from the one presented: rejected,
+    /// nothing pinned, and the reviewed-key approval is left intact.
+    func testApprovalBoundToAnotherKeyRejectsPresentedKey() async throws {
         let store = InMemoryPinStore()
-        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store)
+        let reviewed = try XCTUnwrap(SPKIFingerprint(base64: TLSFixtureIdentities.mitmSPKIBase64))
+        try store.syncApproveFirstUse(boundTo: reviewed, for: gatewayID)
+        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
         let (disposition, credential) = await evaluate(
             handler,
             trust: makeTrust(certDER: TLSFixtureIdentities.gatewayCertificateDER))
 
-        XCTAssertEqual(disposition, .useCredential, "first use must trust-and-pin")
-        XCTAssertNotNil(credential)
-        let stored = try await store.loadPin(for: gatewayID)
-        XCTAssertEqual(stored?.base64String, TLSFixtureIdentities.gatewaySPKIBase64)
+        XCTAssertEqual(disposition, .cancelAuthenticationChallenge)
+        XCTAssertNil(credential)
+        XCTAssertNil(try store.syncLoadPin(for: gatewayID))
+        XCTAssertTrue(try store.syncIsFirstUseApproved(for: gatewayID))
     }
 
     func testFirstUseWithoutExplicitApprovalIsRejected() async throws {
@@ -103,7 +107,7 @@ final class PinningTrustHandlerTests: XCTestCase {
 
     func testApprovedFirstUseIsAcceptedAndPins() async throws {
         let store = InMemoryPinStore()
-        try store.syncSetFirstUseApproved(true, for: gatewayID)
+        try store.syncApproveFirstUse(boundTo: try gatewayPin, for: gatewayID)
         let handler = PinningTrustHandler(
             gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
@@ -120,7 +124,7 @@ final class PinningTrustHandlerTests: XCTestCase {
     func testLastVerdictRecordsMismatch() async throws {
         let store = InMemoryPinStore()
         try await store.savePin(try gatewayPin, for: gatewayID)
-        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store)
+        let handler = PinningTrustHandler(gatewayID: gatewayID, pinStore: store, approvalStore: store)
 
         _ = await evaluate(handler, trust: makeTrust(certDER: TLSFixtureIdentities.mitmCertificateDER))
 

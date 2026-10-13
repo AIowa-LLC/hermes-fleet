@@ -41,16 +41,18 @@ build products are excluded from call-site findings.
 
 ### UserDefaults source locations
 
-The scanner reports 49 production API hits in app-owned defaults used for
+The scanner reports 53 production API hits in app-owned defaults used for
 local settings/state. Line numbers belong to the source snapshot above.
 
 | File | Lines |
 | --- | --- |
 | `HermesFleetApp/FleetConversationShortcuts.swift` | 45 |
-| `HermesFleetApp/FleetServiceGraph.swift` | 91, 229 |
+| `HermesFleetApp/FleetServiceGraph.swift` | 80, 261 |
 | `Packages/FleetCore/Sources/FleetCore/ConversationPinning.swift` | 77, 79, 92, 111 |
-| `Packages/FleetUI/Sources/FleetUI/AppEnvironment.swift` | 623 |
-| `Packages/FleetUI/Sources/FleetUI/AppLockController.swift` | 101, 108 |
+| `Packages/FleetPersistence/Sources/FleetPersistence/FileConversationPinStore.swift` | 35, 38 |
+| `Packages/FleetSecurity/Sources/FleetSecurity/KeychainInstallHygiene.swift` | 65, 70, 162 |
+| `Packages/FleetUI/Sources/FleetUI/AppEnvironment.swift` | 633 |
+| `Packages/FleetUI/Sources/FleetUI/AppLockController.swift` | 145, 160 |
 | `Packages/FleetUI/Sources/FleetUI/ConnectionIntentStore.swift` | 12, 15 |
 | `Packages/FleetUI/Sources/FleetUI/ConversationToolingViewModel.swift` | 69, 111, 113 |
 | `Packages/FleetUI/Sources/FleetUI/CronHomeView.swift` | 197, 460 |
@@ -58,12 +60,12 @@ local settings/state. Line numbers belong to the source snapshot above.
 | `Packages/FleetUI/Sources/FleetUI/FleetAppearance.swift` | 45, 47 |
 | `Packages/FleetUI/Sources/FleetUI/FleetDestinations.swift` | 92, 98, 108 |
 | `Packages/FleetUI/Sources/FleetUI/FleetTabView.swift` | 145, 172 |
-| `Packages/FleetUI/Sources/FleetUI/FleetThemePalette.swift` | 645, 648, 676 |
+| `Packages/FleetUI/Sources/FleetUI/FleetThemePalette.swift` | 662, 665, 693 |
 | `Packages/FleetUI/Sources/FleetUI/FleetUnreadStore.swift` | 17, 25, 34, 43, 61, 72, 80, 88 |
 | `Packages/FleetUI/Sources/FleetUI/GatewayResourceView.swift` | 64, 71, 207 |
 | `Packages/FleetUI/Sources/FleetUI/KanbanBoardSelectionStore.swift` | 17, 20, 42 |
 | `Packages/FleetUI/Sources/FleetUI/ReasoningPresentation.swift` | 20 |
-| `Packages/FleetUI/Sources/FleetUI/RoomChatView.swift` | 600, 607, 613, 615, 620 |
+| `Packages/FleetUI/Sources/FleetUI/RoomChatView.swift` | 646, 702, 745, 763 |
 
 The source also reads local file-size and file-attribute values for attachment
 handling, but the current Apple required-reason table audited by the scanner

@@ -209,7 +209,7 @@ struct BotPetCell: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(theme.surfaceElevated)
-                    if let thumbnail, let image = UIImage(data: thumbnail) {
+                    if let thumbnail, let image = BoundedImageDecoder.decode(thumbnail) {
                         Image(uiImage: image)
                             .resizable()
                             .interpolation(.none)

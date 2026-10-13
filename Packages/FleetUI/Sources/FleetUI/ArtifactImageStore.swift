@@ -42,6 +42,12 @@ public final class ArtifactImageStore {
     /// How many retrieved payloads are retained in memory at once.
     public static let maxLoadedPayloads = 16
 
+    /// Aggregate cap on retained memory: payload bytes PLUS the decoded
+    /// bitmap of each entry (a few-hundred-KB solid-colour PNG can expand to a
+    /// ~64 MB bitmap, so counting compressed bytes alone would not bound
+    /// memory). Oldest entries are evicted until the new one fits.
+    public static let maxLoadedBytes = 96 * 1024 * 1024
+
     public private(set) var states: [ArtifactReference: State] = [:]
 
     /// Insertion order for eviction (references whose payload is retained).
@@ -223,11 +229,11 @@ public final class ArtifactImageStore {
     private func store(_ state: State, for reference: ArtifactReference) {
         switch state {
         case .loaded(let payload):
-            evictIfNeeded(beforeInserting: reference)
+            let image = BoundedImageDecoder.decode(payload.data)
+            evictIfNeeded(beforeInserting: reference,
+                          incomingBytes: payload.byteCount + Self.bitmapBytes(of: image))
             states[reference] = .loaded(payload)
-            if let image = UIImage(data: payload.data) {
-                decoded[reference] = image
-            }
+            if let image { decoded[reference] = image }
             loadedOrder.removeAll { $0 == reference }
             loadedOrder.append(reference)
         case .loading, .failed:
@@ -240,9 +246,34 @@ public final class ArtifactImageStore {
         return state
     }
 
-    private func evictIfNeeded(beforeInserting reference: ArtifactReference) {
-        guard !loadedOrder.contains(reference) else { return }
-        while loadedOrder.count >= Self.maxLoadedPayloads {
+    /// Resident bytes of a decoded image from its real row stride (covers
+    /// 16-bit and wide-gamut bitmaps); 0 when not an image.
+    static func bitmapBytes(of image: UIImage?) -> Int {
+        guard let cg = image?.cgImage else { return 0 }
+        return cg.bytesPerRow * cg.height
+    }
+
+    /// Payload plus decoded-bitmap bytes of every retained entry.
+    var loadedByteCount: Int {
+        loadedOrder.reduce(0) { total, ref in
+            if case .loaded(let payload) = states[ref] {
+                return total + payload.byteCount + Self.bitmapBytes(of: decoded[ref])
+            }
+            return total
+        }
+    }
+
+    private func evictIfNeeded(beforeInserting reference: ArtifactReference, incomingBytes: Int) {
+        // A refreshed reference replaces its own entry: drop it from the
+        // accounting so it is not counted twice.
+        if loadedOrder.contains(reference) {
+            loadedOrder.removeAll { $0 == reference }
+            states[reference] = nil
+            decoded[reference] = nil
+        }
+        while !loadedOrder.isEmpty
+                && (loadedOrder.count >= Self.maxLoadedPayloads
+                    || loadedByteCount + incomingBytes > Self.maxLoadedBytes) {
             let oldest = loadedOrder.removeFirst()
             if case .loaded = states[oldest] {
                 states[oldest] = nil

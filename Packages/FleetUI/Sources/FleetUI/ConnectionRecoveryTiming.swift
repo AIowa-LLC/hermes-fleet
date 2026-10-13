@@ -1,4 +1,5 @@
 import Foundation
+import FleetCore
 
 /// Bounded auto-recovery cadence for a failed gateway connection (spec §8.6
 /// "other codes → reconnect + replay").
@@ -19,17 +20,26 @@ public struct ConnectionRecoveryTiming: Sendable, Equatable {
     public var maxDelay: TimeInterval
     /// Retries AFTER the initial failed attempt.
     public var maxAttempts: Int
+    /// Continuous online time after which the retry budget is restored. A
+    /// connection that drops sooner keeps its backoff (see `ReconnectBackoff`).
+    public var healthyDuration: TimeInterval
 
     public init(
         watchInterval: TimeInterval = 1,
         baseDelay: TimeInterval = 2,
         maxDelay: TimeInterval = 30,
-        maxAttempts: Int = 8
+        maxAttempts: Int = 8,
+        healthyDuration: TimeInterval = 60
     ) {
         self.watchInterval = watchInterval
         self.baseDelay = baseDelay
         self.maxDelay = maxDelay
         self.maxAttempts = maxAttempts
+        self.healthyDuration = healthyDuration
+    }
+
+    public var backoffPolicy: ReconnectBackoff.Policy {
+        .init(baseDelay: baseDelay, maxDelay: maxDelay, maxAttempts: maxAttempts, healthyDuration: healthyDuration)
     }
 
     public static let standard = ConnectionRecoveryTiming()
