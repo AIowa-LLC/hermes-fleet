@@ -138,6 +138,27 @@ public enum Redaction {
             withTemplate: "[ENDPOINT REDACTED]")
     }
 
+    /// Maximum characters of a user-typed problem description kept in a report.
+    public static let reportDescriptionLimit = 2000
+
+    /// Redact free text the user typed into the Report a Problem form. Same
+    /// credential and endpoint masking as `safeDiagnosticReportText`, but the
+    /// text is capped at `reportDescriptionLimit` (not 512) and newlines are
+    /// preserved so a multi-line description stays readable.
+    public static func safeReportDescription(_ text: String) -> String {
+        var safe = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(reportDescriptionLimit))
+        for pattern in errorSecretPatterns + diagnosticSecretPatterns {
+            safe = pattern.stringByReplacingMatches(
+                in: safe,
+                range: NSRange(safe.startIndex..., in: safe),
+                withTemplate: "$1[REDACTED]")
+        }
+        return diagnosticReportURLPatterns[0].stringByReplacingMatches(
+            in: safe,
+            range: NSRange(safe.startIndex..., in: safe),
+            withTemplate: "[ENDPOINT REDACTED]")
+    }
+
     /// The credential shapes `safeText` does not cover. Each keeps a leading
     /// marker as capture group 1 so the masked output stays readable.
     private static let diagnosticSecretPatterns: [NSRegularExpression] = {
