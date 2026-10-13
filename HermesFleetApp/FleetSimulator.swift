@@ -343,6 +343,14 @@ final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
     private let liveUpdatesEnabled =
         ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] == "1"
 
+    /// UI-test knob: `HERMES_FLEET_KANBAN_REFUSED=1` scripts the connector's
+    /// 403 `out_of_scope` refusal for every board route (the real-gateway
+    /// failure shape), so the unavailable state is walkable.
+    private let refused =
+        ProcessInfo.processInfo.environment["HERMES_FLEET_KANBAN_REFUSED"] == "1"
+    private static let scriptedRefusal = KanbanBoardError.accessRefused(
+        .outOfScope, status: 403, route: "/api/plugins/kanban/board")
+
     private static let scriptedBoards = KanbanBoardList(
         boards: [
             KanbanBoardSummary(
@@ -355,7 +363,8 @@ final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
         current: "hermes-fleet-r10")
 
     func fetchBoards() async throws -> KanbanBoardList {
-        Self.scriptedBoards
+        if refused { throw Self.scriptedRefusal }
+        return Self.scriptedBoards
     }
 
     func pinBoard(_ slug: String?) async {
@@ -363,7 +372,8 @@ final class ScriptedKanbanWatcher: KanbanBoardOperating, @unchecked Sendable {
     }
 
     func snapshot() async throws -> KanbanBoardSnapshot {
-        snapshotFromState()
+        if refused { throw Self.scriptedRefusal }
+        return snapshotFromState()
     }
 
     func changeEvents() async -> AsyncStream<KanbanEventBatch> {

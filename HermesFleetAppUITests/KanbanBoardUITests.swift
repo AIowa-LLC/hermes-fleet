@@ -46,6 +46,34 @@ final class KanbanBoardUITests: XCTestCase {
         attachScreenshot(of: app, name: "kanban-board-interactive")
     }
 
+    /// DEV14: a gateway whose connector refuses the board shows an honest
+    /// unavailable state with a single "Check again" and NO create controls.
+    func testRefusedBoardShowsUnavailableStateWithoutAddControls() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_KANBAN_REFUSED"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_KANBAN_BOARD_RESET"] = "1"
+        app.launch()
+
+        openKanbanEntry(app)
+
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "kanban.board.unavailable").waitForExistence(timeout: 15),
+            "a refused board must render the unavailable state")
+        XCTAssertTrue(
+            app.staticTexts["This gateway's connector doesn't allow Kanban yet"].exists)
+        XCTAssertFalse(app.buttons["kanban.board.add"].exists, "no Add Card when the board is unavailable")
+        XCTAssertFalse(app.buttons["kanban.board.empty.add"].exists)
+        XCTAssertFalse(firstMatch(in: app, identifier: "kanban.board.error").exists)
+        let check = app.buttons["kanban.board.unavailable.check"]
+        XCTAssertTrue(check.exists)
+        check.tap()
+        XCTAssertTrue(
+            firstMatch(in: app, identifier: "kanban.board.unavailable").waitForExistence(timeout: 10),
+            "still unavailable after a manual re-check")
+        attachScreenshot(of: app, name: "kanban-board-unavailable")
+    }
+
     func testLiveEventsUpdateBoardWithoutManualRefresh() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_KANBAN_LIVE_UPDATES"] = "1"

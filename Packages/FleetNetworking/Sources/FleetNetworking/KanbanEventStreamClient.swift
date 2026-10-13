@@ -147,7 +147,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("kanban boards: HTTP \(http.statusCode)")
-            throw KanbanBoardError.httpStatus(http.statusCode)
+            throw Self.statusError(http.statusCode, body: data, route: "/api/plugins/kanban/boards")
         }
         do {
             return try JSONDecoder().decode(KanbanBoardList.self, from: data)
@@ -187,7 +187,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("kanban board: HTTP \(http.statusCode)")
-            throw KanbanBoardError.httpStatus(http.statusCode)
+            throw Self.statusError(http.statusCode, body: data, route: "/api/plugins/kanban/board")
         }
         let envelope: BoardEnvelope
         do {
@@ -343,6 +343,20 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     }
 
     // MARK: Wire helpers (pure, testable)
+
+    /// Map a non-2xx board response to a typed error. 401/403/404 become
+    /// `.accessRefused` (definitive — never retried automatically); the JSON
+    /// body is read only for its `"error"` code (the Fleet connector's
+    /// `out_of_scope`) and is never logged or surfaced. Other statuses stay
+    /// plain `.httpStatus` (retryable).
+    public static func statusError(_ status: Int, body: Data, route: String) -> KanbanBoardError {
+        struct Envelope: Decodable { let error: String? }
+        let code = (try? JSONDecoder().decode(Envelope.self, from: body))?.error
+        guard let issue = KanbanBoardAccessIssue.classify(status: status, errorCode: code) else {
+            return .httpStatus(status)
+        }
+        return .accessRefused(issue, status: status, route: route)
+    }
 
     /// Build the snapshot URL: `…/api/plugins/kanban/board` plus
     /// `?board=<slug>` when pinned (nil = the server's active board; the

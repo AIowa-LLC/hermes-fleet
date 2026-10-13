@@ -70,6 +70,91 @@ final class KanbanBoardViewModelTests: XCTestCase {
         XCTAssertNil(model.snapshot)
     }
 
+    // MARK: DEV14 — refused board (connector out_of_scope)
+
+    private static let outOfScope = KanbanBoardError.accessRefused(
+        .outOfScope, status: 403, route: "/api/plugins/kanban/board")
+
+    func testForbiddenBoardStopsAutomaticUpdatesAndBlocksMutation() async throws {
+        let watcher = ScriptedKanbanWatcherDouble()
+        watcher.snapshotError = Self.outOfScope
+        let recorder = DiagnosticsRecorder()
+        let model = KanbanBoardViewModel(
+            watcher: watcher, boardOperator: nil, diagnostics: recorder)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        XCTAssertEqual(model.accessIssue, .outOfScope)
+        XCTAssertNil(model.snapshot)
+        XCTAssertFalse(model.canMutate)
+        XCTAssertEqual(watcher.snapshotFetchCount, 1)
+        XCTAssertEqual(watcher.streamOpenCount, 0, "no WS stream for a refused board")
+        XCTAssertEqual(model.streamPhase, .idle)
+        XCTAssertTrue(
+            recorder.snapshot().contains { $0.category == "Kanban" && $0.detail.contains("out_of_scope") },
+            "the refused route must be recorded in diagnostics")
+    }
+
+    func testManualCheckIssuesExactlyOneRequestAndRecovers() async throws {
+        let watcher = ScriptedKanbanWatcherDouble()
+        watcher.snapshotError = Self.outOfScope
+        let model = KanbanBoardViewModel(watcher: watcher)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        await model.refresh()
+        XCTAssertEqual(watcher.snapshotFetchCount, 2, "one request per manual check")
+        XCTAssertEqual(model.accessIssue, .outOfScope)
+
+        watcher.snapshotError = nil
+        await model.refresh()
+        XCTAssertEqual(watcher.snapshotFetchCount, 3)
+        XCTAssertNil(model.accessIssue)
+        XCTAssertNotNil(model.snapshot)
+        XCTAssertEqual(watcher.streamOpenCount, 1, "stream starts once the board loads")
+    }
+
+    func testConcurrentRefreshesIssueOneRequest() async throws {
+        let watcher = ScriptedKanbanWatcherDouble()
+        let model = KanbanBoardViewModel(watcher: watcher)
+        await model.start()
+        defer { Task { await model.stop() } }
+        let before = watcher.snapshotFetchCount
+
+        watcher.snapshotDelay = .milliseconds(200)
+        async let a: Void = model.refresh()
+        async let b: Void = model.refresh()
+        async let c: Void = model.refresh()
+        _ = await (a, b, c)
+        XCTAssertEqual(watcher.snapshotFetchCount - before, 1)
+    }
+
+    func testSignedOutIsDefinitive() async throws {
+        let watcher = ScriptedKanbanWatcherDouble()
+        watcher.snapshotError = KanbanBoardError.httpStatus(401)
+        let model = KanbanBoardViewModel(watcher: watcher)
+        await model.start()
+        defer { Task { await model.stop() } }
+        XCTAssertEqual(model.accessIssue, .signedOut)
+        XCTAssertEqual(watcher.streamOpenCount, 0)
+    }
+
+    func testServerErrorStaysRetryable() async throws {
+        let watcher = ScriptedKanbanWatcherDouble()
+        watcher.snapshotError = KanbanBoardError.httpStatus(500)
+        let model = KanbanBoardViewModel(watcher: watcher)
+        await model.start()
+        defer { Task { await model.stop() } }
+
+        XCTAssertNil(model.accessIssue)
+        XCTAssertEqual(model.errorMessage, "kanban board: HTTP 500")
+        XCTAssertEqual(watcher.streamOpenCount, 1, "transient failures keep the live stream")
+        watcher.snapshotError = nil
+        await model.refresh()
+        XCTAssertNotNil(model.snapshot)
+        XCTAssertNil(model.errorMessage)
+    }
+
     func testStopEndsStream() async throws {
         let watcher = ScriptedKanbanWatcherDouble()
         let model = KanbanBoardViewModel(watcher: watcher)
@@ -88,6 +173,8 @@ final class ScriptedKanbanWatcherDouble: KanbanBoardWatching, @unchecked Sendabl
     private var _snapshotFetchCount = 0
     private var _snapshotError: Error?
     private var _stopped = false
+    private var _streamOpenCount = 0
+    private var _snapshotDelay: Duration?
 
     var snapshotFetchCount: Int {
         get { locked { _snapshotFetchCount } }
@@ -95,6 +182,11 @@ final class ScriptedKanbanWatcherDouble: KanbanBoardWatching, @unchecked Sendabl
     var snapshotError: Error? {
         get { locked { _snapshotError } }
         set { locked { _snapshotError = newValue } }
+    }
+    var streamOpenCount: Int { locked { _streamOpenCount } }
+    var snapshotDelay: Duration? {
+        get { locked { _snapshotDelay } }
+        set { locked { _snapshotDelay = newValue } }
     }
     var stopped: Bool {
         get { locked { _stopped } }
@@ -111,6 +203,7 @@ final class ScriptedKanbanWatcherDouble: KanbanBoardWatching, @unchecked Sendabl
             _snapshotFetchCount += 1
             return _snapshotError
         }
+        if let delay = snapshotDelay { try? await Task.sleep(for: delay) }
         if let thrown { throw thrown }
         return KanbanBoardSnapshot(
             columns: ["todo", "running"],
@@ -125,7 +218,8 @@ final class ScriptedKanbanWatcherDouble: KanbanBoardWatching, @unchecked Sendabl
     func changeEvents() async -> AsyncStream<KanbanEventBatch> {
         let id = UUID()
         return locked {
-            AsyncStream { continuation in
+            _streamOpenCount += 1
+            return AsyncStream { continuation in
                 self.continuations[id] = continuation
                 continuation.onTermination = { _ in
                     self.locked { self.continuations[id] = nil }
