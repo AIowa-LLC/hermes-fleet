@@ -340,8 +340,12 @@ final class ReconnectReplayTests: XCTestCase {
 
         // Subscribe to the live event channel to observe replayed injection.
         let collector = GatewayEventCollector()
+        // Registration is synchronous, so create the bounded fan-out stream
+        // before replay can inject. Starting the task alone does not guarantee
+        // it has run far enough to register the subscription.
+        let eventStream = transport.subscribeToEvents()
         let subscription = Task {
-            for await event in transport.subscribeToEvents() {
+            for await event in eventStream {
                 collector.append(event)
             }
         }
@@ -359,8 +363,12 @@ final class ReconnectReplayTests: XCTestCase {
         let wmAfter = await transport.watermark(for: "s1")
         XCTAssertEqual(wmAfter, 5)
 
+        // Cancellation finishes the bounded queue and discards any unread
+        // backlog. Wait until the collector has consumed both replay events
+        // before cancelling, so this assertion tests replay rather than task
+        // scheduling.
+        await waitUntil({ collector.all.filter { ($0.seq ?? 0) > 3 }.count == 2 }, timeout: .seconds(3))
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(100))
 
         // The two replayed events reached the live channel, in order. P0-7
         // fan-out semantics: the channel delivers to LIVE subscribers only —
@@ -420,14 +428,15 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
 
         let collector = GatewayEventCollector()
+        let eventStream = transport.subscribeToEvents()
         let subscription = Task {
-            for await event in transport.subscribeToEvents() { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         let outcomes = try await engine.replayAfterReconnect()
         XCTAssertEqual(outcomes, [.replayed(sessionID: "s1", count: 1)],
                        "only the strictly-newer event is counted as replayed")
+        await waitUntil({ collector.all.filter { $0.seq == 2 }.count == 1 }, timeout: .seconds(3))
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(100))
 
         let replayed = collector.all.filter { $0.seq != nil && $0.seq != 1 }
         XCTAssertEqual(replayed.map(\.seq), [2], "overlap seq 1 must be dropped; only seq 2 applied")
@@ -623,13 +632,14 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
 
         let collector = GatewayEventCollector()
+        let eventStream = transport.subscribeToEvents()
         let subscription = Task {
-            for await event in transport.subscribeToEvents() { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         let outcomes = try await engine.replayAfterReconnect()
         XCTAssertEqual(outcomes, [.replayed(sessionID: "s1", count: 2)])
+        await waitUntil({ collector.all.filter { ($0.seq ?? 0) > 3 }.count == 2 }, timeout: .seconds(3))
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(100))
 
         let replayed = collector.all.filter { ($0.seq ?? 0) > 3 }
         XCTAssertEqual(replayed.map(\.seq), [5, 7], "apply exactly what was returned, in order — no invented 6")
