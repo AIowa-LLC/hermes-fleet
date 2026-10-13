@@ -590,13 +590,8 @@ public final class ConversationViewModel {
         // so this surfaces no notice on a normal open.
         do {
             let outcomes = try await session.replay.replayAfterReconnect()
-            if outcomes.contains(where: { outcome in
-                switch outcome {
-                case .replayed, .truncated, .epochChanged, .failed: return true
-                default: return false
-                }
-            }) {
-                replayNotice = Self.replayNotice(outcomes)
+            if let notice = Self.replayNotice(outcomes, openSessionID: openedSessionID) {
+                replayNotice = notice
             }
         } catch {
             // Non-fatal: if the first adoption fails (e.g. transient drop
@@ -2569,7 +2564,7 @@ public final class ConversationViewModel {
         do {
             let outcomes = try await session.replay.replayAfterReconnect()
             guard isCurrent(token) else { return }
-            replayNotice = Self.replayNotice(outcomes)
+            replayNotice = Self.replayNotice(outcomes, openSessionID: openedSessionID)
             // If the epoch changed or replay was truncated, the authoritative
             // transcript must be refetched (spec §9.5/§9.6). All three paths
             // route through refetchAuthoritativeHistory so the conversation
@@ -2582,6 +2577,9 @@ public final class ConversationViewModel {
             for outcome in outcomes {
                 switch outcome {
                 case .truncated(let sid), .failed(let sid, _):
+                    // DEV14: outcomes now span every watermarked session; only
+                    // the open session's transcript may be refetched here.
+                    guard openedSessionID == nil || sid == openedSessionID else { break }
                     await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
                 case .epochChanged:
                     if let sid = openedSessionID {
@@ -3122,22 +3120,36 @@ public final class ConversationViewModel {
 
     /// Human-readable replay hydration notice (non-secret; spec §30 answers
     /// "what happened" without leaking credentials).
-    static func replayNotice(_ outcomes: [ReplayOutcome]) -> String {
-        guard !outcomes.isEmpty else { return "Reconnected." }
-        let parts = outcomes.map { outcome -> String in
+    ///
+    /// DEV14: the transport watermarks every session it has ever seen, so one
+    /// reconnect yields one outcome per session. The conversation banner only
+    /// describes the OPEN session (plus gateway-wide epoch changes), collapses
+    /// duplicates, and returns `nil` when nothing changed — a routine
+    /// background/foreground recovery must not read as a failure.
+    /// `.nothingToReplay` carries no session id and is never surfaced.
+    public static func replayNotice(_ outcomes: [ReplayOutcome], openSessionID: String?) -> String? {
+        var parts: [String] = []
+        func add(_ part: String) {
+            if !parts.contains(part) { parts.append(part) }
+        }
+        for outcome in outcomes {
             switch outcome {
-            case .replayed(_, let count):
-                return "replayed \(count) missed event\(count == 1 ? "" : "s")"
-            case .truncated:
-                return "history refreshed"
+            case .replayed(let sid, let count):
+                guard openSessionID == nil || sid == openSessionID else { continue }
+                add("replayed \(count) missed event\(count == 1 ? "" : "s")")
+            case .truncated(let sid):
+                guard openSessionID == nil || sid == openSessionID else { continue }
+                add("history refreshed")
             case .epochChanged:
-                return "gateway restarted — history refreshed"
-            case .failed(_, let detail):
-                return "replay failed: \(detail)"
+                add("gateway restarted — history refreshed")
+            case .failed(let sid, let detail):
+                guard openSessionID == nil || sid == openSessionID else { continue }
+                add("replay failed: \(detail)")
             case .nothingToReplay:
-                return "nothing new"
+                continue
             }
         }
+        guard !parts.isEmpty else { return nil }
         return "Reconnected · " + parts.joined(separator: ", ")
     }
 }
