@@ -127,13 +127,15 @@ final class F4FirstRunGateUITests: XCTestCase {
         XCTAssertTrue(row.isHittable, "the Settings enrollment entry must be brought onscreen before tapping")
         row.tap()
 
+        // DEV14: Settings opens the QR-first add-server sheet (same guidance
+        // as first run); owner sign-in lives under Advanced setup.
         XCTAssertTrue(
-            app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10),
-            "Settings must open the same owner enrollment flow used at first run"
+            app.buttons["fleet.add-gateway.scan"].waitForExistence(timeout: 10),
+            "Settings must open the QR-first add-server sheet"
         )
-        XCTAssertTrue(app.buttons["fleet.onboarding.dismiss"].exists,
+        XCTAssertTrue(app.buttons["fleet.add-gateway.cancel"].exists,
                       "existing users can cancel enrollment and return to the fleet")
-        app.buttons["fleet.onboarding.dismiss"].tap()
+        app.buttons["fleet.add-gateway.cancel"].tap()
         attachScreenshot(of: app, name: "f4-settings-owner-enrollment")
     }
 
@@ -147,13 +149,16 @@ final class F4FirstRunGateUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
         add.tap()
-        XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10),
-                      "Add Gateway must open owner enrollment from the Gateways tab")
-        app.buttons["fleet.onboarding.advanced"].tap()
+        XCTAssertTrue(app.buttons["fleet.add-gateway.scan"].waitForExistence(timeout: 10),
+                      "Add Gateway must open the QR-first sheet from the Gateways tab")
+        let advanced = app.buttons["fleet.add-gateway.advanced"]
+        for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+        advanced.tap()
+        app.buttons["fleet.add-gateway.advanced.manual"].tap()
         XCTAssertTrue(app.textFields["fleet.gateways.form.endpoint"].waitForExistence(timeout: 10),
                       "advanced gateway strategies remain available")
         app.buttons["fleet.gateways.form.cancel"].tap()
-        app.buttons["fleet.onboarding.dismiss"].tap()
+        app.buttons["fleet.add-gateway.advanced.cancel"].tap()
         attachScreenshot(of: app, name: "f4-add-gateway-still-works")
     }
 

@@ -201,6 +201,10 @@ final class F3OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.textFields["fleet.gateways.form.endpoint"].waitForExistence(timeout: 10))
         app.buttons["fleet.gateways.form.cancel"].tap()
         app.buttons["fleet.onboarding.dismiss"].tap()
+        // The owner sign-in sheet was nested in the add-server sheet.
+        let cancelAdd = app.buttons["fleet.add-gateway.advanced.cancel"]
+        XCTAssertTrue(cancelAdd.waitForExistence(timeout: 10))
+        cancelAdd.tap()
         UITabNavigation.shellReady(app, timeout: 10)
     }
 
@@ -266,6 +270,15 @@ final class F3OnboardingUITests: XCTestCase {
         let add = app.buttons["fleet.gateways.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 10))
         add.tap()
+        // DEV14: additional servers default to the QR-first sheet; owner
+        // sign-in remains available as a secondary Advanced setup path.
+        let advanced = app.buttons["fleet.add-gateway.advanced"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 10))
+        for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+        advanced.tap()
+        let owner = app.buttons["fleet.add-gateway.advanced.owner"]
+        XCTAssertTrue(owner.waitForExistence(timeout: 10))
+        owner.tap()
         XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10),
                       "owner enrollment remains available for existing fleets")
     }

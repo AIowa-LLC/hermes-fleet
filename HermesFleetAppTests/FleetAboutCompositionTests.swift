@@ -57,4 +57,45 @@ final class FleetAboutCompositionTests: XCTestCase {
         XCTAssertTrue(source.contains("\"fleet.about.support\""))
         XCTAssertTrue(source.contains("FleetLegal.privacyPolicyURL"))
     }
+
+    // MARK: DEV14 brand consistency
+
+    func testAboutAndOnboardingUseTheSharedBrandMarkNotSFSymbols() throws {
+        let about = try repoSource("Packages/FleetUI/Sources/FleetUI/FleetAboutView.swift")
+        XCTAssertTrue(about.contains("FleetBrandMark("), "About must use the approved wing mark")
+        XCTAssertFalse(about.contains("square.grid.2x2"), "the placeholder SF Symbol must not return")
+        let owner = try repoSource("Packages/FleetUI/Sources/FleetUI/GatewayOnboardingView.swift")
+        XCTAssertTrue(owner.contains("FleetBrandMark("))
+        XCTAssertFalse(owner.contains("circle.hexagongrid"), "the seven-dot symbol must not return")
+        for file in ["QRFirstServerView", "AdditionalGatewaySheet"] {
+            let source = try repoSource("Packages/FleetUI/Sources/FleetUI/\(file).swift")
+            XCTAssertTrue(source.contains("FleetBrandMark("), "\(file) must show the shared brand mark")
+        }
+    }
+
+    func testBrandMarkCornerRadiusMatchesFirstRunHeaderAtDefaultSize() {
+        XCTAssertEqual(FleetBrandMark.cornerRadius(for: 72), FleetTheme.radiusCard)
+        XCTAssertEqual(FleetBrandMark.cornerRadius(for: 36), FleetTheme.radiusCard / 2)
+    }
+
+    // MARK: DEV14 single setup-prompt source
+
+    func testFirstRunAndAdditionalGatewayShareOneSetupPromptSource() throws {
+        XCTAssertTrue(PairingSetupPrompt.ownerMessage.contains("actual incoming event is a private Telegram message"))
+        let sources = "Packages/FleetUI/Sources/FleetUI/"
+        for file in ["QRFirstServerView", "AdditionalGatewaySheet"] {
+            let source = try repoSource("\(sources)\(file).swift")
+            XCTAssertTrue(source.contains("PairingSetupPromptCard("), "\(file) must use the shared prompt card")
+            XCTAssertTrue(source.contains("PairingScanAction("), "\(file) must use the shared scan action")
+            XCTAssertFalse(source.contains("First verify that this actual incoming event"),
+                           "\(file) must not carry its own copy of the prompt")
+        }
+        let card = try repoSource("\(sources)PairingSetupComponents.swift")
+        XCTAssertEqual(card.components(separatedBy: "PairingSetupPrompt.ownerMessage").count - 1, 2,
+                       "the card copies and renders the single maintained prompt")
+        XCTAssertFalse(try repoSource("\(sources)GatewaysView.swift").contains("GatewayOnboardingView("),
+                       "Gateways must present the QR-first sheet, not the old address flow")
+        XCTAssertFalse(try repoSource("\(sources)FleetSettingsView.swift").contains("GatewayOnboardingView("),
+                       "Settings must present the QR-first sheet, not the old address flow")
+    }
 }
