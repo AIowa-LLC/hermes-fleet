@@ -350,14 +350,19 @@ final class ConversationCompactChromeUITests: XCTestCase {
         for id in ["fleet.conversation.header.folder", "fleet.conversation.header.profile"] {
             let chip = firstMatch(in: app, identifier: id)
             XCTAssertTrue(chip.waitForExistence(timeout: 10), "\(id) must render")
-            for _ in 0..<4 where !chip.isHittable {
-                zone.swipeLeft(velocity: .slow)
+            for _ in 0..<4 where !chip.isHittable || chip.frame.maxX > window.frame.maxX + 1 {
+                // The scroll view's frame can extend below the chip row, so
+                // drag along the chip row itself (the model chip's midY).
+                let rowY = model.frame.midY / window.frame.height
+                let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: rowY))
+                let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: rowY))
+                start.press(forDuration: 0.1, thenDragTo: end)
             }
             XCTAssertTrue(chip.isHittable, "\(id) must be reachable by scrolling")
             XCTAssertGreaterThanOrEqual(chip.frame.minX, window.frame.minX,
                                         "\(id) clipped at leading edge once revealed")
             XCTAssertLessThanOrEqual(chip.frame.maxX, window.frame.maxX + 1,
-                                     "\(id) clipped at trailing edge once revealed")
+                                     "\(id) clipped at trailing edge once revealed (chip \(chip.frame), zone \(zone.frame), window \(window.frame), hittable \(chip.isHittable))")
             XCTAssertLessThanOrEqual(chip.frame.width, 190, "\(id) must be width-capped (\(chip.frame.width))")
         }
         // The full value stays available to assistive tech.
@@ -388,7 +393,7 @@ final class ConversationCompactChromeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launchEnvironment["HERMES_FLEET_REASONING_DEMO"] = "1"
-        app.launchEnvironment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] = "1200"
+        app.launchEnvironment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] = "3000"
         if accessibilityText {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName",
                                     "UICTContentSizeCategoryAccessibilityXL"]
