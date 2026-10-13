@@ -18,7 +18,7 @@ final class F3OnboardingUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["fleet.first-run.expiry"].exists)
         let ownerPrompt = app.staticTexts["fleet.first-run.owner-prompt"]
         XCTAssertTrue(ownerPrompt.exists, "the Telegram setup instructions must be selectable text")
-        XCTAssertTrue(ownerPrompt.label.contains("actual incoming event is a private Telegram message"))
+        XCTAssertTrue(ownerPrompt.label.contains("private Telegram message from the verified owner"))
         XCTAssertTrue(ownerPrompt.label.contains("exact source, runtime source, and Hermes home"))
         XCTAssertTrue(ownerPrompt.label.contains("This report proves host capability only"))
         XCTAssertTrue(ownerPrompt.label.contains("does not prove authority for this Telegram event"))

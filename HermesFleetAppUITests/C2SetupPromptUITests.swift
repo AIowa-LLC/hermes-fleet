@@ -51,7 +51,7 @@ final class C2SetupPromptUITests: XCTestCase {
                        "the old address-first flow must not be the default")
         let prompt = app.staticTexts["fleet.add-gateway.owner-prompt"]
         XCTAssertTrue(prompt.exists)
-        XCTAssertTrue(prompt.label.contains("actual incoming event is a private Telegram message"),
+        XCTAssertTrue(prompt.label.contains("private Telegram message from the verified owner"),
                       "the shared prompt text is shown")
 
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())

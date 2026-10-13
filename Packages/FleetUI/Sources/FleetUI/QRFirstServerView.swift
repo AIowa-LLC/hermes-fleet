@@ -67,7 +67,7 @@ struct QRFirstServerView: View {
                 prerequisiteRow(number: "2", text: "Open a private Telegram chat with Hermes from the server owner’s account.")
                 prerequisiteRow(number: "3", text: "The maintained Fleet host release must report a ready, owner-bound invitation issuer for the active Hermes home/runtime, and the computer must be able to display the QR locally.")
 
-                Text("Invitations work once and expire after 10 minutes. Scanning only previews the request; this phone is added only after you review and confirm it.")
+                Text("Invitations work once and expire after two minutes. Scanning only previews the request; this phone is added only after you review and confirm it.")
                     .font(.footnote)
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

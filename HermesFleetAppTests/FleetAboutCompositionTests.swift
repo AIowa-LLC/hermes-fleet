@@ -81,13 +81,17 @@ final class FleetAboutCompositionTests: XCTestCase {
     // MARK: DEV14 single setup-prompt source
 
     func testFirstRunAndAdditionalGatewayShareOneSetupPromptSource() throws {
-        XCTAssertTrue(PairingSetupPrompt.ownerMessage.contains("actual incoming event is a private Telegram message"))
+        XCTAssertTrue(PairingSetupPrompt.ownerMessage.contains("private Telegram message from the verified owner"))
+        let owner = PairingSetupPrompt.ownerMessage
+        for needle in ["/fleetsetup", "/fleetstatus", "/fleetqr", "/fleetdevices", "two minutes", "existing owner binding"] {
+            XCTAssertTrue(owner.contains(needle), "setup prompt must describe the connector contract: \(needle)")
+        }
         let sources = "Packages/FleetUI/Sources/FleetUI/"
         for file in ["QRFirstServerView", "AdditionalGatewaySheet"] {
             let source = try repoSource("\(sources)\(file).swift")
             XCTAssertTrue(source.contains("PairingSetupPromptCard("), "\(file) must use the shared prompt card")
             XCTAssertTrue(source.contains("PairingScanAction("), "\(file) must use the shared scan action")
-            XCTAssertFalse(source.contains("First verify that this actual incoming event"),
+            XCTAssertFalse(source.contains("Help me set up Hermes Fleet on this host"),
                            "\(file) must not carry its own copy of the prompt")
         }
         let card = try repoSource("\(sources)PairingSetupComponents.swift")
