@@ -70,7 +70,7 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             }
             return LiveOpsGatewaySnapshot(
                 gatewayID: gatewayID, coverage: .reporting, operations: operations, observedAt: now,
-                observationNote: "Live reporting from \(publishers) Hermes backend\(publishers == 1 ? "" : "s"). Only enabled profiles are visible.",
+                observationNote: "Live reporting from \(publishers) Hermes process\(publishers == 1 ? "" : "es"). Only enabled profiles are visible.",
                 reportingSetup: .reporting(backends: publishers))
         } catch {
             return LiveOpsGatewaySnapshot(

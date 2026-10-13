@@ -161,4 +161,40 @@ final class FleetDashboardFormattingTests: XCTestCase {
         XCTAssertEqual(FleetDashboardFormatting.durationLabel(milliseconds: 3 * 3_600_000 + 12 * 60_000), "3h 12m")
         XCTAssertEqual(FleetDashboardFormatting.durationLabel(milliseconds: 26 * 3_600_000), "1d 2h")
     }
+
+    // MARK: Continue labels (DEV14)
+
+    func testContinueLabelsUseSessionTitleBotAndGateway() {
+        let labels = FleetDashboardFormatting.continueLabels(
+            session: SessionSummary(id: "s1", title: "Replay plan review", preview: "ignored"),
+            storedSessionTitle: nil, botName: "Researcher", gatewayName: "Workstation")
+        XCTAssertEqual(labels.title, "Replay plan review")
+        XCTAssertEqual(labels.subtitle, "Researcher · Workstation")
+        XCTAssertTrue(labels.hasRealTitle)
+    }
+
+    func testContinueLabelsFallBackToPreviewThenBotName() {
+        let fromPreview = FleetDashboardFormatting.continueLabels(
+            session: SessionSummary(id: "s1", title: "  ", preview: "Draft the launch email\nsecond line"),
+            storedSessionTitle: nil, botName: "Default", gatewayName: "Lab")
+        XCTAssertEqual(fromPreview.title, "Draft the launch email")
+
+        let none = FleetDashboardFormatting.continueLabels(
+            session: nil, storedSessionTitle: nil, botName: "Default", gatewayName: "Lab")
+        XCTAssertEqual(none.title, "Conversation with Default")
+        XCTAssertFalse(none.hasRealTitle)
+        XCTAssertNotEqual(none.title, "default", "never the bare profile slug")
+
+        let stored = FleetDashboardFormatting.continueLabels(
+            session: nil, storedSessionTitle: "Stored title", botName: "Default", gatewayName: "Lab")
+        XCTAssertEqual(stored.title, "Stored title")
+    }
+
+    func testContinueLabelsCapLongTitles() {
+        let labels = FleetDashboardFormatting.continueLabels(
+            session: SessionSummary(id: "s", title: String(repeating: "x", count: 300)),
+            storedSessionTitle: nil, botName: "B", gatewayName: "G")
+        XCTAssertEqual(labels.title.count, 80)
+        XCTAssertTrue(labels.title.hasSuffix("…"))
+    }
 }

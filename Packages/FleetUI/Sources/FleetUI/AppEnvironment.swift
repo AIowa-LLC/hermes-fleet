@@ -2842,9 +2842,21 @@ public final class AppEnvironment {
     /// a failed link; identity is source-qualified (Route + sessionID).
     public func recordConversationOpen(route: Route, sessionID: String?, canonical: Bool, title: String, subtitle: String) {
         guard let sessionID, !sessionID.isEmpty else { return }
+        // DEV14: record the conversation's REAL title + bot/gateway names so
+        // Home can tell two conversations with the same bot apart. `title` /
+        // `subtitle` passed by the caller are the legacy (slug) labels and are
+        // only the fallback for pre-DEV14 readers.
+        let gatewayName = gateway(for: route.gatewayID)?.displayName ?? route.gatewayID.rawValue
+        let botName = botIncludingGhost(for: route).map { BotRosterPresentation.displayTitle(for: $0) }
+            ?? route.profileSlug.rawValue
+        let session = sessionsByRoute[route]?.first { $0.id == sessionID }
+        let labels = FleetDashboardFormatting.continueLabels(
+            session: session, storedSessionTitle: nil, botName: botName, gatewayName: gatewayName)
         continueIndex.recordConversationOpen(
             route: route, sessionID: sessionID, canonical: canonical,
-            title: title, subtitle: subtitle)
+            title: labels.title, subtitle: labels.subtitle,
+            sessionTitle: labels.hasRealTitle ? labels.title : nil,
+            botName: botName, gatewayName: gatewayName)
         // Opening can mint a new session; stale only the owning route.
         sessionsObservedAt[route] = nil
     }

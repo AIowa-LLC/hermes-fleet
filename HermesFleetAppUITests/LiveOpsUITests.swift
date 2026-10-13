@@ -28,7 +28,7 @@ final class LiveOpsUITests: XCTestCase {
         if !check.isHittable { app.swipeUp() }
         XCTAssertTrue(check.waitForExistence(timeout: 5))
         check.tap()
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Live reporting connected")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Live reporting on")).firstMatch.exists)
     }
 
     func testInstalledReportingShowsVerifiedStatusAndSetupRemainsReachable() throws {
@@ -37,8 +37,8 @@ final class LiveOpsUITests: XCTestCase {
         openFleetTab(app)
         let status = firstMatch(in: app, identifier: "fleet.liveOpsReporting.status.workstation")
         XCTAssertTrue(status.waitForExistence(timeout: 10))
-        XCTAssertTrue(status.label.contains("Live reporting connected"))
-        XCTAssertTrue(status.label.contains("2 backends"))
+        XCTAssertTrue(status.label.contains("Live reporting on"))
+        XCTAssertTrue(status.label.contains("2 Hermes processes"))
         app.buttons["fleet.liveOpsReporting.setup.workstation"].tap()
         XCTAssertTrue(firstMatch(in: app, identifier: "fleet.liveOpsSetup").waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["Share setup link"].exists)

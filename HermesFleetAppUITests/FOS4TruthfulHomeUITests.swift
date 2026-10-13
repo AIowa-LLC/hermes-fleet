@@ -133,6 +133,53 @@ final class FOS4TruthfulHomeUITests: XCTestCase {
         attachScreenshot(of: app, name: "fos4-continue-empty")
     }
 
+    /// DEV14: two recent conversations with the same bot on the same gateway
+    /// are distinguishable by their own titles (not both "default"), and a
+    /// row opens the exact conversation it names: re-opening the OLDER row
+    /// promotes that same conversation to the top.
+    func testContinueRowsDistinguishSameBotSessionsAndOpenTheIntendedOne() throws {
+        let app = launch(extra: ["HERMES_FLEET_CONTINUE_SEED": "same-bot"])
+        let first = app.buttons["fleet.dashboard.continue.row.0"]
+        if !first.waitForExistence(timeout: 5) {
+            for _ in 0..<8 where !first.exists { app.swipeUp(velocity: .fast) }
+        }
+        XCTAssertTrue(first.waitForExistence(timeout: 15), "seeded recent conversations render")
+        let second = app.buttons["fleet.dashboard.continue.row.1"]
+        XCTAssertTrue(second.exists)
+        XCTAssertTrue(first.label.contains("Fleet setup"), "newest row names its own session: \(first.label)")
+        XCTAssertTrue(second.label.contains("Replay plan review"), "older row names its own session: \(second.label)")
+        XCTAssertNotEqual(first.label, second.label)
+        for row in [first, second] {
+            XCTAssertTrue(row.label.contains("Default"), "rows name the bot: \(row.label)")
+            XCTAssertTrue(row.label.contains("Workstation"), "rows name the gateway: \(row.label)")
+        }
+        attachScreenshot(of: app, name: "dev14-continue-distinct")
+
+        second.tap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 20)
+                      || app.textFields.firstMatch.waitForExistence(timeout: 5),
+                      "the conversation opens")
+        UITabNavigation.openTabToFleet(app)
+        let reopened = app.buttons["fleet.dashboard.continue.row.0"]
+        for _ in 0..<8 where !reopened.exists { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(reopened.waitForExistence(timeout: 15))
+        XCTAssertTrue(reopened.label.contains("Replay plan review"),
+                      "opening the older row opened exactly that conversation (now most recent): \(reopened.label)")
+    }
+
+    /// DEV14: Home states honestly that nothing needs attention and shows the
+    /// "Resume a conversation" header with the device-local empty state.
+    func testHomeHierarchyHeadersAndEmptyStates() throws {
+        let app = launch(extra: ["HERMES_FLEET_CONTINUE_RESET": "1"])
+        XCTAssertTrue(app.staticTexts["fleet.dashboard.status"].waitForExistence(timeout: 15)
+                      || app.otherElements["fleet.dashboard.status"].waitForExistence(timeout: 5),
+                      "a concise connection status line leads Home")
+        let header = app.staticTexts["fleet.dashboard.continue.header"]
+        for _ in 0..<8 where !header.exists { app.swipeUp(velocity: .fast) }
+        XCTAssertEqual(header.label, "Resume a conversation")
+        XCTAssertTrue(app.staticTexts["fleet.dashboard.continue.empty"].exists)
+    }
+
     func testGatewayRowsAreCompactWithoutEndpoints() throws {
         let app = launch()
         let row = app.buttons["fleet.dashboard.gateway.workstation"]

@@ -29,6 +29,25 @@ enum FleetServiceGraph {
         if ProcessInfo.processInfo.environment["HERMES_FLEET_CONTINUE_RESET"] == "1" {
             try? FileManager.default.removeItem(at: FleetContinueIndexStore.defaultURL())
         }
+        // DEV14 UI-test seed (simulator only): two recent conversations with
+        // the SAME bot on the SAME gateway, so a UI test can prove Home tells
+        // them apart by their own titles. Synthetic, deterministic ids that
+        // match the scripted session list.
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["HERMES_FLEET_CONTINUE_SEED"] == "same-bot" {
+            try? FileManager.default.removeItem(at: FleetContinueIndexStore.defaultURL())
+            let route = Route(gatewayID: GatewayID(rawValue: "workstation"), profileSlug: ProfileSlug(rawValue: "default"))
+            let seeds = [("workstation.default.s2", "Replay plan review", -600.0),
+                         ("workstation.default.s1", "Fleet setup", -300.0)]
+            for (sessionID, title, offset) in seeds {
+                let clocked = FleetContinueIndexStore(url: FleetContinueIndexStore.defaultURL(), now: { Date().addingTimeInterval(offset) })
+                clocked.recordConversationOpen(
+                    route: route, sessionID: sessionID, canonical: false,
+                    title: title, subtitle: "Default · Workstation",
+                    sessionTitle: title, botName: "Default", gatewayName: "Workstation")
+            }
+        }
+        #endif
         // P0-5: the scripted fleet is for the SIMULATOR ONLY — a Debug build
         // running on a physical device is Tony's live-dogfood lane and must
         // get the REAL production graph (real Keychain + live transports).

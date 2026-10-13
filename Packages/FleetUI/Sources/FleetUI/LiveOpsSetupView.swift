@@ -84,7 +84,9 @@ struct LiveOpsReportingStatusView: View {
         switch snapshot.reportingSetup {
         case .required: return "Desktop activity needs Fleet Live Reporting on the Hermes computer."
         case .reporting(let count) where snapshot.coverage.isReporting:
-            return "Live reporting connected · \(count) backend\(count == 1 ? "" : "s")"
+            // A "reporter" is one running Hermes process with the Fleet
+            // live-reporting plugin loaded (it publishes its own session file).
+            return "Live reporting on · \(count) Hermes process\(count == 1 ? "" : "es") reporting"
         case .reporting, .unavailable: return "Live reporting is unavailable. Check that Hermes has restarted and the selected profiles are enabled."
         case .unknown: return snapshot.observationNote ?? "Reporting has not been checked yet."
         }
@@ -94,6 +96,7 @@ struct LiveOpsReportingStatusView: View {
         VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
             Text(status)
                 .font(FleetTheme.secondaryFont)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("fleet.liveOpsReporting.status.\(gatewayID.rawValue)")
             if offersSetup {
                 Button(snapshot?.reportingSetup == .required ? "Set up Live Operations" : "Live Operations setup") {
