@@ -42,10 +42,15 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // Rich content can auto-scroll the transcript while it settles. The
         // composer exposes the view model's terminal state directly: the
         // streaming Stop control becomes Send only after message.complete.
-        // Use the composer's unique identifier rather than a label-wide
-        // Button query. The streamed Markdown subtree can make a broad AX
-        // snapshot expensive even though this state transition is stable.
-        let send = app.descendants(matching: .any)["fleet.conversation.send"]
+        // Observe both sides of the composer transition with button-scoped
+        // queries. A descendants(.any) lookup repeatedly snapshots the whole
+        // accessibility tree while SwiftStreamingMarkdown is updating it;
+        // the UI can keep rendering, but XCTest can stall the turn's final
+        // message.complete delivery behind those broad queries.
+        let stop = app.buttons["fleet.conversation.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10),
+                      "the scripted assistant turn should enter its streaming state")
+        let send = app.buttons["fleet.conversation.send"]
         XCTAssertTrue(send.waitForExistence(timeout: 30),
                       "the scripted rich-text turn should complete before scrolling")
 
