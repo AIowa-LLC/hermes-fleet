@@ -2143,6 +2143,11 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
                 for chunk in Self.issue5RichMarkdownChunks {
                     fullMarkdown += chunk
                     streamBox.yield(.messageDelta(sessionID: sessionID, text: chunk, rendered: nil))
+                    // Model a real streamed response rather than enqueueing
+                    // the entire rich document in one zero-gap burst. The UI
+                    // needs a turn to parse and publish each growing snapshot
+                    // before the terminal message.complete event arrives.
+                    try? await Task.sleep(for: .milliseconds(80))
                 }
                 streamBox.yield(.statusUpdate(sessionID: sessionID, kind: "process", text: "complete"))
                 streamBox.yield(.messageComplete(

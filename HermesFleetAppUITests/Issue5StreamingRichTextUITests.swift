@@ -43,10 +43,8 @@ final class Issue5StreamingRichTextUITests: XCTestCase {
         // composer exposes the view model's terminal state directly: the
         // streaming Stop control becomes Send only after message.complete.
         // Observe both sides of the composer transition with button-scoped
-        // queries. A descendants(.any) lookup repeatedly snapshots the whole
-        // accessibility tree while SwiftStreamingMarkdown is updating it;
-        // the UI can keep rendering, but XCTest can stall the turn's final
-        // message.complete delivery behind those broad queries.
+        // queries. The scripted fixture emits paced deltas so SwiftUI can
+        // publish the growing rich-text snapshots before the terminal state.
         let stop = app.buttons["fleet.conversation.stop"]
         XCTAssertTrue(stop.waitForExistence(timeout: 10),
                       "the scripted assistant turn should enter its streaming state")
