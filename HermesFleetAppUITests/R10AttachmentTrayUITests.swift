@@ -29,6 +29,122 @@ final class R10AttachmentTrayUITests: XCTestCase {
         element.tap()
     }
 
+    /// On iOS 26 the document picker is embedded in the host app's accessibility
+    /// tree as a DOC.browsingRoot element. Its visible X is exposed as a Cancel
+    /// button beneath that root; the separate DocumentsApp process is not
+    /// discoverable while this picker is presented.
+    private func waitForSystemPicker(
+        in app: XCUIApplication,
+        selectedAction: XCUIElement,
+        pickerName: String
+    ) -> XCUIElement {
+        let deadline = Date().addingTimeInterval(20)
+        let filesBrowser = app.otherElements
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
+            .firstMatch
+        let filesCloseButton = filesBrowser.descendants(matching: .button)
+            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
+            .firstMatch
+        // PHPicker is presented by the OS outside the host app's accessibility
+        // tree. Query its owner through SpringBoard instead of reusing an
+        // app-scoped element whose activation frame can be invalid.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let photoCloseButton = springboard.buttons
+            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
+            .firstMatch
+
+        while Date() < deadline {
+            if pickerName == "File" {
+                if !selectedAction.exists,
+                   filesBrowser.exists,
+                   filesCloseButton.exists,
+                   filesCloseButton.isHittable {
+                    return filesCloseButton
+                }
+            } else if !selectedAction.exists,
+                      photoCloseButton.exists,
+                      photoCloseButton.isHittable {
+                return photoCloseButton
+            }
+
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+
+        // Capture expensive diagnostics only after the readiness budget has
+        // expired, so screenshot/hierarchy collection cannot consume the
+        // time reserved for the picker to present.
+        XCTContext.runActivity(named: "\(pickerName) picker readiness failure") { activity in
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "\(pickerName) picker at readiness failure"
+            screenshot.lifetime = .keepAlways
+            activity.add(screenshot)
+
+            let hierarchyText = """
+            Host app accessibility hierarchy:
+            \(app.debugDescription)
+
+            SpringBoard accessibility hierarchy:
+            \(springboard.debugDescription)
+            """
+            let hierarchy = XCTAttachment(
+                data: Data(hierarchyText.utf8),
+                uniformTypeIdentifier: "public.plain-text"
+            )
+            hierarchy.name = "\(pickerName) picker accessibility hierarchies at readiness failure"
+            hierarchy.lifetime = .keepAlways
+            activity.add(hierarchy)
+        }
+        XCTFail("\(pickerName) picker should dismiss Add and expose its hittable Cancel or Close control within 20 seconds")
+        return pickerName == "File" ? filesCloseButton : photoCloseButton
+    }
+
+    private func dismissPhotoPicker(
+        by tapping: XCUIElement,
+        in app: XCUIApplication,
+        returningTo addButton: XCUIElement
+    ) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let photoCloseButton = springboard.buttons
+            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
+            .firstMatch
+
+        tap(tapping)
+
+        let deadline = Date().addingTimeInterval(10)
+        while photoCloseButton.exists && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertFalse(photoCloseButton.exists, "Photos picker should dismiss after tapping its system-owned close control")
+
+        while !addButton.isHittable && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertTrue(addButton.isHittable, "conversation Add action should be reachable after the Photos picker closes")
+    }
+
+    private func dismissFilePicker(
+        by tapping: XCUIElement,
+        in app: XCUIApplication,
+        returningTo addButton: XCUIElement
+    ) {
+        let filesBrowser = app.otherElements
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
+            .firstMatch
+
+        tap(tapping)
+
+        let deadline = Date().addingTimeInterval(10)
+        while filesBrowser.exists && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertFalse(filesBrowser.exists, "Files picker should dismiss after tapping its Cancel control")
+
+        while !addButton.isHittable && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertTrue(addButton.isHittable, "conversation Add action should be reachable after the Files picker closes")
+    }
+
     private func openConversation(_ app: XCUIApplication) {
         UITabNavigation.openGatewaysTab(app)
         tap(app.descendants(matching: .any).matching(identifier: "fleet.gateways.row.workstation").firstMatch)
@@ -105,5 +221,38 @@ final class R10AttachmentTrayUITests: XCTestCase {
         let banner = firstMatch(in: app, identifier: "fleet.conversation.attachment.error")
         XCTAssertTrue(banner.label.contains("too large") || banner.label.contains("fixture"),
                       "banner carries the honest failure: \(banner.label)")
+    }
+
+    func testAddActionsPresentAndCanReopenSystemPickers() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let add = firstMatch(in: app, identifier: "fleet.conversation.attach")
+
+        tap(add)
+        let fileAction = firstMatch(in: app, identifier: "fleet.conversation.attach.file")
+        tap(fileAction)
+        let cancelFile = waitForSystemPicker(in: app, selectedAction: fileAction, pickerName: "File")
+        dismissFilePicker(by: cancelFile, in: app, returningTo: add)
+
+        tap(add)
+        let repeatedFileAction = firstMatch(in: app, identifier: "fleet.conversation.attach.file")
+        tap(repeatedFileAction)
+        let cancelRepeatedFile = waitForSystemPicker(in: app, selectedAction: repeatedFileAction, pickerName: "File")
+        dismissFilePicker(by: cancelRepeatedFile, in: app, returningTo: add)
+
+        tap(add)
+        let photoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
+        tap(photoAction)
+        let cancelPhoto = waitForSystemPicker(in: app, selectedAction: photoAction, pickerName: "Photo")
+        dismissPhotoPicker(by: cancelPhoto, in: app, returningTo: add)
+
+        tap(add)
+        let repeatedPhotoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
+        tap(repeatedPhotoAction)
+        let cancelRepeatedPhoto = waitForSystemPicker(in: app, selectedAction: repeatedPhotoAction, pickerName: "Photo")
+        dismissPhotoPicker(by: cancelRepeatedPhoto, in: app, returningTo: add)
     }
 }

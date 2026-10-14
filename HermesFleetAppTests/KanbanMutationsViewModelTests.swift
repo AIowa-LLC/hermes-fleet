@@ -468,6 +468,15 @@ final class KanbanMutationsViewModelTests: XCTestCase {
         XCTAssertEqual(model.filteredSnapshot?.totalCards ?? 0, 2)
     }
 
+    func testCanMutateRequiresLoadedSnapshotNotJustOperator() async throws {
+        let op = RecordingBoardOperator()
+        let model = KanbanBoardViewModel(watcher: op, boardOperator: op)
+        XCTAssertFalse(model.canMutate, "an operator alone must not enable Add/Move")
+        await model.start()
+        defer { Task { await model.stop() } }
+        XCTAssertTrue(model.canMutate)
+    }
+
     func testNoOperatorMeansFailClosedMutations() async throws {
         let op = RecordingBoardOperator()
         let model = KanbanBoardViewModel(watcher: op, boardOperator: nil)

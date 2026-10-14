@@ -1,0 +1,6 @@
+name: fleet-owner-control
+version: 0.1.0
+description: "Private owner-bound Telegram commands for Fleet QR pairing readiness and local QR display."
+author: Hermes Fleet
+kind: standalone
+provides_hooks: []

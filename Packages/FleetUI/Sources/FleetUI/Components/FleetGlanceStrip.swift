@@ -24,7 +24,8 @@ public struct FleetGlanceFact: View {
             Text(label)
                 .font(FleetTheme.monoCaptionFont)
                 .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label): \(value)")

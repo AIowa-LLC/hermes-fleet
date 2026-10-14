@@ -27,6 +27,9 @@ public struct GatewayAuthConfiguration: Hashable, Sendable, Codable {
         /// credential is the username + password pair (stored as one Keychain
         /// item).
         case usernamePassword
+        /// Paired Fleet phone credential exchanged at `/auth/device-login`
+        /// for a short-lived authenticated session before ticket minting.
+        case deviceCredential
     }
 
     public var strategy: Strategy

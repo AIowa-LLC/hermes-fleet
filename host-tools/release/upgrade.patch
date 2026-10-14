@@ -1,0 +1,46 @@
+diff --git a/gateway/session.py b/gateway/session.py
+index 0950e5b58338d2e7fa3aa41a9b03e5df130bf925..5a3e070fe68aecdd09c489dfe8e04cf1ad810671 100644
+--- a/gateway/session.py
++++ b/gateway/session.py
+@@ -485,13 +485,17 @@ def build_session_context_prompt(context: SessionContext, *, redact_pii: bool =
+                 "separate slash-command admin setting, not Fleet-pairing authority; the configured home "
+                 "channel is a mutable delivery destination, not an owner role. When this profile's "
+                 "Fleet-pairing owner binding is `verified` and the user explicitly requests an invitation "
+-                "in this same private DM, use the documented host-side owner command "
+-                "`python -m hermes_cli.fleet_pairing_cli invite --label iPhone --ttl 600`. It acts directly on this "
+-                "Hermes home with local owner authority and does not require an interactive Dashboard "
+-                "session. A context-check message is not an invitation request. The HTTP API remains "
++                "in this same private DM, first verify the maintained Fleet host release, its exact "
++                "Hermes home/runtime, trusted HTTPS reachable from the phone, and a private local QR "
++                "display. Use that release's owner-control `/fleetqr` handler only after its readiness "
++                "gates pass; do not improvise an issuer or assume a stock update installs it. Local "
++                "owner control does not require an interactive Dashboard session. A context-check "
++                "message is not an invitation request. The HTTP API remains "
+                 "separately protected and requires an authenticated non-device Dashboard owner session; "
+-                "never infer that session from Telegram identity. Deliver a bearer link only in this "
+-                "verified private DM reply, never to a group or diagnostic report. Otherwise fail closed."
++                "never infer that session from Telegram identity. Display the bearer invitation only "
++                "as a private local QR on the host; return status only in Telegram. Never send its link "
++                "or secret in any Telegram reply, group, command arguments, or diagnostic report. "
++                "Otherwise fail closed."
+             ),
+             _TELEGRAM_TRUST_CONTEXT_END,
+         ]
+diff --git a/tests/gateway/test_telegram_pairing_owner_context.py b/tests/gateway/test_telegram_pairing_owner_context.py
+index e761da1fd7611485b14e961d236b0a9a21400437..90500fb8acd933a94073ea26c8526bc0e1adfbb0 100644
+--- a/tests/gateway/test_telegram_pairing_owner_context.py
++++ b/tests/gateway/test_telegram_pairing_owner_context.py
+@@ -69,8 +69,11 @@ def test_explicit_fleet_pairing_owner_is_visible_with_gateway_identity_and_acces
+ def test_verified_owner_can_use_the_host_issuer_without_a_dashboard_cookie():
+     prompt = build_session_context_prompt(_context(access=True, pairing_owner=True))
+ 
+-    assert "documented host-side owner command" in prompt
+-    assert "python -m hermes_cli.fleet_pairing_cli invite --label iPhone --ttl 600" in prompt
++    assert "maintained Fleet host release" in prompt
++    assert "owner-control `/fleetqr` handler only after its readiness gates pass" in prompt
++    assert "private local QR on the host; return status only in Telegram" in prompt
++    assert "Never send its link or secret in any Telegram reply" in prompt
++    assert "python -m hermes_cli.fleet_pairing_cli invite" not in prompt
+     assert "does not require an interactive Dashboard session" in prompt
+     assert "HTTP API" in prompt and "non-device Dashboard owner session" in prompt
+     assert "explicitly requests an invitation in this same private DM" in prompt

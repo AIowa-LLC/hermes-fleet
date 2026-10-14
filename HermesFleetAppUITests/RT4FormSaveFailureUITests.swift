@@ -1,5 +1,21 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    // Additional servers default to the QR-first sheet; the manual form is a
+    // secondary path under Advanced setup.
+    let scan = app.buttons["fleet.add-gateway.scan"]
+    XCTAssertTrue(scan.waitForExistence(timeout: 10), "add-server sheet should appear after Add Gateway")
+    let advanced = app.buttons["fleet.add-gateway.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    let manual = app.buttons["fleet.add-gateway.advanced.manual"]
+    XCTAssertTrue(manual.waitForExistence(timeout: 10), "manual setup should be listed under Advanced")
+    manual.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// RT4 P2-6 UI regression: a gateway-form save failure must NOT dismiss and
 /// discard the entered fields. The sheet stays open, the non-secret fields are
 /// preserved for retry, and a non-secret inline error is surfaced.
@@ -22,22 +38,15 @@ final class RT4FormSaveFailureUITests: XCTestCase {
         app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
         app.launch()
 
-        // With save-fail enabled, the scripted seed (registry.addGateway) also
-        // throws, so the fleet is empty. The first-run gate now owns that
-        // empty state and exposes the same Add Gateway form directly; a
-        // configured-fleet launch still reaches the form from Gateways. Keep
-        // both paths in the regression so the form contract is tested without
-        // assuming a tab that is intentionally unavailable on first run.
-        let onboardingEntry = firstMatch(in: app, identifier: "fleet.onboarding.enter-values")
-        if onboardingEntry.waitForExistence(timeout: 10) {
-            onboardingEntry.tap()
-        } else {
-            UITabNavigation.openGatewaysTab(app)
-            let gatewaysEntry = firstMatch(in: app, identifier: "fleet.gateways.add")
-            XCTAssertTrue(gatewaysEntry.waitForExistence(timeout: 10),
-                          "Add Gateway entry should appear (empty state or toolbar)")
-            gatewaysEntry.tap()
-        }
+        // The failure seam permits fixed configured-fleet seeds and fails
+        // user saves. Manual compatibility lives in additional-gateway
+        // setup; an empty fleet intentionally offers only QR scanning.
+        UITabNavigation.openGatewaysTab(app)
+        let gatewaysEntry = firstMatch(in: app, identifier: "fleet.gateways.add")
+        XCTAssertTrue(gatewaysEntry.waitForExistence(timeout: 10),
+                      "Add Gateway entry should appear in the configured fleet")
+        gatewaysEntry.tap()
+        openAdvancedSetup(in: app)
 
         // Enter a name + endpoint in the shared Add Gateway form.
         let nameField = app.textFields["fleet.gateways.form.name"]

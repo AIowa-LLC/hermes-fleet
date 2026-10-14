@@ -148,6 +148,50 @@ final class FOS4TruthfulHomeTests: XCTestCase {
         XCTAssertEqual(entries[0].openedAt, clock.value, "re-open refreshes recency")
     }
 
+    /// DEV14: two sessions with the SAME bot on the SAME gateway must record
+    /// distinct titles/subtitles (the old code stored the profile slug for both).
+    func testSameBotSessionsRecordDistinctTitlesAndSubtitles() async {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dev14-a-\(UUID().uuidString).json")
+        let store = FleetContinueIndexStore(url: url)
+        let r = route(ws, "default")
+        for (id, title) in [("s1", "Fleet setup"), ("s2", "Replay plan review")] {
+            let labels = FleetDashboardFormatting.continueLabels(
+                session: SessionSummary(id: id, title: title),
+                storedSessionTitle: nil, botName: "Default", gatewayName: "Workstation")
+            store.recordConversationOpen(
+                route: r, sessionID: id, canonical: false,
+                title: labels.title, subtitle: labels.subtitle,
+                sessionTitle: labels.title, botName: "Default", gatewayName: "Workstation")
+        }
+        let entries = FleetContinueIndexStore(url: url).entries()
+        XCTAssertEqual(Set(entries.map(\.title)), ["Fleet setup", "Replay plan review"])
+        XCTAssertTrue(entries.allSatisfy { $0.subtitle == "Default · Workstation" })
+        XCTAssertTrue(entries.allSatisfy { $0.title != "default" })
+        XCTAssertEqual(entries.first?.botName, "Default")
+        XCTAssertEqual(entries.first?.gatewayName, "Workstation")
+    }
+
+    /// Entries persisted by older builds (no sessionTitle/botName/gatewayName)
+    /// still decode, and are flagged legacy by the nil optional fields.
+    func testOldFormatContinueEntriesStillDecode() async throws {
+        let json = """
+        [{"id":"conv|workstation#default|s1","kind":"ordinaryConversation",
+          "gatewayIDRaw":"workstation","routeProfile":"default","sessionID":"s1",
+          "title":"default","subtitle":"default · Workstation",
+          "openedAt":\(Date().timeIntervalSinceReferenceDate)}]
+        """
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dev14-b-\(UUID().uuidString).json")
+        try Data(json.utf8).write(to: url)
+        let entries = FleetContinueIndexStore(url: url).entries()
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertNil(entries[0].sessionTitle)
+        XCTAssertNil(entries[0].botName)
+        XCTAssertNil(entries[0].gatewayName)
+        XCTAssertEqual(entries[0].sessionID, "s1")
+    }
+
     func testContinueIndexPersistsAcrossStoreReload() async {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("fos4-b-\(UUID().uuidString).json")

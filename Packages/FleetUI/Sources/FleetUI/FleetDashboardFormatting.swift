@@ -25,6 +25,55 @@ public enum FleetDashboardFormatting {
         return initials.map(String.init).joined().uppercased()
     }
 
+    // MARK: Continue rows (DEV14)
+
+    /// Display labels for a Continue (resume) row. `title` is the
+    /// conversation's own title; `subtitle` is "<bot> · <gateway>" (the view
+    /// appends the relative time).
+    public struct ContinueLabels: Equatable, Sendable {
+        public let title: String
+        public let subtitle: String
+        /// False when `title` is the "Conversation with <bot>" fallback.
+        public let hasRealTitle: Bool
+    }
+
+    /// Resolve a conversation's labels from real data only. Priority: the
+    /// live listed session title, a title stored at record time, the listed
+    /// session's sanitized preview, then "Conversation with <bot>". Never the
+    /// profile slug, so two conversations with one bot are distinguishable by
+    /// whatever the gateway actually called them.
+    public static func continueLabels(
+        session: SessionSummary?,
+        storedSessionTitle: String?,
+        botName: String,
+        gatewayName: String
+    ) -> ContinueLabels {
+        let subtitle = "\(botName) · \(gatewayName)"
+        let candidates: [String?] = [
+            session?.title,
+            storedSessionTitle,
+            session.map { SessionPreviewText.humanReadable($0.preview) },
+        ]
+        for candidate in candidates {
+            if let title = cleanedConversationTitle(candidate) {
+                return ContinueLabels(title: title, subtitle: subtitle, hasRealTitle: true)
+            }
+        }
+        return ContinueLabels(
+            title: "Conversation with \(botName)", subtitle: subtitle, hasRealTitle: false)
+    }
+
+    /// One trimmed line, capped at 80 characters, or nil when blank.
+    private static func cleanedConversationTitle(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let firstLine = raw
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+        guard !firstLine.isEmpty else { return nil }
+        return firstLine.count > 80 ? String(firstLine.prefix(79)) + "…" : firstLine
+    }
+
     // MARK: Relative time
 
     /// Compact relative time for "last active" / activity timestamps

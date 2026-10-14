@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CRITICAL_SMOKE_TESTS=(
-  F3Onboarding/testFreshInstallLandsOnOnboardingAsRootSurface
+  F3Onboarding/testFirstRunShowsOnlyQRPathAndCopyableOwnerInstructions
   U3TabNavigation/testBotsTabOpensFleetRoster
   HermesFleetHappyPath/testHappyPathGatewaysToConversationStreamedAnswer
   RoomChat/testHostedRoomOpenSendAndTranscriptRender

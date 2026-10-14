@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetCore
+import UIKit
 
 /// Compact action toolbar under a completed assistant reply.
 ///
@@ -77,8 +78,11 @@ struct AssistantReplyFooter: View {
 
     private var copyButton: some View {
         Button {
-            UIPasteboard.general.string = text
+            // Copy the exact Markdown/text displayed by the renderer. Do not
+            // strip formatting, trim whitespace, or reconstruct from history.
+            UIPasteboard.general.string = AssistantReplyFooterPolicy.actionableText(text)
             withAnimation(.easeIn(duration: 0.15)) { showingCopiedConfirmation = true }
+            UIAccessibility.post(notification: .announcement, argument: "Reply copied")
             copiedResetTask?.cancel()
             copiedResetTask = Task {
                 try? await Task.sleep(for: .seconds(1.2))

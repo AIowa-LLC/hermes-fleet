@@ -8,7 +8,8 @@ set -u
 VENV=~/.hermes/hermes-agent/venv/bin
 HERMES=$VENV/hermes
 PORT=9119
-WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
+. "$(dirname "$0")/private_dir_lib.sh"
+WORK=$(hf_private_dir "${HERMES_FLEET_LIVE_WORKDIR:-$(hf_private_name hermes-fleet-live)}") || exit 2
 mkdir -p "$WORK"
 
 echo "=== L1: start persistent live gateway surface on :$PORT ==="

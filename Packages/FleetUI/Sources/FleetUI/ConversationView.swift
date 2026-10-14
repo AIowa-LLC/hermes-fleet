@@ -3,6 +3,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import FleetCore
 import FleetPersistence
+import UIKit
 
 /// B87 follow-up ("Cannot open chat"): what `ConversationView.body` should
 /// render for a given (VM presence, fleet hydration, gateway registration)
@@ -141,7 +142,11 @@ public struct ConversationView: View {
     @State private var newChatTargetSessionID: String?
     /// R10-T1: composer attachment pickers.
     @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showingPhotoPicker = false
     @State private var showingFileImporter = false
+    @State private var showingAddActions = false
+    @State private var pendingAddPresentation: PendingAddPresentation?
+    @State private var isResolvingPickedAttachment = false
     @FocusState private var composerFocused: Bool
     /// Dogfood r6 (G1): the focus signal driving the pill→card morph. (The
     /// composer's adaptive glass + shadow no longer read the color scheme
@@ -198,6 +203,11 @@ public struct ConversationView: View {
     private struct OpenTrigger: Equatable {
         let hydrationPhase: AppEnvironment.HydrationPhase
         let gatewayPresent: Bool
+    }
+
+    private enum PendingAddPresentation {
+        case photo
+        case file
     }
 
     private var openTrigger: OpenTrigger {
@@ -297,6 +307,8 @@ public struct ConversationView: View {
             #endif
         }
         .onDisappear {
+            pendingAddPresentation = nil
+            showingAddActions = false
             viewModel?.teardown()
             environment.conversationDrafts.flush()
         }
@@ -305,6 +317,10 @@ public struct ConversationView: View {
         .onChange(of: scenePhase) { _, phase in
             // Active also retries a protected-file write deferred while locked.
             environment.conversationDrafts.flush()
+            if phase != .active {
+                pendingAddPresentation = nil
+                showingAddActions = false
+            }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .background(theme.background.ignoresSafeArea())
@@ -376,6 +392,66 @@ public struct ConversationView: View {
                 ContextBreakdownSheet(model: toolingModel)
             }
         }
+        // Keep system pickers and action dialogs attached to the stable
+        // conversation canvas. Menu content is transient and SwiftUI can
+        // dismiss it before a nested presentation request is delivered.
+        .confirmationDialog("Add to message", isPresented: $showingAddActions, titleVisibility: .visible) {
+            Button("Photo…", systemImage: "photo") {
+                pendingAddPresentation = .photo
+            }
+            .accessibilityIdentifier("fleet.conversation.attach.photo")
+            Button("File or PDF…", systemImage: "doc") {
+                pendingAddPresentation = .file
+            }
+            .accessibilityIdentifier("fleet.conversation.attach.file")
+            let previousPrompts = model.transcript
+                .filter { $0.kind == .user && !$0.text.isEmpty }
+                .suffix(10)
+            ForEach(previousPrompts.reversed()) { row in
+                Button("Reuse: \(String(row.text.prefix(64)))") {
+                    composerText = row.text
+                    composerFocused = true
+                }
+                .accessibilityIdentifier("fleet.conversation.reusePrompt.\(row.id)")
+            }
+            Button {
+                Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
+            } label: {
+                Label(
+                    model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
+                    systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
+                )
+            }
+            .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: showingAddActions) { _, isPresented in
+            if !isPresented { presentPendingAddPresentation() }
+        }
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhoto, matching: .images)
+        .onChange(of: selectedPhoto) { _, item in
+            guard let item else { return }
+            selectedPhoto = nil
+            isResolvingPickedAttachment = true
+            Task { await loadPickedPhoto(item, model: model) }
+        }
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
+            switch result {
+            case .success(let url):
+                isResolvingPickedAttachment = true
+                Task { await loadPickedFile(url, model: model) }
+            case .failure(let error):
+                let nsError = error as NSError
+                guard nsError.domain != NSCocoaErrorDomain || nsError.code != CocoaError.userCancelled.rawValue else {
+                    return
+                }
+                Task {
+                    await model.stageAttachment(
+                        name: "file", mime: nil, byteCount: 0,
+                        loadBytes: { throw error })
+                }
+            }
+        }
         // R9-T4: navigate to a successfully forked session.
         .onChange(of: model.forkedSession?.storedSessionID ?? model.forkedSession?.sessionID) { _, newID in
             guard let newID, newID != forkTargetSessionID else { return }
@@ -425,6 +501,25 @@ public struct ConversationView: View {
             floatingLatestChevron
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showingJumpToLatest)
+    }
+
+    /// Consume the attachment action only after the Add dialog has closed.
+    /// Keeping this as pending state avoids competing system presentations;
+    /// disappearance or backgrounding clears it before a picker can appear.
+    private func presentPendingAddPresentation() {
+        guard scenePhase == .active else {
+            pendingAddPresentation = nil
+            return
+        }
+        guard let pending = pendingAddPresentation else { return }
+        pendingAddPresentation = nil
+        switch pending {
+        case .photo:
+            selectedPhoto = nil
+            showingPhotoPicker = true
+        case .file:
+            showingFileImporter = true
+        }
     }
 
     /// Floating jump-to-latest chevron — zero permanent chrome: it renders
@@ -791,6 +886,11 @@ public struct ConversationView: View {
             }
     }
 
+    /// DEV14: a toolbelt chip never grows past this (full value remains in
+    /// its accessibility value / popover) so one long model, folder or
+    /// profile name cannot push its neighbours off screen.
+    private static let toolbeltChipMaxWidth: CGFloat = 150
+
     /// Working-project-folder chip: folder glyph + the LAST path component
     /// (full path in the tap popover — phone-width chips must not truncate).
     /// Hidden honestly when the gateway reports no cwd.
@@ -810,7 +910,9 @@ public struct ConversationView: View {
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .frame(maxWidth: Self.toolbeltChipMaxWidth)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(theme.background, in: Capsule())
@@ -857,7 +959,9 @@ public struct ConversationView: View {
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .frame(maxWidth: Self.toolbeltChipMaxWidth)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(theme.background, in: Capsule())
@@ -951,8 +1055,9 @@ enum ConversationHeaderChips {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            .frame(maxWidth: Self.toolbeltChipMaxWidth)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
             .background(theme.background, in: Capsule())
         }
         .buttonStyle(.fleetPressable)
@@ -1002,7 +1107,8 @@ enum ConversationHeaderChips {
             replayNotice: model.replayNotice,
             hydratedFromCache: model.hydratedFromCache,
             historyLoadError: model.historyLoadError,
-            errorMessage: model.errorMessage
+            errorMessage: model.errorMessage,
+            historyMayBeIncomplete: model.historyMayBeIncomplete
         ) {
             HStack(spacing: 12) {
                 bannerBody(banner)
@@ -1543,35 +1649,8 @@ enum ConversationHeaderChips {
                 // gateway queues attaches for the NEXT submit; allowing
                 // mid-stream picks invites orphaned uploads).
                 if model.phase == .ready {
-                    Menu {
-                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                            Label("Photo…", systemImage: "photo")
-                        }
-                        Button {
-                            showingFileImporter = true
-                        } label: {
-                            Label("File or PDF…", systemImage: "doc")
-                        }
-                        let previousPrompts = model.transcript.filter { $0.kind == .user && !$0.text.isEmpty }.suffix(10)
-                        if !previousPrompts.isEmpty {
-                            Menu("Reuse a prompt", systemImage: "clock.arrow.circlepath") {
-                                ForEach(previousPrompts.reversed()) { row in
-                                    Button(String(row.text.prefix(80))) { composerText = row.text }
-                                }
-                            }
-                        }
-                        // R10-T4: voice-mode toggle rides the "+" menu. ON =
-                        // assistant replies spoken via local TTS; turning
-                        // OFF cuts speech immediately.
-                        Button {
-                            Task { await model.setVoiceMode(!model.isVoiceModeEnabled) }
-                        } label: {
-                            Label(
-                                model.isVoiceModeEnabled ? "Speak Replies: On" : "Speak Replies: Off",
-                                systemImage: model.isVoiceModeEnabled ? "speaker.wave.2.fill" : "speaker.wave.2"
-                            )
-                        }
-                        .accessibilityIdentifier("fleet.conversation.voiceMode.toggle")
+                    Button {
+                        showingAddActions = true
                     } label: {
                         // r6: bare glyph inside the pill (the pill is the
                         // surface; 44pt target via the frame).
@@ -1582,7 +1661,8 @@ enum ConversationHeaderChips {
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
-                    .accessibilityLabel("Attach")
+                    .disabled(isResolvingPickedAttachment || model.isUploadingAttachment)
+                    .accessibilityLabel("Add to message")
                     .accessibilityIdentifier("fleet.conversation.attach")
                 }
 
@@ -1688,32 +1768,20 @@ enum ConversationHeaderChips {
             // Scrollable chip zone: model · working folder · profile ·
             // context — the r9 TOOLBELT, docked UNDER the composer (moved
             // from the header in r9; actions live next to the input they
-            // affect). Overflow scrolls (never truncates). Hidden at
-            // accessibility sizes (the ⋯ menu carries model + context
-            // there — established policy).
-            if !dynamicTypeSize.isAccessibilitySize {
-                toolbeltZone(model)
-            }
+            // affect). DEV14: chips cap + truncate (full values stay in the
+            // accessibility value) and the strip scrolls from the LEADING
+            // edge when it still overflows. The zone is no longer hidden at
+            // accessibility sizes — the ⋯ menu never carried model/folder/
+            // profile, so hiding it made them unreachable; instead the
+            // chips' own type size is capped (see `toolbeltZone`).
+            toolbeltZone(model)
         }
         // r6: the composer floats on the canvas — no full-width surface
         // band, no top hairline (the de-glass contract).
         .background(theme.background.ignoresSafeArea())
-        // R10-T1: pickers.
-        .onChange(of: selectedPhoto) { _, item in
-            guard let item else { return }
-            selectedPhoto = nil
-            Task { await loadPickedPhoto(item, model: model) }
-        }
         .onChange(of: composerText) { _, newValue in
             model.updateSlashSuggestions(for: newValue)
             persistDraft(newValue)
-        }
-        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.pdf, .item]) { result in
-            guard case .success(let url) = result else {
-                // User-cancelled picker: not an error.
-                return
-            }
-            Task { await loadPickedFile(url, model: model) }
         }
     }
 
@@ -1732,11 +1800,16 @@ enum ConversationHeaderChips {
                 }
                 profileChip(model)
             }
-            .padding(.horizontal, FleetTheme.spacingXs)
-            .frame(minHeight: 32)
+            .padding(.horizontal, FleetTheme.spacingMd)
+            .frame(minHeight: 36)
         }
         .frame(maxWidth: .infinity)
-        .defaultScrollAnchor(.center)
+        // DEV14: `.center` clipped BOTH edges whenever the chips overflowed
+        // (long model/profile names). Start at the leading edge instead.
+        .defaultScrollAnchor(.leading)
+        // Accessibility sizes: keep the strip reachable but bounded — the
+        // composer and transcript keep their space.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityIdentifier("fleet.conversation.header.chipzone")
         .scrollBounceBehavior(.basedOnSize)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -2098,12 +2171,17 @@ enum ConversationHeaderChips {
     /// via ImageIO first (the vision pipeline can't read them, cli.py:3954);
     /// unconvertible data fails honestly pre-upload.
     private func loadPickedPhoto(_ item: PhotosPickerItem, model: ConversationViewModel) async {
+        defer { isResolvingPickedAttachment = false }
         let data: Data
         do {
-            guard let loaded = try await item.loadTransferable(type: Data.self), !loaded.isEmpty else {
-                return // user-cancelled / empty pick — not an error
+            guard let loaded = try await item.loadTransferable(type: PickedAttachmentData.self),
+                  !loaded.data.isEmpty else {
+                await model.stageAttachment(
+                    name: "photo", mime: nil, byteCount: 0,
+                    loadBytes: { throw AttachmentStagingError.rpcFailed("photo could not be read — choose it again") })
+                return
             }
-            data = loaded
+            data = loaded.data
         } catch {
             await model.stageAttachment(
                 name: "photo.bin", mime: nil, byteCount: 0,
@@ -2134,7 +2212,9 @@ enum ConversationHeaderChips {
     /// HEIC/RAW → JPEG via ImageIO (device photos default to HEIC; the
     /// gateway's image pipeline accepts PNG/JPEG/GIF/WebP/BMP only).
     private static func cameraDataAsJPEG(_ data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+        guard let size = BoundedImageDecoder.pixelSize(of: data),
+              BoundedImageDecoder.isWithinBudget(width: size.width, height: size.height),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0 else { return nil }
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
@@ -2148,19 +2228,29 @@ enum ConversationHeaderChips {
 
     /// Load a picked file URL (PDF or any type) via security-scoped access.
     private func loadPickedFile(_ url: URL, model: ConversationViewModel) async {
+        defer { isResolvingPickedAttachment = false }
         let gotAccess = url.startAccessingSecurityScopedResource()
         defer { if gotAccess { url.stopAccessingSecurityScopedResource() } }
         let name = url.lastPathComponent
         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
         do {
-            // Pre-upload guard on the real size before reading the bytes.
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            // Pre-upload guard on the real size before reading the bytes. An
+            // unreadable size fails closed (it never defaults to "small"), and
+            // the read itself is bounded so a file that grows cannot slip past.
+            let size = try BoundedPickedFile.size(of: url)
             await model.stageAttachment(
                 name: name,
                 mime: mime,
                 byteCount: size,
-                loadBytes: { try Data(contentsOf: url) })
+                loadBytes: {
+                    do {
+                        return try BoundedPickedFile.read(url, limit: AttachmentStagingRules.clientCapBytes)
+                    } catch let error as BoundedPickedFile.TooLarge {
+                        throw AttachmentStagingError.fileTooLarge(
+                            name: name, sizeBytes: error.sizeBytes,
+                            capBytes: AttachmentStagingRules.clientCapBytes)
+                    }
+                })
         } catch {
             await model.stageAttachment(
                 name: name, mime: mime, byteCount: 0,
@@ -2315,6 +2405,7 @@ private struct ReasoningDisclosure: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.background, in: RoundedRectangle(cornerRadius: FleetTheme.radiusRow))
         .onAppear {
             // Completed-turn default from the persisted preference; a live
@@ -2429,6 +2520,8 @@ private struct ToolActivityGroupView: View {
 private struct ConversationBubbleView: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @State private var showingCopyConfirmation = false
+    @State private var copyConfirmationResetTask: Task<Void, Never>?
     let row: ConversationRow
     /// Card D: needed to retrieve/render inline generated-image artifacts on
     /// the row that cited them. Optional so previews/tests that only exercise
@@ -2471,7 +2564,7 @@ private struct ConversationBubbleView: View {
                     // Dogfood r7 (decision 2): the width cap is USER-ONLY
                     // (the capsule stays compact); assistant output spans
                     // the full content width like ChatGPT/Hermex.
-                    .frame(maxWidth: row.kind == .user ? 420 : nil,
+                    .frame(maxWidth: row.kind == .user ? 420 : (row.kind == .assistant ? .infinity : nil),
                            alignment: row.kind == .user ? .trailing : .leading)
                 if let reactions = row.reactions, !reactions.isEmpty {
                     reactionChips(reactions)
@@ -2481,6 +2574,13 @@ private struct ConversationBubbleView: View {
                     Text(timestampText)
                         .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
+                }
+                if showingCopyConfirmation {
+                    Text("Copied")
+                        .font(FleetTheme.monoCaptionFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityIdentifier("fleet.conversation.row.\(row.id).copied")
+                        .accessibilityAddTraits(.updatesFrequently)
                 }
                 // Stage 1: action footer on COMPLETED assistant replies only
                 // (policy gate — streaming/failed/empty rows never render
@@ -2513,6 +2613,12 @@ private struct ConversationBubbleView: View {
             // message column can still be exactly as flexible
             // (`.frame(maxWidth: .infinity)`) as their trailing spacer.
             .layoutPriority(1)
+            // DEV14: assistant rows claim the full content width and align
+            // leading in EVERY state (streaming, expanded, collapsed, final,
+            // cancelled). Without this the column shrink-wrapped to the
+            // reasoning block's intrinsic width and the row's position moved
+            // as content streamed in / the block collapsed on completion.
+            .frame(maxWidth: row.kind == .assistant ? .infinity : nil, alignment: .leading)
             if row.kind != .user && row.kind != .assistant { Spacer(minLength: 60) }
         }
         .transition(row.kind == .user ? entrance : .identity)
@@ -2553,6 +2659,14 @@ private struct ConversationBubbleView: View {
     @ViewBuilder
     private var reactionMenu: some View {
         if row.kind == .user || row.kind == .assistant {
+            if !row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    copyVisibleMessage()
+                } label: {
+                    Label("Copy Message", systemImage: "doc.on.doc")
+                }
+                .accessibilityIdentifier("fleet.conversation.reaction.copy")
+            }
             ForEach(MessageReactionPalette.standard.emojis, id: \.self) { emoji in
                 Button {
                     react(emoji)
@@ -2570,6 +2684,20 @@ private struct ConversationBubbleView: View {
                 }
                 .accessibilityIdentifier("fleet.conversation.reaction.clear")
             }
+        }
+    }
+
+    private func copyVisibleMessage() {
+        // Copy exactly the visible row's raw text, including Markdown and
+        // intentional surrounding whitespace.
+        UIPasteboard.general.string = row.text
+        withAnimation(.easeIn(duration: 0.15)) { showingCopyConfirmation = true }
+        UIAccessibility.post(notification: .announcement, argument: "Message copied")
+        copyConfirmationResetTask?.cancel()
+        copyConfirmationResetTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { showingCopyConfirmation = false }
         }
     }
 
@@ -2645,28 +2773,16 @@ private struct ConversationBubbleView: View {
                         .foregroundStyle(FleetTheme.statusDestructive)
                         .textSelection(.enabled)
                 } else if row.text.isEmpty, row.isStreaming {
-                    Text("…")
-                        .font(.body)
-                        .foregroundStyle(theme.textPrimary)
+                    // DEV14: no in-row placeholder or dots. The turn-level
+                    // "Working for Ns" indicator (`workingIndicator`) is the
+                    // ONE pending-operation indicator for the whole turn;
+                    // a second set of dots under Reasoning duplicated it.
+                    EmptyView()
                 } else {
                     AssistantRichTextView(
                         markdown: row.text,
                         isStreaming: row.isStreaming,
                         identity: row.id)
-                }
-                if row.isStreaming {
-                    // P2-7: decorative streaming dots — hidden from assistive
-                    // tech (the row's accessibilityValue already announces
-                    // "Streaming").
-                    HStack(spacing: 4) {
-                        ForEach(0..<3, id: \.self) { i in
-                            Circle()
-                                .fill(theme.highlight)
-                                .frame(width: 5, height: 5)
-                                .opacity(0.6)
-                        }
-                    }
-                    .accessibilityHidden(true)
                 }
             }
             // Dogfood r7 (decision 1, ChatGPT/Hermex parity): the assistant

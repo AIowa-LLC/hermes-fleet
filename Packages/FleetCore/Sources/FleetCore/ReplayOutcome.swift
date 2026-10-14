@@ -20,6 +20,11 @@ public enum ReplayOutcome: Hashable, Sendable, Equatable {
     case failed(sessionID: String, detail: String)
     /// There were no watermarks to replay (first connect, or nothing seen).
     case nothingToReplay
+    /// The transport could not keep exact track of every session (a bounded
+    /// table overflowed or an unattributable frame was refused). Every open
+    /// conversation must refetch authoritative history rather than trust its
+    /// local transcript.
+    case historyIncomplete
 
     /// Human-readable summary for diagnostics (never a promise of fidelity).
     public var debugSummary: String {
@@ -29,6 +34,7 @@ public enum ReplayOutcome: Hashable, Sendable, Equatable {
         case .epochChanged(let from, let to): return "replay epoch changed \(from ?? "nil") → \(to ?? "nil"); rehydrate"
         case .failed(let sid, let detail): return "replay failed for \(sid): \(detail)"
         case .nothingToReplay: return "nothing to replay"
+        case .historyIncomplete: return "history may be incomplete: refetch all open sessions"
         }
     }
 }

@@ -85,17 +85,22 @@ final class U4DashboardUITests: XCTestCase {
         attachScreenshot(of: app, name: "u4-home-gateway-rows")
     }
 
-    func testConnectionActivityHonestEmptyState() throws {
+    /// DEV14: routine connection chatter no longer sits on Home — it is one
+    /// secondary "Connection history" link to the full activity screen, whose
+    /// own honest empty state renders when nothing was observed.
+    func testConnectionHistoryIsSecondaryLinkToActivityScreen() throws {
         let app = launch()
 
-        // A fresh scripted session has accumulated no connection events —
-        // the honest empty hint renders (no fabricated timeline entries).
-        let empty = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.activity.empty"), in: app)
+        let link = scrollTo(firstMatch(in: app, identifier: "fleet.dashboard.activity.header"), in: app)
+        XCTAssertTrue(link.exists, "Home must offer a Connection history link")
+        XCTAssertFalse(
+            firstMatch(in: app, identifier: "fleet.dashboard.activity.empty").exists,
+            "routine connection activity rows/empty chatter no longer render inline on Home")
+        link.tap()
         XCTAssertTrue(
-            empty.exists,
-            "with no observed connection events the Connection Activity section must show its honest empty state"
-        )
-        attachScreenshot(of: app, name: "u4-home-activity-empty")
+            firstMatch(in: app, identifier: "fleet.activity").waitForExistence(timeout: 10),
+            "the link opens the full connection activity screen")
+        attachScreenshot(of: app, name: "u4-home-history-link")
     }
 
     func testSeeAllDrillInsPushOnHomeStack() throws {

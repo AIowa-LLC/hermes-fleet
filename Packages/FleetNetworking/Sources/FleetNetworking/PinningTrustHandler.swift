@@ -28,7 +28,7 @@ public final class PinningTrustHandler: @unchecked Sendable {
     public init(
         gatewayID: GatewayID,
         pinStore: any SynchronousPinStoring,
-        approvalStore: (any SynchronousTLSFirstUseApprovalStoring)? = nil
+        approvalStore: any SynchronousTLSFirstUseApprovalStoring
     ) {
         self.gatewayID = gatewayID
         self.evaluator = TLSTrustEvaluator(
@@ -83,7 +83,7 @@ public final class PinningTrustHandler: @unchecked Sendable {
 /// URLSession delegate adapter for REST sessions that share the gateway's
 /// pinning policy. WebSocket sessions have their own close-code-aware adapter;
 /// REST only needs the same server-trust decision and fail-closed rejection.
-public final class URLSessionPinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+public final class URLSessionPinningDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     private let trustHandler: PinningTrustHandler
 
     public init(trustHandler: PinningTrustHandler) {
@@ -96,5 +96,18 @@ public final class URLSessionPinningDelegate: NSObject, URLSessionDelegate, @unc
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         trustHandler.evaluate(challenge, completionHandler: completionHandler)
+    }
+
+    /// Gateway control-plane requests may carry owner cookies, device
+    /// credentials, or session tokens. Never let URLSession forward those
+    /// values to a redirect target, even when the redirect appears same-host.
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

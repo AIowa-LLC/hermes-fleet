@@ -27,6 +27,10 @@ public final class KanbanBoardViewModel {
     public private(set) var isLoading = false
     /// Last error (snapshot fetch or fatal stream failure). Non-secret.
     public private(set) var errorMessage: String?
+    /// Set when the gateway DEFINITIVELY refused the board (401/403/404).
+    /// While set, the model issues no automatic requests (no poll, no stream
+    /// reconnects); only an explicit `refresh()` ("Check again") re-asks.
+    public private(set) var accessIssue: KanbanBoardAccessIssue?
     /// Live connection phase of the event stream.
     public enum StreamPhase: Equatable, Sendable {
         case idle
@@ -138,8 +142,12 @@ public final class KanbanBoardViewModel {
     /// The mutation seam. Nil = this gateway's board is read-only (fail
     /// closed — the UI hides every mutation affordance).
     public let boardOperator: (any KanbanBoardOperating)?
-    /// Whether this board can mutate (operator present).
-    public var canMutate: Bool { boardOperator != nil }
+    /// Whether this board can mutate: an operator exists AND a board
+    /// snapshot has actually loaded (a refused/unavailable board must not
+    /// offer Add/Move controls that can only fail).
+    public var canMutate: Bool {
+        boardOperator != nil && snapshot != nil && accessIssue == nil
+    }
 
     // MARK: Dependencies
 
@@ -150,6 +158,10 @@ public final class KanbanBoardViewModel {
     /// selectBoard predecessor can never write state for its successor.
     private var streamGeneration = 0
     private var pollTask: Task<Void, Never>?
+    /// The single in-flight snapshot load (concurrent callers join it).
+    private var inFlightLoad: Task<Void, Never>?
+    private var inFlightIncludesArchived = false
+    private let diagnostics: DiagnosticsRecorder?
     /// Coalescing: a refetch requested but not yet started.
     private var refetchPending = false
     private static let recentEventsCap = 20
@@ -160,8 +172,10 @@ public final class KanbanBoardViewModel {
     public init(
         watcher: any KanbanBoardWatching,
         boardOperator: (any KanbanBoardOperating)? = nil,
-        selectionStore: KanbanBoardSelectionStore = KanbanBoardSelectionStore()
+        selectionStore: KanbanBoardSelectionStore = KanbanBoardSelectionStore(),
+        diagnostics: DiagnosticsRecorder? = nil
     ) {
+        self.diagnostics = diagnostics
         self.watcher = watcher
         self.boardOperator = boardOperator
         self.selectionStore = selectionStore
@@ -173,24 +187,48 @@ public final class KanbanBoardViewModel {
     public func start(board: String? = nil) async {
         guard streamTask == nil else { return }
         if let board {
-            boards = (try? await watcher.fetchBoards())?.boards ?? []
+            await fetchBoardList()
             selectedBoard = board
             await watcher.pinBoard(board)
         } else {
             await loadBoards()
         }
-        await loadAssignees()
-        await openStream()
+        // The snapshot is the arbiter: a definitive refusal means no
+        // assignee fetch, no event stream and no poll (nothing to hammer).
         await loadSnapshot(initial: true)
+        guard accessIssue == nil else { return }
+        await beginLiveUpdates()
+    }
+
+    /// Assignees + event stream + poll backstop (idempotent).
+    private func beginLiveUpdates() async {
+        await loadAssignees()
+        if streamTask == nil { await openStream() }
         startPollBackstop()
+    }
+
+    /// `GET /boards`, recording a refusal in diagnostics instead of
+    /// swallowing it.
+    private func fetchBoardList() async {
+        do {
+            boards = try await watcher.fetchBoards().boards
+        } catch {
+            boards = []
+            record(error)
+        }
+    }
+
+    private func record(_ error: any Error) {
+        guard !Redaction.isCancellation(error) else { return }
+        let detail = (error as? KanbanBoardError)?.diagnosticDetail
+            ?? Redaction.safeErrorDescription(error)
+        diagnostics?.record(category: "Kanban", detail: detail)
     }
 
     /// Load the boards list; restore the persisted selection when the
     /// gateway still has that board (unknown slug → active board, no crash).
     private func loadBoards() async {
-        if let list = try? await watcher.fetchBoards() {
-            boards = list.boards
-        }
+        await fetchBoardList()
         guard let stored = selectionStore?.loadSelectedBoard() else { return }
         // A missing saved board must fail at its exact target, never silently
         // show a different board from the same gateway.
@@ -209,9 +247,20 @@ public final class KanbanBoardViewModel {
     }
 
     /// Manual refresh (pull-to-refresh; also the recovery path).
+    ///
+    /// Exactly one request while the board is refused (the "Check again"
+    /// path); concurrent calls join the in-flight load. If a previously
+    /// refused board now loads, live updates start.
     public func refresh() async {
+        let wasRefused = accessIssue != nil
         await loadSnapshot(initial: false)
-        await loadAssignees()
+        guard accessIssue == nil else { return }
+        if wasRefused {
+            await fetchBoardList()
+            await beginLiveUpdates()
+        } else {
+            await loadAssignees()
+        }
     }
 
     // MARK: Board switching (t_624b81cd — client-side selection only)
@@ -230,12 +279,21 @@ public final class KanbanBoardViewModel {
         // rather than showing another board's cards under the new name.
         snapshot = nil
         recentEvents.removeAll()
+        accessIssue = nil
 
+        // A load still in flight belongs to the OLD board: cancel it so the
+        // new board's load cannot join (and adopt) its result.
+        if let running = inFlightLoad {
+            running.cancel()
+            await running.value
+        }
         streamTask?.cancel()
         streamTask = nil
         await watcher.pinBoard(slug)
-        await openStream()
         await loadSnapshot(initial: true)
+        guard accessIssue == nil else { return }
+        await openStream()
+        startPollBackstop()
         await loadAssignees()
     }
 
@@ -520,6 +578,25 @@ public final class KanbanBoardViewModel {
     }
 
     private func loadSnapshot(initial: Bool) async {
+        // Join an in-flight load rather than issuing a duplicate request —
+        // unless it was for a different archived mode (then wait, re-ask).
+        if let running = inFlightLoad {
+            let sameMode = inFlightIncludesArchived == (boardOperator != nil && showArchived)
+            await running.value
+            if sameMode { return }
+            await loadSnapshot(initial: initial)
+            return
+        }
+        inFlightIncludesArchived = boardOperator != nil && showArchived
+        let task = Task { [weak self] in
+            await self?.performSnapshotLoad(initial: initial)
+            self?.inFlightLoad = nil
+        }
+        inFlightLoad = task
+        await task.value
+    }
+
+    private func performSnapshotLoad(initial: Bool) async {
         if initial { isLoading = true }
         defer { if initial { isLoading = false } }
         do {
@@ -531,12 +608,32 @@ public final class KanbanBoardViewModel {
             }
             snapshot = next
             errorMessage = nil
+            accessIssue = nil
         } catch {
+            if Redaction.isCancellation(error) { return }
             errorMessage = Redaction.safeErrorDescription(error)
-            if initial {
+            record(error)
+            if let issue = (error as? KanbanBoardError)?.accessIssue {
+                // Definitive: stop everything automatic. A stale snapshot
+                // from before the refusal is not trustworthy either.
+                accessIssue = issue
+                snapshot = nil
+                await haltAutomaticUpdates()
+            } else if initial {
                 streamPhase = .reconnecting
             }
         }
+    }
+
+    /// Stop the WS stream (and its reconnect loop) and the poll backstop.
+    private func haltAutomaticUpdates() async {
+        streamGeneration += 1
+        streamTask?.cancel()
+        streamTask = nil
+        pollTask?.cancel()
+        pollTask = nil
+        streamPhase = .idle
+        await watcher.stop()
     }
 
     /// Slow poll backstop: the client's WS reconnect covers drops, but a
@@ -548,7 +645,8 @@ public final class KanbanBoardViewModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.pollBackstopInterval)
                 guard !Task.isCancelled else { break }
-                await self?.refresh()
+                guard let self, self.accessIssue == nil else { break }
+                await self.refresh()
             }
         }
     }

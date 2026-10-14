@@ -141,13 +141,13 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw KanbanBoardError.malformedResponse("boards response too large")
         }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("kanban boards: HTTP \(http.statusCode)")
-            throw KanbanBoardError.httpStatus(http.statusCode)
+            throw Self.statusError(http.statusCode, body: data, route: "/api/plugins/kanban/boards")
         }
         do {
             return try JSONDecoder().decode(KanbanBoardList.self, from: data)
@@ -181,13 +181,13 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         AuthREST.bounded(&request)
         try await applyHTTPCredential(to: &request)
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.boundedData(for: request)
         guard data.count <= AuthREST.maxResponseBytes else {
             throw KanbanBoardError.malformedResponse("board response too large")
         }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             Self.log.error("kanban board: HTTP \(http.statusCode)")
-            throw KanbanBoardError.httpStatus(http.statusCode)
+            throw Self.statusError(http.statusCode, body: data, route: "/api/plugins/kanban/board")
         }
         let envelope: BoardEnvelope
         do {
@@ -344,13 +344,27 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
 
     // MARK: Wire helpers (pure, testable)
 
+    /// Map a non-2xx board response to a typed error. 401/403/404 become
+    /// `.accessRefused` (definitive — never retried automatically); the JSON
+    /// body is read only for its `"error"` code (the Fleet connector's
+    /// `out_of_scope`) and is never logged or surfaced. Other statuses stay
+    /// plain `.httpStatus` (retryable).
+    public static func statusError(_ status: Int, body: Data, route: String) -> KanbanBoardError {
+        struct Envelope: Decodable { let error: String? }
+        let code = (try? JSONDecoder().decode(Envelope.self, from: body))?.error
+        guard let issue = KanbanBoardAccessIssue.classify(status: status, errorCode: code) else {
+            return .httpStatus(status)
+        }
+        return .accessRefused(issue, status: status, route: route)
+    }
+
     /// Build the snapshot URL: `…/api/plugins/kanban/board` plus
     /// `?board=<slug>` when pinned (nil = the server's active board; the
     /// param is simply omitted). Query-safe for any legal slug.
     public static func buildBoardURL(base: URL, board: String?) -> URL? {
         var components = URLComponents(
             url: base, resolvingAgainstBaseURL: false)
-        components?.path = "/api/plugins/kanban/board"
+        components?.path = GatewayEndpoint.path(joining: "/api/plugins/kanban/board", onto: base)
         if let board, !board.isEmpty {
             components?.queryItems = [
                 URLQueryItem(name: "board", value: board)
@@ -363,7 +377,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
     public static func buildBoardsListURL(base: URL) -> URL {
         var components = URLComponents(
             url: base, resolvingAgainstBaseURL: false)!
-        components.path = "/api/plugins/kanban/boards"
+        components.path = GatewayEndpoint.path(joining: "/api/plugins/kanban/boards", onto: base)
         components.query = nil
         return components.url!
     }
@@ -388,7 +402,7 @@ public actor KanbanEventStreamClient: KanbanBoardWatching, GatewaySessionDisconn
         case "ws", "wss": break
         default: return nil
         }
-        components.path = "/api/plugins/kanban/events"
+        components.path = GatewayEndpoint.path(joining: "/api/plugins/kanban/events", onto: base)
         var query = components.queryItems ?? []
         query.append(URLQueryItem(name: "since", value: String(since)))
         if let board, !board.isEmpty {

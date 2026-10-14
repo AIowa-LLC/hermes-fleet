@@ -2,6 +2,10 @@
 # RC preflight: verify repository-side readiness without signing, uploading,
 # or claiming physical-device/live-gateway acceptance.
 set -u
+# Private per-run scratch (never a predictable shared /tmp name: a local
+# user could pre-create or symlink it and clobber files).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_rc_preflight.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
 FAIL=0
@@ -48,10 +52,12 @@ else
   fail "deterministic UI inventory audit failed"
 fi
 
-if bash scripts/public_safety_guard.sh >/tmp/rc_public_safety.log 2>&1; then
+# Release-candidate runs are fail-closed on the PRIVATE denylist: without it the
+# guard only has generic checks, which is not enough to clear a release.
+if HF_PUBLIC_SAFETY_REQUIRE_PRIVATE=1 bash scripts/public_safety_guard.sh >"$SCRIPT_TMP/rc_public_safety.log" 2>&1; then
   pass "public-safety guard"
 else
-  fail "public-safety guard"; sed -n '1,80p' /tmp/rc_public_safety.log
+  fail "public-safety guard"; sed -n '1,80p' $SCRIPT_TMP/rc_public_safety.log
 fi
 
 printf '\nRC-TIME ACTIONS (not executable by this preflight):\n'

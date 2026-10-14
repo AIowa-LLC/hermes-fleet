@@ -17,6 +17,17 @@ public enum GatewayEndpoint {
     ///
     /// Throws `GatewayRegistryError.invalidEndpoint` when the input is not a
     /// usable origin.
+    /// Join an API path onto a gateway endpoint's own path prefix.
+    ///
+    /// A path-scoped gateway (`https://host/gw`) must keep its prefix: setting
+    /// `URLComponents.path` to an absolute API path would silently retarget the
+    /// request (and its credential) at whatever service owns the origin root.
+    public static func path(joining apiPath: String, onto base: URL) -> String {
+        let prefix = base.path.hasSuffix("/") ? String(base.path.dropLast()) : base.path
+        let suffix = apiPath.hasPrefix("/") ? apiPath : "/" + apiPath
+        return prefix + suffix
+    }
+
     public static func normalizedOrigin(from url: URL) throws -> URL {
         guard let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else {

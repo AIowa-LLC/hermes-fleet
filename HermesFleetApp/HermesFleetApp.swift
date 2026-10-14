@@ -32,20 +32,12 @@ struct HermesFleetApp: App {
                             // Authenticate before touching the registry,
                             // cache, or roster. Protected content must not
                             // be hydrated while the lock screen is showing.
+                            environment.setForegroundRecoveryAllowed(false)
                             await lockController.authenticateIfNeeded()
-                            guard !lockController.isLocked else { return }
+                            guard !lockController.isLocked, scenePhase == .active else { return }
+                            environment.setForegroundRecoveryAllowed(true)
                             await environment.hydrateIfNeeded()
-                            #if DEBUG && targetEnvironment(simulator)
-                            if ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" {
-                                // This UI fixture exercises the monitor's
-                                // connected-only polling contract without
-                                // relying on connection intent persisted by
-                                // another simulator test.
-                                await environment.connect(to: GatewayID(rawValue: "workstation"))
-                                await environment.connect(to: GatewayID(rawValue: "render-box"))
-                                await environment.connect(to: GatewayID(rawValue: "arch"))
-                            }
-                            #endif
+                            await connectScriptedLiveOpsIfNeeded()
                         }
 
                     // Continue the launch artwork past the native LaunchScreen
@@ -79,25 +71,33 @@ struct HermesFleetApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             lockController.handleScenePhase(phase)
-            if phase == .active && !lockController.isLocked {
+            let canRecover = phase == .active && !lockController.isLocked
+            environment.setForegroundRecoveryAllowed(canRecover)
+            if phase == .background {
+                environment.beginBackgroundSuspension()
+            } else if canRecover {
                 Task {
-                    await environment.restoreIntendedConnections()
-                    await environment.restoreConversationSessions()
+                    await environment.resumeAfterForeground()
+                    await connectScriptedLiveOpsIfNeeded()
                 }
             }
         }
         .onChange(of: lockController.isLocked) { _, isLocked in
             if isLocked {
+                environment.setForegroundRecoveryAllowed(false)
                 // App Lock gates presentation. It is not a user disconnect
                 // and must not clear desired gateway connection intent.
             } else {
+                let canRecover = scenePhase == .active
+                environment.setForegroundRecoveryAllowed(canRecover)
                 // Biometric failure enters passcode fallback. The initial
                 // launch task has already returned at that point, so the
                 // unlock transition must resume protected hydration.
-                Task {
-                    await environment.hydrateIfNeeded()
-                    await environment.restoreIntendedConnections()
-                    await environment.restoreConversationSessions()
+                if canRecover {
+                    Task {
+                        await environment.resumeAfterForeground()
+                        await connectScriptedLiveOpsIfNeeded()
+                    }
                 }
             }
         }
@@ -107,5 +107,17 @@ struct HermesFleetApp: App {
             // changes so a previously unlocked name is not left cached.
             HermesFleetShortcuts.updateAppShortcutParameters()
         }
+    }
+
+    private func connectScriptedLiveOpsIfNeeded() async {
+        #if DEBUG && targetEnvironment(simulator)
+        guard scenePhase == .active, !lockController.isLocked,
+              ProcessInfo.processInfo.environment["HERMES_FLEET_LIVEOPS_UI_FIXTURE"] == "1" else { return }
+        // Preserve the connected-only synthetic fixture whether authentication
+        // settles in the initial task or in a later active/unlock transition.
+        for id in ["workstation", "render-box", "arch"] {
+            await environment.connect(to: GatewayID(rawValue: id))
+        }
+        #endif
     }
 }

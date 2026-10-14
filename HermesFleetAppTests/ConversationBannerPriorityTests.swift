@@ -17,7 +17,8 @@ final class ConversationBannerPriorityTests: XCTestCase {
         replayNotice: String? = nil,
         hydratedFromCache: Bool = false,
         historyLoadError: String? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        historyMayBeIncomplete: Bool = false
     ) -> ConversationBanner? {
         ConversationBannerSelector.select(
             phase: phase,
@@ -25,8 +26,17 @@ final class ConversationBannerPriorityTests: XCTestCase {
             replayNotice: replayNotice,
             hydratedFromCache: hydratedFromCache,
             historyLoadError: historyLoadError,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            historyMayBeIncomplete: historyMayBeIncomplete
         )
+    }
+
+    func testIncompleteHistoryNoticeStaysVisibleWhileStreaming() {
+        XCTAssertNil(select(phase: .streaming, integrityNotice: "skipped"),
+                     "ordinary integrity notices stay hidden mid-turn")
+        let banner = select(phase: .streaming, integrityNotice: "History may be incomplete", historyMayBeIncomplete: true)
+        XCTAssertEqual(banner?.kind, .integrity)
+        XCTAssertEqual(banner?.text, "History may be incomplete")
     }
 
     // MARK: - Priority ladder

@@ -4,6 +4,12 @@ import FleetPersistence
 
 /// FOS-4 (t_2f5bf49a, SPEC §7/§17) — the TRUTHFUL Fleet Home.
 ///
+/// DEV14 hierarchy: connection status line → glance facts → Needs your
+/// attention → Running now → Resume a conversation → Gateways → a secondary
+/// "Connection history" link (routine connection chatter no longer renders on
+/// Home). The numbered list below is the FOS-4 original, kept for the
+/// truth contracts it states.
+///
 /// Composition (in first-viewport priority order):
 /// 1. compact 2×2 glance strip (connected n/m · known Bots · Active ·
 ///    needs-you) obeying COVERAGE TRUTH — unknown/incomplete never renders
@@ -113,6 +119,7 @@ public struct FleetDashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
                 if hasGateways {
+                    connectionStatusLine
                     glanceStrip
                     coverageLine
                     needsYouSection
@@ -124,7 +131,7 @@ public struct FleetDashboardView: View {
                     }
                     continueSection
                     gatewaysSection
-                    connectionActivitySection
+                    connectionHistoryLink
                 } else {
                     emptyFleetState
                 }
@@ -164,6 +171,61 @@ public struct FleetDashboardView: View {
         }
     }
 
+    // MARK: 0. Connection status line (DEV14)
+
+    /// Gateways whose connection lifecycle says they are NOT reachable
+    /// (failed or dropped). Idle/connecting/not-yet-checked are not "offline".
+    private var offlineGateways: [FleetGateway] {
+        environment.gateways.filter { gateway in
+            switch environment.connectionStates[gateway.id] {
+            case .failed, .disconnected: return true
+            default: break
+            }
+            // A classified failed roster probe is also an observed outage.
+            if case .failed = environment.rosterSnapshot?.outcome(for: gateway.id) { return true }
+            return false
+        }
+    }
+
+    /// One concise line: "Connected · 1 gateway" / "1 of 2 gateways offline".
+    private var connectionHeadline: String {
+        let total = environment.gateways.count
+        let noun = total == 1 ? "gateway" : "gateways"
+        let offline = offlineGateways.count
+        if offline > 0 {
+            return "\(offline) of \(total) \(noun) offline"
+        }
+        if connectedCount == total { return "Connected · \(total) \(noun)" }
+        return "Connecting · \(connectedCount) of \(total) \(noun) connected"
+    }
+
+    private var connectionHeadlineIsHealthy: Bool {
+        offlineGateways.isEmpty && connectedCount == environment.gateways.count
+    }
+
+    private var connectionStatusLine: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            HStack(alignment: .firstTextBaseline, spacing: FleetTheme.spacingSm) {
+                Image(systemName: connectionHeadlineIsHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(connectionHeadlineIsHealthy ? FleetTheme.statusExecuting : FleetTheme.statusNeedsIntervention)
+                    .accessibilityHidden(true)
+                Text(connectionHeadline)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // The reason a gateway is down, from classified state only.
+            ForEach(offlineGateways.prefix(3)) { gateway in
+                Text("\(gateway.displayName): \(gatewayStateLabel(gateway))")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("fleet.dashboard.status")
+    }
+
     // MARK: 1. Glance strip (compact 2×2 facts, no bordered tiles)
 
     private var glanceStrip: some View {
@@ -173,15 +235,15 @@ public struct FleetDashboardView: View {
         FleetGlanceStrip(
             a: FleetGlanceFact(
                 value: "\(connectedCount)/\(environment.gateways.count)",
-                label: "Connected",
+                label: "Gateways connected",
                 id: "fleet.dashboard.glance.connected"),
             b: FleetGlanceFact(
                 value: knownBotCount.map { "\($0)" } ?? "…",
-                label: "Known Bots",
+                label: "Bots",
                 id: "fleet.dashboard.glance.bots"),
             c: FleetGlanceFact(
                 value: activeGlanceValue,
-                label: "Active",
+                label: "Running now",
                 id: "fleet.dashboard.glance.active"),
             d: FleetGlanceFact(
                 value: needsYouGlanceValue,
@@ -215,7 +277,7 @@ public struct FleetDashboardView: View {
     /// an incomplete inbox never reads as complete).
     private var needsYouGlanceLabel: String {
         guard attentionItems.count > 0 else {
-            return attentionCoverageComplete ? "Attention" : "Attention"
+            return "Needs you"
         }
         return attentionCoverageComplete ? "Needing you" : "Known attention items"
     }
@@ -226,6 +288,7 @@ public struct FleetDashboardView: View {
         Text(coverageText)
             .font(FleetTheme.secondaryFont)
             .foregroundStyle(theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("fleet.dashboard.coverage")
     }
 
@@ -258,7 +321,18 @@ public struct FleetDashboardView: View {
     @ViewBuilder
     private var needsYouSection: some View {
         let totalCount = attentionItems.count + liveOpsAttentionItems.count
-        if totalCount > 0 {
+        if totalCount == 0 {
+            VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                needsYouHeader
+                Text(attentionCoverageComplete
+                     ? "Nothing needs your attention."
+                     : "Nothing known needs your attention. Some gateways couldn't be checked.")
+                    .font(FleetTheme.secondaryFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("fleet.dashboard.needsYou.empty")
+            }
+        } else {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
                 needsYouHeader
                 // Live Ops rows lead (an approval blocking a running agent is
@@ -404,7 +478,7 @@ public struct FleetDashboardView: View {
     }
 
     private var needsYouHeader: some View {
-        Text("Needs You")
+        Text("Needs your attention")
             .font(FleetTheme.sectionHeaderFont)
             .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.needsYou.header")
@@ -463,7 +537,7 @@ public struct FleetDashboardView: View {
     // MARK: 3. Active Now (real execution only)
 
     private var activeHeader: some View {
-        Text("Active Now")
+        Text("Running now")
             .font(FleetTheme.sectionHeaderFont)
             .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.active.header")
@@ -567,7 +641,7 @@ public struct FleetDashboardView: View {
     // MARK: 3b. Live Operations (Live Ops v1 — primary concept when available)
 
     private var liveOperationsHeader: some View {
-        Text("Live Operations")
+        Text("Running now")
             .font(FleetTheme.sectionHeaderFont)
             .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.liveOps.header")
@@ -581,7 +655,10 @@ public struct FleetDashboardView: View {
         let gateways = environment.liveOps.snapshot?.gateways.filter { $0.reportingSetup != .unknown } ?? []
         if !gateways.isEmpty {
             VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-                liveOperationsHeader
+                Text("Live reporting")
+                    .font(FleetTheme.sectionHeaderFont)
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("fleet.dashboard.liveOps.header")
                 ForEach(gateways) { gateway in
                     reportingStatus(gateway)
                 }
@@ -609,7 +686,7 @@ public struct FleetDashboardView: View {
             if nonIdleOperations.isEmpty && idleOperationCount == 0 {
                 Text(liveOpsSnapshot?.gateways.contains(where: { $0.reportingSetup == .required }) == true
                      ? "Set up reporting to see Desktop operations."
-                     : "No live operations right now.")
+                     : "Nothing running right now.")
                     .font(FleetTheme.secondaryFont)
                     .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("fleet.dashboard.liveOps.empty")
@@ -618,7 +695,7 @@ public struct FleetDashboardView: View {
                     liveOperationCard(operation)
                 }
                 if idleOperationCount > 0 {
-                    Text("\(idleOperationCount) idle session\(idleOperationCount == 1 ? "" : "s")")
+                    Text("\(idleOperationCount) other session\(idleOperationCount == 1 ? " is" : "s are") idle")
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.dashboard.liveOps.idleCount")
@@ -725,7 +802,7 @@ public struct FleetDashboardView: View {
     // MARK: 4. Continue (this phone's recent-open index)
 
     private var continueHeader: some View {
-        Text("Continue")
+        Text("Resume a conversation")
             .font(FleetTheme.sectionHeaderFont)
             .foregroundStyle(theme.textSecondary)
             .accessibilityIdentifier("fleet.dashboard.continue.header")
@@ -781,19 +858,45 @@ public struct FleetDashboardView: View {
         }
     }
 
+    /// Labels for a Continue row. Conversations re-resolve against the live
+    /// session list (so a title the gateway assigned after the open shows up)
+    /// and never fall back to the profile slug stored by older builds. Rooms
+    /// keep their recorded labels.
+    private func continueLabels(for entry: FleetContinueIndexStore.Entry) -> (title: String, subtitle: String) {
+        guard entry.kind != .room, let profile = entry.routeProfile, let sessionID = entry.sessionID else {
+            return (entry.title, entry.subtitle)
+        }
+        let gatewayID = GatewayID(rawValue: entry.gatewayIDRaw)
+        let route = Route(gatewayID: gatewayID, profileSlug: ProfileSlug(rawValue: profile))
+        let gatewayName = environment.gateway(for: gatewayID)?.displayName
+            ?? entry.gatewayName ?? entry.gatewayIDRaw
+        let botName = environment.botIncludingGhost(for: route).map { BotRosterPresentation.displayTitle(for: $0) }
+            ?? entry.botName ?? profile
+        let labels = FleetDashboardFormatting.continueLabels(
+            session: environment.sessionsByRoute[route]?.first { $0.id == sessionID },
+            storedSessionTitle: entry.sessionTitle,
+            botName: botName,
+            gatewayName: gatewayName)
+        return (labels.title, labels.subtitle)
+    }
+
     @ViewBuilder
     private func continueRow(_ entry: FleetContinueIndexStore.Entry, index: Int) -> some View {
         if let destination = continueDestination(for: entry) {
             NavigationLink(value: destination) {
                 HStack(spacing: FleetTheme.spacingMd) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.title)
+                        let labels = continueLabels(for: entry)
+                        Text(labels.title)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(theme.textPrimary)
-                        Text("\(entry.subtitle) · \(FleetDashboardFormatting.relativeTime(from: entry.openedAt, since: now))")
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(labels.subtitle) · \(FleetDashboardFormatting.relativeTime(from: entry.openedAt, since: now))")
                             .font(FleetTheme.secondaryFont)
                             .foregroundStyle(theme.textSecondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -927,50 +1030,29 @@ public struct FleetDashboardView: View {
         }
     }
 
-    // MARK: 6. Connection activity (last; ≤3 observations)
+    // MARK: 6. Connection history (secondary link; routine chatter lives there)
 
-    private var connectionActivitySection: some View {
-        VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
-            SectionHeader(title: "Connection Activity", destination: FleetScreen.activity, actionTitle: "Connection summary")
-                .accessibilityIdentifier("fleet.dashboard.activity.header")
-            let entries = Array(FleetDashboardFormatting.activityEntries(
-                gateways: environment.gateways,
-                stats: environment.healthStats
-            ).prefix(3))
-            if entries.isEmpty {
-                Text("No connection activity recorded yet.")
-                    .font(FleetTheme.secondaryFont)
+    /// DEV14: routine reconnect/disconnect observations no longer render on
+    /// Home. A gateway that is down right now is surfaced by the status line
+    /// and Needs your attention; the full history is one tap away.
+    private var connectionHistoryLink: some View {
+        NavigationLink(value: FleetScreen.activity) {
+            HStack(spacing: FleetTheme.spacingMd) {
+                Label("Connection history", systemImage: "clock.arrow.circlepath")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.highlight)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
                     .foregroundStyle(theme.textSecondary)
-                    .accessibilityIdentifier("fleet.dashboard.activity.empty")
-            } else {
-                VStack(spacing: FleetTheme.spacingSm) {
-                    ForEach(entries) { entry in
-                        activityRow(entry)
-                    }
-                }
+                    .accessibilityHidden(true)
             }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
-    }
-
-    private func activityRow(_ entry: FleetDashboardFormatting.ActivityEntry) -> some View {
-        HStack(spacing: FleetTheme.spacingMd) {
-            Image(systemName: entry.icon)
-                .font(.caption)
-                .foregroundStyle(theme.textSecondary)
-                .accessibilityHidden(true)
-            Text(entry.text)
-                .font(FleetTheme.secondaryFont)
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(2)
-            Spacer()
-            if let at = entry.at {
-                Text(FleetDashboardFormatting.relativeTime(from: at, since: now))
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(theme.textSecondary)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("fleet.dashboard.activity.row.\(entry.id)")
+        .buttonStyle(.fleetPressable)
+        .accessibilityIdentifier("fleet.dashboard.activity.header")
     }
 
     // MARK: Empty fleet (no registered gateway)

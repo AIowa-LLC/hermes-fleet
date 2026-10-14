@@ -20,73 +20,238 @@ public struct DiagnosticsReportSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.fleetTheme) private var theme
 
-    /// The rendered report. Assembled once per presentation in `.onAppear` —
-    /// the hardware identifier and bundle facts are read exactly once, and the
-    /// text is stable while the sheet is open.
-    @State private var reportText = ""
-    @State private var showingCopiedConfirmation = false
-    /// The newest copy tap owns the dismissal (AssistantReplyFooter pattern):
-    /// without this, tapping copy twice starts two timers whose completion
-    /// order is not guaranteed, so the first could hide the second's badge.
-    @State private var copiedResetTask: Task<Void, Never>?
+    /// Facts gathered once per presentation (id, timestamp, hardware, gateway
+    /// state). The description is layered on at render time, so typing never
+    /// changes the report id or re-reads the device.
+    @State private var baseInput: DiagnosticsReportInput?
+    @State private var problemDescription = ""
+    @State private var previewExpanded = false
+    @State private var actionStatus: ActionStatus?
+    /// The newest status owns the dismissal (AssistantReplyFooter pattern).
+    @State private var statusResetTask: Task<Void, Never>?
+    @Environment(\.openURL) private var openURL
+    @FocusState private var descriptionFocused: Bool
+
+    enum ActionStatus: Equatable {
+        case copied
+        case copyFailed
+        case openFailed
+
+        var text: String {
+            switch self {
+            case .copied: "Copied"
+            case .copyFailed: "Couldn't copy the report. Try Share instead."
+            case .openFailed: "Couldn't open the support page."
+            }
+        }
+        var isFailure: Bool { self != .copied }
+    }
 
     public init(environment: AppEnvironment) {
         self.environment = environment
     }
 
+    /// The exact text Copy and Share hand to the user. Empty until the base
+    /// facts are gathered.
+    private var reportText: String {
+        guard let baseInput else { return "" }
+        return DiagnosticsReport.render(baseInput.withUserDescription(problemDescription))
+    }
+
     public var body: some View {
         NavigationStack {
             ScrollView {
-                Text(reportText.isEmpty ? "Preparing report…" : reportText)
-                    .font(FleetTheme.monoFont)
-                    .foregroundStyle(theme.textPrimary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(FleetTheme.spacingMd)
-                    .accessibilityIdentifier("fleet.diagnostics.text")
+                VStack(alignment: .leading, spacing: FleetTheme.spacingMd) {
+                    explanation
+                    descriptionField
+                    previewDisclosure
+                    actions
+                    supportNote
+                }
+                .padding(FleetTheme.spacingMd)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             // Surface identity attaches BEFORE any toolbar/inset content, so
             // descendant ids stay queryable (drawer-scrollview order rule).
             .accessibilityIdentifier("fleet.diagnostics.sheet")
             .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(theme.background.ignoresSafeArea())
             .navigationTitle("Report a Problem")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Nothing has been sent anywhere, so closing simply discards
+                // the draft.
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
+                        .accessibilityIdentifier("fleet.diagnostics.done")
                 }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    Button("Copy") { copyReport() }
-                        .accessibilityIdentifier("fleet.diagnostics.copy")
-                    ShareLink(item: reportText) {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                    }
-                    .accessibilityIdentifier("fleet.diagnostics.share")
-                    if showingCopiedConfirmation {
-                        Text("Copied")
-                            .font(FleetTheme.monoCaptionFont)
-                            .foregroundStyle(theme.textSecondary)
-                            .transition(.opacity)
-                            .accessibilityIdentifier("fleet.diagnostics.copied")
-                    }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Hide keyboard") { descriptionFocused = false }
+                        .accessibilityIdentifier("fleet.diagnostics.hide-keyboard")
                 }
             }
         }
         .tint(theme.highlight)
-        .onAppear { reportText = makeReportText() }
+        .onAppear {
+            if baseInput == nil { baseInput = makeBaseInput() }
+        }
     }
 
-    // MARK: - Copy
+    // MARK: - Sections
+
+    private var explanation: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Text("This builds a report you can review, then copy or share yourself. Nothing is sent automatically.")
+                .font(.body)
+                .foregroundStyle(theme.textPrimary)
+            Text("Included: app version, iOS version and device model, your gateways' names, connection state and capabilities (addresses hidden), and recent errors the app recorded.")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+            Text("Not included: messages, credentials, or server addresses.")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("fleet.diagnostics.explanation")
+    }
+
+    private var descriptionField: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
+            Text("What happened?")
+                .font(.headline)
+                .foregroundStyle(theme.textPrimary)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $problemDescription)
+                    .focused($descriptionFocused)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120)
+                    .padding(FleetTheme.spacingSm)
+                    .accessibilityIdentifier("fleet.diagnostics.description")
+                    .accessibilityLabel("What happened?")
+                if problemDescription.isEmpty {
+                    Text("What were you doing, and what did you expect?")
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.horizontal, FleetTheme.spacingSm + 5)
+                        .padding(.vertical, FleetTheme.spacingSm + 8)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .background(theme.surface, in: RoundedRectangle(cornerRadius: 10))
+            Text("Don't paste passwords, tokens, or private messages. Links and token-like text are masked automatically, but check the preview.")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var previewDisclosure: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { previewExpanded.toggle() }
+            } label: {
+                HStack {
+                    Text("Preview report")
+                        .font(.headline)
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(previewExpanded ? 90 : 0))
+                        .foregroundStyle(theme.textSecondary)
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(previewExpanded ? "Expanded" : "Collapsed")
+            .accessibilityHint("Shows the exact text that Copy and Share will use")
+            .accessibilityIdentifier("fleet.diagnostics.preview")
+            if previewExpanded {
+                Text(reportText.isEmpty ? "Preparing report…" : reportText)
+                    .font(FleetTheme.monoFont)
+                    .foregroundStyle(theme.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("fleet.diagnostics.text")
+            }
+        }
+    }
+
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Button {
+                copyReport()
+            } label: {
+                Label("Copy report", systemImage: "doc.on.doc")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(baseInput == nil)
+            .accessibilityIdentifier("fleet.diagnostics.copy")
+
+            ShareLink(item: reportText) {
+                Label("Share…", systemImage: "square.and.arrow.up")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(baseInput == nil)
+            .accessibilityIdentifier("fleet.diagnostics.share")
+
+            if let actionStatus {
+                Text(actionStatus.text)
+                    .font(.footnote)
+                    .foregroundStyle(actionStatus.isFailure ? theme.textPrimary : theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(actionStatus == .copied
+                        ? "fleet.diagnostics.copied" : "fleet.diagnostics.status")
+            }
+        }
+    }
+
+    private var supportNote: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            Button {
+                openSupportPage()
+            } label: {
+                Label("Open support page", systemImage: "arrow.up.right.square")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("fleet.diagnostics.support")
+            Text("The support page is a public issue tracker, so anything you post there is visible to everyone. Review the report before posting it.")
+                .font(.footnote)
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func show(_ status: ActionStatus) {
+        withAnimation(.easeIn(duration: 0.15)) { actionStatus = status }
+        statusResetTask?.cancel()
+        statusResetTask = Task {
+            try? await Task.sleep(for: .seconds(status.isFailure ? 4 : 2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { actionStatus = nil }
+        }
+    }
 
     private func copyReport() {
-        UIPasteboard.general.string = reportText
-        withAnimation(.easeIn(duration: 0.15)) { showingCopiedConfirmation = true }
-        copiedResetTask?.cancel()
-        copiedResetTask = Task {
-            try? await Task.sleep(for: .seconds(1.2))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { showingCopiedConfirmation = false }
+        let text = reportText
+        guard !text.isEmpty else { show(.copyFailed); return }
+        UIPasteboard.general.string = text
+        // `hasStrings` does not trigger the paste-permission prompt; "Copied"
+        // is only claimed once the pasteboard really holds text.
+        show(UIPasteboard.general.hasStrings ? .copied : .copyFailed)
+    }
+
+    private func openSupportPage() {
+        openURL(FleetLegal.supportURL) { accepted in
+            if !accepted { show(.openFailed) }
         }
     }
 
@@ -94,7 +259,7 @@ public struct DiagnosticsReportSheet: View {
 
     /// Build the report. `surfaceContext` names the surface that generated
     /// it ("Settings · Report a Problem") — factual, never invented.
-    private func makeReportText(now: Date = Date()) -> String {
+    private func makeBaseInput(now: Date = Date()) -> DiagnosticsReportInput {
         let info = Bundle.main.infoDictionary
         let sections = environment.gateways.map { gateway in
             DiagnosticsGatewaySection(
@@ -108,7 +273,7 @@ public struct DiagnosticsReportSheet: View {
         let events = environment.diagnosticsRecorder.snapshot().map { entry in
             DiagnosticsEvent(at: entry.at, category: entry.category, detail: entry.detail)
         }
-        let input = DiagnosticsReportInput(
+        return DiagnosticsReportInput(
             generatedAt: now,
             reportID: DiagnosticsReport.makeReportID(now: now, suffix: Self.freshSuffix()),
             appVersion: info?["CFBundleShortVersionString"] as? String ?? "unknown",
@@ -118,7 +283,6 @@ public struct DiagnosticsReportSheet: View {
             surfaceContext: "Settings · Report a Problem",
             gateways: sections,
             recentEvents: events)
-        return DiagnosticsReport.render(input)
     }
 
     /// Advertised transport capabilities: the last connection-test probe wins,

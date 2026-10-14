@@ -98,7 +98,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
     }
 
     /// Seeds one item in each of the app's namespaces through the real stores
-    /// (credential, token, TLS pin, first-use approval).
+    /// (credential, token, TLS pin, first-use approval, pending enrollment).
     private func seedStores(_ keychain: InMemoryKeychainFake) async throws {
         let id = GatewayID(rawValue: "gw-a")
         try await KeychainCredentialStore(keychain: keychain)
@@ -108,24 +108,51 @@ final class KeychainInstallHygieneTests: XCTestCase {
         let pins = KeychainPinStore(keychain: keychain)
         let pin = try XCTUnwrap(SPKIFingerprint(base64: "0sshb6QBdnSVmS4d7pNB5MC4rowmN+JUeF0KQS/kpOk="))
         try await pins.savePin(pin, for: id)
-        try await pins.approveFirstUse(for: id)
+        try await pins.approveFirstUse(for: id, boundTo: pin)
+        try await KeychainOwnerEnrollmentIdentityStore(keychain: keychain).saveIdentity(
+            PendingOwnerDeviceIdentity(
+                deviceID: "0123456789abcdef0123456789abcdef",
+                secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            for: id)
     }
 
     func testFreshInstallWithLeftoverItemsPurgesThenSetsMarker() async throws {
         let keychain = InMemoryKeychainFake()
         try await seedStores(keychain)
-        XCTAssertEqual(keychain.totalCount, 4)
+        XCTAssertEqual(keychain.totalCount, 5)
 
         let hygiene = KeychainInstallHygiene(keychain: keychain, defaults: defaults)
         let outcome = hygiene.runIfNeeded(hasPriorInstallEvidence: false)
 
-        XCTAssertEqual(outcome, .purged(count: 4))
+        XCTAssertEqual(outcome, .purged(count: 5))
         XCTAssertEqual(keychain.totalCount, 0)
         XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
         XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
         let credential = try await KeychainCredentialStore(keychain: keychain)
             .loadCredential(for: GatewayID(rawValue: "gw-a"))
         XCTAssertNil(credential)
+    }
+
+    func testPendingEnrollmentIdentitySurvivesStoreRecreationAndIsDeviceOnly() async throws {
+        let keychain = InMemoryKeychainFake()
+        let id = GatewayID(rawValue: "gateway.example:443")
+        let expected = PendingOwnerDeviceIdentity(
+            deviceID: "0123456789abcdef0123456789abcdef",
+            secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        try await KeychainOwnerEnrollmentIdentityStore(keychain: keychain)
+            .saveIdentity(expected, for: id)
+
+        let loaded = try await KeychainOwnerEnrollmentIdentityStore(keychain: keychain)
+            .loadIdentity(for: id)
+        XCTAssertEqual(loaded, expected, "a relaunch can retry the same server idempotency key")
+        let attributes = KeychainOwnerEnrollmentIdentityStore.baseAttributes(account: id.rawValue)
+        XCTAssertEqual(attributes[kSecAttrAccessible as String] as? String,
+                       kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        XCTAssertEqual(attributes[kSecAttrSynchronizable as String] as? Bool, false)
+
+        try await KeychainOwnerEnrollmentIdentityStore(keychain: keychain).deleteIdentity(for: id)
+        let deleted = try await KeychainOwnerEnrollmentIdentityStore(keychain: keychain).loadIdentity(for: id)
+        XCTAssertNil(deleted)
     }
 
     func testMarkerPresentLeavesItemsUntouched() async throws {
@@ -138,7 +165,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
         let outcome = hygiene.runIfNeeded(hasPriorInstallEvidence: false)
 
         XCTAssertEqual(outcome, .skippedMarkerPresent)
-        XCTAssertEqual(keychain.totalCount, 4)
+        XCTAssertEqual(keychain.totalCount, 5)
         XCTAssertEqual(keychain.deleteCount, 0)
     }
 
@@ -153,20 +180,20 @@ final class KeychainInstallHygieneTests: XCTestCase {
         let outcome = hygiene.runIfNeeded(hasPriorInstallEvidence: true)
 
         XCTAssertEqual(outcome, .adoptedExistingInstall)
-        XCTAssertEqual(keychain.totalCount, 4)
+        XCTAssertEqual(keychain.totalCount, 5)
         XCTAssertEqual(keychain.deleteCount, 0)
         XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
 
         // Second launch: marker fast path, still untouched.
         XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: true), .skippedMarkerPresent)
-        XCTAssertEqual(keychain.totalCount, 4)
+        XCTAssertEqual(keychain.totalCount, 5)
     }
 
     func testIsIdempotentAfterPurge() async throws {
         let keychain = InMemoryKeychainFake()
         try await seedStores(keychain)
         let hygiene = KeychainInstallHygiene(keychain: keychain, defaults: defaults)
-        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false), .purged(count: 4))
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: false), .purged(count: 5))
 
         // A credential added after the purge (the user set up a gateway)
         // must survive every later launch, including one where the sandbox
@@ -196,12 +223,12 @@ final class KeychainInstallHygieneTests: XCTestCase {
             .purgeFailed(status: errSecInteractionNotAllowed))
         XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
         XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
-        XCTAssertEqual(keychain.totalCount, 4)
+        XCTAssertEqual(keychain.totalCount, 5)
 
         // Next launch: the failed attempt's own launch created sandbox state,
         // so evidence is now true, but the pending flag forces the retry.
         keychain.forceDeleteStatus(nil)
-        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: true), .purged(count: 4))
+        XCTAssertEqual(hygiene.runIfNeeded(hasPriorInstallEvidence: true), .purged(count: 5))
         XCTAssertEqual(keychain.totalCount, 0)
         XCTAssertTrue(defaults.bool(forKey: KeychainInstallHygiene.markerFlagName))
         XCTAssertFalse(defaults.bool(forKey: KeychainInstallHygiene.purgePendingFlagName))
@@ -224,7 +251,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? CredentialStoreError, .unexpectedStatus(Int(errSecInteractionNotAllowed)))
         }
-        XCTAssertEqual(keychain.totalCount, 4)
+        XCTAssertEqual(keychain.totalCount, 5)
         keychain.forceDeleteStatus(nil)
         try await credentials.saveCredential(GatewayCredential(rawValue: "synthetic-new"), for: newID)
         let restored = try await credentials.loadCredential(for: newID)
@@ -257,6 +284,7 @@ final class KeychainInstallHygieneTests: XCTestCase {
                 "com.aiowa.hermesfleet.gateway-credentials",
                 "com.aiowa.hermesfleet.tokens",
                 "com.aiowa.hermesfleet.tlspins",
+                "com.aiowa.hermesfleet.owner-enrollment-pending",
             ])
     }
 }

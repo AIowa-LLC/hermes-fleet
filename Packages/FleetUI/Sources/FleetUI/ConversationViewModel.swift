@@ -240,6 +240,12 @@ public final class ConversationViewModel {
     /// detected on the live event stream (recovered via targeted replay, or
     /// unrecoverable → authoritative history refetch). Never silent loss.
     public private(set) var integrityNotice: String?
+    /// True from the moment the transport reports (or the cursor detects) that
+    /// live events may have been lost until authoritative history has been
+    /// refetched successfully. Stays true — with a persistent notice — when
+    /// automatic recovery is rate-limited, so a stale transcript never looks
+    /// current.
+    public private(set) var historyMayBeIncomplete = false
     /// Non-secret error / auth surface text.
     public private(set) var errorMessage: String?
     /// Slash-command parity — live command suggestions (built-ins, quick
@@ -453,6 +459,33 @@ public final class ConversationViewModel {
     nonisolated(unsafe) private var eventTask: Task<Void, Never>?
     /// `nonisolated(unsafe)`: same pattern — only canceled in `deinit`.
     nonisolated(unsafe) private var statusWatcher: Task<Void, Never>?
+    /// Stream-gap watcher and the single coalesced recovery task (cancelled
+    /// in `deinit`, same pattern as `eventTask`).
+    nonisolated(unsafe) private var gapTask: Task<Void, Never>?
+    nonisolated(unsafe) private var gapRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var gapRecoveryPending = false
+    @ObservationIgnored private var gapGeneration = 0
+    @ObservationIgnored private var refetchSequence = 0
+    /// Bumped each time an authoritative snapshot replaces the transcript. A
+    /// gap replay that started before a snapshot was applied is covered by it.
+    @ObservationIgnored private var snapshotGeneration = 0
+    /// Gap replays currently suspended in `resumeEvents`. A history snapshot is
+    /// never applied meanwhile: the replay may be the only source of events the
+    /// snapshot lacks (the in-flight turn is persisted at completion).
+    @ObservationIgnored private var gapReplaysInFlight = 0
+    @ObservationIgnored private var settleRefreshArmed = false
+    /// Rate limit for automatic recovery (retry-storm guard).
+    @ObservationIgnored var gapGovernor = GapRecoveryGovernor()
+    /// Injectable time/sleep so tests drive recovery deterministically.
+    @ObservationIgnored var gapClock: @MainActor () -> TimeInterval = {
+        // Monotonic seconds from the Swift clock (not a boot-time API).
+        let elapsed = ContinuousClock.now - ConversationViewModel.gapClockOrigin
+        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+    }
+    private static let gapClockOrigin = ContinuousClock.now
+    @ObservationIgnored var gapSleep: @Sendable (TimeInterval) async -> Void = { seconds in
+        try? await Task.sleep(for: .seconds(seconds))
+    }
     private var hasStarted = false
     /// Generation of the newest conversation recovery operation
     /// (t_e77c614c). Bumped when `reconnect()` / `reauthenticate()` /
@@ -487,7 +520,8 @@ public final class ConversationViewModel {
         biometrics: any AppLockBiometricAuth = NeverLockBiometricAuth(),
         statusInterval: Duration = .milliseconds(400),
         maxDisplayRows: Int = 200,
-        voice: (any VoiceTranscribing)? = nil
+        voice: (any VoiceTranscribing)? = nil,
+        prepareForegroundRecovery: (@MainActor () async -> Bool)? = nil
     ) {
         self.session = session
         self.cache = cache
@@ -496,6 +530,7 @@ public final class ConversationViewModel {
         self.biometrics = biometrics
         self.statusInterval = statusInterval
         self.maxDisplayRows = maxDisplayRows
+        self.prepareForegroundRecovery = prepareForegroundRecovery
         // R10-T4: fail-closed voice default when no engine is injected.
         self.voice = voice ?? UnsupportedVoiceTranscriber()
         // Stage 1: the footer's Read Aloud renders only where a real engine
@@ -528,6 +563,8 @@ public final class ConversationViewModel {
     /// (single-subscriber: it cannot be re-created after cancellation).
     deinit {
         eventTask?.cancel()
+        gapTask?.cancel()
+        gapRecoveryTask?.cancel()
         statusWatcher?.cancel()
         micTask?.cancel()
         readAloudCompletionTask?.cancel()
@@ -588,13 +625,8 @@ public final class ConversationViewModel {
         // so this surfaces no notice on a normal open.
         do {
             let outcomes = try await session.replay.replayAfterReconnect()
-            if outcomes.contains(where: { outcome in
-                switch outcome {
-                case .replayed, .truncated, .epochChanged, .failed: return true
-                default: return false
-                }
-            }) {
-                replayNotice = Self.replayNotice(outcomes)
+            if let notice = Self.replayNotice(outcomes, openSessionID: openedSessionID) {
+                replayNotice = notice
             }
         } catch {
             // Non-fatal: if the first adoption fails (e.g. transient drop
@@ -641,6 +673,7 @@ public final class ConversationViewModel {
                         profile: route.profileSlug.rawValue
                     )
                     guard isCurrent(token) else { return false }
+                    settleRefreshArmed = false
                     openedSessionID = resumed.sessionID
                     openedStoredSessionID = Self.durableSessionID(
                         listedSessionID: sessionID, opened: resumed)
@@ -660,6 +693,7 @@ public final class ConversationViewModel {
                         cols: nil
                     )
                     guard isCurrent(token) else { return false }
+                    settleRefreshArmed = false
                     openedSessionID = created.sessionID
                     openedStoredSessionID = Self.durableSessionID(
                         listedSessionID: nil, opened: created)
@@ -1438,7 +1472,10 @@ public final class ConversationViewModel {
                 name: name, sizeBytes: byteCount, capBytes: AttachmentStagingRules.clientCapBytes))
             return
         }
-        guard !isUploadingAttachment else { return } // one upload at a time
+        guard !isUploadingAttachment else {
+            attachmentError = "An attachment is already being added — try again when it finishes"
+            return
+        }
         isUploadingAttachment = true
         defer { isUploadingAttachment = false }
         do {
@@ -1601,7 +1638,13 @@ public final class ConversationViewModel {
     /// Voice mode toggle: turning OFF cuts any in-flight speech immediately
     /// (never talks over the user reading).
     public func setVoiceMode(_ enabled: Bool) async {
+        guard !enabled || voiceCanSpeak else {
+            isVoiceModeEnabled = false
+            voiceError = VoiceError.unsupported.description
+            return
+        }
         isVoiceModeEnabled = enabled
+        voiceError = nil
         if !enabled {
             readAloudCompletionTask?.cancel()
             readAloudCompletionTask = nil
@@ -1822,6 +1865,7 @@ public final class ConversationViewModel {
         // prefix locally before appending the one new user row, so the old
         // user/assistant pair is never displayed twice.
         allRows.removeSubrange(userIndex...)
+        transcriptMutationRevision &+= 1
         let sent = await sendPrepared(
             modelText: prompt,
             displayText: prompt,
@@ -1934,11 +1978,19 @@ public final class ConversationViewModel {
     nonisolated(unsafe) private var foregroundObserver: Task<Void, Never>?
     nonisolated(unsafe) private var foregroundRetryTask: Task<Void, Never>?
     private var isHealingFromForeground = false
+    /// Optional app-level foreground recovery gate. The composition root uses
+    /// this to wait for shared resume/lock policy before a conversation may
+    /// reconnect; independent view-model users keep the historical default.
+    private let prepareForegroundRecovery: (@MainActor () async -> Bool)?
 
     public func appBecameActive() async {
         guard phase == .disconnected, !isHealingFromForeground else { return }
         isHealingFromForeground = true
         defer { isHealingFromForeground = false }
+        if let prepareForegroundRecovery {
+            let mayReconnect = await prepareForegroundRecovery()
+            guard !Task.isCancelled, mayReconnect, phase == .disconnected else { return }
+        }
         await reconnect()
         guard phase == .disconnected else { return }
         // One bounded retry after a short grace period — never a loop (F1's
@@ -1946,11 +1998,14 @@ public final class ConversationViewModel {
         foregroundRetryTask?.cancel()
         foregroundRetryTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, let self else { return }
-            await MainActor.run {
-                guard self.phase == .disconnected else { return }
-                Task { await self.reconnect() }
+            guard !Task.isCancelled, let self, self.phase == .disconnected else { return }
+            if let prepareForegroundRecovery = self.prepareForegroundRecovery {
+                let mayReconnect = await prepareForegroundRecovery()
+                guard !Task.isCancelled, mayReconnect, self.phase == .disconnected else { return }
             }
+            // Keep the retry inside its stored task so teardown/deinit can
+            // cancel the reconnect itself, not just an abandoned launcher.
+            await self.reconnect()
         }
     }
 
@@ -2020,6 +2075,7 @@ public final class ConversationViewModel {
             } else {
                 allRows = authoritative.map { Self.row(from: $0, id: nextRowID()) }
             }
+            snapshotGeneration &+= 1
             adoptHistoryReactions(into: allRows, from: opened.messages)
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
@@ -2125,6 +2181,84 @@ public final class ConversationViewModel {
                 await self.apply(event)
             }
         }
+        // Live gaps from the transport (backlog overflow, refused frame,
+        // evicted watermark): the stream may have lost events even though the
+        // cursor saw no later event to compare against.
+        gapTask?.cancel()
+        gapTask = Task { [weak self] in
+            guard let session = self?.session else { return }
+            for await gap in session.replay.subscribeToGaps() {
+                guard let self, !Task.isCancelled else { break }
+                await self.handleStreamGap(gap)
+            }
+        }
+    }
+
+    // MARK: Stream-gap recovery (bounded, never silent)
+
+    /// Flag the transcript incomplete. The generation fences "recovered": a
+    /// refetch that STARTED before this gap can never clear the flag.
+    @MainActor
+    private func markHistoryGap() {
+        gapGeneration += 1
+        historyMayBeIncomplete = true
+        integrityNotice = "Some live updates were skipped — refreshing history."
+    }
+
+    @MainActor
+    func handleStreamGap(_ gap: EventGap) {
+        guard let sid = openedSessionID else { return }
+        if let gapSession = gap.sessionID, gapSession != sid { return }
+        markHistoryGap()
+        scheduleGapRecovery()
+    }
+
+    /// One coalesced recovery at a time. Gaps arriving meanwhile set a flag
+    /// that earns at most one more governed pass, never a queue of refetches.
+    @MainActor
+    private func scheduleGapRecovery() {
+        if gapRecoveryTask != nil { gapRecoveryPending = true; return }
+        gapRecoveryTask = Task { [weak self] in
+            await self?.runGapRecovery()
+        }
+    }
+
+    @MainActor
+    private func runGapRecovery() async {
+        defer { gapRecoveryTask = nil }
+        repeat {
+            gapRecoveryPending = false
+            var decision = gapGovernor.request(at: gapClock())
+            while case .deferUntil(let when) = decision {
+                await gapSleep(max(0, when - gapClock()))
+                guard !Task.isCancelled else { return }
+                decision = gapGovernor.request(at: gapClock())
+            }
+            switch decision {
+            case .recoverNow:
+                guard let sid = openedSessionID else { return }
+                switch await refetchAuthoritativeHistory(sessionID: sid) {
+                case .applied:
+                    if historyLoadError == nil, !historyMayBeIncomplete {
+                        integrityNotice = "Skipped live updates were recovered — history refreshed."
+                    }
+                    // else: a newer gap arrived meanwhile; its pass is pending.
+                case .failed:
+                    if !settleRefreshArmed {
+                        integrityNotice = "History may be incomplete — refresh failed. Reopen the conversation to retry."
+                    }
+                case .rejectedStale:
+                    break // notice + settle refresh armed inside the refetch
+                case .superseded, .cancelled:
+                    break
+                }
+            case .suppressed:
+                integrityNotice = "History may be incomplete — updates were skipped faster than they could be recovered. Reopen the conversation to refresh."
+                return
+            case .deferUntil:
+                return // unreachable: the loop above only exits on non-deferral
+            }
+        } while gapRecoveryPending && !Task.isCancelled
     }
 
     @MainActor
@@ -2148,11 +2282,27 @@ public final class ConversationViewModel {
             // Events after `after` and before `before` were never applied.
             // Recover them via targeted last-event-id replay; if the ring no
             // longer holds them, surface the loss explicitly (never silent).
-            Task { await recoverGap(after: after, before: before, triggering: event) }
-            // Do NOT apply the triggering event yet — recovery re-applies it
-            // in order (it will be contiguous then). If recovery fails, the
-            // unrecoverable path refetches authoritative history instead.
-            return
+            // Rate-limited: past the governor's budget the targeted replay is
+            // replaced by ONE coalesced authoritative-history refetch, and the
+            // transcript is flagged incomplete meanwhile.
+            switch gapGovernor.request(at: gapClock()) {
+            case .recoverNow:
+                Task { await recoverGap(after: after, before: before, triggering: event) }
+                // Do NOT apply the triggering event yet — recovery re-applies
+                // it in order (it will be contiguous then). If recovery fails,
+                // the unrecoverable path refetches authoritative history.
+                return
+            case .deferUntil, .suppressed:
+                // Recovery is rate-limited. Freezing the stream until it runs
+                // would drop every later event against a stale cursor, so the
+                // live tail keeps rendering (cursor advances past the hole)
+                // while the transcript is flagged incomplete and ONE coalesced
+                // history refetch is scheduled.
+                markHistoryGap()
+                scheduleGapRecovery()
+                applyRendered(event)
+                return
+            }
         case .contiguous, .unknown:
             break
         }
@@ -2183,7 +2333,14 @@ public final class ConversationViewModel {
         if let seq = event.seq, event.sessionID == openedSessionID {
             lastAppliedEventID = max(lastAppliedEventID ?? 0, seq)
         }
+        // Any live event can touch the transcript (appends, streamed text,
+        // tool rows): an in-flight history snapshot predates it.
+        transcriptMutationRevision &+= 1
         render(event)
+        if settleRefreshArmed, !isStreaming {
+            settleRefreshArmed = false
+            scheduleGapRecovery()
+        }
     }
 
     /// t_8401d3c3 — gap recovery: fetch the missed tail from the gateway's
@@ -2203,9 +2360,22 @@ public final class ConversationViewModel {
     private func recoverGap(after: Int, before: Int, triggering: ConversationEvent) async {
         let token = operationGeneration
         guard let sid = openedSessionID else { return }
+        let snapshotAtStart = snapshotGeneration
         do {
-            let missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
+            gapReplaysInFlight += 1
+            let missed: [ConversationEvent]
+            do {
+                missed = try await session.conversation.resumeEvents(since: after, sessionID: sid)
+                gapReplaysInFlight -= 1
+            } catch {
+                gapReplaysInFlight -= 1
+                throw error
+            }
             guard isCurrent(token) else { return }
+            // A history snapshot was applied while the replay was in flight: it
+            // already contains these events and reset the continuity cursor, so
+            // re-applying them would duplicate text and rows. Discard the replay.
+            guard snapshotGeneration == snapshotAtStart else { return }
             // Re-apply in seq order, cursor-gated: replayed overlap drops,
             // the missed events + triggering event apply contiguously.
             for event in missed {
@@ -2221,13 +2391,13 @@ public final class ConversationViewModel {
         } catch ConversationError.gapUnrecoverable(let gsid, let gAfter) {
             guard isCurrent(token) else { return }
             integrityNotice = "Some events after #\(gAfter) are no longer retained — reloading full history."
-            await refetchAuthoritativeHistory(sessionID: gsid, fencedBy: token)
+            await refetchAuthoritativeHistory(sessionID: gsid, fencedBy: token, allowDuringStream: true)
         } catch {
             guard isCurrent(token) else { return }
             // Replay attempt failed (transport-level): surface it explicitly
             // and rehydrate from history rather than rendering a hole.
             integrityNotice = "Stream gap could not be recovered — reloading full history."
-            await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
+            await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token, allowDuringStream: true)
         }
     }
 
@@ -2237,33 +2407,116 @@ public final class ConversationViewModel {
     /// re-auth / gap recovery already refetched or owns the screen) never
     /// replaces the transcript. `nil` keeps the pre-existing unconditional
     /// behavior for unfenced callers.
-    private func refetchAuthoritativeHistory(sessionID: String, fencedBy token: Int? = nil) async {
-        let transcriptRevisionAtRequest = transcriptMutationRevision
+    /// Result of an authoritative-history refetch (see `refetchAuthoritativeHistory`).
+    enum HistoryRefetchOutcome: Equatable {
+        /// The snapshot replaced the transcript.
+        case applied
+        /// Live events / streaming / a user mutation landed while the request
+        /// was in flight, on every allowed attempt: the snapshot was NOT
+        /// applied and the transcript stays flagged incomplete.
+        case rejectedStale
+        /// A newer request, a newer recovery operation or a session change
+        /// owns the transcript; this response was discarded.
+        case superseded
+        case failed
+        case cancelled
+    }
+
+    /// Attempts per call before giving up on a quiet moment.
+    static let maxRefetchAttempts = 3
+
+    /// Authoritative refetch that can never overwrite newer local state.
+    ///
+    /// A response is applied only if, since its request began: no live event
+    /// or local mutation touched the transcript (`transcriptMutationRevision`),
+    /// no newer refetch started (`refetchSequence`,
+    /// which rejects out-of-order responses), the opened session is unchanged,
+    /// the recovery token is still current and the task was not cancelled.
+    /// A stale response is retried (bounded by `maxRefetchAttempts`). If every attempt is stale
+    /// the transcript is flagged incomplete and one more refresh is armed for
+    /// the next quiet moment (turn completion), still governed by
+    /// `GapRecoveryGovernor`.
+    @discardableResult
+    func refetchAuthoritativeHistory(
+        sessionID: String, fencedBy token: Int? = nil, allowDuringStream: Bool = false
+    ) async -> HistoryRefetchOutcome {
+        let originRevision = transcriptMutationRevision
+        for _ in 0..<Self.maxRefetchAttempts {
+            guard !Task.isCancelled else { return .cancelled }
+            // A turn is streaming: the snapshot may lack the in-progress reply
+            // and later deltas would attach to the wrong row. Do not fetch;
+            // flag and re-arm for turn completion. The unrecoverable-gap path
+            // opts out: its stream is already broken and history IS the repair.
+            if isStreaming, !allowDuringStream { break }
+            let outcome = await refetchHistoryOnce(
+                sessionID: sessionID, fencedBy: token, originRevision: originRevision,
+                allowDuringStream: allowDuringStream)
+            if outcome == .failed, historyMayBeIncomplete {
+                // A failed refresh (possibly the newer request that superseded
+                // an earlier valid one) must not leave "refreshing…" with no
+                // pending pass: keep the honest notice and re-arm one governed
+                // refresh for the next quiet moment.
+                integrityNotice = "History may be incomplete — refresh failed. It will retry when the conversation next updates."
+                settleRefreshArmed = true
+            }
+            if outcome != .rejectedStale { return outcome }
+        }
+        // Busy conversation: do not claim recovery.
+        gapGeneration += 1
+        historyMayBeIncomplete = true
+        integrityNotice = "History may be incomplete — the conversation was busy while refreshing. It will refresh when it settles."
+        settleRefreshArmed = true
+        return .rejectedStale
+    }
+
+    @MainActor
+    private func refetchHistoryOnce(
+        sessionID: String, fencedBy token: Int?, originRevision: UInt64, allowDuringStream: Bool
+    ) async -> HistoryRefetchOutcome {
+        refetchSequence += 1
+        let sequence = refetchSequence
+        let revisionAtRequest = transcriptMutationRevision
+        let gapGenerationAtRequest = gapGeneration
+        let sessionAtRequest = openedSessionID
         // H1: a failed fetch must NEVER wipe the transcript. Cached/projection
         // rows stay rendered, an honest non-secret error surfaces, and the
         // placeholder stays armed only if nothing ever landed (still loading,
         // not failed-slate) — retry rides the next reconnect/replay hydration.
         do {
             let history = try await session.history.fetchSessionHistory(sessionID: sessionID)
-            guard isCurrent(token) else { return }
+            if Task.isCancelled { return .cancelled }
+            guard isCurrent(token) else { return .superseded }
+            guard sequence == refetchSequence else { return .superseded }
+            guard openedSessionID == sessionAtRequest,
+                  openedSessionID == nil || openedSessionID == sessionID else { return .superseded }
+            guard transcriptMutationRevision == revisionAtRequest else { return .rejectedStale }
+            // A gap replay is in flight and may carry events this snapshot lacks.
+            guard gapReplaysInFlight == 0 else { return .rejectedStale }
+            // A turn that began in flight is already covered by the revision
+            // (messageStart bumps it); one still open now must not be replaced.
+            if isStreaming, !allowDuringStream { return .rejectedStale }
             if history.messages.isEmpty {
-                // The empty result is authoritative only for the point in
-                // time at which the request began. A prompt/event may have
-                // populated the transcript while this fetch was suspended;
-                // preserve those newer rows instead of resetting them.
-                guard transcriptMutationRevision == transcriptRevisionAtRequest else {
+                // An empty snapshot is authoritative only for the moment the CALL
+                // began: if live rows arrived since (even between retries), a
+                // server that has not persisted them yet must not erase them.
+                guard transcriptMutationRevision == originRevision else {
                     hydratedFromCache = false
                     isHistoryHydrationInProgress = false
                     historyLoadError = nil
-                    return
+                    // Not proven: the server may simply not have persisted the
+                    // live rows yet. Treat as stale so the incomplete flag and
+                    // the armed refresh stay accurate.
+                    return .rejectedStale
                 }
                 // Authoritative empty (session.history always carries the
                 // persisted rows) — the session genuinely has no messages.
                 allRows = []
+                if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
                 hydratedFromCache = false
                 isHistoryHydrationInProgress = false
                 historyLoadError = nil
-                return
+                snapshotGeneration &+= 1
+                return .applied
             }
             if hydratedFromCache {
                 // H1 flash-free swap (see applyOpenedSession): preserve row
@@ -2281,6 +2534,7 @@ public final class ConversationViewModel {
                 allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
             }
             adoptHistoryReactions(into: allRows, from: history.messages)
+            if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
             historyLoadError = nil
@@ -2289,10 +2543,14 @@ public final class ConversationViewModel {
             // from the freshest server state instead of false-gap-firing against
             // a stale cursor.
             lastAppliedEventID = nil
+            snapshotGeneration &+= 1
             Task { await persistTranscript() }
+            return .applied
         } catch {
-            guard isCurrent(token) else { return }
+            if Task.isCancelled || error is CancellationError { return .cancelled }
+            guard isCurrent(token) else { return .superseded }
             historyLoadError = "History unavailable — \(Self.nonSecret(error))"
+            return .failed
         }
     }
 
@@ -2547,7 +2805,7 @@ public final class ConversationViewModel {
         do {
             let outcomes = try await session.replay.replayAfterReconnect()
             guard isCurrent(token) else { return }
-            replayNotice = Self.replayNotice(outcomes)
+            replayNotice = Self.replayNotice(outcomes, openSessionID: openedSessionID)
             // If the epoch changed or replay was truncated, the authoritative
             // transcript must be refetched (spec §9.5/§9.6). All three paths
             // route through refetchAuthoritativeHistory so the conversation
@@ -2560,8 +2818,11 @@ public final class ConversationViewModel {
             for outcome in outcomes {
                 switch outcome {
                 case .truncated(let sid), .failed(let sid, _):
+                    // DEV14: outcomes now span every watermarked session; only
+                    // the open session's transcript may be refetched here.
+                    guard openedSessionID == nil || sid == openedSessionID else { break }
                     await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
-                case .epochChanged:
+                case .epochChanged, .historyIncomplete:
                     if let sid = openedSessionID {
                         await refetchAuthoritativeHistory(sessionID: sid, fencedBy: token)
                     }
@@ -2786,6 +3047,10 @@ public final class ConversationViewModel {
             reactionError = "Reactions need an open session"
             return
         }
+        if reactionSeam is UnsupportedReactionProviding {
+            reactionError = "Reactions aren't supported by this gateway"
+            return
+        }
         // Resolve the wire target.
         let target: MessageReactionTarget
         if let rowID {
@@ -2836,6 +3101,10 @@ public final class ConversationViewModel {
         reactionError = nil
         guard let sid = openedSessionID else {
             reactionError = "Reactions need an open session"
+            return
+        }
+        if reactionSeam is UnsupportedReactionProviding {
+            reactionError = "Reactions aren't supported by this gateway"
             return
         }
         let target: MessageReactionTarget
@@ -2924,6 +3193,7 @@ public final class ConversationViewModel {
             $0.kind == kind && $0.rowID == nil
         }) {
             allRows[idx].rowID = resultRowID
+            transcriptMutationRevision &+= 1
         }
         // Drop the in-flight live-* entry (the promoted row now reads the
         // durable key; a next live write optimistically starts fresh).
@@ -3092,22 +3362,38 @@ public final class ConversationViewModel {
 
     /// Human-readable replay hydration notice (non-secret; spec §30 answers
     /// "what happened" without leaking credentials).
-    static func replayNotice(_ outcomes: [ReplayOutcome]) -> String {
-        guard !outcomes.isEmpty else { return "Reconnected." }
-        let parts = outcomes.map { outcome -> String in
+    ///
+    /// DEV14: the transport watermarks every session it has ever seen, so one
+    /// reconnect yields one outcome per session. The conversation banner only
+    /// describes the OPEN session (plus gateway-wide epoch changes), collapses
+    /// duplicates, and returns `nil` when nothing changed — a routine
+    /// background/foreground recovery must not read as a failure.
+    /// `.nothingToReplay` carries no session id and is never surfaced.
+    public static func replayNotice(_ outcomes: [ReplayOutcome], openSessionID: String?) -> String? {
+        var parts: [String] = []
+        func add(_ part: String) {
+            if !parts.contains(part) { parts.append(part) }
+        }
+        for outcome in outcomes {
             switch outcome {
-            case .replayed(_, let count):
-                return "replayed \(count) missed event\(count == 1 ? "" : "s")"
-            case .truncated:
-                return "history refreshed"
+            case .replayed(let sid, let count):
+                guard openSessionID == nil || sid == openSessionID else { continue }
+                add("replayed \(count) missed event\(count == 1 ? "" : "s")")
+            case .truncated(let sid):
+                guard openSessionID == nil || sid == openSessionID else { continue }
+                add("history refreshed")
             case .epochChanged:
-                return "gateway restarted — history refreshed"
-            case .failed(_, let detail):
-                return "replay failed: \(detail)"
+                add("gateway restarted — history refreshed")
+            case .failed(let sid, let detail):
+                guard openSessionID == nil || sid == openSessionID else { continue }
+                add("replay failed: \(detail)")
             case .nothingToReplay:
-                return "nothing new"
+                continue
+            case .historyIncomplete:
+                add("history refreshed")
             }
         }
+        guard !parts.isEmpty else { return nil }
         return "Reconnected · " + parts.joined(separator: ", ")
     }
 }

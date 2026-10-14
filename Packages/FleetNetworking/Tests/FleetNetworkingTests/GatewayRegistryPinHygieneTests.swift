@@ -10,7 +10,8 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
 
     private func makeRegistry(
         credentials: any CredentialStoring = EmptyCredentialStore(),
-        pins: any TLSPinStoring = InMemoryPinStore()
+        pins: any TLSPinStoring = InMemoryPinStore(),
+        enrollmentCleanup: (any GatewayEnrollmentCleanupProviding)? = nil
     ) -> GatewayRegistryService {
         GatewayRegistryService(
             credentials: credentials,
@@ -18,7 +19,8 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
                 UnconnectableConnection()
             },
             recordStore: nil,
-            pinStore: pins
+            pinStore: pins,
+            enrollmentCleanup: enrollmentCleanup
         )
     }
 
@@ -84,6 +86,49 @@ final class GatewayRegistryPinHygieneTests: XCTestCase {
 
         let after = try await pins.loadPin(for: gateway.id)
         XCTAssertNotNil(after, "an endpoint edit must not clear the pin")
+    }
+
+    func testRemovalRunsEnrollmentCleanupBeforeDeletingGateway() async throws {
+        let cleanup = RecordingEnrollmentCleanup()
+        let registry = makeRegistry(enrollmentCleanup: cleanup)
+        let gateway = try await registry.addGateway(registration())
+
+        try await registry.removeGateway(gateway.id)
+
+        let removedIDs = await cleanup.removedIDs
+        let remaining = await registry.gateway(for: gateway.id)
+        XCTAssertEqual(removedIDs, [gateway.id])
+        XCTAssertNil(remaining)
+    }
+
+    func testEnrollmentCleanupFailureKeepsGatewayRegistered() async throws {
+        let cleanup = RecordingEnrollmentCleanup(fail: true)
+        let registry = makeRegistry(enrollmentCleanup: cleanup)
+        let gateway = try await registry.addGateway(registration())
+
+        do {
+            try await registry.removeGateway(gateway.id)
+            XCTFail("cleanup failure must block removal")
+        } catch let error as GatewayRegistryError {
+            guard case .credentialStoreFailed = error else { return XCTFail("unexpected error: \(error)") }
+        }
+
+        let removedIDs = await cleanup.removedIDs
+        let remaining = await registry.gateway(for: gateway.id)
+        XCTAssertEqual(removedIDs, [gateway.id])
+        XCTAssertNotNil(remaining)
+    }
+}
+
+private actor RecordingEnrollmentCleanup: GatewayEnrollmentCleanupProviding {
+    private(set) var removedIDs: [GatewayID] = []
+    private let fail: Bool
+
+    init(fail: Bool = false) { self.fail = fail }
+
+    func removeEnrollmentMaterial(for gateway: FleetGateway) async throws {
+        removedIDs.append(gateway.id)
+        if fail { throw OwnerEnrollmentError.identityStorageFailed }
     }
 }
 
