@@ -1,4 +1,5 @@
 import XCTest
+import ImageIO
 import FleetCore
 import FleetUI
 import FleetWatchKit
@@ -37,6 +38,12 @@ private final class FakeBackend: WatchBridgeBackend {
         calls.append("approve:\(gatewayID)|\(sessionID)|\(requestID)")
         if approveResult == .done { pending["\(gatewayID)|\(sessionID)|\(requestID)"] = nil }
         return approveResult
+    }
+    var thumbnails: [String: (digest: String, data: Data)] = [:]   // key gateway#slug
+    func avatarThumbnail(gatewayID: String, profileSlug: String, digest: String) async -> Data? {
+        calls.append("avatar:\(gatewayID)#\(profileSlug)")
+        guard let t = thumbnails["\(gatewayID)#\(profileSlug)"], t.digest == digest else { return nil }
+        return t.data
     }
     func sendMessage(_ request: WatchMessageRequest) async -> WatchSendResult {
         calls.append("send:\(request.gatewayID)#\(request.profileSlug)#\(request.target.isMain ? "main:" : "chat:")\(request.target.sessionID)")
@@ -524,5 +531,106 @@ final class WatchBridgeTests: XCTestCase {
         XCTAssertEqual(info["CFBundleIdentifier"] as? String, "com.aiowa.hermesfleet.dev.watchkitapp")
         XCTAssertEqual(info["WKCompanionAppBundleIdentifier"] as? String, "com.aiowa.hermesfleet.dev")
         XCTAssertNotEqual(info["WKRunsIndependentlyOfCompanionApp"] as? Bool, true)
+    }
+
+    // MARK: Avatars
+
+    private func bot(_ slug: String, gw: String = "mac", hasAvatar: Bool = false, meta: BotModeMetadata? = nil) -> FleetBot {
+        FleetBot(route: Route(gatewayID: GatewayID(rawValue: gw), profileSlug: ProfileSlug(rawValue: slug)),
+                 displayName: slug.capitalized, hasAvatar: hasAvatar, botModeMetadata: meta)
+    }
+
+    func testAvatarMatchesIPhoneRosterRules() {
+        let plain = bot("scout")
+        let a = WatchSnapshotBuilder.avatar(for: plain, imageDigest: nil)
+        XCTAssertEqual(a.shape, BotAvatarIdentity.defaultShape(forName: "scout"), "slug-derived default shape, like BotAvatar")
+        XCTAssertEqual(a.colorHex, String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: plain.route)))
+        let sameSlugOtherMachine = WatchSnapshotBuilder.avatar(for: bot("scout", gw: "nas"), imageDigest: nil)
+        XCTAssertEqual(sameSlugOtherMachine.colorHex, String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: bot("scout", gw: "nas").route)))
+
+        let styled = WatchSnapshotBuilder.avatar(for: bot("atlas", meta: BotModeMetadata(color: "#ff6482", shape: "hexagon")), imageDigest: nil)
+        XCTAssertEqual(styled.shape, "hexagon")
+        XCTAssertEqual(styled.colorHex, "#FF6482", "server color wins")
+
+        let badColor = WatchSnapshotBuilder.avatar(for: bot("atlas", meta: BotModeMetadata(color: "teal")), imageDigest: nil)
+        XCTAssertEqual(badColor.colorHex, String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: bot("atlas").route)),
+                       "malformed color is not authoritative")
+
+        let blob = WatchSnapshotBuilder.avatar(for: bot("nova", meta: BotModeMetadata(shape: "blobatar:abc:round")), imageDigest: nil)
+        XCTAssertEqual(blob.shape, "blob")
+        XCTAssertEqual(blob.seed, "abcround")
+    }
+
+    func testThumbnailDigestOnlyForBotsThatStillHaveAnImage() {
+        XCTAssertNil(WatchSnapshotBuilder.avatar(for: bot("scout", hasAvatar: false), imageDigest: "d").imageDigest)
+        XCTAssertEqual(WatchSnapshotBuilder.avatar(for: bot("scout", hasAvatar: true), imageDigest: "d").imageDigest, "d")
+    }
+
+    func testSnapshotCarriesAvatarsAndRosterTitles() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        var scout = o.botsByGateway[mac]![0]
+        scout.hasAvatar = true
+        scout.botModeMetadata = BotModeMetadata(title: "Scout Prime", shape: "drop")
+        o.botsByGateway[mac] = [scout]
+        o.avatarThumbnailDigestByRoute = [scout.route: "abc"]
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        let b = s.gateways[0].bots[0]
+        XCTAssertEqual(b.displayName, "Scout Prime", "same title the iPhone roster shows")
+        XCTAssertEqual(b.avatar?.shape, "drop")
+        XCTAssertEqual(b.avatar?.imageDigest, "abc")
+        XCTAssertEqual(s.approvals.first?.botName, "Scout Prime")
+    }
+
+    func testAvatarRequestAnsweredOnlyForExactDigestAndNeverWhileLocked() async {
+        let (b, c) = make()
+        let data = Data((0..<200).map { UInt8($0) })
+        let digest = WatchCodec.digest(data: data)
+        b.thumbnails["mac#scout"] = (digest, data)
+
+        guard case .avatar(let ok) = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: digest), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertEqual(ok.data, data)
+        XCTAssertTrue(ok.isValid)
+
+        guard case .avatar(let stale) = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: "old"), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertNil(stale.data, "a changed image is never sent under an old digest")
+
+        guard case .avatar(let other) = await c.handle(.avatar(.init(gatewayID: "nas", profileSlug: "scout", digest: digest), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertNil(other.data, "the same slug on another machine is a different bot")
+
+        b.isContentVisible = false
+        b.calls = []
+        guard case .avatar(let locked) = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: digest), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertNil(locked.data)
+        XCTAssertTrue(b.calls.isEmpty, "locked phone doesn't even look the image up")
+
+        guard case .rejected = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: digest), flavor: .production))
+        else { return XCTFail("wrong flavor must be rejected") }
+    }
+
+    func testThumbnailerShrinksToWatchSizeAndFitsOneMessage() throws {
+        let edge = 1024
+        let ctx = try XCTUnwrap(CGContext(data: nil, width: edge, height: edge, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        for i in 0..<64 {   // busy content so compression has work to do
+            ctx.setFillColor(CGColor(red: Double(i % 8) / 8, green: Double(i / 8) / 8, blue: 0.5, alpha: 1))
+            ctx.fill(CGRect(x: (i % 8) * 128, y: (i / 8) * 128, width: 128, height: 128))
+        }
+        let image = try XCTUnwrap(ctx.makeImage())
+        let out = NSMutableData()
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+
+        let thumb = try XCTUnwrap(WatchAvatarThumbnailer.thumbnail(from: out as Data))
+        XCTAssertLessThanOrEqual(thumb.count, WatchAvatarImage.maxBytes)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(thumb as CFData, nil))
+        let props = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        XCTAssertLessThanOrEqual(props[kCGImagePropertyPixelWidth] as? Int ?? .max, WatchAvatarThumbnailer.edge)
+        XCTAssertNil(WatchAvatarThumbnailer.thumbnail(from: Data("not an image".utf8)))
     }
 }

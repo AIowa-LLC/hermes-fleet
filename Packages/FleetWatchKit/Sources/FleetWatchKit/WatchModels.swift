@@ -205,7 +205,7 @@ public enum WatchBotActivityKind: String, Sendable, Hashable {
     public var label: String {
         switch self {
         case .busy: return "Working"
-        case .waiting: return "Waiting for input"
+        case .waiting: return "Needs input"
         case .needsAttention: return "Needs attention"
         case .idle: return "Idle"
         case .offline: return "Offline"

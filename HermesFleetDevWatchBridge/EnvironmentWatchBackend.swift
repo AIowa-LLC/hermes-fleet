@@ -15,6 +15,9 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     private let flavor: WatchAppFlavor
     private let log = Logger(subsystem: "com.aiowa.hermesfleet.dev", category: "watch-bridge")
     private var lastGoodLive: [GatewayID: Date] = [:]
+    /// Watch-sized avatar thumbnails, rebuilt only when the phone's cached
+    /// source image changes.
+    private var thumbnails: [Route: (source: Data, thumbnail: WatchAvatarImage)] = [:]
 
     init(environment: AppEnvironment, lock: AppLockController, flavor: WatchAppFlavor) {
         self.environment = environment
@@ -48,6 +51,7 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
                 mainChats[bot.route] = environment.mainChatState(for: bot)
             }
         }
+        let avatarDigests = updateThumbnails(for: bots.values.flatMap { $0 })
         for live in environment.liveOps.snapshot?.gateways ?? [] {
             switch live.coverage {
             case .reporting, .unsupported:
@@ -63,6 +67,7 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
             rosterObservedAtByGateway: environment.rosterObservedAtByGateway,
             sessionsObservedAtByRoute: sessionsObserved,
             mainChatByRoute: mainChats, lastGoodLiveObservedAt: lastGoodLive,
+            avatarThumbnailDigestByRoute: avatarDigests,
             routeForSessionKey: { [environment] key, gateway in
                 environment.route(forLiveOperationSessionKey: key, gatewayID: gateway)
             })
@@ -71,6 +76,31 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
     func snapshot(generation: Int, now: Date, pinned: WatchConversationPin?) -> WatchSnapshot {
         WatchSnapshotBuilder.build(observation(), flavor: flavor, generation: generation, now: now,
                                    contentVisible: isContentVisible, isFixture: Self.isScriptedFleet, pinned: pinned)
+    }
+
+    /// Keeps a thumbnail per bot whose roster reports an image the phone has
+    /// already loaded; drops it when the image goes away.
+    private func updateThumbnails(for bots: [FleetBot]) -> [Route: String] {
+        var digests: [Route: String] = [:]
+        var kept: [Route: (source: Data, thumbnail: WatchAvatarImage)] = [:]
+        for bot in bots where bot.hasAvatar {
+            guard let source = environment.botManagement.avatarDataByRoute[bot.route] else { continue }
+            if let existing = thumbnails[bot.route], existing.source == source {
+                kept[bot.route] = existing
+            } else if let data = WatchAvatarThumbnailer.thumbnail(from: source) {
+                kept[bot.route] = (source, WatchAvatarImage(digest: WatchCodec.digest(data: data), data: data))
+            }
+            digests[bot.route] = kept[bot.route]?.thumbnail.digest
+        }
+        thumbnails = kept
+        return digests
+    }
+
+    func avatarThumbnail(gatewayID: String, profileSlug: String, digest: String) async -> Data? {
+        let route = Route(gatewayID: GatewayID(rawValue: gatewayID), profileSlug: ProfileSlug(rawValue: profileSlug))
+        guard environment.bot(for: route)?.hasAvatar == true,
+              let entry = thumbnails[route], entry.thumbnail.digest == digest else { return nil }
+        return entry.thumbnail.data
     }
 
     func isGatewayReachable(_ gatewayID: String) -> Bool {
@@ -89,6 +119,8 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
         // Read-only Main chat lookup for bots whose roster reports none (the
         // same registry the iPhone's Bot Chat uses). Never creates a chat.
         await environment.refreshMainChatLookups(for: bots)
+        // Same throttled, bounded loader the iPhone roster uses.
+        for bot in bots where bot.hasAvatar { await environment.botManagement.loadAvatar(for: bot) }
         await environment.liveOps.checkReportingNow()
         logRefreshSummary(bots)
     }

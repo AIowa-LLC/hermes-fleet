@@ -126,6 +126,7 @@
 		7CEC3E04BE1669A048732A54 /* P0_7LiveTailnetUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6325589D12BB7792035231F /* P0_7LiveTailnetUITests.swift */; };
 		7D33191F494DEF132018443B /* FleetLaunchCacheUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D6614AB8BF1388C02E14C95 /* FleetLaunchCacheUITests.swift */; };
 		7F99468D159C41A1F9FE4CC3 /* ScriptedPresence.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEB835A2C8620A0EA580E2B /* ScriptedPresence.swift */; };
+		821BF678CFE76EC40FABAAA1 /* BotAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB198F87E0A8DC10F0CC45A /* BotAvatarView.swift */; };
 		82725A689F83E414C95BE70C /* SplashUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F88573D747272E04066317D /* SplashUITests.swift */; };
 		8329C5AB1D27FCBB3F884A6C /* ScenePrivacyShieldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FAF1AC0EE826F6069D7A299 /* ScenePrivacyShieldTests.swift */; };
 		83B772C524755030F962DEA6 /* FleetConversationShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A08506C47F80EF97B548420 /* FleetConversationShortcuts.swift */; };
@@ -208,6 +209,7 @@
 		D6D26E52EB47C6C3A479A84F /* ImageGenerationAnimationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB5D3EBD6F4D46D0139E63F9 /* ImageGenerationAnimationUITests.swift */; };
 		D82BFF6EBCBB2A7B6D1B0C11 /* U4DashboardUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1896CA7B98299D932622EE4A /* U4DashboardUITests.swift */; };
 		D9DC730BEE5131BE4CDFB4B2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8DE26D4BAD2C7D97E451973 /* PrivacyInfo.xcprivacy */; };
+		DA3440CD007DF57A038EFDC7 /* WatchAvatarThumbnailer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92DF64BBD5603562C63C9B7A /* WatchAvatarThumbnailer.swift */; };
 		DD67AC6ED8C64C68589DEBEF /* ConversationDraftStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E3B481779EB31BE7249CBB1 /* ConversationDraftStoreTests.swift */; };
 		DEA04FB333232EAAE82C9AD7 /* R9ManagementPanesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C593000BFB095D711C803E /* R9ManagementPanesUITests.swift */; };
 		E05705250BAEBA2BF5467729 /* HistoryRefetchRaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF6CBBE534EC789B9BB279D0 /* HistoryRefetchRaceTests.swift */; };
@@ -423,10 +425,12 @@
 		8BDFA81C1B2253DBC85E49C2 /* FleetAboutCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetAboutCompositionTests.swift; sourceTree = "<group>"; };
 		8E4B9CA2708C4F6346F45A41 /* R10VoiceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R10VoiceUITests.swift; sourceTree = "<group>"; };
 		8EAE2F40450E24D88B169D4C /* AssistantRichTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantRichTextTests.swift; sourceTree = "<group>"; };
+		8EB198F87E0A8DC10F0CC45A /* BotAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatarView.swift; sourceTree = "<group>"; };
 		8FAF1AC0EE826F6069D7A299 /* ScenePrivacyShieldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenePrivacyShieldTests.swift; sourceTree = "<group>"; };
 		90F4785CD8BD260DF07E65DF /* R9ApprovalBannerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = R9ApprovalBannerUITests.swift; sourceTree = "<group>"; };
 		90F68797AD9C57818CDC7085 /* FOS4TruthfulHomeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FOS4TruthfulHomeTests.swift; sourceTree = "<group>"; };
 		920D165DE93AC52EACD9A21C /* SecondGenerationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecondGenerationUITests.swift; sourceTree = "<group>"; };
+		92DF64BBD5603562C63C9B7A /* WatchAvatarThumbnailer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAvatarThumbnailer.swift; sourceTree = "<group>"; };
 		9620FDDA804B293B62BF6A1A /* LaunchOverrideHygieneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchOverrideHygieneTests.swift; sourceTree = "<group>"; };
 		9885932DF84B44FCF6F4DE15 /* CronTabUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CronTabUITests.swift; sourceTree = "<group>"; };
 		99AA8C731B1E831A652CE505 /* BotAvatarAppearanceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BotAvatarAppearanceUITests.swift; sourceTree = "<group>"; };
@@ -772,6 +776,7 @@
 			isa = PBXGroup;
 			children = (
 				4F94CBDB2432D763769575E0 /* Assets.xcassets */,
+				8EB198F87E0A8DC10F0CC45A /* BotAvatarView.swift */,
 				FFA10444E97B84B15FB52ABE /* FleetDevWatchApp.swift */,
 				46C3C05E78BDB589DA18CE17 /* MockFleetTransport.swift */,
 				C30BDA96C8FC6257A883D557 /* Views.swift */,
@@ -865,6 +870,7 @@
 			children = (
 				40AAE38D1E5A86AE61282F5D /* EnvironmentWatchBackend.swift */,
 				85A90A6C5967363BFB464979 /* FleetWatchLink.swift */,
+				92DF64BBD5603562C63C9B7A /* WatchAvatarThumbnailer.swift */,
 				DB261DA8D982105AC1CE4AD7 /* WatchPhoneCoordinator.swift */,
 				4B635820367EF4041B57DDE1 /* WatchPhoneService.swift */,
 				FFB99B114F516457AA9A0830 /* WatchSnapshotBuilder.swift */,
@@ -1182,6 +1188,7 @@
 				B574684B617A7D5EE47D380D /* SplashOverlayView.swift in Sources */,
 				711FD2E69CDFCA5F9463884A /* UnconfiguredGateways.swift in Sources */,
 				9F86CCB2714C5FEDD86976E8 /* VoiceIO.swift in Sources */,
+				DA3440CD007DF57A038EFDC7 /* WatchAvatarThumbnailer.swift in Sources */,
 				CD081709A8A24D86F2A4B4B3 /* WatchPhoneCoordinator.swift in Sources */,
 				479C72707242EF59555394F8 /* WatchPhoneService.swift in Sources */,
 				19DC9DBA3DF82D45C69AE222 /* WatchSnapshotBuilder.swift in Sources */,
@@ -1413,6 +1420,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				821BF678CFE76EC40FABAAA1 /* BotAvatarView.swift in Sources */,
 				295A3513272B11BB8C207FE2 /* FleetDevWatchApp.swift in Sources */,
 				BAD6D2CAF6465104EF943747 /* MockFleetTransport.swift in Sources */,
 				BAAA5177C2EE07187F54298D /* Views.swift in Sources */,

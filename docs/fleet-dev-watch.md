@@ -47,6 +47,8 @@ session). The Watch has no separate hierarchy.
 
 ## What each screen does
 
+* **Bots**: every bot with avatar, activity and approval count; tap for its
+  page (see below).
 * **Context picker**: Machine → Bot → Conversation (or "whole machine" / "bot
   only"), built only from what the iPhone app already has configured. Shown at
   the top of every screen. A removed machine/bot/conversation is reported, never
@@ -59,6 +61,35 @@ session). The Watch has no separate hierarchy.
   machine/bot/chat.
 * **Messages**: explicit Send to the selected machine/bot/conversation, with
   delivery states below.
+
+## Bots, avatars and quick replies (DEV16)
+
+* **Bots at a glance.** The home screen lists every bot across machines with
+  its avatar, a small activity dot (working, needs input, needs attention,
+  idle, offline), its machine, and a badge with its pending approvals. Tapping
+  a bot opens its page: larger avatar, status, the iPhone's connection to its
+  machine, its own approvals, and one tap to Main chat or a named
+  conversation. Opening a chat there sets the destination exactly like the
+  picker does; Main chat appears only when the iPhone reported one.
+* **Avatars match the iPhone.** The iPhone resolves each bot's appearance with
+  the roster's rules (server shape and `#RRGGBB` color first, then the
+  slug-derived default shape and route-derived identity color) and sends it in
+  the snapshot. Bot names use the same roster title as the iPhone.
+* **Uploaded images.** The snapshot carries only the SHA-256 of a Watch-sized
+  thumbnail (at most 112 px and 24 KB, made with a bounded decode on the
+  iPhone). The Watch asks for it once per digest over `sendMessage`, verifies
+  the bytes against the digest, and caches up to 48 thumbnails in its Caches
+  directory. The iPhone answers only for the exact bot and current digest and
+  sends nothing while App Lock hides content. If anything fails, the Watch
+  keeps drawing the bot's shape. With the display dimmed, avatars become
+  neutral placeholders like names.
+* **Quick replies.** "Continue", "Looks good", "Stop for now" and "What's the
+  status?" fill the message field. Sending still needs the explicit Send with
+  the destination shown above it.
+* **New approval tap.** While the Watch app is open, a snapshot with an
+  approval the Watch hasn't seen before plays one notification haptic.
+  Approvals already pending at launch, or ones that drop out of the capped
+  list and come back, don't.
 
 ## Approval rules (unchanged from the phone, never broader)
 

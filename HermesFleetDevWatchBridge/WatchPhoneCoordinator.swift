@@ -46,6 +46,8 @@ protocol WatchBridgeBackend: AnyObject {
     func approveOnce(gatewayID: String, sessionID: String, requestID: String) async -> WatchApproveResult
     /// Validates the exact target and, only if valid, submits the prompt.
     func sendMessage(_ request: WatchMessageRequest) async -> WatchSendResult
+    /// The thumbnail for exactly this bot when its current digest matches, else nil.
+    func avatarThumbnail(gatewayID: String, profileSlug: String, digest: String) async -> Data?
 }
 
 /// Handles Watch requests. All security decisions live here and in
@@ -114,7 +116,21 @@ final class WatchPhoneCoordinator {
             return .approval(await handleApproval(approval))
         case .message(let message, _):
             return .message(await handleMessage(message))
+        case .avatar(let avatar, _):
+            return .avatar(await handleAvatar(avatar))
         }
+    }
+
+    // MARK: Avatars
+
+    /// Avatars are bot identity, so they follow the same lock rule as names:
+    /// nothing while the iPhone hides content. Only the advertised digest is
+    /// ever answered, so a stale request can't receive a different image.
+    func handleAvatar(_ r: WatchAvatarRequest) async -> WatchAvatarImage {
+        guard backend.isContentVisible else { return WatchAvatarImage(digest: r.digest, data: nil) }
+        let data = await backend.avatarThumbnail(gatewayID: r.gatewayID, profileSlug: r.profileSlug, digest: r.digest)
+        let image = WatchAvatarImage(digest: r.digest, data: data)
+        return image.isValid ? image : WatchAvatarImage(digest: r.digest, data: nil)
     }
 
     // MARK: Approvals

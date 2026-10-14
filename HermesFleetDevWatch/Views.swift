@@ -1,4 +1,5 @@
 import SwiftUI
+import WatchKit
 import FleetWatchKit
 
 // MARK: - Shared
@@ -40,10 +41,128 @@ struct RootView: View {
                         Label(count == 0 ? "Approvals" : "Approvals (\(count))", systemImage: "checkmark.shield")
                     }
                     NavigationLink { MessagesView(store: store) } label: { Label("Messages", systemImage: "bubble.left") }
+                    BotsSection(store: store)
                 }
             }
             .navigationTitle("Fleet Dev")
             .dimRedacted()
+        }
+        // One tap on the wrist per newly arrived approval (while the app is open).
+        .onChange(of: store.approvalArrivalCount) { _, _ in WKInterfaceDevice.current().play(.notification) }
+    }
+}
+
+// MARK: - Bots at a glance
+
+/// Every bot across machines: face, what it's doing, where it runs, and how
+/// many approvals it is waiting on.
+struct BotsSection: View {
+    let store: WatchStore
+
+    var body: some View {
+        let entries = store.botEntries
+        Section("Bots") {
+            if entries.isEmpty { Text("No bots reported yet.").font(.footnote) }
+            ForEach(entries) { entry in
+                NavigationLink { BotDetailView(store: store, entry: entry) } label: { BotRow(store: store, entry: entry) }
+            }
+        }
+    }
+}
+
+struct BotRow: View {
+    let store: WatchStore
+    let entry: WatchBotEntry
+
+    var body: some View {
+        let pending = store.approvals(for: entry.bot).count
+        HStack(spacing: 8) {
+            BotAvatarView(store: store, bot: entry.bot, size: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.bot.displayName).font(.footnote.bold()).lineLimit(1)
+                Text(entry.bot.activityKind.label).font(.caption2).lineLimit(1)
+                Text(entry.gateway.displayName).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if pending > 0 {
+                Text("\(pending)").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Capsule().fill(.orange)).foregroundStyle(.black)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.bot.displayName), \(entry.bot.activityKind.label), on \(entry.gateway.displayName)\(pending > 0 ? ", \(pending) approval\(pending == 1 ? "" : "s") waiting" : "")")
+    }
+}
+
+/// One bot: who it is, what it's doing, what it needs from you, and one tap to
+/// message it. Reads the bot from the latest snapshot so it never shows a
+/// bot the iPhone has removed as if it were still there.
+struct BotDetailView: View {
+    let store: WatchStore
+    let entry: WatchBotEntry
+
+    var body: some View {
+        let live = store.bot(gatewayID: entry.gateway.id, profileSlug: entry.bot.ref.profileSlug)
+        let gateway = store.snapshot?.gateways.first { $0.id == entry.gateway.id } ?? entry.gateway
+        List {
+            if let bot = live {
+                VStack(spacing: 4) {
+                    BotAvatarView(store: store, bot: bot, size: 56)
+                    Text(bot.displayName).font(.headline).lineLimit(2).multilineTextAlignment(.center)
+                    Text(bot.activityKind.label).font(.caption2).foregroundStyle(.secondary)
+                    Label(gateway.status.reachability, systemImage: gateway.status.symbol)
+                        .font(.caption2).foregroundStyle(gateway.status == .online ? Color.secondary : Color.orange)
+                }
+                .frame(maxWidth: .infinity)
+                .listRowBackground(Color.clear)
+                .accessibilityElement(children: .combine)
+
+                let approvals = store.approvals(for: bot)
+                if !approvals.isEmpty {
+                    Section("Needs your approval") {
+                        ForEach(approvals) { approval in
+                            NavigationLink { ApprovalDetailView(store: store, approval: approval) } label: {
+                                Text(approval.commandPreview).font(.footnote).lineLimit(2)
+                            }
+                        }
+                    }
+                }
+                Section("Message") {
+                    if let main = bot.mainChat {
+                        NavigationLink { messages(bot, main) } label: { Label("Main chat", systemImage: "bubble.left.fill") }
+                    } else if let guidance = bot.mainChatGuidance(rosterState: store.rosterState(gateway)) {
+                        Label(guidance, systemImage: "iphone").font(.caption2).foregroundStyle(.orange)
+                    }
+                    ForEach(bot.conversations.filter { !$0.isMain }) { conversation in
+                        NavigationLink(conversation.title) { messages(bot, conversation) }
+                    }
+                    if bot.omittedConversationCount > 0 {
+                        Text("\(bot.omittedConversationCount) more on iPhone.").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                NavigationLink {
+                    StatusView(store: store).onAppear {
+                        store.selection = .init(gatewayID: gateway.id, profileSlug: bot.ref.profileSlug)
+                    }
+                } label: { Label("Check in", systemImage: "waveform.path.ecg") }
+            } else {
+                Text("This bot is no longer reported by the iPhone.").font(.footnote).foregroundStyle(.orange)
+            }
+        }
+        .navigationTitle(live?.displayName ?? entry.bot.displayName)
+        .dimRedacted()
+    }
+
+    /// The message screen, pointed at this chat when it opens. The destination
+    /// is then shown above Send as usual, so nothing is sent to a guess.
+    private func messages(_ bot: WatchBot, _ conversation: WatchConversation) -> some View {
+        MessagesView(store: store).onAppear {
+            let target = WatchContextSelection(gatewayID: bot.ref.gatewayID, profileSlug: bot.ref.profileSlug,
+                                               conversationID: conversation.id)
+            guard store.selection != target else { return }
+            store.selection = target
+            // Tell the phone, so it keeps this chat in the capped snapshot.
+            Task { await store.refresh() }
         }
     }
 }
@@ -64,9 +183,14 @@ struct ContextHeader: View {
 
     var body: some View {
         Button { showPicker = true } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Destination · tap to change").font(.caption2).foregroundStyle(.secondary)
-                Text(store.contextLabel).font(.footnote.bold()).lineLimit(3)
+            HStack(spacing: 6) {
+                if case .resolved(_, let bot?, _) = store.resolution {
+                    BotAvatarView(store: store, bot: bot, size: 24, showsActivity: false)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Destination · tap to change").font(.caption2).foregroundStyle(.secondary)
+                    Text(store.contextLabel).font(.footnote.bold()).lineLimit(3)
+                }
             }
         }
         .accessibilityLabel("Destination \(store.contextLabel). Change.")
@@ -174,9 +298,12 @@ struct BotPickerView: View {
                 NavigationLink {
                     ConversationPickerView(store: store, gateway: gateway, bot: bot, dismissAll: dismissAll)
                 } label: {
-                    VStack(alignment: .leading) {
-                        Text(bot.displayName)
-                        Text(bot.activity).font(.caption2).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        BotAvatarView(store: store, bot: bot, size: 26)
+                        VStack(alignment: .leading) {
+                            Text(bot.displayName)
+                            Text(bot.activityKind.label).font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -342,10 +469,14 @@ struct ApprovalListView: View {
 
     private func link(_ approval: WatchApproval) -> some View {
         NavigationLink { ApprovalDetailView(store: store, approval: approval) } label: {
-            VStack(alignment: .leading) {
-                Text("\(approval.gatewayName) › \(approval.botName ?? "unknown bot") › \(approval.sessionLabel)")
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                Text(approval.commandPreview).font(.footnote).lineLimit(2)
+            HStack(alignment: .top, spacing: 6) {
+                BotAvatarView(store: store, bot: store.bot(gatewayID: approval.gatewayID, profileSlug: approval.profileSlug),
+                              size: 22, showsActivity: false)
+                VStack(alignment: .leading) {
+                    Text("\(approval.gatewayName) › \(approval.botName ?? "unknown bot") › \(approval.sessionLabel)")
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    Text(approval.commandPreview).font(.footnote).lineLimit(2)
+                }
             }
         }
     }
@@ -362,7 +493,11 @@ struct ApprovalDetailView: View {
             // Always the ORIGINAL origin, never the picker selection.
             Section("From") {
                 Text("Machine: \(approval.gatewayName)")
-                Text("Bot: \(approval.botName ?? "unknown")")
+                HStack(spacing: 6) {
+                    BotAvatarView(store: store, bot: store.bot(gatewayID: approval.gatewayID, profileSlug: approval.profileSlug),
+                                  size: 20, showsActivity: false)
+                    Text("Bot: \(approval.botName ?? "unknown")")
+                }
                 Text("Chat: \(approval.sessionLabel)")
             }.font(.caption)
             Section("Command") {
@@ -446,8 +581,23 @@ struct MessagesView: View {
                     }
                 } else {
                     // The exact frozen destination, shown right above the Send button.
-                    Text("To: \(store.contextLabel)").font(.footnote.bold())
+                    HStack(spacing: 6) {
+                        if case .resolved(_, let bot?, _) = store.resolution {
+                            BotAvatarView(store: store, bot: bot, size: 22, showsActivity: false)
+                        }
+                        Text("To: \(store.contextLabel)").font(.footnote.bold())
+                    }
                     TextField("Message", text: $text)
+                    // Fills the field only; Send below is still the explicit action.
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(WatchStore.quickReplies, id: \.self) { reply in
+                                Button(reply) { text = reply }
+                                    .buttonStyle(.bordered).font(.caption2).fixedSize()
+                            }
+                        }
+                    }
+                    .accessibilityLabel("Quick replies")
                     Button("Send") {
                         if store.send(text: text) { text = "" }
                     }
@@ -475,7 +625,11 @@ struct OutboxRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             // Frozen at compose time; later context changes never relabel it.
-            Text("To: \(message.targetLabel)").font(.caption2).foregroundStyle(.secondary).lineLimit(3)
+            HStack(spacing: 4) {
+                BotAvatarView(store: store, bot: store.bot(gatewayID: message.request.gatewayID, profileSlug: message.request.profileSlug),
+                              size: 16, showsActivity: false)
+                Text("To: \(message.targetLabel)").font(.caption2).foregroundStyle(.secondary).lineLimit(3)
+            }
             Text(message.request.text).font(.footnote).lineLimit(2)
             Label(message.state.userText, systemImage: message.state.symbol).font(.caption2)
             if let diagnostic = message.diagnostic, message.state != .acknowledged {

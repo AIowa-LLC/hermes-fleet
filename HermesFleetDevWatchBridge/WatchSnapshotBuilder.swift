@@ -24,6 +24,9 @@ struct WatchFleetObservation {
     /// failed attempt with the failure time, so the bridge remembers the last
     /// good one; absent = never observed by this phone session.
     var lastGoodLiveObservedAt: [GatewayID: Date] = [:]
+    /// Digest of the avatar thumbnail the phone can send, per bot. Absent when
+    /// the bot has no uploaded image or it isn't loaded on the phone yet.
+    var avatarThumbnailDigestByRoute: [Route: String] = [:]
     var routeForSessionKey: (String, GatewayID) -> Route?
 }
 
@@ -70,7 +73,7 @@ enum WatchSnapshotBuilder {
             let preview = ApprovalCommandPreview(command: request.command)
             let approval = WatchApproval(
                 gatewayID: gatewayID.rawValue, gatewayName: clip(names[gatewayID] ?? gatewayID.rawValue, 40),
-                profileSlug: route?.profileSlug.rawValue, botName: bot.map { clip($0.displayName, 40) },
+                profileSlug: route?.profileSlug.rawValue, botName: bot.map { clip(BotRosterPresentation.displayTitle(for: $0), 40) },
                 sessionID: request.sessionID,
                 sessionLabel: clip(ApprovalOrigin.sessionLabel(title: item.operation.title, id: request.sessionID) ?? "unknown", 40),
                 requestID: request.requestID, commandPreview: clip(preview.visibleText, 140),
@@ -177,9 +180,37 @@ enum WatchSnapshotBuilder {
             seen.insert(session.id)
         }
         return WatchBot(ref: WatchBotRef(gatewayID: bot.gatewayID.rawValue, profileSlug: bot.profileSlug.rawValue),
-                        displayName: clip(bot.displayName, 40), activity: bot.activity.rawValue, conversations: chats,
+                        displayName: clip(BotRosterPresentation.displayTitle(for: bot), 40),
+                        activity: bot.activity.rawValue, conversations: chats,
                         mainChatStatus: status, mainChatDiagnostic: diagnostic,
-                        conversationsObservedAt: obs.sessionsObservedAtByRoute[bot.route])
+                        conversationsObservedAt: obs.sessionsObservedAtByRoute[bot.route],
+                        avatar: avatar(for: bot, imageDigest: obs.avatarThumbnailDigestByRoute[bot.route]))
+    }
+
+    /// The same appearance the iPhone roster draws (`BotAvatar`): server shape
+    /// metadata or the slug-derived default, server color or the route-derived
+    /// identity color. The thumbnail digest is offered only for a bot whose
+    /// roster still reports an uploaded image.
+    static func avatar(for bot: FleetBot, imageDigest: String?) -> WatchBotAvatar {
+        let slug = bot.profileSlug.rawValue
+        let shape: String
+        var seed = slug
+        switch BotAvatarIdentity.face(hasAvatar: false, shape: bot.botModeMetadata?.shape, identityName: slug) {
+        case .shape(let name): shape = name
+        case .blob(let parsed, let kind): shape = "blob"; seed = parsed + (kind ?? "")
+        case .image, .initials: shape = "squircle"
+        }
+        return WatchBotAvatar(shape: shape, seed: seed, colorHex: colorHex(metadata: bot.botModeMetadata?.color, route: bot.route),
+                              imageDigest: bot.hasAvatar ? imageDigest : nil)
+    }
+
+    /// A valid `#RRGGBB` server color wins; anything else falls back to the
+    /// bot's stable identity color (never the user's theme).
+    static func colorHex(metadata: String?, route: Route) -> String {
+        if let metadata, metadata.hasPrefix("#"), metadata.count == 7, UInt32(metadata.dropFirst(), radix: 16) != nil {
+            return metadata.uppercased()
+        }
+        return String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: route))
     }
 
     static func clip(_ text: String, _ limit: Int) -> String {
