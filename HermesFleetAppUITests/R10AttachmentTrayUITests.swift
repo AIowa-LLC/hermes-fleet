@@ -45,12 +45,14 @@ final class R10AttachmentTrayUITests: XCTestCase {
         let filesCloseButton = filesBrowser.descendants(matching: .button)
             .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
             .firstMatch
-        // PHPicker is presented by the OS outside the host app's accessibility
-        // tree. Query its owner through SpringBoard instead of reusing an
-        // app-scoped element whose activation frame can be invalid.
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let photoCloseButton = springboard.buttons
-            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
+        // On iOS 26 the Photos picker is exposed beneath the host app's
+        // Photos navigation bar. Keep the query there so an unrelated Cancel
+        // control elsewhere in the app cannot satisfy the picker check.
+        let photosPickerNavigationBar = app.navigationBars
+            .matching(identifier: "Photos")
+            .firstMatch
+        let photoCancelButton = photosPickerNavigationBar.buttons
+            .matching(identifier: "Cancel")
             .firstMatch
 
         while Date() < deadline {
@@ -62,9 +64,10 @@ final class R10AttachmentTrayUITests: XCTestCase {
                     return filesCloseButton
                 }
             } else if !selectedAction.exists,
-                      photoCloseButton.exists,
-                      photoCloseButton.isHittable {
-                return photoCloseButton
+                      photosPickerNavigationBar.exists,
+                      photoCancelButton.exists,
+                      photoCancelButton.isHittable {
+                return photoCancelButton
             }
 
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
@@ -79,23 +82,16 @@ final class R10AttachmentTrayUITests: XCTestCase {
             screenshot.lifetime = .keepAlways
             activity.add(screenshot)
 
-            let hierarchyText = """
-            Host app accessibility hierarchy:
-            \(app.debugDescription)
-
-            SpringBoard accessibility hierarchy:
-            \(springboard.debugDescription)
-            """
             let hierarchy = XCTAttachment(
-                data: Data(hierarchyText.utf8),
+                data: Data(app.debugDescription.utf8),
                 uniformTypeIdentifier: "public.plain-text"
             )
-            hierarchy.name = "\(pickerName) picker accessibility hierarchies at readiness failure"
+            hierarchy.name = "\(pickerName) picker host-app accessibility hierarchy at readiness failure"
             hierarchy.lifetime = .keepAlways
             activity.add(hierarchy)
         }
-        XCTFail("\(pickerName) picker should dismiss Add and expose its hittable Cancel or Close control within 20 seconds")
-        return pickerName == "File" ? filesCloseButton : photoCloseButton
+        XCTFail("\(pickerName) picker should dismiss Add and expose a hittable Cancel control within 20 seconds")
+        return pickerName == "File" ? filesCloseButton : photoCancelButton
     }
 
     private func dismissPhotoPicker(
@@ -103,18 +99,17 @@ final class R10AttachmentTrayUITests: XCTestCase {
         in app: XCUIApplication,
         returningTo addButton: XCUIElement
     ) {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let photoCloseButton = springboard.buttons
-            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
+        let photosPickerNavigationBar = app.navigationBars
+            .matching(identifier: "Photos")
             .firstMatch
 
         tap(tapping)
 
         let deadline = Date().addingTimeInterval(10)
-        while photoCloseButton.exists && Date() < deadline {
+        while photosPickerNavigationBar.exists && Date() < deadline {
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
         }
-        XCTAssertFalse(photoCloseButton.exists, "Photos picker should dismiss after tapping its system-owned close control")
+        XCTAssertFalse(photosPickerNavigationBar.exists, "Photos picker should dismiss after tapping its Photos navigation Cancel control")
 
         while !addButton.isHittable && Date() < deadline {
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
