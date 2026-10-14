@@ -39,14 +39,18 @@ final class R10AttachmentTrayUITests: XCTestCase {
         pickerName: String
     ) -> XCUIElement {
         let deadline = Date().addingTimeInterval(20)
-        let cancelButton = app.buttons
-            .matching(NSPredicate(format: "label == %@", "Cancel"))
-            .firstMatch
         let closePredicate = NSPredicate(format: "label IN %@", ["Cancel", "Close"])
         let filesBrowser = app.otherElements
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
             .firstMatch
         let filesCloseButton = filesBrowser.descendants(matching: .button)
+            .matching(closePredicate)
+            .firstMatch
+        // PHPicker is presented by the OS outside the host app's accessibility
+        // tree. Query its owner through SpringBoard instead of reusing an
+        // app-scoped element whose activation frame can be invalid.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let photoCloseButton = springboard.buttons
             .matching(closePredicate)
             .firstMatch
 
@@ -59,9 +63,9 @@ final class R10AttachmentTrayUITests: XCTestCase {
                     return filesCloseButton
                 }
             } else if !selectedAction.exists,
-                      cancelButton.exists,
-                      cancelButton.isHittable {
-                return cancelButton
+                      photoCloseButton.exists,
+                      photoCloseButton.isHittable {
+                return photoCloseButton
             }
 
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
@@ -77,8 +81,11 @@ final class R10AttachmentTrayUITests: XCTestCase {
             activity.add(screenshot)
 
             let hierarchyText = """
-            Host app, including the embedded system picker:
+            Host app accessibility hierarchy:
             \(app.debugDescription)
+
+            SpringBoard accessibility hierarchy:
+            \(springboard.debugDescription)
             """
             let hierarchy = XCTAttachment(
                 data: Data(hierarchyText.utf8),
@@ -89,7 +96,31 @@ final class R10AttachmentTrayUITests: XCTestCase {
             activity.add(hierarchy)
         }
         XCTFail("\(pickerName) picker should dismiss Add and expose its hittable Cancel or Close control within 20 seconds")
-        return pickerName == "File" ? filesCloseButton : cancelButton
+        return pickerName == "File" ? filesCloseButton : photoCloseButton
+    }
+
+    private func dismissPhotoPicker(
+        by tapping: XCUIElement,
+        in app: XCUIApplication,
+        returningTo addButton: XCUIElement
+    ) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let photoCloseButton = springboard.buttons
+            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
+            .firstMatch
+
+        tap(tapping)
+
+        let deadline = Date().addingTimeInterval(10)
+        while photoCloseButton.exists && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertFalse(photoCloseButton.exists, "Photos picker should dismiss after tapping its system-owned close control")
+
+        while !addButton.isHittable && Date() < deadline {
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.2)))
+        }
+        XCTAssertTrue(addButton.isHittable, "conversation Add action should be reachable after the Photos picker closes")
     }
 
     private func dismissFilePicker(
@@ -217,12 +248,12 @@ final class R10AttachmentTrayUITests: XCTestCase {
         let photoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
         tap(photoAction)
         let cancelPhoto = waitForSystemPicker(in: app, selectedAction: photoAction, pickerName: "Photo")
-        tap(cancelPhoto)
+        dismissPhotoPicker(by: cancelPhoto, in: app, returningTo: add)
 
         tap(add)
         let repeatedPhotoAction = firstMatch(in: app, identifier: "fleet.conversation.attach.photo")
         tap(repeatedPhotoAction)
         let cancelRepeatedPhoto = waitForSystemPicker(in: app, selectedAction: repeatedPhotoAction, pickerName: "Photo")
-        tap(cancelRepeatedPhoto)
+        dismissPhotoPicker(by: cancelRepeatedPhoto, in: app, returningTo: add)
     }
 }
