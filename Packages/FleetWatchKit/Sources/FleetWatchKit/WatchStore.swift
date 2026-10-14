@@ -26,6 +26,11 @@ public final class WatchStore {
     /// recorded is never queued or sent (fail closed); this explains why.
     public private(set) var outboxPersistenceError: String?
     public var selection: WatchContextSelection { didSet { persistSelection() } }
+    /// Avatar thumbnails by digest that are ready to draw.
+    public private(set) var avatarImages: [String: Data] = [:]
+    /// Bumped each time a snapshot brings an approval the Watch hasn't seen
+    /// before (not on launch), so the UI can tap the wrist once per arrival.
+    public private(set) var approvalArrivalCount = 0
 
     public let flavor: WatchAppFlavor = .dev
     private let transport: any WatchTransport
@@ -35,9 +40,18 @@ public final class WatchStore {
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var flushing = false
     @ObservationIgnored private var refreshesInFlight = 0
+    @ObservationIgnored private let avatarCache: WatchAvatarCache
+    @ObservationIgnored private var avatarsInFlight: Set<String> = []
+    /// Digests the phone couldn't supply this session; not asked for again
+    /// until the snapshot advertises a different digest.
+    @ObservationIgnored private var avatarsUnavailable: Set<String> = []
+    @ObservationIgnored private var seenApprovalIDs: Set<String> = []
 
     public init(transport: any WatchTransport, defaults: UserDefaults = .standard,
-         outboxURL: URL = WatchStore.defaultOutboxURL(), clock: @escaping () -> Date = Date.init) {
+         outboxURL: URL = WatchStore.defaultOutboxURL(),
+         avatarCache: WatchAvatarCache = WatchAvatarCache(directory: WatchAvatarCache.defaultDirectory()),
+         clock: @escaping () -> Date = Date.init) {
+        self.avatarCache = avatarCache
         self.transport = transport
         self.defaults = defaults
         self.outboxURL = outboxURL
@@ -74,11 +88,86 @@ public final class WatchStore {
         // Drop out-of-order contexts; never move backwards.
         if let current = snapshot, incoming.generation < current.generation,
            incoming.builtAt <= current.builtAt { return }
+        let hadSnapshot = snapshot != nil
         snapshot = incoming
         now = clock()
         // A resolved approval is gone from the snapshot: forget its UI state.
         let live = Set(incoming.approvals.map(\.id))
         approvalStates = approvalStates.filter { live.contains($0.key) }
+        noteApprovalArrivals(live, hadSnapshot: hadSnapshot)
+        loadCachedAvatars(incoming)
+    }
+
+    private func noteApprovalArrivals(_ live: Set<String>, hadSnapshot: Bool) {
+        let fresh = live.subtracting(seenApprovalIDs)
+        if hadSnapshot, !fresh.isEmpty { approvalArrivalCount += 1 }
+        seenApprovalIDs.formUnion(live)
+        if seenApprovalIDs.count > 500 { seenApprovalIDs = live }
+    }
+
+    // MARK: Bots and avatars
+
+    /// Every bot in the snapshot with its machine, in the phone's order.
+    public var botEntries: [WatchBotEntry] {
+        (snapshot?.gateways ?? []).flatMap { gateway in gateway.bots.map { WatchBotEntry(gateway: gateway, bot: $0) } }
+    }
+
+    public func bot(gatewayID: String, profileSlug: String?) -> WatchBot? {
+        guard let profileSlug else { return nil }
+        return snapshot?.gateways.first { $0.id == gatewayID }?.bots.first { $0.ref.profileSlug == profileSlug }
+    }
+
+    /// Points the destination at this bot: its Main chat when the iPhone
+    /// reported one, otherwise the bot overview. Never invents a chat.
+    public func select(_ bot: WatchBot) {
+        selection = .init(gatewayID: bot.ref.gatewayID, profileSlug: bot.ref.profileSlug, conversationID: bot.mainChat?.id)
+    }
+
+    /// Short replies offered under the message field. Tapping one only fills
+    /// the field; sending still takes an explicit Send with the destination shown.
+    public static let quickReplies = ["Continue", "Looks good", "Stop for now", "What's the status?"]
+
+    /// Pending approvals that came from this exact bot.
+    public func approvals(for bot: WatchBot) -> [WatchApproval] {
+        (snapshot?.approvals ?? []).filter { $0.gatewayID == bot.ref.gatewayID && $0.profileSlug == bot.ref.profileSlug }
+    }
+
+    /// Thumbnail bytes for the bot's current avatar, when already on the Watch.
+    public func avatarData(for bot: WatchBot?) -> Data? {
+        guard let digest = bot?.avatar?.imageDigest else { return nil }
+        return avatarImages[digest]
+    }
+
+    private func loadCachedAvatars(_ snapshot: WatchSnapshot) {
+        for gateway in snapshot.gateways {
+            for bot in gateway.bots {
+                guard let digest = bot.avatar?.imageDigest, avatarImages[digest] == nil,
+                      let data = avatarCache.load(digest) else { continue }
+                avatarImages[digest] = data
+            }
+        }
+    }
+
+    /// Fetches the bot's thumbnail from the phone once, if the Watch doesn't
+    /// have it. Never retried for the same digest after the phone said no.
+    public func loadAvatar(for bot: WatchBot) async {
+        guard let digest = bot.avatar?.imageDigest, avatarImages[digest] == nil,
+              !avatarsInFlight.contains(digest), !avatarsUnavailable.contains(digest) else { return }
+        if let data = avatarCache.load(digest) {
+            avatarImages[digest] = data
+            return
+        }
+        guard link == .reachable else { return }
+        avatarsInFlight.insert(digest)
+        defer { avatarsInFlight.remove(digest) }
+        let request = WatchAvatarRequest(gatewayID: bot.ref.gatewayID, profileSlug: bot.ref.profileSlug, digest: digest)
+        guard let reply = try? await transport.send(.avatar(request, flavor: flavor)) else { return }
+        guard case .avatar(let image) = reply, image.digest == digest, image.isValid, let data = image.data else {
+            avatarsUnavailable.insert(digest)
+            return
+        }
+        avatarCache.store(image)
+        avatarImages[digest] = data
     }
 
     public func refresh() async {

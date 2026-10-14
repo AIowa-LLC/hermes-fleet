@@ -72,6 +72,43 @@ public struct WatchConversationPin: Hashable, Codable, Sendable {
     }
 }
 
+/// How a bot looks, resolved on the iPhone with the same rules as the iPhone
+/// roster (server metadata first, then the bot's stable identity), so the
+/// Watch never derives its own appearance. Image bytes are not in the
+/// snapshot: `imageDigest` names a small thumbnail the Watch fetches once and
+/// caches by content hash.
+public struct WatchBotAvatar: Hashable, Codable, Sendable {
+    /// One of `circle, blob, squircle, pill, triangle, hexagon, cloud, drop`.
+    /// Anything else renders as `squircle`.
+    public let shape: String
+    /// Seed for the `blob` silhouette (stable per bot).
+    public let seed: String
+    /// `#RRGGBB` identity color.
+    public let colorHex: String
+    /// SHA-256 of the thumbnail the iPhone can send; nil when the bot has no
+    /// uploaded image or the iPhone hasn't loaded it yet.
+    public let imageDigest: String?
+
+    public init(shape: String, seed: String, colorHex: String, imageDigest: String? = nil) {
+        self.shape = shape
+        self.seed = seed
+        self.colorHex = colorHex
+        self.imageDigest = imageDigest
+    }
+
+    public static let shapes: Set<String> = ["circle", "blob", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"]
+
+    /// The shape to draw: unknown values degrade to `squircle`, never a crash.
+    public var renderShape: String { Self.shapes.contains(shape) ? shape : "squircle" }
+
+    /// RGB components 0...1 for `colorHex`, or nil when malformed.
+    public var rgb: (red: Double, green: Double, blue: Double)? {
+        guard colorHex.hasPrefix("#"), colorHex.count == 7,
+              let value = UInt32(colorHex.dropFirst(), radix: 16) else { return nil }
+        return (Double((value >> 16) & 255) / 255, Double((value >> 8) & 255) / 255, Double(value & 255) / 255)
+    }
+}
+
 /// What the iPhone actually knows about a bot's Main chat. "Unknown" is never
 /// shown as "not set up": only a successful registry lookup (with no roster
 /// chat) is absence.
@@ -93,12 +130,24 @@ public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
     public let mainChatDiagnostic: String?
     /// When the phone last successfully read THIS bot's conversation list.
     public let conversationsObservedAt: Date?
+    /// Appearance (nil from a sender that doesn't report it: initials).
+    public let avatar: WatchBotAvatar?
 
     /// Conversations that exist on the phone but are not in `conversations`
     /// because of the snapshot cap (not because they were removed).
     public var omittedConversationCount: Int { max(0, (totalConversations ?? conversations.count) - conversations.count) }
 
     public var id: String { "\(ref.gatewayID)#\(ref.profileSlug)" }
+
+    /// Up to two initials for the no-avatar fallback.
+    public var initials: String {
+        let words = displayName.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "_" })
+        let letters = words.prefix(2).compactMap(\.first).map(String.init).joined()
+        return letters.isEmpty ? "?" : letters.uppercased()
+    }
+
+    /// Activity reported by the iPhone, mapped to a small fixed vocabulary.
+    public var activityKind: WatchBotActivityKind { WatchBotActivityKind(rawActivity: activity) }
 
     /// The roster-reported Main chat, if the iPhone knows one. Nil means Main
     /// chat is not established: the Watch never creates or guesses one.
@@ -123,7 +172,9 @@ public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
 
     public init(ref: WatchBotRef, displayName: String, activity: String, conversations: [WatchConversation],
                 totalConversations: Int? = nil, mainChatStatus: WatchMainChatStatus? = nil,
-                mainChatDiagnostic: String? = nil, conversationsObservedAt: Date? = nil) {
+                mainChatDiagnostic: String? = nil, conversationsObservedAt: Date? = nil,
+                avatar: WatchBotAvatar? = nil) {
+        self.avatar = avatar
         self.totalConversations = totalConversations
         self.mainChatStatus = mainChatStatus
         self.mainChatDiagnostic = mainChatDiagnostic
@@ -132,6 +183,34 @@ public struct WatchBot: Hashable, Codable, Sendable, Identifiable {
         self.displayName = displayName
         self.activity = activity
         self.conversations = conversations
+    }
+}
+
+/// What a bot is doing, as the Watch shows it. Built from the iPhone's
+/// activity string; anything unrecognised is `unknown`, never "idle".
+public enum WatchBotActivityKind: String, Sendable, Hashable {
+    case busy, waiting, needsAttention, idle, offline, unknown
+
+    public init(rawActivity: String) {
+        switch rawActivity {
+        case "working", "thinking", "usingTool": self = .busy
+        case "waiting": self = .waiting
+        case "needsAttention": self = .needsAttention
+        case "idle": self = .idle
+        case "offline": self = .offline
+        default: self = .unknown
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .busy: return "Working"
+        case .waiting: return "Waiting for input"
+        case .needsAttention: return "Needs attention"
+        case .idle: return "Idle"
+        case .offline: return "Offline"
+        case .unknown: return "Status unknown"
+        }
     }
 }
 

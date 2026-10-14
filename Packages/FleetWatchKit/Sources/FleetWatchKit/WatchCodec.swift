@@ -49,7 +49,12 @@ public enum WatchCodec {
 
     /// Hex SHA-256 of the exact command string the phone observed.
     public static func digest(_ text: String) -> String {
-        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        digest(data: Data(text.utf8))
+    }
+
+    /// Hex SHA-256 of raw bytes (avatar thumbnails are cached by this).
+    public static func digest(data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -76,7 +81,8 @@ public enum WatchSnapshotBudget {
                                     conversations: capped(bot.conversations, keeping: pin),
                                     totalConversations: bot.totalConversations ?? bot.conversations.count,
                                     mainChatStatus: bot.mainChatStatus, mainChatDiagnostic: bot.mainChatDiagnostic,
-                                    conversationsObservedAt: bot.conversationsObservedAt)
+                                    conversationsObservedAt: bot.conversationsObservedAt,
+                                    avatar: bot.avatar)
                 },
                 running: Array(gateway.running.prefix(maxRunningPerGateway)),
                 rosterObservedAt: gateway.rosterObservedAt,

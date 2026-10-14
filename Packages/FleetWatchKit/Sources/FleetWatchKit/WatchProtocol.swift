@@ -92,16 +92,31 @@ public struct WatchMessageRequest: Codable, Sendable, Hashable {
     }
 }
 
+/// Asks the phone for one bot's avatar thumbnail, named by the digest the
+/// snapshot advertised. The phone answers only for that exact bot and digest.
+public struct WatchAvatarRequest: Codable, Sendable, Hashable {
+    public let gatewayID: String
+    public let profileSlug: String
+    public let digest: String
+
+    public init(gatewayID: String, profileSlug: String, digest: String) {
+        self.gatewayID = gatewayID
+        self.profileSlug = profileSlug
+        self.digest = digest
+    }
+}
+
 public enum WatchRequest: Codable, Sendable, Hashable {
     /// `pinned` is the conversation the Watch has selected, so the phone keeps it
     /// in the (capped) snapshot while it still exists.
     case refresh(flavor: WatchAppFlavor, pinned: WatchConversationPin? = nil)
     case approval(WatchApprovalRequest, flavor: WatchAppFlavor)
     case message(WatchMessageRequest, flavor: WatchAppFlavor)
+    case avatar(WatchAvatarRequest, flavor: WatchAppFlavor)
 
     public var flavor: WatchAppFlavor {
         switch self {
-        case .refresh(let f, _), .approval(_, let f), .message(_, let f): return f
+        case .refresh(let f, _), .approval(_, let f), .message(_, let f), .avatar(_, let f): return f
         }
     }
 }
@@ -184,9 +199,31 @@ public struct WatchMessageReply: Codable, Sendable, Hashable {
     }
 }
 
+/// A bot avatar thumbnail. `data` is nil when the phone no longer has that
+/// exact image (it changed or was removed); the Watch then keeps the shape.
+public struct WatchAvatarImage: Codable, Sendable, Hashable {
+    public let digest: String
+    public let data: Data?
+
+    /// Thumbnails stay well inside one WatchConnectivity message.
+    public static let maxBytes = 24 * 1024
+
+    public init(digest: String, data: Data?) {
+        self.digest = digest
+        self.data = data
+    }
+
+    /// True when the bytes are present, within budget and match the digest.
+    public var isValid: Bool {
+        guard let data, !data.isEmpty, data.count <= Self.maxBytes else { return false }
+        return WatchCodec.digest(data: data) == digest
+    }
+}
+
 public enum WatchReply: Codable, Sendable, Hashable {
     case snapshot(WatchSnapshot)
     case approval(WatchApprovalReply)
     case message(WatchMessageReply)
+    case avatar(WatchAvatarImage)
     case rejected(reason: String)
 }

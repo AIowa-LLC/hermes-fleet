@@ -81,3 +81,15 @@ public enum WatchContextResolver {
         }
     }
 }
+
+/// One bot together with the machine it runs on.
+public struct WatchBotEntry: Identifiable, Hashable, Sendable {
+    public let gateway: WatchGateway
+    public let bot: WatchBot
+    public var id: String { bot.id }
+
+    public init(gateway: WatchGateway, bot: WatchBot) {
+        self.gateway = gateway
+        self.bot = bot
+    }
+}
