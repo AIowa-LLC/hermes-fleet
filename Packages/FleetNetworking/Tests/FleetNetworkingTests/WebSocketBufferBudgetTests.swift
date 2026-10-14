@@ -263,6 +263,8 @@ final class WebSocketBufferBudgetTests: XCTestCase {
         socket.push(Self.event(session: "s1", seq: 2))
         let reported = await waitUntil { gaps.all.contains { $0.reason == .oversizedFrame && $0.sessionID == nil } }
         XCTAssertTrue(reported, "a refused frame has an unknown session: the gap must say so")
+        let laterFrameForwarded = await waitUntil { await transport.watermark(for: "s1") == 2 }
+        XCTAssertTrue(laterFrameForwarded, "later events still flow after an oversized frame is refused")
         let incomplete = await transport.takeIncompleteSessions()
         XCTAssertTrue(incomplete.all, "every session must be treated as possibly incomplete")
         let w = await transport.watermark(for: "s1")
