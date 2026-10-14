@@ -39,19 +39,18 @@ final class R10AttachmentTrayUITests: XCTestCase {
         pickerName: String
     ) -> XCUIElement {
         let deadline = Date().addingTimeInterval(20)
-        let closePredicate = NSPredicate(format: "label IN %@", ["Cancel", "Close"])
         let filesBrowser = app.otherElements
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "DOC.browsingRoot Source:"))
             .firstMatch
         let filesCloseButton = filesBrowser.descendants(matching: .button)
-            .matching(closePredicate)
+            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
             .firstMatch
         // PHPicker is presented by the OS outside the host app's accessibility
         // tree. Query its owner through SpringBoard instead of reusing an
         // app-scoped element whose activation frame can be invalid.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let photoCloseButton = springboard.buttons
-            .matching(closePredicate)
+            .matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
             .firstMatch
 
         while Date() < deadline {
