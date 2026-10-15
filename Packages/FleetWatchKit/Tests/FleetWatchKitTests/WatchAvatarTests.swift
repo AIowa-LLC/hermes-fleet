@@ -105,23 +105,33 @@ final class WatchAvatarTests: XCTestCase {
         XCTAssertFalse(cache.store(WatchAvatarImage(digest: "../x", data: png)))
     }
 
-    func testCacheEvictsOldestBeyondCapacity() throws {
-        let cache = WatchAvatarCache(directory: dir.appendingPathComponent("c"), capacity: 2)
-        var digests: [String] = []
-        for i in 0..<3 {
-            let data = Data([UInt8(i), 1, 2, 3])
-            let d = WatchCodec.digest(data: data)
-            digests.append(d)
-            XCTAssertTrue(cache.store(WatchAvatarImage(digest: d, data: data)))
-            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: Double(1000 + i))],
-                                                  ofItemAtPath: dir.appendingPathComponent("c").appendingPathComponent(d).path)
-        }
-        let cache2 = WatchAvatarCache(directory: dir.appendingPathComponent("c"), capacity: 2)
-        let extra = Data([9, 9])
-        cache2.store(WatchAvatarImage(digest: WatchCodec.digest(data: extra), data: extra))
-        XCTAssertNil(cache2.load(digests[0]))
-        XCTAssertNil(cache2.load(digests[1]))
-        XCTAssertNotNil(cache2.load(digests[2]))
+    func testCachePrunesToAdvertisedDigestsOnly() throws {
+        let cache = WatchAvatarCache(directory: dir.appendingPathComponent("c"))
+        let other = Data([1, 2, 3])
+        cache.store(WatchAvatarImage(digest: digest, data: png))
+        cache.store(WatchAvatarImage(digest: WatchCodec.digest(data: other), data: other))
+        try Data("note".utf8).write(to: dir.appendingPathComponent("c").appendingPathComponent("README"))
+        cache.prune(keeping: [digest])
+        XCTAssertEqual(cache.load(digest), png)
+        XCTAssertNil(cache.load(WatchCodec.digest(data: other)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("c/README").path),
+                      "non-digest files are never touched")
+    }
+
+    func testChangedAvatarPrunesOldThumbnailButLockedSnapshotDoesNot() async {
+        answerAvatars(with: png)
+        let bot = botWithAvatar(digest: digest)
+        push(bot)
+        await store.loadAvatar(for: bot)
+        XCTAssertNotNil(store.avatarData(for: bot))
+
+        transport.push(.hidden(flavor: .dev, generation: 2, builtAt: Fx.t0))
+        let cache = WatchAvatarCache(directory: dir.appendingPathComponent("avatars"))
+        XCTAssertEqual(cache.load(digest), png, "locking the phone doesn't wipe cached faces")
+
+        push(botWithAvatar(digest: nil), generation: 3)
+        XCTAssertNil(cache.load(digest), "an image the iPhone no longer advertises is removed")
+        XCTAssertNil(store.avatarData(for: bot))
     }
 
     // MARK: store

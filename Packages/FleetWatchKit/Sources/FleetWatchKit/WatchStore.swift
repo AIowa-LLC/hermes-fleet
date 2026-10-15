@@ -139,6 +139,13 @@ public final class WatchStore {
     }
 
     private func loadCachedAvatars(_ snapshot: WatchSnapshot) {
+        // A hidden (locked) snapshot carries no bots; it says nothing about
+        // which avatars are still in use, so it never prunes.
+        if snapshot.contentVisible {
+            let advertised = Set(snapshot.gateways.flatMap { $0.bots.compactMap(\.avatar?.imageDigest) })
+            avatarCache.prune(keeping: advertised)
+            avatarImages = avatarImages.filter { advertised.contains($0.key) }
+        }
         for gateway in snapshot.gateways {
             for bot in gateway.bots {
                 guard let digest = bot.avatar?.imageDigest, avatarImages[digest] == nil,

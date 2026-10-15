@@ -78,8 +78,8 @@ session). The Watch has no separate hierarchy.
 * **Uploaded images.** The snapshot carries only the SHA-256 of a Watch-sized
   thumbnail (at most 112 px and 24 KB, made with a bounded decode on the
   iPhone). The Watch asks for it once per digest over `sendMessage`, verifies
-  the bytes against the digest, and caches up to 48 thumbnails in its Caches
-  directory. The iPhone answers only for the exact bot and current digest and
+  the bytes against the digest, and caches it in its Caches directory, keeping
+  only the thumbnails the latest unlocked snapshot still advertises. The iPhone answers only for the exact bot and current digest and
   sends nothing while App Lock hides content. If anything fails, the Watch
   keeps drawing the bot's shape. With the display dimmed, avatars become
   neutral placeholders like names.
