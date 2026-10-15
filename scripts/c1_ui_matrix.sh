@@ -330,9 +330,12 @@ for cls in "${SELECTED[@]}"; do
       || die "cannot resolve expected cases for $cls"
     while IFS= read -r method; do expected_cases+=("$method"); done <<< "$case_list"
   fi
+  # Xcode can spend 600s collecting simulator diagnostics after XCTest has
+  # completed. Keep the watchdog fail-closed, with a 60s margin for Xcode to
+  # emit its final result and exit instead of killing a completed invocation.
   if ! python3 scripts/xcode_progress_watchdog.py --log "$out" \
     --report "$RESULTS_ROOT/${cls}.watchdog.json" \
-    --timeout "${HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS:-600}" -- \
+    --timeout "${HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS:-660}" -- \
     xcodebuild "${XC[@]}" "${RETRY[@]}" -resultBundlePath "$bundle" "${only_testing[@]}" test-without-building; then
     UI_FAIL=$((UI_FAIL+1)); printf 'FAIL  UI %s FAILED or incomplete\n' "$cls"
     grep -E 'error:|failed|Executed|Test Suite' "$out" | tail -20; continue

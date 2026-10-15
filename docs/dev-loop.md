@@ -231,13 +231,15 @@ Partitions use the 60 observed suite runtimes from successful run
 recorded in `ci-runtime-baseline.json`. Weights guide balancing and must be
 re-profiled after harness changes; they are not completion-time guarantees.
 
-Test invocations fail after 600 seconds without XCTest case/suite or XCUI
-step progress. App startup noise does not reset the watchdog. The owned
-process group is stopped, and its original log, partial result bundle, and
-watchdog report are retained. An interrupted invocation is not a pass and is
-not automatically retried. Slow tests with real progress keep running.
+Test invocations fail after 660 seconds without XCTest case/suite or XCUI
+step progress. This includes a 60-second exit margin after Xcode's 600-second
+simulator-diagnostics cleanup timeout, which can begin after all assertions
+pass. App startup noise does not reset the watchdog. The owned process group is
+stopped, and its original log, partial result bundle, and watchdog report are
+retained. An interrupted invocation is not a pass and is not automatically
+retried. Slow tests with real progress keep running.
 `HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS` accepts a finite positive override;
-the hosted default remains 600 seconds.
+the default is 660 seconds.
 
 Each of the twelve required UI jobs either executes its selected suites or
 validates trusted source evidence. Static guards, package suites, hosted
