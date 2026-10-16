@@ -235,7 +235,7 @@ public struct PairingInvitationLink: Sendable, Equatable, CustomStringConvertibl
     }
 
     /// Strict unpadded base64url (alphabet `A-Za-z0-9-_`, no `=`).
-    static func base64URLDecode(_ text: String) -> Data? {
+    public static func base64URLDecode(_ text: String) -> Data? {
         guard !text.isEmpty, text.unicodeScalars.allSatisfy({
             ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A)
                 || ($0.value >= 0x61 && $0.value <= 0x7A) || $0 == "-" || $0 == "_"
@@ -250,7 +250,7 @@ public struct PairingInvitationLink: Sendable, Equatable, CustomStringConvertibl
         return Data(base64Encoded: standard)
     }
 
-    static func base64URLEncode(_ data: Data) -> String {
+    public static func base64URLEncode(_ data: Data) -> String {
         data.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")

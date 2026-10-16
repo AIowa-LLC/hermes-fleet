@@ -161,7 +161,8 @@ final class PairingFlowTests: XCTestCase {
             ("not a link", .malformedLink),
             ("http://gateway.example.test/pair#v=1&i=\(id)&s=\(secret)", .insecureDestination),
             ("https://127.0.0.1/pair#v=1&i=\(id)&s=\(secret)", .insecureDestination),
-            ("https://gateway.example.test/pair#v=2&i=\(id)&s=\(secret)", .unsupportedLinkVersion),
+            ("https://gateway.example.test/pair#v=3&i=\(id)&s=\(secret)", .unsupportedLinkVersion),
+            ("https://gateway.example.test/pair#v=2&i=\(id)&s=\(secret)", .malformedLink),     // v2 needs its key pin
         ]
         for (text, expected) in cases {
             let (coordinator, service, _) = makeCoordinator()
