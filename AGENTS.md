@@ -19,13 +19,18 @@ FleetCore
   ↑
   ├─ FleetNetworking
   ├─ FleetSecurity
+  │    ↑
+  │    └─ FleetClientKit   (extension-safe; FleetCore + FleetSecurity only)
   ├─ FleetPersistence
   └─ FleetUI
 
 HermesFleetApp depends on all modules.
+App extensions (added later) may link only FleetCore, FleetSecurity, FleetClientKit.
 ```
 
 `FleetUI` must never import `FleetNetworking`. UI code depends on abstractions defined in `FleetCore`; concrete networking is wired by the app target.
+
+`FleetClientKit` and any extension target must never import `FleetNetworking`, `FleetUI`, `FleetPersistence`, or app code (enforced by `scripts/extension_boundary_guard.py`). The App Group and shared keychain group are off by default behind `FLEET_SHARED_GROUPS`; see [docs/extension-kit.md](docs/extension-kit.md). Gateway credentials never move to a shared keychain group.
 
 ## Working rules
 

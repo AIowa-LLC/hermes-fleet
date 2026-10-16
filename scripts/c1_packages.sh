@@ -15,7 +15,9 @@ expected_test_count() {
     FleetCore) echo 760 ;;
     FleetNetworking) echo 743 ;;
     FleetPersistence) echo 64 ;;
-    FleetSecurity) echo 50 ;;
+    FleetSecurity) echo 60 ;;
+    FleetClientKit) echo 52 ;;
+    FleetWatchKit) echo 96 ;;
     *) return 1 ;;
   esac
 }
@@ -71,6 +73,8 @@ run_pkg FleetCore
 run_pkg FleetNetworking
 run_pkg FleetPersistence
 run_pkg FleetSecurity
+run_pkg FleetClientKit
+run_pkg FleetWatchKit
 
 printf '\n=====================================\n'
 printf 'C1 packages phase: FAIL=%d\n' "$FAIL"

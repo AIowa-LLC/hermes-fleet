@@ -40,6 +40,13 @@ else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
 fi
 
+# --- extension-safe module boundary --------------------------------------------
+if python3 scripts/extension_boundary_guard.py && bash scripts/extension_boundary_guard_test.sh; then
+  ok "extension boundary: shared kit remains independent of app/UI/networking/persistence"
+else
+  bad "extension boundary validation FAILED"
+fi
+
 # --- cache failure-policy guard (P0.4b) ---------------------------------------
 note "Cache failure policy: no force-try in FleetServiceGraph.swift"
 HITS=$(grep -nE '\btry!|\bfatalError[[:space:]]*\(|\bpreconditionFailure[[:space:]]*\(' HermesFleetApp/FleetServiceGraph.swift 2>/dev/null || true)

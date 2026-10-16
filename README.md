@@ -73,6 +73,7 @@ FleetCore          domain models, policies, and cross-module seams
    ▲
    ├─ FleetNetworking   JSON-RPC/WebSocket transport and gateway clients
    ├─ FleetSecurity     Keychain-backed credentials, tokens, and trust pins
+   │    └─ FleetClientKit  extension-safe client layer (shared snapshot, one-shot calls)
    ├─ FleetPersistence  SwiftData non-secret cache and snapshots
    └─ FleetUI           SwiftUI screens and view models
 
