@@ -80,6 +80,9 @@ UI_CLASSES=(
   # approval flow / Operation Detail swarm view, all over the deterministic
   # scripted Live Ops fixture (no live gateway).
   LiveOps
+  # Build 17 (universal login): paste/scan -> confirm -> approval code ->
+  # scripted approval over the deterministic scripted pairing fleet.
+  UniversalLogin
 )
 
 # C1 measured suite runtimes, rounded up to tenths of a minute. Source:
@@ -92,6 +95,7 @@ UI_WEIGHT_TENTHS_OF_MINUTE=(
   72 29 35 70 72 70 96 82 84 40 170 139
   80 101 54 46 112 91 48 87 70 60 29 99
   52 49 64 46 46 58 176 51 54 43 25 58
+  40
 )
 
 # Live-gateway/environmental suites — intentionally excluded from CI. They
