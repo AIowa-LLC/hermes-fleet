@@ -1,8 +1,9 @@
 import XCTest
 
 /// C2 — existing users add another server through the same QR-first guidance
-/// as first run (DEV14): Copy setup prompt, Scan pairing QR, Cancel, and a
-/// secondary Advanced setup. Keep the registered suite name stable.
+/// as first run: "Connect to Hermes" with Scan QR code, Paste link, Cancel, and a secondary
+/// "Other ways to connect" that holds the legacy Telegram setup prompt. Keep the registered
+/// suite name stable.
 final class C2SetupPromptUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -37,30 +38,26 @@ final class C2SetupPromptUITests: XCTestCase {
         add.tap()
     }
 
-    /// Asserts the sheet's actions, exercises copy, then scan -> back -> scan again.
+    /// Asserts the sheet's actions, then scan -> back -> scan again.
     private func exerciseAddSheet(_ app: XCUIApplication, simulated: Bool) {
         let scan = app.buttons["fleet.add-gateway.scan"]
-        XCTAssertTrue(scan.waitForExistence(timeout: 10), "Scan pairing QR must be visible")
-        XCTAssertEqual(scan.label, "Scan pairing QR")
-        let copy = app.buttons["fleet.add-gateway.copy-owner-prompt"]
-        XCTAssertTrue(copy.waitForExistence(timeout: 5), "Copy setup prompt must be visible")
-        XCTAssertTrue(copy.label.contains("Copy setup prompt"))
+        XCTAssertTrue(scan.waitForExistence(timeout: 10), "Scan QR code must be visible")
+        XCTAssertEqual(scan.label, "Scan QR code")
+        XCTAssertEqual(app.buttons["fleet.add-gateway.paste"].label, "Paste link")
         XCTAssertTrue(app.buttons["fleet.add-gateway.cancel"].exists)
-        XCTAssertTrue(app.buttons["fleet.add-gateway.advanced"].exists, "Advanced setup stays available")
+        XCTAssertTrue(app.buttons["fleet.add-gateway.advanced"].exists, "Other ways to connect stays available")
         XCTAssertFalse(app.textFields["fleet.onboarding.address"].exists,
                        "the old address-first flow must not be the default")
-        let prompt = app.staticTexts["fleet.add-gateway.owner-prompt"]
-        XCTAssertTrue(prompt.exists)
-        XCTAssertTrue(prompt.label.contains("private Telegram message from the verified owner"),
-                      "the shared prompt text is shown")
+        XCTAssertEqual(app.staticTexts["fleet.add-gateway.title"].label, "Connect to Hermes")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.add-gateway.step.1"].firstMatch.label.contains("/fleet pair"))
+        XCTAssertFalse(app.buttons["fleet.add-gateway.copy-owner-prompt"].exists,
+                       "the Telegram prompt is no longer on the default path")
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "Telegram")).firstMatch.exists)
 
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         shot.name = "add-gateway-sheet"
         shot.lifetime = .keepAlways
         add(shot)
-
-        copy.tap()
-        XCTAssertTrue(app.buttons["fleet.add-gateway.copy-owner-prompt"].label.contains("Copied"))
 
         guard simulated else { return }
         for round in 1...2 {
@@ -109,6 +106,12 @@ final class C2SetupPromptUITests: XCTestCase {
         for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
         advanced.tap()
         XCTAssertTrue(app.buttons["fleet.add-gateway.advanced.manual"].waitForExistence(timeout: 10))
+        let legacyCopy = app.buttons["fleet.add-gateway.legacy.copy-owner-prompt"]
+        for _ in 0..<6 where !legacyCopy.exists { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(legacyCopy.exists, "the legacy Telegram prompt lives under Other ways to connect")
+        legacyCopy.tap()
+        XCTAssertTrue(app.buttons["fleet.add-gateway.legacy.copy-owner-prompt"].label.contains("Copied"))
+        for _ in 0..<6 where !app.buttons["fleet.add-gateway.advanced.owner"].isHittable { app.swipeDown(velocity: .fast) }
         app.buttons["fleet.add-gateway.advanced.owner"].tap()
         XCTAssertTrue(app.textFields["fleet.onboarding.address"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["fleet.onboarding.dismiss"].exists)

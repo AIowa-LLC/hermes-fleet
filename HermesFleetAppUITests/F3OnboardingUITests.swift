@@ -8,42 +8,63 @@ final class F3OnboardingUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    // Name kept: scripts/c1_critical_smoke.sh selects this case by id.
     func testFirstRunShowsOnlyQRPathAndCopyableOwnerInstructions() throws {
         let app = launch()
 
         XCTAssertTrue(app.otherElements["fleet.root.onboarding"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["fleet.first-run.title"].exists)
+        XCTAssertEqual(app.staticTexts["fleet.first-run.title"].label, "Connect to Hermes")
         XCTAssertTrue(app.staticTexts["fleet.first-run.intro"].exists)
-        XCTAssertTrue(app.staticTexts["fleet.first-run.readiness"].exists)
         XCTAssertTrue(app.staticTexts["fleet.first-run.expiry"].exists)
-        let ownerPrompt = app.staticTexts["fleet.first-run.owner-prompt"]
-        XCTAssertTrue(ownerPrompt.exists, "the Telegram setup instructions must be selectable text")
-        XCTAssertTrue(ownerPrompt.label.contains("private Telegram message from the verified owner"))
-        XCTAssertTrue(ownerPrompt.label.contains("/fleetsetup"), "owner prompt must mention /fleetsetup")
-        XCTAssertTrue(ownerPrompt.label.contains("/fleetstatus"), "owner prompt must mention /fleetstatus")
-        XCTAssertTrue(ownerPrompt.label.contains("/fleetqr"), "owner prompt must mention /fleetqr")
-        XCTAssertTrue(ownerPrompt.label.contains("/fleetdevices"), "owner prompt must mention /fleetdevices")
-        XCTAssertTrue(ownerPrompt.label.contains("existing owner binding"), "owner prompt must mention existing owner binding")
-        XCTAssertTrue(ownerPrompt.label.contains("expires in two minutes"), "owner prompt must mention expires in two minutes")
-        XCTAssertTrue(ownerPrompt.label.contains("logged-in macOS desktop session"), "owner prompt must mention logged-in macOS desktop session")
-        XCTAssertTrue(ownerPrompt.label.contains("Never send the invitation link"), "owner prompt must mention Never send the invitation link")
-        XCTAssertFalse(ownerPrompt.label.contains("hermes --run-module hermes_cli.fleet_pairing_cli invite"),
-                       "the prompt must not tell every Hermes install to run a legacy issuer")
 
-        let copyPrompt = app.buttons["fleet.first-run.copy-owner-prompt"]
-        XCTAssertTrue(copyPrompt.exists)
-        copyPrompt.tap()
-        XCTAssertTrue(app.buttons["fleet.first-run.copy-owner-prompt"].label.contains("Copied"))
+        // The three steps of the universal-login flow (docs/universal-login.md).
+        let step1 = app.descendants(matching: .any)["fleet.first-run.step.1"].firstMatch
+        XCTAssertTrue(step1.exists)
+        XCTAssertTrue(step1.label.contains("/fleet pair"), "step 1 names /fleet pair")
+        XCTAssertTrue(step1.label.contains("hermes fleet pair"), "step 1 names the terminal command")
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.first-run.step.2"].firstMatch.label.contains("scan its QR code"))
+        XCTAssertTrue(app.descendants(matching: .any)["fleet.first-run.step.3"].firstMatch.label.contains("Approve the code"))
 
         let scan = app.buttons["fleet.first-run.scan"]
         XCTAssertTrue(scan.exists)
         XCTAssertTrue(scan.isEnabled)
+        XCTAssertEqual(scan.label, "Scan QR code")
+        let paste = app.buttons["fleet.first-run.paste"]
+        XCTAssertTrue(paste.exists)
+        XCTAssertEqual(paste.label, "Paste link")
+
+        // No Telegram, and no legacy setup prompt, on the default path.
+        XCTAssertFalse(app.staticTexts["fleet.first-run.owner-prompt"].exists)
+        XCTAssertFalse(app.buttons["fleet.first-run.copy-owner-prompt"].exists)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "Telegram")).firstMatch.exists,
+                       "the default path must not mention Telegram")
         XCTAssertFalse(app.textFields["fleet.onboarding.address"].exists)
         XCTAssertFalse(app.textFields["fleet.onboarding.username"].exists)
         XCTAssertFalse(app.secureTextFields["fleet.onboarding.password"].exists)
         XCTAssertFalse(app.buttons["fleet.onboarding.advanced"].exists)
         XCTAssertFalse(app.tabBars.firstMatch.exists)
-        attachScreenshot(of: app, name: "f3-first-run-qr-first")
+        attachScreenshot(of: app, name: "f3-first-run-connect-to-hermes")
+    }
+
+    func testOtherWaysToConnectHoldsOwnerSignInManualSetupAndTheLegacyPrompt() throws {
+        let app = launch()
+        let other = app.buttons["fleet.first-run.advanced"]
+        for _ in 0..<6 where !other.isHittable { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(other.waitForExistence(timeout: 5))
+        other.tap()
+
+        XCTAssertTrue(app.buttons["fleet.first-run.advanced.owner"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["fleet.first-run.advanced.manual"].exists)
+        let copy = app.buttons["fleet.first-run.legacy.copy-owner-prompt"]
+        for _ in 0..<6 where !copy.exists { app.swipeUp(velocity: .fast) }
+        XCTAssertTrue(copy.exists, "the v1 Telegram setup message lives under Other ways to connect")
+        let prompt = app.staticTexts["fleet.first-run.legacy.owner-prompt"]
+        XCTAssertTrue(prompt.exists)
+        XCTAssertTrue(prompt.label.contains("private Telegram message from the verified owner"))
+        copy.tap()
+        XCTAssertTrue(app.buttons["fleet.first-run.legacy.copy-owner-prompt"].label.contains("Copied"))
+        attachScreenshot(of: app, name: "f3-other-ways-to-connect")
     }
 
     func testInvitationPreviewRequiresExplicitPhoneConfirmation() throws {
