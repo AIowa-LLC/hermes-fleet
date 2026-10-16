@@ -42,6 +42,8 @@ final class PairingExchange: NSObject, URLSessionDataDelegate, @unchecked Sendab
         var fingerprint: SPKIFingerprint?
         var untrusted = false
         var keyMismatch = false
+        /// The key matched the link's pin although the system would not trust the certificate.
+        var acceptedByPinOnly = false
         var redirected = false
         var oversized = false
     }
@@ -65,12 +67,20 @@ final class PairingExchange: NSObject, URLSessionDataDelegate, @unchecked Sendab
 
     private let trust: any PairingTrustEvaluating
     private let expected: SPKIFingerprint?
+    private let pin: SPKIFingerprint?
     private let limit: Int
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    init(trust: any PairingTrustEvaluating, expected: SPKIFingerprint?, limit: Int) {
+    /// - Parameters:
+    ///   - expected: the key already confirmed for this exchange; any other key is refused.
+    ///   - pin: the key a version 2 link vouches for (S6). With a pin the server is accepted
+    ///     when the leaf key matches it, whether or not the system trusts the certificate; a
+    ///     different key is refused either way (`keyMismatch` when the system trusted the
+    ///     certificate, `untrusted` when it did not).
+    init(trust: any PairingTrustEvaluating, expected: SPKIFingerprint?, pin: SPKIFingerprint? = nil, limit: Int) {
         self.trust = trust
         self.expected = expected
+        self.pin = pin
         self.limit = limit
     }
 
@@ -111,10 +121,26 @@ final class PairingExchange: NSObject, URLSessionDataDelegate, @unchecked Sendab
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
-        guard trust.isTrusted(serverTrust, host: challenge.protectionSpace.host),
-              let chain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
+        let systemTrusted = trust.isTrusted(serverTrust, host: challenge.protectionSpace.host)
+        guard let chain = SecTrustCopyCertificateChain(serverTrust) as? [SecCertificate],
               let leaf = chain.first,
               let fingerprint = SPKIExtractor.fingerprint(from: leaf) else {
+            state.withLock { $0.observed.untrusted = true }
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        if let pin {
+            guard fingerprint == pin else {
+                // Wrong key. If the system would have trusted it this is a different server
+                // than the link's (identity mismatch); otherwise it is simply untrusted.
+                state.withLock {
+                    if systemTrusted { $0.observed.keyMismatch = true } else { $0.observed.untrusted = true }
+                }
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            if !systemTrusted { state.withLock { $0.observed.acceptedByPinOnly = true } }
+        } else if !systemTrusted {
             state.withLock { $0.observed.untrusted = true }
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
@@ -202,6 +228,10 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
 
     private let trust: any PairingTrustEvaluating
     private let configuration: URLSessionConfiguration
+    /// Keys this client admitted because a version 2 link pinned them. A cleanup revocation
+    /// to such a key must be admitted the same way (the system never trusted that certificate);
+    /// every other key still needs system trust.
+    private let pinnedKeys = OSAllocatedUnfairLock(initialState: Set<SPKIFingerprint>())
 
     /// - Parameter trust: the server-trust policy. Production uses the default (the system's);
     ///   tests inject an evaluator anchored to a throwaway certificate.
@@ -227,7 +257,7 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
         let reply = try await post(
             origin: link.origin, path: "api/fleet/pairing/preview",
             body: ["invitation_id": link.invitationID, "secret": link.secret.rawValue],
-            expecting: nil)
+            expecting: nil, pin: link.pin)
         let envelope = try Self.decode(PreviewEnvelope.self, from: reply.data)
         let gateway = try envelope.gateway.validated(against: link.origin)
         guard envelope.invitation.id == link.invitationID else { throw .identityMismatch }
@@ -245,12 +275,26 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
             throw .malformedResponse
         }
         let remaining = expiresAt - serverTime
+        let approvalRequired = envelope.invitation.approval_required ?? false
+        let protocols = envelope.protocols ?? []
+        if link.requiresApproval {
+            // A version 2 link only works through the approval path.
+            guard approvalRequired else { throw .malformedResponse }
+            if !protocols.isEmpty, !protocols.contains(PairingInvitationLink.approvalVersion) {
+                throw .approvalNotSupported
+            }
+        } else if approvalRequired {
+            // A legacy link to an invitation that must be approved can never be redeemed.
+            throw .approvalRequired
+        }
         return PairingPreview(
             gateway: gateway,
             label: Self.displayText(envelope.invitation.label, limit: 64),
             access: access,
             expiresAt: Date().addingTimeInterval(TimeInterval(remaining)),
-            tlsFingerprint: reply.fingerprint)
+            tlsFingerprint: reply.fingerprint,
+            approvalRequired: approvalRequired,
+            protocols: protocols)
     }
 
     public func redeem(
@@ -271,13 +315,24 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
             ],
             expecting: expecting.tlsFingerprint)
         let envelope = try Self.decode(RedeemEnvelope.self, from: reply.data)
+        return try await grant(
+            from: envelope, origin: link.origin, expectingGateway: expecting.gateway,
+            approvedScopes: approvedScopes, confirmedKey: expecting.tlsFingerprint,
+            presentedKey: reply.fingerprint)
+    }
+
+    /// Validate a credential-bearing answer (redeem, or an approved poll) and turn it into a
+    /// grant. From the moment a credential arrives, anything wrong with the answer means the
+    /// credential must not be kept: revoke it (best effort, to the confirmed key) and fail.
+    private func grant(
+        from envelope: RedeemEnvelope, origin: URL, expectingGateway: PairingGatewayIdentity,
+        approvedScopes: [String], confirmedKey: SPKIFingerprint, presentedKey: SPKIFingerprint
+    ) async throws(PairingFailure) -> PairingGrant {
         let credential = envelope.credential
-        // From here on the invitation IS consumed. Anything wrong with the answer means the
-        // credential must not be kept: revoke it (best effort) and fail.
         let gateway: PairingGatewayIdentity
         do {
-            gateway = try envelope.gateway.validated(against: link.origin)
-            guard gateway.instanceID == expecting.gateway.instanceID,
+            gateway = try envelope.gateway.validated(against: origin)
+            guard gateway.instanceID == expectingGateway.instanceID,
                   Self.isCredential(credential), Self.isDeviceID(envelope.device.id) else {
                 throw PairingFailure.identityMismatch
             }
@@ -290,8 +345,8 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
         } catch let failure as PairingFailure {
             if Self.isCredential(credential) {
                 let cleanup = await revoke(
-                    origin: link.origin, credential: PairingDeviceCredential(credential),
-                    expecting: expecting.tlsFingerprint)
+                    origin: origin, credential: PairingDeviceCredential(credential),
+                    expecting: confirmedKey)
                 guard cleanup == .revoked || cleanup == .alreadyRevoked else {
                     throw .rollbackUnconfirmed
                 }
@@ -302,7 +357,76 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
         }
         return PairingGrant(
             gateway: gateway, deviceID: envelope.device.id,
-            credential: PairingDeviceCredential(credential), tlsFingerprint: reply.fingerprint)
+            credential: PairingDeviceCredential(credential), tlsFingerprint: presentedKey)
+    }
+
+    // MARK: Approval (v2)
+
+    public func requestApproval(
+        _ link: PairingInvitationLink, deviceName: String, deviceModel: String,
+        clientSecret: PairingClientSecret, expecting: PairingPreview
+    ) async throws(PairingFailure) -> PairingApprovalRequest {
+        try Self.validate(link: link)
+        guard link.requiresApproval, let pin = link.pin else { throw .approvalNotSupported }
+        guard expecting.gateway.origin == link.origin, expecting.tlsFingerprint == pin else {
+            throw .identityMismatch
+        }
+        let scopes = expecting.access.map(\.scope)
+        guard !scopes.isEmpty, Set(scopes).count == scopes.count,
+              scopes.allSatisfy({ PairingScope(rawValue: $0) != nil }) else { throw .unsupportedAccess }
+        let reply = try await post(
+            origin: link.origin, path: "api/fleet/pairing/request",
+            body: [
+                "invitation_id": link.invitationID, "secret": link.secret.rawValue,
+                "device_name": Self.displayText(deviceName, limit: 64),
+                "device_model": Self.displayText(deviceModel, limit: 64),
+                "client_secret": clientSecret.rawValue,
+            ],
+            expecting: expecting.tlsFingerprint, pin: pin)
+        let envelope = try Self.decode(RequestEnvelope.self, from: reply.data)
+        let gateway = try envelope.gateway.validated(against: link.origin)
+        let wire = envelope.request
+        guard gateway.instanceID == expecting.gateway.instanceID, Self.isRequestID(wire.id),
+              Self.isMatchCode(wire.match_code), wire.server_time > 0, wire.expires_at > wire.server_time,
+              wire.expires_at - wire.server_time <= Self.maxInvitationLifetimeSeconds else {
+            throw .malformedResponse
+        }
+        return PairingApprovalRequest(
+            id: wire.id, matchCode: wire.match_code,
+            expiresAt: Date().addingTimeInterval(TimeInterval(wire.expires_at - wire.server_time)),
+            pollInterval: Self.clampedPollInterval(wire.poll_interval),
+            gateway: gateway, scopes: scopes, tlsFingerprint: reply.fingerprint)
+    }
+
+    public func pollApproval(
+        _ request: PairingApprovalRequest, clientSecret: PairingClientSecret
+    ) async throws(PairingFailure) -> PairingApprovalStatus {
+        guard Self.isRequestID(request.id) else { throw .malformedLink }
+        // Every poll must reach the very key the request was made to: it is the link's pin.
+        let reply = try await post(
+            origin: request.gateway.origin, path: "api/fleet/pairing/request/status",
+            body: ["request_id": request.id, "client_secret": clientSecret.rawValue],
+            expecting: request.tlsFingerprint, pin: request.tlsFingerprint)
+        let envelope = try Self.decode(StatusEnvelope.self, from: reply.data)
+        switch envelope.status {
+        case "pending": return .pending
+        case "delivered": return .delivered
+        case "denied": return .denied
+        case "expired": return .expired
+        case "approved":
+            guard let device = envelope.device, let credential = envelope.credential,
+                  let gateway = envelope.gateway, let scopes = envelope.scopes else {
+                throw .malformedResponse
+            }
+            let grant = try await grant(
+                from: RedeemEnvelope(device: device, credential: credential, gateway: gateway, scopes: scopes),
+                origin: request.gateway.origin, expectingGateway: request.gateway,
+                approvedScopes: request.scopes, confirmedKey: request.tlsFingerprint,
+                presentedKey: reply.fingerprint)
+            return .approved(grant)
+        default:
+            throw .malformedResponse
+        }
     }
 
     public func revoke(origin: URL, credential: PairingDeviceCredential) async -> PairingRevocationOutcome {
@@ -317,15 +441,19 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
     ) async -> PairingRevocationOutcome {
         guard Self.isSafeCredentialPayload(credential.rawValue), Self.isHTTPSOrigin(origin) else { return .failed }
         do {
+            let pinned: SPKIFingerprint? = expecting.flatMap { key in
+                pinnedKeys.withLock { $0.contains(key) } ? key : nil
+            }
             let reply = try await post(
                 origin: origin, path: "auth/device-revoke",
-                body: ["device_credential": credential.rawValue], expecting: expecting)
+                body: ["device_credential": credential.rawValue], expecting: expecting, pin: pinned)
             let envelope = try Self.decode(RevocationEnvelope.self, from: reply.data)
             guard envelope.ok else { return .failed }
             return .revoked
         } catch {
             switch error {
-            case .unreachable, .untrustedCertificate: return .unreachable
+            case .untrustedCertificate: return .unreachable
+            case _ where error.isNetworkFailure: return .unreachable
             case .invalidInvitation: return .alreadyRevoked   // 401 invalid_credential maps here
             default: return .failed
             }
@@ -340,7 +468,8 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
     }
 
     private func post(
-        origin: URL, path: String, body: [String: String], expecting: SPKIFingerprint?
+        origin: URL, path: String, body: [String: String], expecting: SPKIFingerprint?,
+        pin: SPKIFingerprint? = nil
     ) async throws(PairingFailure) -> Reply {
         guard Self.isHTTPSOrigin(origin),
               let url = URL(string: path, relativeTo: origin)?.absoluteURL,
@@ -358,11 +487,14 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
 
-        let exchange = PairingExchange(trust: trust, expected: expecting, limit: Self.maxResponseBytes)
+        let exchange = PairingExchange(trust: trust, expected: expecting, pin: pin, limit: Self.maxResponseBytes)
         let outcome = await exchange.run(request, configuration: configuration)
         let observed = outcome.observed
         if observed.keyMismatch { throw .identityMismatch }
         if observed.untrusted { throw .untrustedCertificate }
+        if observed.acceptedByPinOnly, let key = observed.fingerprint {
+            pinnedKeys.withLock { _ = $0.insert(key) }
+        }
         if observed.oversized { throw .malformedResponse }
         if observed.redirected { throw .malformedResponse }
         if let error = outcome.error { throw Self.failure(for: error, observed: observed) }
@@ -387,6 +519,14 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
             return .untrustedCertificate
         case .cancelled:
             return .interrupted
+        case .cannotFindHost, .dnsLookupFailed:
+            return .hostNotFound
+        case .timedOut:
+            return .timedOut
+        case .cannotConnectToHost:
+            return .connectionRefused
+        case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff, .callIsActive:
+            return .offline
         default:
             // Includes a generic TLS handshake failure (`secureConnectionFailed`): that is what a
             // reset connection or a port that does not speak TLS produces, and it says nothing
@@ -407,6 +547,10 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
             case "pairing_unavailable": return .pairingUnavailable
             case "invalid_credential": return .invalidInvitation
             case "too_many_pending": return .rateLimited
+            case "invalid_request": return .invalidRequest
+            case "already_redeemed": return .alreadyUsed
+            case "approval_not_supported": return .approvalNotSupported
+            case "approval_required": return .approvalRequired
             default: break
             }
         }
@@ -454,9 +598,31 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
             let scopes: [String]
             let expires_at: Int
             let server_time: Int
+            let approval_required: Bool?
         }
         let gateway: GatewayWire
         let invitation: Invitation
+        let protocols: [Int]?
+    }
+
+    private struct RequestEnvelope: Decodable {
+        struct Request: Decodable {
+            let id: String
+            let match_code: String
+            let expires_at: Int
+            let poll_interval: Double?
+            let server_time: Int
+        }
+        let request: Request
+        let gateway: GatewayWire
+    }
+
+    private struct StatusEnvelope: Decodable {
+        let status: String
+        let device: RedeemEnvelope.Device?
+        let credential: String?
+        let gateway: GatewayWire?
+        let scopes: [String]?
     }
 
     private struct RedeemEnvelope: Decodable {
@@ -505,6 +671,19 @@ public final class GatewayPairingClient: GatewayPairing, @unchecked Sendable {
             ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A)
                 || ($0.value >= 0x61 && $0.value <= 0x7A) || $0 == "-" || $0 == "_"
         }
+    }
+
+    /// Request ids are opaque handles issued by the gateway; accept a bounded token only.
+    static func isRequestID(_ text: String) -> Bool { isToken(text, length: 8...128) }
+
+    static func isMatchCode(_ text: String) -> Bool {
+        text.utf8.count == 6 && text.unicodeScalars.allSatisfy { $0.value >= 0x30 && $0.value <= 0x39 }
+    }
+
+    /// The gateway suggests a polling pace; the phone never polls faster than once a second
+    /// (the gateway rate-limits) nor slower than every ten.
+    static func clampedPollInterval(_ seconds: Double?) -> TimeInterval {
+        min(max(seconds ?? 2, 1), 10)
     }
 
     static func isInstanceID(_ text: String) -> Bool { GatewayID(pairedInstanceID: text) != nil }

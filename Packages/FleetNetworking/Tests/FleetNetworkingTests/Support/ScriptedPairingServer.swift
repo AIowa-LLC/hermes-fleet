@@ -30,6 +30,18 @@ final class ScriptedPairingServer: @unchecked Sendable {
         case cleanupUnconfirmed
         case badRevokeBody
         case expired, alreadyUsed, cancelled, invalid, rateLimited, unavailable, serverError
+        // v2 (owner approval). `approval` stays pending until the test server is told to approve
+        // by the number of polls in `approveAfterPolls` (0 = never, see the program below).
+        case approval            // pending on the first poll, approved from the second on
+        case approvalPending     // never decided
+        case approvalDenied
+        case approvalExpired
+        case approvalDelivered
+        case approvalWrongInstance // approves with a different installation id
+        case approvalNotSupported  // /request answers approval_not_supported
+        case approvalPollLimited   // /request/status answers 429 rate_limited
+        case approvalBadMatchCode
+        case legacyApprovalRequired // preview says approval_required, v1 redeem refuses
     }
 
     struct Seen: Decodable {
@@ -100,6 +112,18 @@ final class ScriptedPairingServer: @unchecked Sendable {
         try PairingInvitationLink.parseForTesting("https://localhost:\(port)/pair#v=1&i=\(id)&s=\(secret)")
     }
 
+    /// A version 2 link whose pin is the SPKI of one of this server's throwaway certificates
+    /// (`certificateIndex` 0 = the one served first), or an explicit pin.
+    func linkV2(
+        id: String = "AbCdEfGhIjKlMnOpQrStUv", secret: String = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+        certificateIndex: Int = 0, pin: SPKIFingerprint? = nil
+    ) throws -> PairingInvitationLink {
+        let key = try pin ?? XCTUnwrap(SPKIExtractor.fingerprint(from: certificates[certificateIndex]))
+        let encoded = PairingInvitationLink.base64URLEncode(key.sha256Digest)
+        return try PairingInvitationLink.parseForTesting(
+            "https://localhost:\(port)/pair#v=2&i=\(id)&s=\(secret)&k=\(encoded)")
+    }
+
     var requests: [Seen] {
         guard let data = try? Data(contentsOf: logURL), let text = String(data: data, encoding: .utf8) else { return [] }
         return text.split(separator: "\n").compactMap { try? JSONDecoder().decode(Seen.self, from: Data($0.utf8)) }
@@ -155,6 +179,8 @@ DEVICE = "0123abcd" * 4
 CREDENTIAL = "hfd1." + DEVICE + "." + "S" * 43
 lock = threading.Lock()
 rotated = [False]
+state = {"client_secret": None, "polls": 0, "request_id": "req_0123456789abcdef"}
+APPROVAL = behavior.startswith("approval")
 
 def log(entry):
     with lock:
@@ -192,6 +218,37 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, b"not json", "text/plain")
             ok = json.loads(body).get("device_credential") == CREDENTIAL
             return self.reply(200 if ok else 401, {"ok": True} if ok else {"error": "invalid_credential"})
+        if path == "/api/fleet/pairing/request":
+            if behavior == "approvalNotSupported":
+                return self.reply(409, {"error": "approval_not_supported"})
+            if not APPROVAL:
+                return self.reply(409, {"error": "approval_not_supported"})
+            req = json.loads(body)
+            if state["client_secret"] not in (None, req.get("client_secret")):
+                return self.reply(409, {"error": "already_redeemed"})
+            state["client_secret"] = req.get("client_secret")
+            gw = {"instance_id": INSTANCE, "display_name": "Scripted Gateway", "origin": self.origin()}
+            return self.reply(201, {"request": {
+                "id": state["request_id"], "match_code": "48291" if behavior == "approvalBadMatchCode" else "482913",
+                "expires_at": 1000600, "poll_interval": 2, "server_time": 1000000}, "gateway": gw})
+        if path == "/api/fleet/pairing/request/status":
+            if behavior == "approvalPollLimited":
+                return self.reply(429, {"error": "rate_limited"})
+            req = json.loads(body)
+            if req.get("request_id") != state["request_id"] or req.get("client_secret") != state["client_secret"]:
+                return self.reply(404, {"error": "invalid_request"})
+            state["polls"] += 1
+            if behavior == "approvalPending" or (behavior == "approval" and state["polls"] < 2):
+                return self.reply(200, {"status": "pending", "expires_at": 1000600, "server_time": 1000000})
+            if behavior == "approvalDenied": return self.reply(200, {"status": "denied"})
+            if behavior == "approvalExpired": return self.reply(200, {"status": "expired"})
+            if behavior == "approvalDelivered": return self.reply(200, {"status": "delivered"})
+            gw = {"instance_id": OTHER_INSTANCE if behavior == "approvalWrongInstance" else INSTANCE,
+                  "display_name": "Scripted Gateway", "origin": self.origin()}
+            return self.reply(200, {"status": "approved", "device": {"id": DEVICE, "label": "iPhone"},
+                                    "credential": CREDENTIAL, "gateway": gw, "scopes": ["fleet:operator"]})
+        if path.endswith("/redeem") and (APPROVAL or behavior == "legacyApprovalRequired"):
+            return self.reply(409, {"error": "approval_required"})
         if behavior in errors:
             status, code = errors[behavior]
             return self.reply(status, {"error": code, "detail": "x"})
@@ -212,9 +269,14 @@ class Handler(BaseHTTPRequestHandler):
             expires_at = 1000600
             if behavior == "invalidExpiry": expires_at = 999999
             if behavior == "excessiveExpiry": expires_at = 1000901
-            return self.reply(200, {"gateway": gw, "invitation": {
+            invitation = {
                 "id": req.get("invitation_id"), "label": "Tony's phone", "scopes": scopes,
-                "expires_at": expires_at, "server_time": 1000000}, "access": []})
+                "expires_at": expires_at, "server_time": 1000000}
+            payload = {"gateway": gw, "invitation": invitation, "access": []}
+            if APPROVAL or behavior == "legacyApprovalRequired":
+                invitation["approval_required"] = True
+                payload["protocols"] = [1, 2]
+            return self.reply(200, payload)
         if path.endswith("/redeem"):
             if behavior in ("wrongInstance", "rotateBeforeRevoke", "cleanupUnconfirmed"): gw["instance_id"] = OTHER_INSTANCE
             cred = "not-a-credential" if behavior == "badCredential" else CREDENTIAL

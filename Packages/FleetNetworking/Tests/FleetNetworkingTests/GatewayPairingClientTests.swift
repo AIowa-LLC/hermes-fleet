@@ -291,7 +291,8 @@ final class GatewayPairingClientTests: XCTestCase {
             _ = try await client.preview(link)
             XCTFail()
         } catch {
-            XCTAssertEqual(error, .unreachable)
+            XCTAssertEqual(error, .connectionRefused)
+            XCTAssertTrue(error.isNetworkFailure)
             XCTAssertTrue(error.isRetryable)
         }
     }
