@@ -17,11 +17,22 @@ public protocol PairingHosting: AnyObject {
     func revokeUnsavedDevice(_ grant: PairingGrant) async -> PairingRevocationOutcome
     /// Name shown to the gateway owner in their device list.
     var pairingDeviceName: String { get }
+    /// Hardware model identifier shown next to the name when the owner approves (e.g. `iPhone17,1`).
+    var pairingDeviceModel: String { get }
+}
+
+public extension PairingHosting {
+    var pairingDeviceModel: String { "iPhone" }
 }
 
 /// The Add to Fleet flow, end to end:
 ///
-///     receive link ─▶ preview (no side effect) ─▶ person confirms ─▶ redeem ─▶ save ─▶ done
+///     receive link ─▶ preview (no side effect) ─▶ person confirms ─▶ redeem ─▶ save ─▶ done        (v1 link)
+///     receive link ─▶ preview ─▶ person confirms ─▶ request ─▶ owner approves the code ─▶ save    (v2 link)
+///
+/// A v2 link never redeems on its own: confirming creates a pending request that the owner
+/// approves by its match code, and the phone polls (with a random client secret only it holds)
+/// until the credential is handed over, the request is denied, or it expires.
 ///
 /// Guarantees:
 /// - Receiving or previewing a link consumes nothing and approves nothing; only `confirm()`
@@ -48,6 +59,14 @@ public final class PairingCoordinator {
         case alreadyAdded(name: String)
         /// The person approved; exchanging the invitation. Not cancellable (it may already be consumed).
         case redeeming(PairingPreview)
+        /// v2: creating the pending request on the gateway.
+        case requesting(PairingPreview)
+        /// v2: the request exists; the owner has to approve `code` (six digits). Polling.
+        case awaitingApproval(code: String, expiresAt: Date)
+        /// v2: the owner denied the request.
+        case denied
+        /// v2: the request ran out of time before the owner approved it.
+        case expired
         case completed(name: String)
         case failed(PairingFailure, host: String?)
     }
@@ -72,13 +91,42 @@ public final class PairingCoordinator {
     @ObservationIgnored private var unsavedGrant: PairingGrant?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private let now: @Sendable () -> Date
+    @ObservationIgnored private let sleep: @Sendable (TimeInterval) async -> Void
+    /// Memory-only, per pairing session: binds the pending request to this phone. Losing it
+    /// (app killed) only lets the request expire. Never persisted, logged or placed in an error.
+    @ObservationIgnored private var clientSecret: PairingClientSecret?
+    @ObservationIgnored private var confirmedPreview: PairingPreview?
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    @ObservationIgnored private var isPollingPaused = false
+    /// What Retry repeats after a transient failure.
+    @ObservationIgnored private var retryStage: RetryStage = .preview
+
+    private enum RetryStage {
+        case preview
+        /// The request call failed; the client secret is kept so repeating it is idempotent
+        /// (the gateway may already have created it).
+        case request(PairingPreview)
+    }
+
+    /// The pending approval request while the owner has not decided; nil otherwise.
+    public private(set) var pendingRequest: PairingApprovalRequest?
+    /// Whether the link being handled carried a TLS key pin (version 2). Decides the wording
+    /// of certificate failures; stays valid after a failure drops the link itself.
+    public private(set) var linkIsPinned = false
+    /// The app's own URL scheme, so `<scheme>://pair#…` links are recognised. Set by the
+    /// composition root.
+    public var appURLScheme: String?
 
     public init(
         service: (any GatewayPairing)?,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        sleep: @escaping @Sendable (TimeInterval) async -> Void = { seconds in
+            try? await Task.sleep(for: .seconds(seconds))
+        }
     ) {
         self.service = service
         self.now = now
+        self.sleep = sleep
     }
 
     /// Wire the registry owner (done by `AppEnvironment` right after it is created).
@@ -98,6 +146,12 @@ public final class PairingCoordinator {
         return true
     }
 
+    /// The reachability diagnosis for the current failure, when it is one.
+    public var diagnosis: PairingDiagnosis? {
+        guard case .failed(let failure, let host) = phase else { return nil }
+        return PairingDiagnosis.diagnose(failure, host: host, linkIsPinned: linkIsPinned)
+    }
+
     // MARK: Intake
 
     /// A URL the system delivered (Universal Link or open-URL). Returns whether it is a
@@ -105,7 +159,7 @@ public final class PairingCoordinator {
     /// gets a clear message instead of nothing.
     @discardableResult
     public func receive(url: URL) -> Bool {
-        guard PairingInvitationLink.looksLikePairingLink(url) else { return false }
+        guard PairingInvitationLink.looksLikePairingLink(url, appURLScheme: appURLScheme) else { return false }
         start(entry: .link, text: url.absoluteString)
         return true
     }
@@ -125,6 +179,7 @@ public final class PairingCoordinator {
             return
         }
         cancelTask()
+        resetApprovalState()
         link = nil
         flowID += 1
         entry = .manual
@@ -133,14 +188,24 @@ public final class PairingCoordinator {
 
     public var canRetry: Bool {
         guard case .failed(let failure, _) = phase else { return false }
-        return (failure.isRetryable && link != nil) || (failure == .rollbackUnconfirmed && unsavedGrant != nil)
+        return (Self.allowsRetry(failure, link: link) && link != nil)
+            || (failure == .rollbackUnconfirmed && unsavedGrant != nil)
     }
 
     public var isBusy: Bool {
         switch phase {
-        case .previewing, .redeeming: return true
+        case .previewing, .redeeming, .requesting: return true
         default: return false
         }
+    }
+
+    /// Whether trying the same link again can help. A pinned (v2) link also lets the person
+    /// try again after a certificate or key problem: nothing secret is sent to a server whose
+    /// key does not match the pin, so a retry is harmless.
+    private static func allowsRetry(_ failure: PairingFailure, link: PairingInvitationLink?) -> Bool {
+        if failure.isRetryable { return true }
+        guard link?.pin != nil else { return false }
+        return failure == .untrustedCertificate || failure == .identityMismatch
     }
 
     private func start(entry: Entry, text: String) {
@@ -150,7 +215,7 @@ public final class PairingCoordinator {
         }
         // A second delivery of the very same link (the system can report one tap through two
         // callbacks) must not restart a flow already underway.
-        if let active = link, let incoming = try? PairingInvitationLink.parse(text),
+        if let active = link, let incoming = try? PairingInvitationLink.parse(text, appURLScheme: appURLScheme),
            active.invitationID == incoming.invitationID, active.origin == incoming.origin,
            phase != .idle, !isTerminal {
             return
@@ -158,6 +223,7 @@ public final class PairingCoordinator {
         // Never abandon a redemption that is in flight.
         if case .redeeming = phase { return }
         cancelTask()
+        resetApprovalState()
         flowID += 1
         self.entry = entry
         guard service != nil else {
@@ -166,8 +232,10 @@ public final class PairingCoordinator {
             return
         }
         do {
-            let parsed = try PairingInvitationLink.parse(text)
+            let parsed = try PairingInvitationLink.parse(text, appURLScheme: appURLScheme)
             link = parsed
+            linkIsPinned = parsed.pin != nil
+            retryStage = .preview
             phase = .previewing(host: parsed.host)
             task = Task { [weak self] in await self?.runPreview() }
         } catch {
@@ -178,7 +246,7 @@ public final class PairingCoordinator {
 
     private var isTerminal: Bool {
         switch phase {
-        case .completed, .failed, .alreadyAdded: return true
+        case .completed, .failed, .alreadyAdded, .denied, .expired: return true
         default: return false
         }
     }
@@ -205,7 +273,7 @@ public final class PairingCoordinator {
         } catch {
             guard !Task.isCancelled, self.link == link else { return }
             // Only a failure that trying again can fix keeps the link in memory.
-            if !error.isRetryable { self.link = nil }
+            if !Self.allowsRetry(error, link: link) { self.link = nil }
             phase = .failed(error, host: link.host)
         }
     }
@@ -217,8 +285,13 @@ public final class PairingCoordinator {
             task = Task { [weak self] in await self?.rollback(grant, hostName: hostName) }
             return
         }
-        guard case .failed(let failure, _) = phase, failure.isRetryable, let link else { return }
+        guard case .failed(let failure, _) = phase, Self.allowsRetry(failure, link: link), let link else { return }
         cancelTask()
+        if case .request(let preview) = retryStage, let service {
+            phase = .requesting(preview)
+            task = Task { [weak self] in await self?.runRequest(link: link, preview: preview, service: service) }
+            return
+        }
         phase = .previewing(host: link.host)
         task = Task { [weak self] in await self?.runPreview() }
     }
@@ -229,6 +302,13 @@ public final class PairingCoordinator {
         if preview.expiresAt <= now() {
             self.link = nil
             phase = .failed(.expired, host: link.host)
+            return
+        }
+        if link.requiresApproval {
+            confirmedPreview = preview
+            retryStage = .request(preview)
+            phase = .requesting(preview)
+            task = Task { [weak self] in await self?.runRequest(link: link, preview: preview, service: service) }
             return
         }
         phase = .redeeming(preview)
@@ -248,16 +328,201 @@ public final class PairingCoordinator {
             finish(.failed(error, host: link.host), keepLink: error.isRetryable ? link : nil)
             return
         }
+        await save(grant, hostName: link.host)
+    }
+
+    /// Hand a received credential to the registry owner. Shared by direct redemption (v1) and
+    /// an approved request (v2): on any failure the credential is revoked and nothing is added.
+    private func save(_ grant: PairingGrant, hostName: String) async {
         guard let host else {
-            await rollback(grant, hostName: link.host)
+            await rollback(grant, hostName: hostName)
             return
         }
         do {
             let gateway = try await host.addPairedGateway(grant)
             finish(.completed(name: gateway.displayName))
         } catch {
-            await rollback(grant, hostName: link.host)
+            await rollback(grant, hostName: hostName)
         }
+    }
+
+    // MARK: Approval (v2)
+
+    private func runRequest(
+        link: PairingInvitationLink, preview: PairingPreview, service: any GatewayPairing
+    ) async {
+        let secret = clientSecret ?? PairingClientSecret.generate()
+        clientSecret = secret
+        let request: PairingApprovalRequest
+        do {
+            request = try await service.requestApproval(
+                link, deviceName: host?.pairingDeviceName ?? "iPhone",
+                deviceModel: host?.pairingDeviceModel ?? "iPhone",
+                clientSecret: secret, expecting: preview)
+        } catch {
+            guard !Task.isCancelled, self.link == link else { return }
+            // The request may exist on the gateway already (a lost response): keep the same
+            // client secret so repeating the call returns that very request.
+            if !Self.allowsRetry(error, link: link) {
+                self.link = nil
+                clientSecret = nil
+            }
+            task = nil
+            phase = .failed(error, host: link.host)
+            return
+        }
+        guard !Task.isCancelled, self.link == link else { return }
+        pendingRequest = request
+        task = nil
+        isPollingPaused = false
+        phase = .awaitingApproval(code: request.matchCode, expiresAt: request.expiresAt)
+        startPolling()
+    }
+
+    /// Suspend polling (the app left the foreground). The request stays valid on the gateway;
+    /// `resumePolling()` picks it up again with the same client secret.
+    public func pausePolling() {
+        guard case .awaitingApproval = phase else { return }
+        isPollingPaused = true
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    /// Continue polling after `pausePolling()`. Reports the request as expired when its time
+    /// ran out meanwhile.
+    public func resumePolling() {
+        guard case .awaitingApproval(_, let expiresAt) = phase, isPollingPaused else { return }
+        isPollingPaused = false
+        if expiresAt <= now() {
+            endApproval(.expired)
+            return
+        }
+        startPolling()
+    }
+
+    // MARK: Presentation and lifecycle
+
+    /// Screens that present the flow themselves (first-run, the add-server sheet) register here
+    /// so the app-level presenter does not also show it. Reference counted.
+    public private(set) var inlinePresenters = 0
+    public var hasInlinePresenter: Bool { inlinePresenters > 0 }
+    public func registerPresenter() { inlinePresenters += 1 }
+    public func unregisterPresenter() { inlinePresenters = max(0, inlinePresenters - 1) }
+
+    /// The app left the foreground. A waiting approval is only paused (the request stays valid
+    /// on the gateway); an un-confirmed invitation is dropped, as before; a redemption in
+    /// flight or a pending cleanup is never abandoned.
+    public func appMovedToBackground() {
+        switch phase {
+        case .awaitingApproval:
+            pausePolling()
+        case .failed(.rollbackUnconfirmed, _) where canRetry:
+            break
+        default:
+            guard canCancel, isActive else { return }
+            cancel()
+        }
+    }
+
+    /// The app is active again: continue a paused approval.
+    public func appBecameActive() {
+        resumePolling()
+    }
+
+    /// Whether the waiting screen is currently polling.
+    public var isPolling: Bool { pollTask != nil }
+
+    private func startPolling() {
+        guard pollTask == nil, !isPollingPaused,
+              case .awaitingApproval = phase, let request = pendingRequest,
+              let secret = clientSecret, let service else { return }
+        let flow = flowID
+        pollTask = Task { [weak self] in
+            await self?.pollLoop(request: request, secret: secret, service: service, flow: flow)
+        }
+    }
+
+    /// Poll every `pollInterval` (at least one second; five seconds after a transient error),
+    /// while this flow is on screen and active. Only the owner's decision, the request's end,
+    /// or a non-transient failure stops it.
+    private func pollLoop(
+        request: PairingApprovalRequest, secret: PairingClientSecret,
+        service: any GatewayPairing, flow: Int
+    ) async {
+        var interval = max(request.pollInterval, Self.minimumPollInterval)
+        func isCurrent() -> Bool { !Task.isCancelled && flowID == flow && pendingRequest == request }
+        while isCurrent() {
+            await sleep(interval)
+            guard isCurrent() else { return }
+            if request.expiresAt <= now() {
+                endApproval(.expired)
+                return
+            }
+            do {
+                let status = try await service.pollApproval(request, clientSecret: secret)
+                guard isCurrent() else { return }
+                switch status {
+                case .pending:
+                    interval = max(request.pollInterval, Self.minimumPollInterval)
+                case .approved(let grant):
+                    pollTask = nil
+                    pendingRequest = nil
+                    clientSecret = nil
+                    link = nil
+                    phase = .redeeming(confirmedPreview ?? PairingPreview(
+                        gateway: grant.gateway, label: "", access: [], expiresAt: now(),
+                        tlsFingerprint: grant.tlsFingerprint))
+                    await save(grant, hostName: grant.gateway.origin.host ?? "")
+                    return
+                case .denied:
+                    endApproval(.denied)
+                    return
+                case .expired:
+                    endApproval(.expired)
+                    return
+                case .delivered:
+                    // Approved and already collected, but not by a poll this phone still holds
+                    // the result of: the credential cannot be handed over again.
+                    endApproval(.failed(.alreadyUsed, host: request.gateway.origin.host))
+                    return
+                }
+            } catch {
+                guard isCurrent() else { return }
+                if Self.isTransient(error) {
+                    interval = Self.backoffPollInterval
+                } else {
+                    endApproval(.failed(error, host: request.gateway.origin.host))
+                    return
+                }
+            }
+        }
+    }
+
+    static let minimumPollInterval: TimeInterval = 1
+    static let backoffPollInterval: TimeInterval = 5
+
+    /// Failures that polling again may outlast (no answer, slow down, a gateway hiccup).
+    private static func isTransient(_ failure: PairingFailure) -> Bool {
+        failure.isRetryable || failure == .malformedResponse
+    }
+
+    private func endApproval(_ terminal: Phase) {
+        pollTask?.cancel()
+        pollTask = nil
+        pendingRequest = nil
+        clientSecret = nil
+        link = nil
+        task = nil
+        phase = terminal
+    }
+
+    private func resetApprovalState() {
+        pollTask?.cancel()
+        pollTask = nil
+        pendingRequest = nil
+        clientSecret = nil
+        confirmedPreview = nil
+        isPollingPaused = false
     }
 
     private func rollback(_ grant: PairingGrant, hostName: String?) async {
@@ -284,6 +549,7 @@ public final class PairingCoordinator {
     public func cancel() {
         guard canCancel else { return }
         cancelTask()
+        resetApprovalState()
         link = nil
         phase = .idle
     }
@@ -324,7 +590,11 @@ public enum PairingCopy {
         case .malformedLink: return "That isn't a pairing link"
         case .unsupportedLinkVersion: return "Update Hermes Fleet"
         case .insecureDestination: return "This link can't be trusted"
-        case .unreachable: return "Can't reach the gateway"
+        case .unreachable, .hostNotFound, .timedOut, .connectionRefused: return "Can't reach the gateway"
+        case .offline: return "This iPhone is offline"
+        case .approvalNotSupported: return "Approval isn't available here"
+        case .approvalRequired: return "This link needs approval"
+        case .invalidRequest: return "This request is no longer valid"
         case .untrustedCertificate: return "Gateway certificate not trusted"
         case .identityMismatch: return "The gateway changed"
         case .pairingUnavailable: return "Pairing isn't available here"
@@ -337,7 +607,12 @@ public enum PairingCopy {
         }
     }
 
-    public static func message(for failure: PairingFailure, host: String?) -> String {
+    /// - Parameter linkIsPinned: whether the link carried a TLS key pin (version 2); certificate
+    ///   failures then use the diagnosis wording.
+    public static func message(for failure: PairingFailure, host: String?, linkIsPinned: Bool = false) -> String {
+        if let diagnosis = PairingDiagnosis.diagnose(failure, host: host, linkIsPinned: linkIsPinned) {
+            return diagnosis.message
+        }
         let where_ = host.map { "“\($0)”" } ?? "the gateway"
         switch failure {
         case .expired:
@@ -354,7 +629,13 @@ public enum PairingCopy {
             return "This link was made for a newer version of Hermes Fleet. Update the app, then open it again."
         case .insecureDestination:
             return "Pairing links must be https links to a real gateway address. Nothing was contacted."
-        case .unreachable:
+        case .approvalNotSupported:
+            return "\(where_.capitalizedFirst) can't approve a new phone from a link (it may need a newer Hermes Fleet connector). Ask Hermes for a new link."
+        case .approvalRequired:
+            return "This link has to be approved by the server's owner, and this one can't be. Ask Hermes for a new link with `/fleet pair`."
+        case .invalidRequest:
+            return "\(where_.capitalizedFirst) no longer recognises this request. Ask Hermes for a new link."
+        case .unreachable, .hostNotFound, .timedOut, .connectionRefused, .offline:
             return "This phone couldn't connect to \(where_). A pairing link doesn't create a network path: the gateway must be reachable from this phone (internet, VPN or the same network). Check your connection and try again."
         case .untrustedCertificate:
             return "\(where_.capitalizedFirst) presented a certificate this phone doesn't trust, so nothing was sent to it."

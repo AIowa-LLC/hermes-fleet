@@ -3684,6 +3684,22 @@ extension AppEnvironment: PairingHosting {
         #endif
     }
 
+    /// The hardware model identifier (`iPhone17,1`), shown to the owner when approving.
+    public var pairingDeviceModel: String {
+        #if canImport(UIKit)
+        var info = utsname()
+        uname(&info)
+        let model = withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        // The simulator reports the host architecture; the model it emulates is in the environment.
+        let resolved = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? model
+        return resolved.isEmpty ? "iPhone" : String(resolved.prefix(64))
+        #else
+        return "Phone"
+        #endif
+    }
+
     public func addPairedGateway(_ grant: PairingGrant) async throws -> FleetGateway {
         guard let id = GatewayID(pairedInstanceID: grant.gateway.instanceID) else { throw PairingFailure.malformedResponse }
         guard existingGateway(forPairedInstance: grant.gateway.instanceID, origin: grant.gateway.origin) == nil else {
