@@ -92,4 +92,13 @@ final class PairingDiagnosisTests: XCTestCase {
             scopes: ["fleet:operator"], tlsFingerprint: try XCTUnwrap(SPKIFingerprint(sha256Digest: Data(repeating: 1, count: 32))))
         XCTAssertEqual(request.spacedMatchCode, "482 913")
     }
+
+    func testMatchCodePresentation() {
+        XCTAssertEqual(PairingMatchCode.spaced("482913"), "482 913")
+        XCTAssertEqual(PairingMatchCode.spaced("48291"), "48291")
+        XCTAssertEqual(PairingMatchCode.spaced("48a913"), "48a913")
+        XCTAssertEqual(PairingMatchCode.spoken("482913"), "4, 8, 2, 9, 1, 3")
+        XCTAssertEqual(PairingMatchCode.approveCommand("482913"), "/fleet approve 482913")
+        XCTAssertEqual(PairingMatchCode.normalized("482 913"), "482913")
+    }
 }

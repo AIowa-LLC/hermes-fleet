@@ -130,10 +130,7 @@ public struct PairingApprovalRequest: Sendable, Equatable {
     }
 
     /// `482913` -> `482 913`.
-    public var spacedMatchCode: String {
-        guard matchCode.count == 6 else { return matchCode }
-        return "\(matchCode.prefix(3)) \(matchCode.suffix(3))"
-    }
+    public var spacedMatchCode: String { PairingMatchCode.spaced(matchCode) }
 }
 
 /// What a poll of a pending request reports.
@@ -332,4 +329,26 @@ public protocol GatewayPairingRegistering: Sendable {
     func registerPairedGateway(_ grant: PairingGrant) async throws -> FleetGateway
     /// Cleanup only an uncommitted transaction owned by this service; never a saved gateway.
     func discardUncommittedPairing(_ grant: PairingGrant) async throws
+}
+
+/// Presentation helpers for the six-digit match code, pure so they are unit-testable on the host.
+public enum PairingMatchCode {
+    /// `482913` -> `482 913` (anything that is not exactly six digits is returned as is).
+    public static func spaced(_ code: String) -> String {
+        guard code.count == 6, code.allSatisfy({ $0.isASCII && $0.isNumber }) else { return code }
+        return "\(code.prefix(3)) \(code.suffix(3))"
+    }
+
+    /// What VoiceOver reads: each digit on its own ("4, 8, 2, 9, 1, 3"), never "four hundred...".
+    public static func spoken(_ code: String) -> String {
+        code.map(String.init).joined(separator: ", ")
+    }
+
+    /// What the owner sends to Hermes to approve exactly this code.
+    public static func approveCommand(_ code: String) -> String { "/fleet approve \(code)" }
+
+    /// Normalises owner input: spaces are ignored (`482 913` == `482913`).
+    public static func normalized(_ input: String) -> String {
+        input.filter { !$0.isWhitespace }
+    }
 }
