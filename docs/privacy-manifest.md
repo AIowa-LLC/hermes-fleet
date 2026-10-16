@@ -15,7 +15,10 @@ built/archive copy and resolved dependencies before App Store Connect use.
 The shipping target links the local `FleetCore`, `FleetNetworking`,
 `FleetSecurity`, `FleetPersistence`, and `FleetUI` packages. `FleetUI` links
 the pinned SwiftStreamingMarkdown revision
-`5f7c04e0558df6146f90d482edb62cb456986bda`.
+`5f7c04e0558df6146f90d482edb62cb456986bda`, and (since #109) declares
+HighlightSwift directly at the same revision (`99c431b`) that
+SwiftStreamingMarkdown already pins transitively, so the resolved graph is
+unchanged.
 
 The repository does not commit `Package.resolved` or SwiftPM's checkout
 directory (`Package.resolved` is ignored), so a fresh clone cannot prove the
