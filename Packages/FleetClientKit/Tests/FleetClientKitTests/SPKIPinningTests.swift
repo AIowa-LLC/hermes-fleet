@@ -54,6 +54,7 @@ final class SPKIPinningTests: XCTestCase {
     func testVerifierFailsClosedWhenTheStoreThrows() throws {
         struct FailingStore: SynchronousPinStoring {
             func syncSavePin(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws {}
+            func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool { false }
             func syncLoadPin(for gatewayID: GatewayID) throws -> SPKIFingerprint? {
                 throw PinStoreError.unexpectedStatus(-1)
             }
@@ -78,6 +79,7 @@ final class SPKIPinningTests: XCTestCase {
         let store = FixedPinStore(pins: [:])
         let pin = try XCTUnwrap(SPKIFingerprint(base64: Self.p256SPKIBase64))
         XCTAssertThrowsError(try store.syncSavePin(pin, for: gateway))
+        XCTAssertThrowsError(try store.syncSavePinIfAbsent(pin, for: gateway))
         XCTAssertThrowsError(try store.syncDeletePin(for: gateway))
         XCTAssertNil(try store.syncLoadPin(for: gateway))
     }

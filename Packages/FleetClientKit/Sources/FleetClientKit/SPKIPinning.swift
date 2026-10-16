@@ -145,6 +145,10 @@ public struct FixedPinStore: SynchronousPinStoring {
         throw PinStoreError.unexpectedStatus(Int(errSecWrPerm))
     }
 
+    public func syncSavePinIfAbsent(_ pin: SPKIFingerprint, for gatewayID: GatewayID) throws -> Bool {
+        throw PinStoreError.unexpectedStatus(Int(errSecWrPerm))
+    }
+
     public func syncLoadPin(for gatewayID: GatewayID) throws -> SPKIFingerprint? {
         pins[gatewayID]
     }

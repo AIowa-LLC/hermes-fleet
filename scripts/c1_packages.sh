@@ -23,7 +23,9 @@ expected_test_count() {
 }
 
 run_pkg() {
-  local name=$1 log expected status summaries summary count
+  local name=$1 log expected status summaries summary count swift_summary swift_count swift_expected
+  swift_expected=0
+  [ "$name" != FleetCore ] || swift_expected=21
   expected=$(expected_test_count "$name") || {
     FAIL=$((FAIL+1)); FAILURES+=("$name has no expected test count")
     printf 'FAIL  %s swift test has no expected test count\n' "$name"
@@ -50,14 +52,17 @@ run_pkg() {
   echo "  ${summary:-No final XCTest summary found}"
   count=$(printf '%s\n' "$summary" | sed -nE 's/^[[:space:]]*Executed ([0-9]+) tests?, with ([0-9]+ tests? skipped and )?0 failures([[:space:](]|$).*/\1/p')
 
+  swift_summary=$(grep -E 'Test run with [0-9]+ tests?.* passed after' "$log" | tail -1 || true)
+  swift_count=$(printf '%s\n' "$swift_summary" | sed -nE 's/.*Test run with ([0-9]+) tests?.* passed after.*/\1/p')
+
   # Exact count is intentional: the current declared XCTest inventories are
-  # 737/722/64/50 (including owner enrollment, device sessions, install hygiene,
+  # 760/743/64/60/52/96 XCTest and 21 FleetCore Swift Testing cases (including
   # recovery and gateway-purge regressions). Update
   # these baselines with deliberate test additions or removals; a partial run
   # must never look green merely because its completed subset reported zero
   # failures.
-  if [ "$status" -eq 0 ] && [ -n "$count" ] && [ "$count" -eq "$expected" ]; then
-    printf 'PASS  %s swift test complete (%s tests)\n' "$name" "$expected"
+  if [ "$status" -eq 0 ] && [ -n "$count" ] && [ "$count" -eq "$expected" ] && [ -n "$swift_count" ] && [ "$swift_count" -eq "$swift_expected" ]; then
+    printf 'PASS  %s swift test complete (%s XCTest + %s Swift Testing cases)\n' "$name" "$expected" "$swift_expected"
     printf "Package evidence retained: %s\n" "$log"
   else
     FAIL=$((FAIL+1)); FAILURES+=("$name swift test incomplete or NOT green")

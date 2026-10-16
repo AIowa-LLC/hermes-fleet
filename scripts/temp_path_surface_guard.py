@@ -36,6 +36,7 @@ DOC_ROOTS = [
 # was reviewed: (file, token) -> why it is not a way to reach unreviewed scripts.
 UNRESOLVED_ALLOWED = [
     ("private_dir_lib_test.sh", "scripts/$s.sh"),   # loops over six l1_* names written out in that file
+    ("unreferenced_scripts_guard.sh", "scripts/*"), # enumerates tracked paths; executes none
     ("c1_ui_preflight.sh", "scripts/*"),            # changed-file path classification, not an invocation
 ]
 
@@ -57,7 +58,7 @@ GLOB_ALL = re.compile(r"scripts/\*(?![\w.])")
 
 
 def build(root):
-    scripts = {os.path.basename(p): p for p in glob.glob(os.path.join(root, "scripts", "*")) if os.path.isfile(p)}
+    scripts = {os.path.basename(p): p for p in glob.glob(os.path.join(root, "scripts", "*")) if os.path.isfile(p) and os.path.splitext(p)[1] in {".sh", ".py"}}
 
     unresolved = []
 
