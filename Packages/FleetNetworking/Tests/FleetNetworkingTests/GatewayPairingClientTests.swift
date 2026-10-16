@@ -291,7 +291,10 @@ final class GatewayPairingClientTests: XCTestCase {
             _ = try await client.preview(link)
             XCTFail()
         } catch {
-            XCTAssertEqual(error, .connectionRefused)
+            // Normally a refused connection; under heavy host load the OS can report the same
+            // closed port as a lost connection instead. The exact code mapping is pinned
+            // deterministically in GatewayPairingApprovalTests.testNetworkFailuresAreClassified.
+            XCTAssertTrue([PairingFailure.connectionRefused, .unreachable].contains(error), "\(error)")
             XCTAssertTrue(error.isNetworkFailure)
             XCTAssertTrue(error.isRetryable)
         }
