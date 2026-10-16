@@ -118,7 +118,7 @@ struct PairingEndedView: View {
                     Label(title, systemImage: kind == .denied ? "xmark.shield" : "clock.badge.exclamationmark")
                         .font(FleetTheme.sectionHeaderFont)
                         .foregroundStyle(FleetTheme.statusNeedsIntervention)
-                        .accessibilityIdentifier("fleet.pairing.ended.title")
+                        .accessibilityIdentifier(kind == .denied ? "fleet.pairing.denied" : "fleet.pairing.expired")
                     Text(message)
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(theme.textPrimary)
@@ -140,7 +140,6 @@ struct PairingEndedView: View {
             .foregroundStyle(theme.onHighlight)
             .accessibilityIdentifier(kind == .denied ? "fleet.pairing.denied.done" : "fleet.pairing.expired.done")
         }
-        .accessibilityIdentifier(kind == .denied ? "fleet.pairing.denied" : "fleet.pairing.expired")
     }
 
     private var title: String {

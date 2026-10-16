@@ -118,7 +118,6 @@ struct PairingConnectContent: View {
                 stepRow(3, "Approve the code Fleet shows.")
             }
         }
-        .accessibilityIdentifier("\(idPrefix).steps")
     }
 
     private func stepRow(_ number: Int, _ text: LocalizedStringKey) -> some View {
