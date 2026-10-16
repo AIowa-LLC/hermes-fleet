@@ -45,7 +45,7 @@ public enum GatewaySurfaceDoctor {
         request.httpMethod = "GET"
         request.timeoutInterval = min(request.timeoutInterval, timeoutSeconds)
         do {
-            let (data, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.boundedData(for: request)
             guard data.count <= AuthREST.maxResponseBytes else { return .unknown }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 return .unknown

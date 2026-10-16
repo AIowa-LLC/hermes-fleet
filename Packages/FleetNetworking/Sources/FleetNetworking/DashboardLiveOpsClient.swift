@@ -33,7 +33,7 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             case .sessionTokenHeader(let token): request.setValue(token, forHTTPHeaderField: "X-Hermes-Session-Token")
             case .cookie(let cookie): request.setValue(cookie.headerValue, forHTTPHeaderField: "Cookie")
             }
-            let (data, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.boundedData(for: request)
             guard let http = response as? HTTPURLResponse else { throw SnapshotError.invalid }
             if http.statusCode == 404 {
                 let fallback = await legacy.snapshot()
@@ -70,7 +70,7 @@ public struct DashboardLiveOpsClient: LiveOpsProviding, LiveOpsSubagentControlli
             }
             return LiveOpsGatewaySnapshot(
                 gatewayID: gatewayID, coverage: .reporting, operations: operations, observedAt: now,
-                observationNote: "Live reporting from \(publishers) Hermes backend\(publishers == 1 ? "" : "s"). Only enabled profiles are visible.",
+                observationNote: "Live reporting from \(publishers) Hermes process\(publishers == 1 ? "" : "es"). Only enabled profiles are visible.",
                 reportingSetup: .reporting(backends: publishers))
         } catch {
             return LiveOpsGatewaySnapshot(

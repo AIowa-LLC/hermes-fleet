@@ -31,7 +31,7 @@ enum BotAvatarImageNormalization {
     }
 
     static func normalize(_ bytes: Data) -> Outcome {
-        guard let image = UIImage(data: bytes),
+        guard let image = BoundedImageDecoder.decode(bytes),
               image.size.width > 0, image.size.height > 0 else { return .invalidImage }
         let scale = min(1, maxEdge / max(image.size.width, image.size.height))
         let format = UIGraphicsImageRendererFormat()

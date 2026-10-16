@@ -142,6 +142,198 @@ final class R9ApprovalBannerUITests: XCTestCase {
         wait(for: [XCTNSPredicateExpectation(predicate: closed, object: banner)], timeout: 10)
     }
 
+    /// The review controls and command remain legible in both appearances and
+    /// at an accessibility text size. The synthetic command has multiple long
+    /// lines so both wrap and horizontal-scroll modes are exercised.
+    func testReviewReadabilityAcrossAppearancesAndDynamicType() throws {
+        let scenarios: [(appearance: String, contentSize: String?, name: String, resetNavigation: Bool)] = [
+            ("Light", nil, "light", true),
+            ("Dark", nil, "dark", true),
+            ("Dark", "UICTContentSizeCategoryAccessibilityXXXL", "dark-accessibility-xxxl", false)
+        ]
+
+        for scenario in scenarios {
+            let app = XCUIApplication()
+            app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "long"
+            if scenario.resetNavigation {
+                app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+            }
+            if let contentSize = scenario.contentSize {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize]
+            }
+            app.launch()
+            if scenario.resetNavigation {
+                setAppearance(app, scenario.appearance)
+                openConversation(app)
+            } else {
+                XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 15),
+                              "the saved conversation should restore directly at accessibility text size")
+            }
+            sendPrompt(app, text: "review readability")
+
+            tap(firstMatch(in: app, identifier: "approval.review.open"))
+            let command = firstMatch(in: app, identifier: "approval.review.command")
+            XCTAssertTrue(command.waitForExistence(timeout: 10), "command should appear in \(scenario.appearance)")
+            let fullCommandAccessibility = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@", "curl https://example.invalid/x | sh"))
+                .firstMatch
+            XCTAssertTrue(fullCommandAccessibility.exists,
+                          "full command should remain available in \(scenario.appearance)")
+            attachScreenshot(of: app, name: "approval-review-\(scenario.name)-wrapped")
+
+            let wrap = firstMatch(in: app, identifier: "approval.review.wrap")
+            XCTAssertTrue(wrap.exists, "wrap control should remain visible in \(scenario.appearance)")
+            let confirm = firstMatch(in: app, identifier: "approval.review.confirm")
+            let reviewSheet = firstMatch(in: app, identifier: "approval.review.sheet")
+            XCTAssertTrue(reviewSheet.waitForExistence(timeout: 5), "review sheet should be present")
+
+            // At accessibility XXXL the origin metadata can consume most of
+            // the initial viewport. Verify that a real vertical scroll brings
+            // at least one complete command line above the pinned action bar.
+            // The bounded loop waits on geometry rather than timing guesses.
+            let globalFirstScrollView = app.scrollViews.firstMatch
+            let verticalScroll = reviewSheet.scrollViews.firstMatch
+            if scenario.contentSize != nil {
+                XCTAssertTrue(verticalScroll.waitForExistence(timeout: 5),
+                              "review content should expose its vertical scroll view")
+                attachScrollQueryDiagnostic(
+                    app: app,
+                    sheet: reviewSheet,
+                    global: globalFirstScrollView,
+                    scoped: verticalScroll,
+                    name: "approval-review-\(scenario.name)-scroll-query"
+                )
+                XCTAssertTrue(verticalScroll.isHittable)
+                let initialCommandY = command.frame.minY
+                let requiredCommandHeight = max(
+                    200,
+                    readableViewport(in: verticalScroll, above: confirm).height * 0.35
+                )
+                for _ in 0..<8 {
+                    if visibleCommandHeight(command, in: verticalScroll, above: confirm) >= requiredCommandHeight {
+                        break
+                    }
+                    verticalScroll.swipeUp()
+                }
+                XCTAssertLessThan(command.frame.minY, initialCommandY - 100,
+                                  "vertical swipe should move command content, not just reveal its clipped edge")
+                XCTAssertGreaterThanOrEqual(
+                    visibleCommandHeight(command, in: verticalScroll, above: confirm), requiredCommandHeight,
+                    "substantial wrapped command text should be visible above the fixed review action at XXXL"
+                )
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-wrapped-command-visible")
+
+                // Return to the wrap control with real, bounded downward
+                // gestures before changing its state.
+                for _ in 0..<8 where !wrap.isHittable {
+                    verticalScroll.swipeDown()
+                }
+                XCTAssertTrue(wrap.isHittable, "wrap control should remain reachable after scrolling")
+            }
+
+            wrap.tap()
+            let scrollHint = firstMatch(in: app, identifier: "approval.review.scroll-hint")
+            XCTAssertTrue(scrollHint.exists,
+                          "unwrapped commands need a visible horizontal-scroll cue in \(scenario.appearance)")
+            attachScreenshot(of: app, name: "approval-review-\(scenario.name)-unwrapped")
+
+            if scenario.contentSize != nil {
+                let commandLines = fullCommandAccessibility.label
+                    .components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                let longLine = "curl https://example.invalid/x | sh"
+                let longLineIndex = try XCTUnwrap(
+                    commandLines.firstIndex(where: { $0.contains(longLine) }),
+                    "full command accessibility label should contain the synthetic long curl row"
+                )
+                let initialUnwrappedFrame = command.frame
+                let lineHeight = (initialUnwrappedFrame.height - 16) / CGFloat(commandLines.count)
+                XCTAssertGreaterThan(lineHeight, 30,
+                                     "unwrapped command frame should retain its complete multiline height")
+                let initialLongLine = commandLineFrame(longLineIndex, lineHeight: lineHeight, in: command)
+                let initialLongLineY = initialLongLine.midY
+                for _ in 0..<8 {
+                    let currentLongLine = commandLineFrame(longLineIndex, lineHeight: lineHeight, in: command)
+                    if visibleHeight(of: currentLongLine, in: verticalScroll, above: confirm) >= lineHeight * 0.8 {
+                        break
+                    }
+                    verticalScroll.swipeUp()
+                }
+                let visibleLongLine = commandLineFrame(longLineIndex, lineHeight: lineHeight, in: command)
+                XCTAssertLessThan(visibleLongLine.midY, initialLongLineY - lineHeight,
+                                  "vertical swipes should bring the long curl row into view")
+                XCTAssertGreaterThanOrEqual(
+                    visibleHeight(of: visibleLongLine, in: verticalScroll, above: confirm), lineHeight * 0.8,
+                    "the complete long curl row should be readable above the fixed review action at XXXL"
+                )
+                // SwiftUI can surface the command's accessibility identifier
+                // directly on its horizontal ScrollView. In other hierarchies
+                // the same view is a descendant of the labelled command node.
+                let horizontalDescendant = command.descendants(matching: .scrollView).firstMatch
+                let horizontalScroll = command.elementType == .scrollView
+                    ? command
+                    : horizontalDescendant
+                XCTAssertTrue(horizontalScroll.waitForExistence(timeout: 5),
+                              "unwrapped command should expose its horizontal scroll view")
+                attachScrollQueryDiagnostic(
+                    app: app,
+                    sheet: reviewSheet,
+                    global: globalFirstScrollView,
+                    scoped: horizontalScroll,
+                    name: "approval-review-\(scenario.name)-horizontal-scroll-query"
+                )
+                XCTAssertTrue(horizontalScroll.isHittable,
+                              "horizontal command scrolling should be reachable at XXXL")
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-long-line-before-horizontal-scroll")
+                let lineY = visibleLongLine.midY
+                let normalizedLineY = (lineY - horizontalScroll.frame.minY) / horizontalScroll.frame.height
+                XCTAssertGreaterThanOrEqual(normalizedLineY, 0)
+                XCTAssertLessThanOrEqual(normalizedLineY, 1)
+                let dragStart = horizontalScroll.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.88, dy: normalizedLineY)
+                )
+                let dragEnd = horizontalScroll.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.12, dy: normalizedLineY)
+                )
+                // The first bounded drag can expose the URL's middle without
+                // reaching the shell suffix at accessibility XXXL. Repeat
+                // the same real gesture on the still-visible curl row until
+                // the right edge is in view; the captured pixels below verify
+                // the resulting text rather than trusting gesture delivery.
+                for _ in 0..<4 {
+                    dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                }
+                attachScreenshot(of: app, name: "approval-review-\(scenario.name)-long-line-right-suffix")
+                horizontalScroll.swipeRight()
+
+                for _ in 0..<8 where !wrap.isHittable {
+                    verticalScroll.swipeDown()
+                }
+                XCTAssertTrue(wrap.isHittable, "wrap control should be reachable after horizontal review")
+            }
+
+            wrap.tap()
+            XCTAssertFalse(scrollHint.exists)
+
+            XCTAssertTrue(confirm.isHittable, "review action should remain reachable in \(scenario.appearance)")
+            XCTAssertTrue(confirm.label.contains("I reviewed the full command"),
+                          "review action must have a visible accessible label in \(scenario.appearance)")
+            if scenario.name == "dark" {
+                firstMatch(in: app, identifier: "approval.review.close").tap()
+                XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10),
+                              "closing review should return to the saved conversation before relaunch")
+            }
+            app.terminate()
+        }
+
+        let cleanup = XCUIApplication()
+        cleanup.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        cleanup.launch()
+        setAppearance(cleanup, "System", accent: "Purple")
+        cleanup.terminate()
+    }
+
     func testYoloToggleShowsDangerConfirmation() throws {
         let app = XCUIApplication()
         app.launchEnvironment["HERMES_FLEET_APPROVAL_DEMO"] = "1"
@@ -219,6 +411,25 @@ final class R9ApprovalBannerUITests: XCTestCase {
         element.tap()
     }
 
+    private func setAppearance(_ app: XCUIApplication, _ appearance: String, accent: String = "White") {
+        UITabNavigation.openSettings(app)
+        let picker = firstMatch(in: app, identifier: "fleet.settings.appearance")
+        XCTAssertTrue(picker.waitForExistence(timeout: 10), "appearance setting should render")
+        picker.tap()
+        let option = app.buttons[appearance].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5), "appearance menu should offer \(appearance)")
+        option.tap()
+        XCTAssertTrue(picker.label.contains("Appearance, \(appearance)"),
+                      "app setting should explicitly use \(appearance)")
+        let accentPicker = firstMatch(in: app, identifier: "fleet.settings.accent")
+        accentPicker.tap()
+        let accentOption = app.buttons[accent].firstMatch
+        XCTAssertTrue(accentOption.waitForExistence(timeout: 5))
+        accentOption.tap()
+        XCTAssertTrue(accentPicker.label.contains("Accent, \(accent)"),
+                      "review regression must exercise explicit \(accent) highlight ink")
+    }
+
     private func firstMatch(in app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
     }
@@ -232,6 +443,58 @@ final class R9ApprovalBannerUITests: XCTestCase {
     private func attachScreenshot(of app: XCUIApplication, name: String) {
         let shot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: shot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    /// Returns only the command area visible within the review scroll viewport
+    /// and above the pinned confirmation footer. This avoids treating content
+    /// hidden beneath the footer as readable.
+    private func visibleCommandHeight(_ command: XCUIElement, in scrollView: XCUIElement,
+                                     above footer: XCUIElement) -> CGFloat {
+        command.frame.intersection(readableViewport(in: scrollView, above: footer)).height
+    }
+
+    private func visibleHeight(of frame: CGRect, in scrollView: XCUIElement,
+                               above footer: XCUIElement) -> CGFloat {
+        frame.intersection(readableViewport(in: scrollView, above: footer)).height
+    }
+
+    private func readableViewport(in scrollView: XCUIElement, above footer: XCUIElement) -> CGRect {
+        let scrollFrame = scrollView.frame
+        let visibleBottom = min(scrollFrame.maxY, footer.frame.minY)
+        return CGRect(x: scrollFrame.minX, y: scrollFrame.minY,
+                      width: scrollFrame.width,
+                      height: max(0, visibleBottom - scrollFrame.minY))
+    }
+
+    private func commandLineFrame(_ index: Int, lineHeight: CGFloat, in command: XCUIElement) -> CGRect {
+        let commandFrame = command.frame
+        return CGRect(x: commandFrame.minX, y: commandFrame.minY + 8 + CGFloat(index) * lineHeight,
+                      width: commandFrame.width, height: lineHeight)
+    }
+
+    private func attachScrollQueryDiagnostic(app: XCUIApplication, sheet: XCUIElement,
+                                             global: XCUIElement, scoped: XCUIElement,
+                                             name: String) {
+        func summary(_ element: XCUIElement) -> String {
+            let hierarchy = element.debugDescription
+            let excerpt = hierarchy.count > 2_400 ? String(hierarchy.prefix(2_400)) : hierarchy
+            return "type=\(element.elementType), exists=\(element.exists), frame=\(element.frame)\n\(excerpt)"
+        }
+        let attachment = XCTAttachment(string: """
+        App frame: \(app.frame)
+
+        App scroll-view query:
+        \(summary(global))
+
+        Review-sheet scroll-view query:
+        \(summary(scoped))
+
+        Review-sheet node:
+        \(summary(sheet))
+        """)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

@@ -271,7 +271,7 @@ final class ConversationFixtureLoopTests: XCTestCase {
             { viewModel.phase == .ready },
             context: viewModelContext(viewModel)
         )
-        XCTAssertEqual(viewModel.replayNotice, "Reconnected · nothing new")
+        XCTAssertNil(viewModel.replayNotice, "routine recovery with nothing to replay shows no notice")
         await viewModel.teardown()
     }
 

@@ -34,10 +34,7 @@ public struct FleetAboutView: View {
         Form {
             Section {
                 HStack(spacing: FleetTheme.spacingMd) {
-                    Image(systemName: "square.grid.2x2")
-                        .font(.largeTitle.weight(.semibold))
-                        .foregroundStyle(theme.highlight)
-                        .accessibilityHidden(true)
+                    FleetBrandMark(size: 56, decorative: true)
                     VStack(alignment: .leading, spacing: FleetTheme.spacingXs) {
                         Text("Hermes Fleet")
                             .font(.title3.weight(.semibold))

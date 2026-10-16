@@ -1,5 +1,21 @@
 import XCTest
 
+private func openAdvancedSetup(in app: XCUIApplication) {
+    // Additional servers default to the QR-first sheet; the manual form is a
+    // secondary path under Advanced setup.
+    let addServerTitle = app.staticTexts["fleet.add-gateway.title"]
+    XCTAssertTrue(addServerTitle.waitForExistence(timeout: 10), "add-server sheet should appear after Add Gateway")
+    let advanced = app.buttons["fleet.add-gateway.advanced"]
+    XCTAssertTrue(advanced.waitForExistence(timeout: 10), "Advanced setup should be available")
+    for _ in 0..<6 where !advanced.isHittable { app.swipeUp(velocity: .fast) }
+    XCTAssertTrue(advanced.isHittable, "scroll the footer into view before tapping Advanced")
+    advanced.tap()
+    let manual = app.buttons["fleet.add-gateway.advanced.manual"]
+    XCTAssertTrue(manual.waitForExistence(timeout: 10), "manual setup should be listed under Advanced")
+    manual.tap()
+    XCTAssertTrue(app.textFields["fleet.gateways.form.name"].waitForExistence(timeout: 10), "manual gateway form should appear")
+}
+
 /// S3 (B2) — cleartext-warning UI behavior in the gateway form.
 ///
 /// The add/edit gateway sheet must warn before saving an `http://` endpoint
@@ -28,6 +44,7 @@ final class S3CleartextWarningUITests: XCTestCase {
 
         // Open the add-gateway form.
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
@@ -56,15 +73,19 @@ final class S3CleartextWarningUITests: XCTestCase {
         // keyboard and the Toggle silently never commits, which no amount of
         // waiting fixes (merge-group run 34699513638, shard 4). Dismiss the
         // keyboard first: measured locally the row is then ~18pt clear of it.
-        // Tap the switch KNOB (right edge of the Form row) — tapping the
-        // row's center can land on the label area and miss the SwiftUI Toggle
-        // control.
+        // Tap the accessibility switch directly. Coordinate taps at the
+        // row's right edge have repeatedly missed the control on hosted
+        // runners even after the keyboard is dismissed.
         dismissKeyboard(app)
 
         let confirm = app.switches["fleet.gateways.form.cleartext-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "confirmation toggle should appear")
+        moveAboveKeyboard(confirm, in: app)
         XCTAssertTrue(waitUntilHittable(confirm, timeout: 10),
                       "confirmation toggle should become hittable")
+        // XCTest resolves the switch as the entire Form row; its default
+        // center tap lands on the text label, which does not flip the switch
+        // on these simulator builds. Tap the actual switch side of that row.
         confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         // The switch must actually flip to ON (value "1") — proof the user
         // explicitly confirmed the cleartext send.
@@ -85,6 +106,7 @@ final class S3CleartextWarningUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
@@ -112,6 +134,7 @@ final class S3CleartextWarningUITests: XCTestCase {
         UITabNavigation.openGatewaysTab(app)
 
         tap(firstMatch(in: app, identifier: "fleet.gateways.add"))
+        openAdvancedSetup(in: app)
         let nameField = app.textFields["fleet.gateways.form.name"]
         let endpointField = app.textFields["fleet.gateways.form.endpoint"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 10), "name field should appear")
@@ -161,8 +184,62 @@ final class S3CleartextWarningUITests: XCTestCase {
         if !keyboard.waitForExistence(timeout: 2) {
             field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         }
-        field.typeText(text)
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "keyboard should be visible for text entry")
+        var entered = ""
+        for chunk in textChunks(text, maximumLength: 4) {
+            field.typeText(chunk)
+            entered.append(contentsOf: chunk)
+            completeKeyboardEntry(entered, into: field)
+            XCTAssertEqual(field.value as? String, entered,
+                           "gateway field should retain each typed segment")
+        }
         XCTAssertEqual(field.value as? String, text, "gateway field should retain the typed input")
+    }
+
+    private func textChunks(_ text: String, maximumLength: Int) -> [String] {
+        var chunks: [String] = []
+        var current = ""
+        for character in text {
+            current.append(character)
+            if current.count == maximumLength {
+                chunks.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+
+    /// Short text batches avoid losing trailing keyboard events while the
+    /// SwiftUI field refreshes. On the iOS 26 runner, typeText can return with
+    /// a stable prefix (for example, "Local Gatew" from "Local Gateway").
+    /// Once that prefix is unchanged across accessibility snapshots, enter
+    /// only the missing suffix. The caller checks each segment and the full
+    /// expected string.
+    private func completeKeyboardEntry(_ expected: String, into field: XCUIElement) {
+        let deadline = Date().addingTimeInterval(6)
+        var lastValue: String?
+        var stableSince = Date()
+        var suffixRetries = 0
+
+        while Date() < deadline {
+            let current = field.value as? String ?? ""
+            if current == expected { return }
+
+            if current != lastValue {
+                lastValue = current
+                stableSince = Date()
+            } else if suffixRetries < 2,
+                      expected.hasPrefix(current),
+                      current.count < expected.count,
+                      Date().timeIntervalSince(stableSince) >= 0.5 {
+                field.typeText(String(expected.dropFirst(current.count)))
+                suffixRetries += 1
+                stableSince = Date()
+            }
+
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.1)))
+        }
     }
 
     @discardableResult
@@ -214,10 +291,23 @@ final class S3CleartextWarningUITests: XCTestCase {
         while app.keyboards.count > 0 && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        guard app.keyboards.count > 0 else { return }
-        let window = app.windows.firstMatch
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
-            .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)))
+    }
+
+    /// The keyboard can remain visible after Return on some simulator builds.
+    /// XCUITest's synthesized switch tap then lands at the row's center, which
+    /// can be underneath the keyboard even though `isHittable` is true. Scroll
+    /// the form until the whole control is above the keyboard and fail with an
+    /// explicit geometry assertion if it cannot be exposed.
+    private func moveAboveKeyboard(_ element: XCUIElement, in app: XCUIApplication) {
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.exists else { return }
+        for _ in 0..<5 {
+            if element.frame.maxY + 8 < keyboard.frame.minY { break }
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        }
+        XCTAssertTrue(element.frame.maxY + 8 < keyboard.frame.minY,
+                      "confirmation control should be fully above the software keyboard before tapping; control=\(element.frame), keyboard=\(keyboard.frame)")
     }
 
 }

@@ -7,6 +7,10 @@
 # bot detail sessions, Dynamic Type sanity), secrets scan, git state.
 # Run with: bash scripts/u2_validate.sh
 set -u
+# Private per-run scratch (never a predictable shared /tmp name: a local
+# user could pre-create or symlink it and clobber files).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_u2_validate.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
 PASS=0
@@ -30,10 +34,10 @@ fi
 
 # --- 2. FleetCore build + tests ---------------------------------------------
 note "FleetCore build + tests"
-if (cd Packages/FleetCore && swift build) >/tmp/u2_core_build.log 2>&1; then
+if (cd Packages/FleetCore && swift build) >$SCRIPT_TMP/u2_core_build.log 2>&1; then
   ok "FleetCore builds"
 else
-  bad "FleetCore build failed"; tail -5 /tmp/u2_core_build.log
+  bad "FleetCore build failed"; tail -5 $SCRIPT_TMP/u2_core_build.log
 fi
 CORE_OUT=$(cd Packages/FleetCore && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
 echo "  $CORE_OUT"
@@ -45,10 +49,10 @@ fi
 
 # --- 3. FleetNetworking build + tests ---------------------------------------
 note "FleetNetworking build + tests"
-if (cd Packages/FleetNetworking && swift build) >/tmp/u2_net_build.log 2>&1; then
+if (cd Packages/FleetNetworking && swift build) >$SCRIPT_TMP/u2_net_build.log 2>&1; then
   ok "FleetNetworking builds"
 else
-  bad "FleetNetworking build failed"; tail -8 /tmp/u2_net_build.log
+  bad "FleetNetworking build failed"; tail -8 $SCRIPT_TMP/u2_net_build.log
 fi
 NET_OUT=$(cd Packages/FleetNetworking && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
 echo "  $NET_OUT"
@@ -60,10 +64,10 @@ fi
 
 # --- 4. FleetSecurity + FleetPersistence build/tests -------------------------
 note "FleetSecurity build + tests"
-if (cd Packages/FleetSecurity && swift build) >/tmp/u2_sec_build.log 2>&1; then
+if (cd Packages/FleetSecurity && swift build) >$SCRIPT_TMP/u2_sec_build.log 2>&1; then
   ok "FleetSecurity builds"
 else
-  bad "FleetSecurity build failed"; tail -5 /tmp/u2_sec_build.log
+  bad "FleetSecurity build failed"; tail -5 $SCRIPT_TMP/u2_sec_build.log
 fi
 SEC_OUT=$(cd Packages/FleetSecurity && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
 echo "  $SEC_OUT"
@@ -74,10 +78,10 @@ else
 fi
 
 note "FleetPersistence build + tests"
-if (cd Packages/FleetPersistence && swift build) >/tmp/u2_pers_build.log 2>&1; then
+if (cd Packages/FleetPersistence && swift build) >$SCRIPT_TMP/u2_pers_build.log 2>&1; then
   ok "FleetPersistence builds"
 else
-  bad "FleetPersistence build failed"; tail -5 /tmp/u2_pers_build.log
+  bad "FleetPersistence build failed"; tail -5 $SCRIPT_TMP/u2_pers_build.log
 fi
 PERS_OUT=$(cd Packages/FleetPersistence && swift test 2>&1 | grep -E 'Executed .* tests' | tail -1)
 echo "  $PERS_OUT"
@@ -89,25 +93,25 @@ fi
 
 # --- 5. xcodegen + xcodebuild build/test (iOS Simulator, app-level) ----------
 note "xcodegen + xcodebuild build/test (iOS Simulator)"
-if xcodegen generate >/tmp/u2_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
+if xcodegen generate >$SCRIPT_TMP/u2_xcodegen.log 2>&1 && grep -q '3JS22HX92T' HermesFleetApp.xcodeproj/project.pbxproj; then
   ok "xcodegen regenerated; team 3JS22HX92T present"
 else
-  bad "xcodegen / team missing"; tail -5 /tmp/u2_xcodegen.log
+  bad "xcodegen / team missing"; tail -5 $SCRIPT_TMP/u2_xcodegen.log
 fi
 DEST="platform=iOS Simulator,name=iPhone 17 Pro,OS=latest"
 DD="$REPO/build/DerivedDataU2"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" build >/tmp/u2_xcbuild.log 2>&1; then
+    -destination "$DEST" -derivedDataPath "$DD" build >$SCRIPT_TMP/u2_xcbuild.log 2>&1; then
   ok "xcodebuild BUILD SUCCEEDED (iOS Simulator)"
 else
-  bad "xcodebuild build FAILED"; tail -25 /tmp/u2_xcbuild.log
+  bad "xcodebuild build FAILED"; tail -25 $SCRIPT_TMP/u2_xcbuild.log
 fi
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
-    -destination "$DEST" -derivedDataPath "$DD" test >/tmp/u2_xctest.log 2>&1; then
-  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' /tmp/u2_xctest.log | tail -1)
+    -destination "$DEST" -derivedDataPath "$DD" test >$SCRIPT_TMP/u2_xctest.log 2>&1; then
+  TESTLINE=$(grep -E 'Test Suite.*(passed|failed)' $SCRIPT_TMP/u2_xctest.log | tail -1)
   ok "xcodebuild TEST SUCCEEDED — $TESTLINE"
 else
-  bad "xcodebuild test FAILED"; grep -E 'error:|failed|Test Suite' /tmp/u2_xctest.log | tail -20
+  bad "xcodebuild test FAILED"; grep -E 'error:|failed|Test Suite' $SCRIPT_TMP/u2_xctest.log | tail -20
 fi
 
 # --- 6. Simulator evidence: install, launch, screenshots ---------------------
@@ -120,11 +124,11 @@ else
   APP_BUNDLE="$DD/Build/Products/Debug-iphonesimulator/HermesFleetApp.app"
   if [ -d "$APP_BUNDLE" ]; then
     xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
-    xcrun simctl bootstatus "$SIM_UDID" -b >/tmp/u2_sim_boot.log 2>&1 && ok "simulator booted" || bad "simulator boot failed"
-    if xcrun simctl install "$SIM_UDID" "$APP_BUNDLE" >/tmp/u2_sim_install.log 2>&1; then
+    xcrun simctl bootstatus "$SIM_UDID" -b >$SCRIPT_TMP/u2_sim_boot.log 2>&1 && ok "simulator booted" || bad "simulator boot failed"
+    if xcrun simctl install "$SIM_UDID" "$APP_BUNDLE" >$SCRIPT_TMP/u2_sim_install.log 2>&1; then
       ok "app installed to simulator"
     else
-      bad "app install failed"; tail -5 /tmp/u2_sim_install.log
+      bad "app install failed"; tail -5 $SCRIPT_TMP/u2_sim_install.log
     fi
     LAUNCH_OUT=$(xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet 2>&1)
     if ! echo "$LAUNCH_OUT" | grep -qE 'com.aiowa.hermesfleet: [0-9]+'; then
@@ -136,26 +140,26 @@ else
     if echo "$LAUNCH_OUT" | grep -qE 'com.aiowa.hermesfleet: [0-9]+'; then
       ok "app launched (PID returned)"
       sleep 3
-      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-gateways.png" >/tmp/u2_sim_shot.log 2>&1 && ok "screenshot: build/u2-simulator-gateways.png" || bad "gateways screenshot failed"
+      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-gateways.png" >$SCRIPT_TMP/u2_sim_shot.log 2>&1 && ok "screenshot: build/u2-simulator-gateways.png" || bad "gateways screenshot failed"
       # Roster (union, partial outage) via the DEBUG auto-nav hook.
       xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
       SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=roster xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
       sleep 4
-      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-roster.png" >/tmp/u2_sim_shot3.log 2>&1 && ok "screenshot: build/u2-simulator-roster.png" || bad "roster screenshot failed"
+      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-roster.png" >$SCRIPT_TMP/u2_sim_shot3.log 2>&1 && ok "screenshot: build/u2-simulator-roster.png" || bad "roster screenshot failed"
       # Bot detail (identity + sessions via session.list) via the DEBUG hook.
       xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
       SIMCTL_CHILD_HERMES_FLEET_AUTO_NAV=bot-detail xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
       sleep 4
-      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-bot-detail.png" >/tmp/u2_sim_shot4.log 2>&1 && ok "screenshot: build/u2-simulator-bot-detail.png" || bad "bot-detail screenshot failed"
+      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-bot-detail.png" >$SCRIPT_TMP/u2_sim_shot4.log 2>&1 && ok "screenshot: build/u2-simulator-bot-detail.png" || bad "bot-detail screenshot failed"
       # Dynamic Type sanity: relaunch at a large accessibility content size and
       # capture the gateways/roster state, then restore the default size.
       # (simctl ui content-size is not available on this Xcode; the app-level
       # override rides on the preferred content-size category user default.)
-      xcrun simctl spawn "$SIM_UDID" defaults write com.aiowa.hermesfleet UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityXXXL >/tmp/u2_sim_ui.log 2>&1 && ok "content size set to accessibility XXXL" || bad "content-size set failed"
+      xcrun simctl spawn "$SIM_UDID" defaults write com.aiowa.hermesfleet UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityXXXL >$SCRIPT_TMP/u2_sim_ui.log 2>&1 && ok "content size set to accessibility XXXL" || bad "content-size set failed"
       xcrun simctl terminate "$SIM_UDID" com.aiowa.hermesfleet 2>/dev/null || true
       xcrun simctl launch "$SIM_UDID" com.aiowa.hermesfleet >/dev/null 2>&1
       sleep 3
-      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-dynamic-type.png" >/tmp/u2_sim_shot2.log 2>&1 && ok "screenshot: build/u2-simulator-dynamic-type.png (AX size)" || bad "dynamic-type screenshot failed"
+      xcrun simctl io "$SIM_UDID" screenshot "$REPO/build/u2-simulator-dynamic-type.png" >$SCRIPT_TMP/u2_sim_shot2.log 2>&1 && ok "screenshot: build/u2-simulator-dynamic-type.png (AX size)" || bad "dynamic-type screenshot failed"
       xcrun simctl spawn "$SIM_UDID" defaults delete com.aiowa.hermesfleet UIPreferredContentSizeCategoryName >/dev/null 2>&1
     else
       bad "app launch failed: $LAUNCH_OUT"

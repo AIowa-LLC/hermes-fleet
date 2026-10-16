@@ -31,11 +31,13 @@ public struct GatewaysView: View {
 
     enum PresentedSheet: Identifiable {
         case add
+        case advancedAdd
         case edit(FleetGateway)
         case auth(GatewayID)
         var id: String {
             switch self {
             case .add: return "add"
+            case .advancedAdd: return "advanced-add"
             case .edit(let gateway): return "edit-\(gateway.id.rawValue)"
             case .auth(let id): return "auth-\(id.rawValue)"
             }
@@ -95,48 +97,11 @@ public struct GatewaysView: View {
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .add:
-                // P2-6: let the form see save failures — it keeps the sheet
-                // open, preserves the non-secret fields, and surfaces the error
-                // inline for retry (the parent no longer swallows the error into
-                // a post-dismiss alert that races the sheet).
-                // P0-2: the form binds to the root-owned draft store so it
-                // survives the H1 lock / scenePhase teardown.
-                GatewayFormSheet(
-                    title: "Add Gateway",
-                    saveButton: "Add",
-                    initial: nil,
-                    draftStore: environment.gatewayFormDraft
-                ) { registration, credential, confirmsTLSFirstUse in
-                    _ = try await environment.addGateway(
-                        registration,
-                        credential: credential,
-                        confirmsTLSFirstUse: confirmsTLSFirstUse)
-                }
+                AdditionalGatewaySheet(environment: environment)
+            case .advancedAdd:
+                addGatewayForm
             case .edit(let gateway):
-                GatewayFormSheet(
-                    title: "Edit Gateway",
-                    saveButton: "Save",
-                    initial: gateway,
-                    draftStore: environment.gatewayFormDraft
-                ) { registration, credential, confirmsTLSFirstUse in
-                    // Apply the edited display name / endpoint / strategy.
-                    _ = try await environment.updateGateway(
-                        gateway.id,
-                        edits: GatewayEdit(
-                            displayName: registration.displayName,
-                            endpoint: registration.endpoint,
-                            authConfiguration: registration.authConfiguration
-                        )
-                    )
-                    // Store a newly-entered credential (Keychain-safe);
-                    // nil keeps the registry's existing credential.
-                    if let credential {
-                        try await environment.saveCredential(credential, for: gateway.id)
-                    }
-                    if confirmsTLSFirstUse {
-                        try await environment.approveTLSFirstUse(for: gateway.id)
-                    }
-                }
+                EditGatewayFormHost(environment: environment, gateway: gateway)
             case .auth(let id):
                 GatewayAuthSheet(environment: environment, gatewayID: id)
             }
@@ -278,11 +243,25 @@ public struct GatewaysView: View {
 
     // MARK: P0-2 — in-progress form draft (survives the FaceID lock)
 
-    /// Open the Add-Gateway sheet, beginning a fresh draft in the root-owned
-    /// store (so an app background + relock mid-entry is restored on unlock).
+    /// Start the owner-enrollment flow. The advanced manual form owns the
+    /// root-backed draft and starts it only when the user selects Advanced.
     private func presentAddForm() {
-        environment.gatewayFormDraft.begin(pendingSheet: .add, initial: nil)
         presentedSheet = .add
+    }
+
+    private var addGatewayForm: some View {
+        GatewayFormSheet(
+            title: "Advanced Gateway Setup",
+            saveButton: "Add",
+            initial: nil,
+            draftStore: environment.gatewayFormDraft,
+            reviewKey: { try await environment.reviewTLSKey(for: $0) }
+        ) { registration, credential, tlsReview in
+            _ = try await environment.addGateway(
+                registration,
+                credential: credential,
+                tlsReview: tlsReview)
+        }
     }
 
     /// Open the Edit-Gateway sheet, beginning a fresh draft seeded from the
@@ -300,7 +279,7 @@ public struct GatewaysView: View {
         guard draft.isInProgress, presentedSheet == nil else { return }
         switch draft.pendingSheet {
         case .add:
-            presentedSheet = .add
+            presentedSheet = .advancedAdd
         case .edit(let gatewayID):
             // The draft stores only the ID; resolve the current gateway so the
             // edit sheet gets the live registry value. If it was removed while
@@ -790,5 +769,50 @@ extension GatewaysView {
         case .runningWithoutLocalCache:
             return "Running without local cache. Changes made in this session won't be saved."
         }
+    }
+}
+
+
+/// Edit-gateway form. Loads whether the gateway already has a pinned key so the
+/// form knows if a certificate review is still needed (a cleared or never-pinned
+/// secure gateway is re-paired here by reviewing the key it actually presents).
+private struct EditGatewayFormHost: View {
+    let environment: AppEnvironment
+    let gateway: FleetGateway
+    @State private var pinned: Bool?
+
+    var body: some View {
+        Group {
+            if let pinned {
+                GatewayFormSheet(
+                    title: "Edit Gateway",
+                    saveButton: "Save",
+                    initial: gateway,
+                    draftStore: environment.gatewayFormDraft,
+                    tlsPinned: pinned,
+                    reviewKey: { try await environment.reviewTLSKey(for: $0) }
+                ) { registration, credential, tlsReview in
+                    // Apply the edited display name / endpoint / strategy. A
+                    // changed secure address needs its own reviewed key.
+                    _ = try await environment.updateGateway(
+                        gateway.id,
+                        edits: GatewayEdit(
+                            displayName: registration.displayName,
+                            endpoint: registration.endpoint,
+                            authConfiguration: registration.authConfiguration
+                        ),
+                        tlsReview: tlsReview
+                    )
+                    // Store a newly-entered credential (Keychain-safe);
+                    // nil keeps the registry's existing credential.
+                    if let credential {
+                        try await environment.saveCredential(credential, for: gateway.id)
+                    }
+                }
+            } else {
+                ProgressView()
+            }
+        }
+        .task { pinned = await environment.tlsPin(for: gateway.id) != nil }
     }
 }

@@ -16,7 +16,7 @@ The app has eight top-level destinations — **Bots, Chats, Groups, Scheduled, K
 - multi-gateway roster aggregation
 - bot and session discovery
 - per-gateway health information
-- QR-assisted gateway pairing
+- Owner-authenticated phone enrollment with advanced manual/legacy QR setup
 - **Gateway Detail** — per-machine cockpit: identity, contextual connection controls, current work, the machine's Needs You item, and dense resource rows (Bots, Groups, Projects, Kanban, Schedules, Skills, Memory, Connection)
 
 ## Fleet Home and coverage honesty
@@ -149,7 +149,7 @@ gateway; failed writes do not appear as successful local changes.
 
 ## Settings and About
 
-Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and the agent setup prompt. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.
+Settings is a top-level destination for appearance and accent pickers, app security, local data, gateway management, problem reporting, and server connection setup. About carries the app identity, version, Terms of Use, Privacy Policy, and support links. See [`settings-and-about-tabs.md`](settings-and-about-tabs.md) for the destination ownership summary.
 
 ## Voice
 

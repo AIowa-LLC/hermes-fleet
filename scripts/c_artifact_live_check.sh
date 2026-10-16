@@ -78,7 +78,14 @@ if [ -z "${FLEET_LIVE_ARTIFACT_MISSING_PATH:-}" ]; then
 fi
 export FLEET_LIVE_ARTIFACT_MISSING_PATH
 export FLEET_LIVE_ARTIFACT_OUTSIDE_PATH="${FLEET_LIVE_ARTIFACT_OUTSIDE_PATH:-/etc/hosts.png}"
-export FLEET_LIVE_ARTIFACT_EVIDENCE_OUT="${FLEET_LIVE_ARTIFACT_EVIDENCE_OUT:-${TMPDIR:-/tmp}/c-artifact-evidence.json}"
+# Default evidence/log location is a verified-private directory, never a
+# predictable file in the shared temp directory.
+. "$(dirname "$0")/private_dir_lib.sh"
+if [ -z "${FLEET_LIVE_ARTIFACT_EVIDENCE_OUT:-}" ]; then
+    EVIDENCE_DIR=$(hf_private_dir "$(hf_private_name hermes-fleet-live)") || exit 2
+    FLEET_LIVE_ARTIFACT_EVIDENCE_OUT="$EVIDENCE_DIR/c-artifact-evidence.json"
+fi
+export FLEET_LIVE_ARTIFACT_EVIDENCE_OUT
 LOG="${FLEET_LIVE_ARTIFACT_EVIDENCE_OUT%.json}.log"
 
 echo "== C: live artifact transport check =="

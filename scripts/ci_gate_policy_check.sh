@@ -78,7 +78,7 @@ if grep -Fq 'MAX_FOCUSED_CLASSES' scripts/c1_ui_preflight.sh; then
   echo "FAIL: oversized changed-area coverage must not be dropped" >&2; exit 1
 fi
 SMOKE_TESTS="$(bash scripts/c1_critical_smoke.sh --list-tests)"
-EXPECTED_SMOKE_TESTS="F3Onboarding/testFreshInstallLandsOnOnboardingAsRootSurface U3TabNavigation/testBotsTabOpensFleetRoster HermesFleetHappyPath/testHappyPathGatewaysToConversationStreamedAnswer RoomChat/testHostedRoomOpenSendAndTranscriptRender"
+EXPECTED_SMOKE_TESTS="F3Onboarding/testFirstRunShowsOnlyQRPathAndCopyableOwnerInstructions U3TabNavigation/testBotsTabOpensFleetRoster HermesFleetHappyPath/testHappyPathGatewaysToConversationStreamedAnswer RoomChat/testHostedRoomOpenSendAndTranscriptRender"
 LATEST_ROOM_TEST="FOS8Accessibility/testGroupConversationOpensAtLatestWithDeepHistory"
 if grep -Eq '^[[:space:]]*func[[:space:]]+testGroupConversationOpensAtLatestWithDeepHistory\(' HermesFleetAppUITests/FOS8AccessibilityUITests.swift; then
   EXPECTED_SMOKE_TESTS="$EXPECTED_SMOKE_TESTS $LATEST_ROOM_TEST"

@@ -43,30 +43,35 @@ struct FleetNavigationDrawer: View {
         Set(environment.pinnedConversations.map(\.id))
     }
 
+    private var canonicalConversationIDs: Set<String> {
+        Set(environment.sessionsByRoute.flatMap { route, sessions in
+            sessions.compactMap { session in
+                guard environment.isCanonicalBotChat(route: route, sessionID: session.id) else {
+                    return nil
+                }
+                return FleetConversationIdentity.individual(
+                    route: route, sessionID: session.id
+                ).id
+            }
+        })
+    }
+
     private var recentEntries: [FleetChatEntry] {
-        environment.sessionsByRoute
-            .flatMap { route, sessions in
-                sessions.filter {
-                    FleetChatsPresentation.isRecentConversation($0) &&
-                    !environment.isCanonicalBotChat(route: route, sessionID: $0.id)
-                }.map { FleetChatEntry(route: route, session: $0) }
-            }
-            .filter { environment.gateway(for: $0.route.gatewayID) != nil && !hiddenIDs.contains($0.id) }
-            .sorted {
-                let left = FleetChatsPresentation.recency($0.session)
-                let right = FleetChatsPresentation.recency($1.session)
-                if left == right { return $0.id < $1.id }
-                return left > right
-            }
-            .filter {
-                !pinnedIDs.contains(
-                    FleetConversationIdentity.individual(
-                        route: $0.route, sessionID: $0.session.id
-                    ).id
-                )
-            }
-            .prefix(12)
-            .map { $0 }
+        FleetChatsPresentation.sidebarRecentEntries(
+            sessionsByRoute: environment.sessionsByRoute,
+            registeredGatewayIDs: Set(environment.gateways.map(\.id)),
+            canonicalConversationIDs: canonicalConversationIDs,
+            pinnedConversationIDs: pinnedIDs,
+            hiddenEntryIDs: hiddenIDs
+        )
+    }
+
+    private var currentSessionRoutes: Set<Route> {
+        Set((environment.rosterSnapshot?.roster.allBots ?? []).map(\.route))
+    }
+
+    private var failedSessionRoutes: Set<Route> {
+        Set(environment.sessionReadErrors.keys).intersection(currentSessionRoutes)
     }
 
     var body: some View {
@@ -91,6 +96,22 @@ struct FleetNavigationDrawer: View {
                             delete: { pendingDelete = pin.identity }))
                 }
                 sectionHeading("Recents")
+                if !failedSessionRoutes.isEmpty {
+                    HStack(spacing: FleetTheme.spacingSm) {
+                        Text("Some conversations couldn't refresh.")
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                        Spacer(minLength: 0)
+                        Button("Retry") {
+                            Task { await refreshSidebarSessions(force: true) }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .accessibilityIdentifier("fleet.drawer.sessions.refresh.retry")
+                    }
+                    .padding(.horizontal, FleetTheme.spacingSm)
+                    .padding(.bottom, FleetTheme.spacingSm)
+                    .accessibilityIdentifier("fleet.drawer.sessions.refresh.error")
+                }
                 ForEach(recentEntries) { entry in
                     recentRow(entry)
                         .modifier(ConversationSwipeActions(
@@ -121,6 +142,7 @@ struct FleetNavigationDrawer: View {
             guard compact else { return }
             if !reduceMotion { headerFocused = true }
         }
+        .task { await refreshSidebarSessions() }
         .onReceive(NotificationCenter.default.publisher(for: FleetChatsArchiveStore.didChange)) { _ in
             hiddenIDs = FleetChatsArchiveStore.hiddenIDs()
         }
@@ -282,6 +304,15 @@ struct FleetNavigationDrawer: View {
         FleetChatsArchiveStore.setHidden(FleetChatsArchiveStore.entryID(for: identity), hidden: true)
         hiddenIDs = FleetChatsArchiveStore.hiddenIDs()
         notice = deleted ? "Removed from this device" : "Archived on this device"
+    }
+
+    private func refreshSidebarSessions(force: Bool = false) async {
+        if environment.rosterSnapshot == nil { await environment.refreshRoster() }
+        guard !Task.isCancelled else { return }
+        let routes = (environment.rosterSnapshot?.roster.allBots ?? []).map(\.route)
+        await environment.refreshSessions(
+            routes: routes, force: force)
+        guard !Task.isCancelled else { return }
     }
 
     /// Circular header action (ChatGPT parity: search/close are circles,

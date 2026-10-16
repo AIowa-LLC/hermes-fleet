@@ -25,6 +25,44 @@ public enum RefreshFailureSurface: Equatable, Sendable {
 
 public enum FleetChatsPresentation {
 
+    /// The drawer's Recents projection uses the same Desktop-recents rules as
+    /// Chats, but it must not add a smaller cross-fleet row cap: Bot Detail
+    /// exposes the route's full bounded `session.list` result, and valid
+    /// sessions from less-active profiles otherwise disappear from the shared
+    /// navigation surface. Identity remains `(Route, sessionID)` throughout.
+    static func sidebarRecentEntries(
+        sessionsByRoute: [Route: [SessionSummary]],
+        registeredGatewayIDs: Set<GatewayID>,
+        canonicalConversationIDs: Set<String>,
+        pinnedConversationIDs: Set<String>,
+        hiddenEntryIDs: Set<String>
+    ) -> [FleetChatEntry] {
+        var uniqueEntries: [String: FleetChatEntry] = [:]
+
+        for (route, sessions) in sessionsByRoute where registeredGatewayIDs.contains(route.gatewayID) {
+            for session in sessions where isRecentConversation(session) {
+                let entry = FleetChatEntry(route: route, session: session)
+                let identityID = entry.pinIdentity.id
+                guard !canonicalConversationIDs.contains(identityID),
+                      !pinnedConversationIDs.contains(identityID),
+                      !hiddenEntryIDs.contains(entry.id) else { continue }
+
+                if let existing = uniqueEntries[entry.id],
+                   recency(existing.session) >= recency(session) {
+                    continue
+                }
+                uniqueEntries[entry.id] = entry
+            }
+        }
+
+        return uniqueEntries.values.sorted {
+            let left = recency($0.session)
+            let right = recency($1.session)
+            if left == right { return $0.id < $1.id }
+            return left > right
+        }
+    }
+
     /// Hermes Desktop's Recents slice contains persisted, human-facing local
     /// conversations. The gateway's `session.list` is broader: it also returns
     /// empty drafts, cron runs, and messaging threads that Desktop places in

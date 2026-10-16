@@ -234,6 +234,7 @@ public enum BridgedRooms {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue else { return }
+            BackupExclusion.apply(to: url) // stores written before the exclusion existed
             do {
                 let data = try Data(contentsOf: url)
                 rooms = try JSONDecoder().decode([String: RoomRecord].self, from: data)
@@ -260,6 +261,7 @@ public enum BridgedRooms {
         private func persist(_ snapshot: [String: RoomRecord]) throws {
             let data = try JSONEncoder().encode(snapshot)
             try data.write(to: url, options: .atomic)
+            BackupExclusion.apply(to: url)
         }
 
         /// Test launches reset before hydration, so previous rooms cannot

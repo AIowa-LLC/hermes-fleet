@@ -37,10 +37,11 @@ public final class GatewayFormDraftStore {
     public var usernameText = ""
     public var passwordText = ""
     public var confirmsCleartextSend = false
-    /// Explicit user consent for secure TOFU on the next connection. This is
-    /// in-memory form state only; the approval is persisted by AppEnvironment
-    /// only after a successful save.
-    public var confirmsTLSFirstUse = false
+    /// The key the user reviewed and explicitly confirmed for the endpoint in
+    /// `endpointText`. In-memory form state only; AppEnvironment validates it
+    /// (same endpoint, not stale) and persists a key-bound approval only after
+    /// a successful save. Editing the endpoint invalidates it.
+    public var tlsReview: TLSKeyReview?
     /// P2-6 inline save-failure message (non-secret) — survives the lock too.
     public var saveError: String?
 
@@ -61,7 +62,7 @@ public final class GatewayFormDraftStore {
         usernameText = ""
         passwordText = ""
         confirmsCleartextSend = false
-        confirmsTLSFirstUse = false
+        tlsReview = nil
         saveError = nil
     }
 
@@ -77,7 +78,7 @@ public final class GatewayFormDraftStore {
         usernameText = ""
         passwordText = ""
         confirmsCleartextSend = false
-        confirmsTLSFirstUse = false
+        tlsReview = nil
         saveError = nil
     }
 

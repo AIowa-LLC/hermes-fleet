@@ -2,12 +2,9 @@ import SwiftUI
 import FleetCore
 
 /// Root wrapper for the unconfigured first-run state (see
-/// `AppEnvironment.hydrationPhase`).
-///
-/// Deliberately thin: the experience is `GatewayOnboardingView`; this wrapper
-/// gives the root a single stable accessibility identifier
-/// (`fleet.root.onboarding`) for UI tests and keeps the hydration-gate
-/// presentation logic in `FleetTabView` free of product copy.
+/// `AppEnvironment.hydrationPhase`). First-run enrollment starts from a link the owner asks
+/// Hermes for (`/fleet pair`), approved by its code; owner sign-in and manual setup remain
+/// available under "Other ways to connect".
 public struct FirstRunSetupView: View {
     private let environment: AppEnvironment
 
@@ -16,7 +13,7 @@ public struct FirstRunSetupView: View {
     }
 
     public var body: some View {
-        GatewayOnboardingView(environment: environment)
+        QRFirstServerView(environment: environment)
             .accessibilityIdentifier("fleet.root.onboarding")
     }
 }

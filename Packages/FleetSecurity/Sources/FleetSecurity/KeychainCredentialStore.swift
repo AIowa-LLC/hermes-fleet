@@ -15,7 +15,7 @@ import FleetCore
 ///   Keychain service, so gateways from different profiles never collide.
 public struct KeychainCredentialStore: CredentialStoring {
     /// Keychain service name — scoped to this app's gateway credentials.
-    public static let serviceName = "com.aiowa.hermesfleet.gateway-credentials"
+    public static let serviceName = FleetAppIdentity.keychainNamespace + ".gateway-credentials"
 
     private let keychain: any KeychainSession
 

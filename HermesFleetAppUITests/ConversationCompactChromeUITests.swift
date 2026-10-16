@@ -300,12 +300,150 @@ final class ConversationCompactChromeUITests: XCTestCase {
         let name = firstMatch(in: app, identifier: "fleet.conversation.header.name")
         XCTAssertTrue(name.waitForExistence(timeout: 5), "bot name leaf must render at AX size")
         XCTAssertTrue(name.label.contains("Default"), "bot name must survive at AX size: \(name.label)")
-        // Secondary metadata degrades away instead of squeezing the name.
-        XCTAssertFalse(firstMatch(in: app, identifier: "model.chip").exists,
-                       "secondary metadata must hide at accessibility sizes")
+        // DEV14: the toolbelt (model/folder/profile chips) used to be hidden
+        // at accessibility sizes on the false premise that the ⋯ menu
+        // carried them, leaving the model picker unreachable. It now stays
+        // mounted (type size capped inside the strip) and scrolls from the
+        // leading edge.
+        XCTAssertTrue(firstMatch(in: app, identifier: "model.chip").waitForExistence(timeout: 5),
+                      "model chip must remain reachable at accessibility sizes")
         // Steer controls remain present.
         XCTAssertTrue(firstMatch(in: app, identifier: "session.actions.menu").waitForExistence(timeout: 10),
                       "session actions must remain reachable at AX sizes")
+    }
+
+    // MARK: - DEV14 toolbelt clipping (issue 6)
+
+    /// Long model/folder/profile names must not clip the strip at either
+    /// edge: the first chip starts at the leading edge, chips are capped and
+    /// truncated, and every chip is hittable (directly or after scrolling).
+    func testToolbeltChipsWithLongNamesAreNotClippedAndStayReachable() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_INFO_FIXTURE"] = "1"
+        app.launchEnvironment["HERMES_FLEET_SESSION_INFO_LONG_NAMES"] = "1"
+        app.launch()
+        openConversation(app)
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("toolbelt probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let window = app.windows.firstMatch
+        let zone = firstMatch(in: app, identifier: "fleet.conversation.header.chipzone")
+        XCTAssertTrue(zone.waitForExistence(timeout: 15), "chip zone must render")
+        let folder = firstMatch(in: app, identifier: "fleet.conversation.header.folder")
+        XCTAssertTrue(folder.waitForExistence(timeout: 15), "folder chip must render from session.info")
+        let model = firstMatch(in: app, identifier: "model.chip")
+        XCTAssertTrue(model.exists)
+
+        // Nothing starts clipped on the leading edge.
+        XCTAssertGreaterThanOrEqual(model.frame.minX, window.frame.minX,
+                                    "first chip clipped at leading edge (chip \(model.frame), window \(window.frame))")
+        XCTAssertGreaterThanOrEqual(zone.frame.minX, window.frame.minX)
+        XCTAssertLessThanOrEqual(zone.frame.maxX, window.frame.maxX + 1)
+        XCTAssertTrue(model.isHittable, "first chip must be hittable at rest")
+
+        // Every chip is hittable, scrolling the strip left if needed.
+        for id in ["fleet.conversation.header.folder", "fleet.conversation.header.profile"] {
+            let chip = firstMatch(in: app, identifier: id)
+            XCTAssertTrue(chip.waitForExistence(timeout: 10), "\(id) must render")
+            for _ in 0..<4 where !chip.isHittable || chip.frame.maxX > window.frame.maxX + 1 {
+                // The scroll view's frame can extend below the chip row, so
+                // drag along the chip row itself (the model chip's midY).
+                let rowY = model.frame.midY / window.frame.height
+                let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: rowY))
+                let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: rowY))
+                start.press(forDuration: 0.1, thenDragTo: end)
+            }
+            XCTAssertTrue(chip.isHittable, "\(id) must be reachable by scrolling")
+            XCTAssertGreaterThanOrEqual(chip.frame.minX, window.frame.minX,
+                                        "\(id) clipped at leading edge once revealed")
+            XCTAssertLessThanOrEqual(chip.frame.maxX, window.frame.maxX + 1,
+                                     "\(id) clipped at trailing edge once revealed (chip \(chip.frame), zone \(zone.frame), window \(window.frame), hittable \(chip.isHittable))")
+            XCTAssertLessThanOrEqual(chip.frame.width, 190, "\(id) must be width-capped (\(chip.frame.width))")
+        }
+        // The full value stays available to assistive tech.
+        let folderValue = folder.value as? String ?? ""
+        XCTAssertTrue(folderValue.contains("an-extremely-long-project-folder-name"),
+                      "truncated chip keeps the full value accessible (got \(folderValue))")
+    }
+
+    // MARK: - DEV14 reasoning layout + single working indicator (issues 4, 5)
+
+    private func openConversationRevealing(_ app: XCUIApplication) {
+        UITabNavigation.openGatewaysTab(app)
+        func reveal(_ identifier: String) -> XCUIElement {
+            let element = app.descendants(matching: .any)[identifier]
+            for _ in 0..<8 where !element.exists {
+                app.swipeUp()
+            }
+            return element
+        }
+        tap(reveal("fleet.gateways.row.workstation"))
+        tap(reveal("fleet.gateway-detail.workstation.bots"))
+        tap(reveal("fleet.roster.row.workstation#default"))
+        tap(reveal("fleet.bot-detail.sessions.row.workstation.default.s1"))
+        XCTAssertTrue(app.textFields["fleet.conversation.composer"].waitForExistence(timeout: 10))
+    }
+
+    private func runReasoningAlignmentProbe(accessibilityText: Bool) {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launchEnvironment["HERMES_FLEET_REASONING_DEMO"] = "1"
+        app.launchEnvironment["HERMES_FLEET_REASONING_DEMO_HOLD_MS"] = "3000"
+        if accessibilityText {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName",
+                                    "UICTContentSizeCategoryAccessibilityXL"]
+        }
+        app.launch()
+        if accessibilityText { openConversationRevealing(app) } else { openConversation(app) }
+
+        let composer = app.textFields["fleet.conversation.composer"]
+        waitUntilEnabled(composer, timeout: 10)
+        composer.tap()
+        composer.typeText("reasoning layout probe")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.send"))
+
+        let toggle = firstMatch(in: app, identifier: "fleet.conversation.reasoning.toggle")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15), "reasoning toggle must render while streaming")
+        let streamingMinX = toggle.frame.minX
+
+        // Issue 5: exactly ONE working indicator while the turn is pending
+        // (reasoning phase), with Stop shown.
+        let working = app.descendants(matching: .any).matching(identifier: "fleet.conversation.working")
+        XCTAssertEqual(working.count, 1, "exactly one pending-operation indicator during reasoning")
+        XCTAssertTrue(firstMatch(in: app, identifier: "fleet.conversation.stop").exists,
+                      "Stop must be shown while the turn is pending")
+
+        // Mid-stream (message deltas arriving): still one indicator, same x.
+        let midStream = NSPredicate(format: "label CONTAINS[c] 'slowly'")
+        let reply = app.staticTexts.matching(midStream).firstMatch
+        _ = reply.waitForExistence(timeout: 10)
+        XCTAssertEqual(working.count, 1, "exactly one indicator while streaming message text")
+        XCTAssertEqual(toggle.frame.minX, streamingMinX, accuracy: 1,
+                       "reasoning toggle must not shift while the reply streams")
+
+        // Completion: indicator + Stop clear; toggle keeps the same x.
+        XCTAssertTrue(waitUntilGone(firstMatch(in: app, identifier: "fleet.conversation.working"), timeout: 20),
+                      "working indicator must clear on completion")
+        XCTAssertTrue(waitUntilGone(firstMatch(in: app, identifier: "fleet.conversation.stop"), timeout: 5),
+                      "Stop must clear on completion")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.frame.minX, streamingMinX, accuracy: 1,
+                       "reasoning toggle minX must be identical while streaming and after completion")
+        XCTAssertLessThan(toggle.frame.minX, app.windows.firstMatch.frame.width / 3,
+                          "reasoning toggle must be leading-aligned, not centered")
+    }
+
+    func testReasoningToggleKeepsLeadingPositionAcrossStreamingAndCompletion() throws {
+        runReasoningAlignmentProbe(accessibilityText: false)
+    }
+
+    func testReasoningToggleKeepsLeadingPositionAtAccessibilityTextSize() throws {
+        runReasoningAlignmentProbe(accessibilityText: true)
     }
 
     /// Completed assistant replies expose the compact action toolbar in the

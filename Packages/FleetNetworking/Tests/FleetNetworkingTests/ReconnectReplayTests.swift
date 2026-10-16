@@ -340,8 +340,12 @@ final class ReconnectReplayTests: XCTestCase {
 
         // Subscribe to the live event channel to observe replayed injection.
         let collector = GatewayEventCollector()
+        // Registration is synchronous, so create the bounded fan-out stream
+        // before replay can inject. Starting the task alone does not guarantee
+        // it has run far enough to register the subscription.
+        let eventStream = transport.subscribeToEvents()
         let subscription = Task {
-            for await event in transport.subscribeToEvents() {
+            for await event in eventStream {
                 collector.append(event)
             }
         }
@@ -359,8 +363,12 @@ final class ReconnectReplayTests: XCTestCase {
         let wmAfter = await transport.watermark(for: "s1")
         XCTAssertEqual(wmAfter, 5)
 
+        // Cancellation finishes the bounded queue and discards any unread
+        // backlog. Wait until the collector has consumed both replay events
+        // before cancelling, so this assertion tests replay rather than task
+        // scheduling.
+        await waitUntil({ collector.all.filter { ($0.seq ?? 0) > 3 }.count == 2 }, timeout: .seconds(3))
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(100))
 
         // The two replayed events reached the live channel, in order. P0-7
         // fan-out semantics: the channel delivers to LIVE subscribers only —
@@ -420,14 +428,15 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
 
         let collector = GatewayEventCollector()
+        let eventStream = transport.subscribeToEvents()
         let subscription = Task {
-            for await event in transport.subscribeToEvents() { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         let outcomes = try await engine.replayAfterReconnect()
         XCTAssertEqual(outcomes, [.replayed(sessionID: "s1", count: 1)],
                        "only the strictly-newer event is counted as replayed")
+        await waitUntil({ collector.all.filter { $0.seq == 2 }.count == 1 }, timeout: .seconds(3))
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(100))
 
         let replayed = collector.all.filter { $0.seq != nil && $0.seq != 1 }
         XCTAssertEqual(replayed.map(\.seq), [2], "overlap seq 1 must be dropped; only seq 2 applied")
@@ -488,6 +497,59 @@ final class ReconnectReplayTests: XCTestCase {
         let wmTrunc = await transport.watermark(for: "s1")
         XCTAssertEqual(wmTrunc, 40)
 
+        await transport.disconnect()
+    }
+
+    /// A replay response larger than the client's bound is NOT injected: it is
+    /// treated like a truncated ring (history refetch), so a runaway or hostile
+    /// `session.events.since` cannot force unbounded client work.
+    func testOversizedReplayBatchIsTreatedAsTruncated() async throws {
+        let first = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame(), Self.seqEventFrame(type: "message.delta", sessionID: "s1", seq: 3)]
+        )
+        let historyStub = StubHistoryProvider()
+        let oversizedEvents = (0...GatewayReplayEngine.maxReplayBatchEvents).map {
+            Self.bareEvent(type: "message.delta", sessionID: "s1", seq: 4 + $0)
+        }
+        // Pre-rendered (id-less) body: the closure may only capture Sendable values.
+        let oversizedBody = try XCTUnwrap(String(
+            data: JSONSerialization.data(withJSONObject: [
+                "events": oversizedEvents, "latest_seq": 99_999,
+                "truncated": false, "count": oversizedEvents.count, "epoch": "epoch-1",
+            ]), encoding: .utf8))
+        let second = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method) = Self.extractRequest(frame) else { return [] }
+                switch method {
+                case "session.events.since":
+                    return [#"{"jsonrpc":"2.0","id":"\#(id)","result":\#(oversizedBody)}"#]
+                case "session.history":
+                    historyStub.noteHistoryRequested(sessionID: "s1")
+                    return [Self.responseFrame(id: id, result: ["count": 0, "messages": []])]
+                default:
+                    return []
+                }
+            }
+        )
+        let server = try InProcessWebSocketServer(scripts: [first, second])
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        await waitUntil({ await transport.watermark(for: "s1") == 3 }, timeout: .seconds(3))
+        let engine = GatewayReplayEngine(
+            gatewayID: GatewayID(rawValue: "workstation"), transport: transport, history: historyStub)
+        _ = try await engine.replayAfterReconnect()
+
+        server.abortConnection()
+        await waitUntil({ transport.state != .connected }, timeout: .seconds(3))
+        try await transport.connect()
+
+        let outcomes = try await engine.replayAfterReconnect()
+        XCTAssertEqual(outcomes, [.truncated(sessionID: "s1")])
+        XCTAssertTrue(historyStub.historyRequestedForS1)
         await transport.disconnect()
     }
 
@@ -570,13 +632,14 @@ final class ReconnectReplayTests: XCTestCase {
         try await transport.connect()
 
         let collector = GatewayEventCollector()
+        let eventStream = transport.subscribeToEvents()
         let subscription = Task {
-            for await event in transport.subscribeToEvents() { collector.append(event) }
+            for await event in eventStream { collector.append(event) }
         }
         let outcomes = try await engine.replayAfterReconnect()
         XCTAssertEqual(outcomes, [.replayed(sessionID: "s1", count: 2)])
+        await waitUntil({ collector.all.filter { ($0.seq ?? 0) > 3 }.count == 2 }, timeout: .seconds(3))
         subscription.cancel()
-        try await Task.sleep(for: .milliseconds(100))
 
         let replayed = collector.all.filter { ($0.seq ?? 0) > 3 }
         XCTAssertEqual(replayed.map(\.seq), [5, 7], "apply exactly what was returned, in order — no invented 6")

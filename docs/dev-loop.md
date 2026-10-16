@@ -175,7 +175,7 @@ suites from the recorded Build 90 source. Environmental suites still require
 their real gateway/device context and are not silently counted as CI passes.
 The five-way deep workflow keeps the release line's historical runtime weights;
 these predate build reuse and are balancing inputs, not speed forecasts.
-Package baselines are 691 core, 613 networking, 58 persistence, and 46
+Package baselines are 709 core, 657 networking, 64 persistence, and 49
 security tests. These include the Live Ops runtime, cold-transport,
 cross-process reporting, structured ownership-refusal, and frozen-clock
 launch-cache TTL boundary regressions. Launch-cache fixtures use an injected
@@ -231,13 +231,15 @@ Partitions use the 60 observed suite runtimes from successful run
 recorded in `ci-runtime-baseline.json`. Weights guide balancing and must be
 re-profiled after harness changes; they are not completion-time guarantees.
 
-Test invocations fail after 600 seconds without XCTest case/suite or XCUI
-step progress. App startup noise does not reset the watchdog. The owned
-process group is stopped, and its original log, partial result bundle, and
-watchdog report are retained. An interrupted invocation is not a pass and is
-not automatically retried. Slow tests with real progress keep running.
+Test invocations fail after 660 seconds without XCTest case/suite or XCUI
+step progress. This includes a 60-second exit margin after Xcode's 600-second
+simulator-diagnostics cleanup timeout, which can begin after all assertions
+pass. App startup noise does not reset the watchdog. The owned process group is
+stopped, and its original log, partial result bundle, and watchdog report are
+retained. An interrupted invocation is not a pass and is not automatically
+retried. Slow tests with real progress keep running.
 `HERMES_FLEET_UI_PROGRESS_TIMEOUT_SECONDS` accepts a finite positive override;
-the hosted default remains 600 seconds.
+the default is 660 seconds.
 
 Each of the twelve required UI jobs either executes its selected suites or
 validates trusted source evidence. Static guards, package suites, hosted
@@ -273,3 +275,24 @@ and xcresult contracts. Rollout additionally requires an actual source-to-
 queue pair proving successful reuse and fresh execution after validation
 changes. A local timing experiment or mocked receipt alone is not rollout
 qualification.
+
+## Temp-path surface guard
+
+`scripts/temp_path_surface_guard.py` (static phase) fails if a script reachable
+from a supported workflow writes to a predictable shared temp path
+(`/tmp/<name>`, `${TMPDIR:-/tmp}/<name>`). Roots: the Makefile, CI workflows,
+the current docs, `project.yml`/xcconfig/`Package.swift`, and any Swift file
+that spawns processes. Reachability follows every script one script names.
+Computed names that keep a meaningful literal part expand to every script they
+could match; names too unspecific to expand (a bare variable plus an extension,
+or a glob over the whole scripts directory) are reported and must be reviewed
+into `UNRESOLVED_ALLOWED` in the guard.
+
+Historical milestone and live-check scripts (`h1_*`, `h2_*`, `fos*`, `rt*`,
+`pet_live_check`, …) still use fixed `/tmp` names and are out of scope because
+nothing reachable mentions them (`--report` lists them). They are kept as
+historical references, not supported entry points.
+
+Remaining limits: names assembled from several run-time string pieces, scripts
+run only by hand, and temp locations that do not literally contain
+`/tmp/<name>` or `$TMPDIR/<name>` (for example a path joined from pieces in Python).

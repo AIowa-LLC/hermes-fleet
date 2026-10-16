@@ -1,0 +1,636 @@
+import XCTest
+import ImageIO
+import FleetCore
+import FleetUI
+import FleetWatchKit
+@testable import HermesFleetDev
+
+@MainActor
+private final class FakeBackend: WatchBridgeBackend {
+    var isContentVisible = true
+    var isAppActive = true
+    var reachable: Set<String> = ["mac", "nas"]
+    var pending: [String: WatchPendingApproval] = [:]   // key gateway|session|request
+    var calls: [String] = []
+    var denyError: String?
+    var approveResult: WatchApproveResult = .done
+    var messageResult = WatchSendResult(.acknowledged)
+    var messageOutcome: WatchMessageOutcome {
+        get { messageResult.outcome }
+        set { messageResult = WatchSendResult(newValue) }
+    }
+    var removeOnDeny = true
+    var vanishOnDenyError = false
+    var lastPin: WatchConversationPin?
+    func snapshot(generation: Int, now: Date, pinned: WatchConversationPin?) -> WatchSnapshot { lastPin = pinned; return .hidden(flavor: .dev, generation: generation, builtAt: now) }
+    func isGatewayReachable(_ g: String) -> Bool { reachable.contains(g) }
+    func refreshObservation() async { calls.append("refresh") }
+    func refreshFleetState(force: Bool) async { calls.append(force ? "refreshFleet" : "refreshFleetRoutine") }
+    func pendingApproval(gatewayID: String, sessionID: String, requestID: String) -> WatchPendingApproval? {
+        pending["\(gatewayID)|\(sessionID)|\(requestID)"]
+    }
+    func deny(gatewayID: String, sessionID: String, requestID: String) async -> String? {
+        calls.append("deny:\(gatewayID)|\(sessionID)|\(requestID)")
+        if (denyError == nil && removeOnDeny) || (denyError != nil && vanishOnDenyError) { pending["\(gatewayID)|\(sessionID)|\(requestID)"] = nil }
+        return denyError
+    }
+    func approveOnce(gatewayID: String, sessionID: String, requestID: String) async -> WatchApproveResult {
+        calls.append("approve:\(gatewayID)|\(sessionID)|\(requestID)")
+        if approveResult == .done { pending["\(gatewayID)|\(sessionID)|\(requestID)"] = nil }
+        return approveResult
+    }
+    var thumbnails: [String: (digest: String, data: Data)] = [:]   // key gateway#slug
+    func avatarThumbnail(gatewayID: String, profileSlug: String, digest: String) async -> Data? {
+        calls.append("avatar:\(gatewayID)#\(profileSlug)")
+        guard let t = thumbnails["\(gatewayID)#\(profileSlug)"], t.digest == digest else { return nil }
+        return t.data
+    }
+    func sendMessage(_ request: WatchMessageRequest) async -> WatchSendResult {
+        calls.append("send:\(request.gatewayID)#\(request.profileSlug)#\(request.target.isMain ? "main:" : "chat:")\(request.target.sessionID)")
+        return messageResult
+    }
+}
+
+@MainActor
+final class WatchBridgeTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+    private func approvalRequest(_ d: WatchApprovalDecision, gw: String = "mac", digest: String = WatchCodec.digest("ls"),
+                                 uuid: String = UUID().uuidString) -> WatchApprovalRequest {
+        WatchApprovalRequest(requestUUID: uuid, gatewayID: gw, sessionID: "s1", requestID: "r1", commandDigest: digest,
+                             decision: d, snapshotGeneration: 1, sentAt: t0)
+    }
+    private func make(store: any WatchMessageLedgerStoring = InMemoryWatchMessageLedgerStore()) -> (FakeBackend, WatchPhoneCoordinator) {
+        let b = FakeBackend()
+        b.pending["mac|s1|r1"] = WatchPendingApproval(commandDigest: WatchCodec.digest("ls"), requiresFullReview: false)
+        return (b, WatchPhoneCoordinator(backend: b, flavor: .dev, ledgerStore: store, now: { self.t0 }))
+    }
+    private func msg(_ id: String = "m1", gw: String = "mac", target: WatchMessageTarget = .conversation(sessionID: "c9"),
+                     text: String = "hi") -> WatchMessageRequest {
+        WatchMessageRequest(clientMessageID: id, gatewayID: gw, profileSlug: "scout", target: target, text: text, composedAt: t0)
+    }
+    private func outcome(_ r: WatchApprovalReply) -> WatchApprovalOutcome { r.outcome }
+
+    func testProductionFlavorRequestRejectedWithoutTouchingBackend() async {
+        let (b, c) = make()
+        let reply = await c.handle(.approval(approvalRequest(.deny), flavor: .production))
+        guard case .rejected = reply else { return XCTFail() }
+        XCTAssertTrue(b.calls.isEmpty)
+    }
+
+    func testDenyRevalidatesThenActsOnOriginalIdentityOnly() async {
+        let (b, c) = make()
+        let r = await c.handleApproval(approvalRequest(.deny))
+        XCTAssertEqual(r.outcome, .applied)
+        XCTAssertEqual(b.calls, ["refresh", "deny:mac|s1|r1"])
+    }
+
+    func testChangedCommandIsNotActedOn() async {
+        let (b, c) = make()
+        b.pending["mac|s1|r1"] = WatchPendingApproval(commandDigest: WatchCodec.digest("rm -rf /"), requiresFullReview: false)
+        let r = await c.handleApproval(approvalRequest(.approveOnce))
+        XCTAssertEqual(r.outcome, .changed)
+        XCTAssertFalse(b.calls.contains { $0.hasPrefix("approve") || $0.hasPrefix("deny") })
+    }
+
+    func testExpiredOrResolvedElsewhere() async {
+        let (b, c) = make()
+        b.pending = [:]
+        let r = await c.handleApproval(approvalRequest(.deny))
+        XCTAssertEqual(r.outcome, .alreadyResolved)
+        XCTAssertFalse(b.calls.contains { $0.hasPrefix("deny") })
+    }
+
+    func testDuplicateUUIDAndSecondDecisionDoNotActTwice() async {
+        let (b, c) = make()
+        let first = approvalRequest(.approveOnce, uuid: "u1")
+        _ = await c.handleApproval(first)
+        let again = await c.handleApproval(first)
+        XCTAssertEqual(again.outcome, .duplicate)
+        let other = await c.handleApproval(approvalRequest(.deny, uuid: "u2"))
+        XCTAssertEqual(other.outcome, .applied, "a second decision for a finished approval returns the first result")
+        XCTAssertEqual(b.calls.filter { $0.hasPrefix("approve") || $0.hasPrefix("deny") }.count, 1)
+    }
+
+    func testApproveNeedsActiveUnlockedPhoneAndFullReviewHandsOff() async {
+        let (b, c) = make()
+        b.isAppActive = false
+        guard case .handOffToPhone = (await c.handleApproval(approvalRequest(.approveOnce, uuid: "a"))).outcome else { return XCTFail() }
+        b.isAppActive = true
+        b.pending["mac|s1|r1"] = WatchPendingApproval(commandDigest: WatchCodec.digest("ls"), requiresFullReview: true)
+        guard case .handOffToPhone = (await c.handleApproval(approvalRequest(.approveOnce, uuid: "b"))).outcome else { return XCTFail() }
+        b.isContentVisible = false
+        guard case .handOffToPhone = (await c.handleApproval(approvalRequest(.deny, uuid: "c"))).outcome else { return XCTFail() }
+        XCTAssertFalse(b.calls.contains { $0.hasPrefix("approve") })
+    }
+
+    func testPresenceFailureHandsOffAndNothingApplied() async {
+        let (b, c) = make()
+        b.approveResult = .needsPresence("Verification cancelled.")
+        guard case .handOffToPhone = (await c.handleApproval(approvalRequest(.approveOnce))).outcome else { return XCTFail() }
+    }
+
+    func testUnreachableGatewayIsUnavailableNotSilentlyRedirected() async {
+        let (b, c) = make()
+        b.reachable = ["nas"]
+        guard case .unavailable = (await c.handleApproval(approvalRequest(.deny))).outcome else { return XCTFail() }
+        XCTAssertFalse(b.calls.contains { $0.hasPrefix("deny") })
+    }
+
+    func testDenyErrorWhileStillPendingIsFailed() async {
+        let (b, c) = make()
+        b.denyError = "network"
+        guard case .failed = (await c.handleApproval(approvalRequest(.deny))).outcome else { return XCTFail() }
+    }
+
+    func testDenyErrorButRequestGoneIsUncertainNotFailed() async {
+        let (b, c) = make()
+        b.denyError = "response lost"
+        b.removeOnDeny = false
+        b.vanishOnDenyError = true
+        guard case .uncertain = (await c.handleApproval(approvalRequest(.deny))).outcome else { return XCTFail() }
+    }
+
+    // MARK: messages
+
+    func testMessageRoutedToExactTargetAndAcked() async {
+        let (b, c) = make()
+        let r = await c.handleMessage(msg(gw: "nas"))
+        XCTAssertEqual(r.outcome, .acknowledged)
+        XCTAssertEqual(b.calls, ["send:nas#scout#chat:c9"])
+    }
+
+    func testMainChatTargetReachesBackendAsMainNeverCreate() async {
+        let (b, c) = make()
+        _ = await c.handleMessage(msg(target: .mainChat(sessionID: "canon1")))
+        XCTAssertEqual(b.calls, ["send:mac#scout#main:canon1"])
+    }
+
+    func testMissingMainChatRejectionIsDefiniteAndCarriesStage() async {
+        let (b, c) = make()
+        b.messageResult = WatchSendResult(.rejected(reason: "This bot has no Main chat yet. Establish it on iPhone first."),
+                                          WatchSendDiagnostic(stage: "validate"))
+        let r = await c.handleMessage(msg(target: .mainChat(sessionID: "gone")))
+        guard case .rejected(let reason) = r.outcome else { return XCTFail() }
+        XCTAssertTrue(reason.contains("iPhone"))
+        XCTAssertEqual(r.diagnostic?.stage, "validate")
+    }
+
+    func testDiagnosticStagesAreRelayedWithoutContent() async {
+        let (b, c) = make()
+        b.messageResult = WatchSendResult(.failed(reason: "gateway not connected"),
+                                          WatchSendDiagnostic(stage: "resume", category: "ConversationError.notConnected"))
+        let r = await c.handleMessage(msg("d1", text: "secret words"))
+        XCTAssertEqual(r.diagnostic, WatchSendDiagnostic(stage: "resume", category: "ConversationError.notConnected"))
+        let encoded = String(decoding: try! JSONEncoder().encode(r), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("secret words"))
+    }
+
+    func testMessageDedupedByClientID() async {
+        let (b, c) = make()
+        _ = await c.handleMessage(msg())
+        let again = await c.handleMessage(msg())
+        XCTAssertEqual(again.outcome, .alreadyAcknowledged)
+        XCTAssertEqual(b.calls.filter { $0.hasPrefix("send") }.count, 1)
+    }
+
+    func testUncertainMessageIsNotRepeatedToGateway() async {
+        let (b, c) = make()
+        b.messageOutcome = .uncertain(reason: "timeout")
+        _ = await c.handleMessage(msg())
+        let again = await c.handleMessage(msg())
+        XCTAssertEqual(again.outcome, .uncertain(reason: "timeout"))
+        XCTAssertEqual(b.calls.filter { $0.hasPrefix("send") }.count, 1)
+    }
+
+    func testSameIDWithDifferentPayloadOrDestinationNeverDispatches() async {
+        let (b, c) = make()
+        _ = await c.handleMessage(msg())
+        for changed in [msg(text: "other"), msg(gw: "nas"), msg(target: .conversation(sessionID: "c10")),
+                        msg(target: .mainChat(sessionID: "c9"))] {
+            guard case .rejected = (await c.handleMessage(changed)).outcome else { return XCTFail() }
+        }
+        XCTAssertEqual(b.calls.filter { $0.hasPrefix("send") }.count, 1)
+    }
+
+    func testReplayAfterPhoneRestartDoesNotResubmitAcknowledged() async {
+        let store = InMemoryWatchMessageLedgerStore()
+        let (b1, c1) = make(store: store)
+        _ = await c1.handleMessage(msg())
+        // Phone app restarts: new coordinator, same persisted ledger.
+        let (b2, c2) = make(store: store)
+        let replay = await c2.handleMessage(msg())
+        XCTAssertEqual(replay.outcome, .alreadyAcknowledged)
+        XCTAssertEqual(b1.calls.filter { $0.hasPrefix("send") }.count, 1)
+        XCTAssertTrue(b2.calls.filter { $0.hasPrefix("send") }.isEmpty)
+    }
+
+    func testReplayAfterRestartMidSendIsUncertainAndNotDispatched() async {
+        // The process died after the admission was persisted but before the outcome.
+        let store = InMemoryWatchMessageLedgerStore()
+        var ledger = WatchMessageLedger()
+        XCTAssertEqual(ledger.admit(msg()), .admit)
+        try? store.save(ledger)
+        let (b, c) = make(store: store)
+        guard case .uncertain = (await c.handleMessage(msg())).outcome else { return XCTFail() }
+        XCTAssertTrue(b.calls.filter { $0.hasPrefix("send") }.isEmpty, "never auto-resent")
+    }
+
+    func testAdmissionIsPersistedBeforeDispatchAndFailureToPersistBlocksSend() async {
+        let store = InMemoryWatchMessageLedgerStore()
+        store.failSaves = true
+        let (b, c) = make(store: store)
+        guard case .rejected = (await c.handleMessage(msg())).outcome else { return XCTFail() }
+        XCTAssertTrue(b.calls.filter { $0.hasPrefix("send") }.isEmpty)
+        store.failSaves = false
+        let retried = await c.handleMessage(msg())
+        XCTAssertEqual(retried.outcome, .acknowledged, "a revoked admission can be retried")
+    }
+
+    func testUnreadableLedgerFailsClosed() async {
+        let store = InMemoryWatchMessageLedgerStore()
+        store.failLoads = true
+        let (b, c) = make(store: store)
+        guard case .rejected = (await c.handleMessage(msg())).outcome else { return XCTFail() }
+        XCTAssertTrue(b.calls.isEmpty)
+    }
+
+    func testDefiniteFailureCanBeRetriedUnderSameID() async {
+        let (b, c) = make()
+        b.messageOutcome = .failed(reason: "gateway not connected")
+        _ = await c.handleMessage(msg())
+        b.messageOutcome = .acknowledged
+        let retried = await c.handleMessage(msg())
+        XCTAssertEqual(retried.outcome, .acknowledged)
+        XCTAssertEqual(b.calls.filter { $0.hasPrefix("send") }.count, 2)
+    }
+
+    func testPhoneLockedGatewayOfflineAndMalformedRejectBeforeAnySend() async {
+        let (b, c) = make()
+        b.isContentVisible = false
+        guard case .rejected = (await c.handleMessage(msg("a"))).outcome else { return XCTFail() }
+        b.isContentVisible = true
+        b.reachable = []
+        let r = await c.handleMessage(msg("b"))
+        guard case .rejected(let reason) = r.outcome else { return XCTFail() }
+        XCTAssertTrue(reason.contains("iPhone"), "says the gateway is unreachable FROM THE IPHONE")
+        guard case .rejected = (await c.handleMessage(msg("c", text: "  "))).outcome else { return XCTFail() }
+        XCTAssertTrue(b.calls.isEmpty)
+    }
+
+    func testWatchRefreshRefreshesAllSourcesButApprovalsOnlyLiveOps() async {
+        let (b, c) = make()
+        _ = await c.handle(.refresh(flavor: .dev))
+        XCTAssertEqual(b.calls, ["refreshFleet"])
+        b.calls.removeAll()
+        _ = await c.handleApproval(approvalRequest(.deny))
+        XCTAssertFalse(b.calls.contains("refreshFleet"))
+        XCTAssertTrue(b.calls.contains("refresh"))
+    }
+
+    // MARK: snapshot mapping
+
+    private func observation() -> WatchFleetObservation {
+        let mac = FleetGateway(id: GatewayID(rawValue: "mac"), displayName: "Mac mini")
+        let nas = FleetGateway(id: GatewayID(rawValue: "nas"), displayName: "NAS")
+        let macScout = FleetBot(route: Route(gatewayID: mac.id, profileSlug: ProfileSlug(rawValue: "scout")), displayName: "Scout",
+                                canonicalSession: CanonicalSessionRef(id: "canon1"))
+        let nasScout = FleetBot(route: Route(gatewayID: nas.id, profileSlug: ProfileSlug(rawValue: "scout")), displayName: "Scout")
+        let op = LiveOperation(id: LiveOperationID(gatewayID: mac.id, runtimeSessionID: "rt1"), sessionKey: "key1", title: "Build",
+                               preview: "", model: "m", startedAt: t0, lastActive: t0, messageCount: 1, status: .waiting)
+        let working = LiveOperation(id: LiveOperationID(gatewayID: mac.id, runtimeSessionID: "rt2"), sessionKey: "key2", title: "Refactor",
+                                    preview: "", model: "m", startedAt: t0, lastActive: t0, messageCount: 1, status: .working)
+        let live = LiveOpsSnapshot(gateways: [
+            LiveOpsGatewaySnapshot(gatewayID: mac.id, coverage: .reporting, operations: [op, working], observedAt: t0),
+            LiveOpsGatewaySnapshot(gatewayID: nas.id, coverage: .unsupported, operations: [], observedAt: t0)])
+        let approval = ApprovalRequest(requestID: "r1", sessionID: "rt1", command: "git push", choices: ["once", "deny"])
+        return WatchFleetObservation(
+            gateways: [mac, nas],
+            connectionStates: [mac.id: .connected, nas.id: .failed(.offline)],
+            botsByGateway: [mac.id: [macScout], nas.id: [nasScout]],
+            sessionsByRoute: [macScout.route: [SessionSummary(id: "s-a", title: "Docs")]],
+            liveOps: live, liveOpsAttention: [LiveOpsAttentionItem(operation: op, pendingApproval: approval)],
+            fleetAttention: [], rosterObservedAt: t0,
+            routeForSessionKey: { key, gw in key == "key1" ? macScout.route : nil })
+    }
+
+    func testSnapshotMapsObservedStateWithCoverageAndOrigin() {
+        let s = WatchSnapshotBuilder.build(observation(), flavor: .dev, generation: 4, now: t0.addingTimeInterval(5), contentVisible: true)
+        XCTAssertEqual(s.gateways.map(\.id), ["mac", "nas"])
+        XCTAssertEqual(s.gateways[0].status, .online)
+        XCTAssertEqual(s.gateways[0].coverage, .reporting)
+        XCTAssertEqual(s.gateways[0].running.map(\.status), ["waiting", "working"], "active work incl. sessions waiting on input")
+        XCTAssertEqual(s.gateways[1].status, .offline)
+        XCTAssertEqual(s.gateways[1].coverage, .limited)
+        XCTAssertEqual(s.gateways[0].bots[0].conversations.map(\.title), ["Main chat", "Docs"])
+        XCTAssertEqual(s.approvals.count, 1)
+        let a = s.approvals[0]
+        XCTAssertEqual(a.gatewayID, "mac")
+        XCTAssertEqual(a.profileSlug, "scout")
+        XCTAssertEqual(a.sessionID, "rt1")
+        XCTAssertEqual(a.commandDigest, WatchCodec.digest("git push"))
+        XCTAssertFalse(a.requiresFullReview)
+    }
+
+    func testGatewayStatusSeparatesNeverConnectedFromUnreachable() {
+        var o = observation()
+        let mac = o.gateways[0].id, nas = o.gateways[1].id
+        o.connectionStates = [mac: .idle, nas: .disconnected]
+        var s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].status, .notConnected, "never connected from the phone is not 'offline'")
+        XCTAssertEqual(s.gateways[1].status, .offline)
+        o.connectionStates = [mac: .connected, nas: .failed(.authenticationRequired)]
+        s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 2, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].status, .online)
+        XCTAssertEqual(s.gateways[1].status, .authenticationRequired)
+    }
+
+    func testFailedLiveOpsAttemptDoesNotBecomeAnObservation() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        // Live Ops stamps failure snapshots with the time of the FAILED attempt.
+        o.liveOps = LiveOpsSnapshot(gateways: [
+            LiveOpsGatewaySnapshot(gatewayID: mac, coverage: .disconnected, operations: [], observedAt: t0.addingTimeInterval(500))])
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0.addingTimeInterval(501), contentVisible: true)
+        XCTAssertNil(s.gateways[0].observedAt)
+        XCTAssertEqual(s.approvals.first?.observedAt, nil, "approval from a non-reporting machine is never-observed, not 'now'")
+    }
+
+    func testApprovalObservedAtIsTheGatewayObservationNotSnapshotCreation() {
+        let s = WatchSnapshotBuilder.build(observation(), flavor: .dev, generation: 1,
+                                           now: t0.addingTimeInterval(500), contentVisible: true)
+        XCTAssertEqual(s.builtAt, t0.addingTimeInterval(500))
+        XCTAssertEqual(s.approvals[0].observedAt, t0)
+        XCTAssertFalse(WatchFreshnessPolicy.approvalActionable(observedAt: s.approvals[0].observedAt, now: s.builtAt))
+    }
+
+    func testRosterAndConversationObservationTimesArePerSourceAndOldestWins() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        let extra = FleetBot(route: Route(gatewayID: mac, profileSlug: ProfileSlug(rawValue: "atlas")), displayName: "Atlas")
+        o.botsByGateway[mac]?.append(extra)
+        o.rosterObservedAtByGateway = [mac: t0.addingTimeInterval(-40)]
+        let scout = o.botsByGateway[mac]![0].route
+        o.sessionsObservedAtByRoute = [scout: t0.addingTimeInterval(-10)]
+        var s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].rosterObservedAt, t0.addingTimeInterval(-40))
+        XCTAssertNil(s.gateways[0].conversationsObservedAt, "one bot never read => not claimed observed")
+        XCTAssertNil(s.gateways[1].rosterObservedAt, "no read for that gateway => never observed")
+        o.sessionsObservedAtByRoute[extra.route] = t0.addingTimeInterval(-300)
+        s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 2, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].conversationsObservedAt, t0.addingTimeInterval(-300))
+    }
+
+    func testMainChatOnlyWhenRosterReportsOne() {
+        let s = WatchSnapshotBuilder.build(observation(), flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].bots[0].mainChat?.id, "canon1")
+        XCTAssertNil(s.gateways[1].bots[0].mainChat, "no roster Main chat => none invented")
+    }
+
+    func testSelectedChatBeyondCapIsPinnedIntoSnapshotAndRemovalIsConfirmedFromFullRoster() {
+        var o = observation()
+        let route = o.botsByGateway[o.gateways[0].id]![0].route
+        o.sessionsByRoute[route] = (1...12).map { SessionSummary(id: "s\($0)", title: "Chat \($0)") }
+        let pin = WatchConversationPin(gatewayID: "mac", profileSlug: "scout", conversationID: "s11")
+        var s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true, pinned: pin)
+        var bot = s.gateways[0].bots[0]
+        XCTAssertEqual(bot.conversations.count, 6)
+        XCTAssertTrue(bot.conversations.contains { $0.id == "s11" }, "still-existing selected chat survives the cap")
+        XCTAssertEqual(bot.totalConversations, 13, "Main + 12")
+        XCTAssertNil(s.removedPin)
+        // Not pinned: omitted, counted, never reported as removed.
+        s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 2, now: t0, contentVisible: true)
+        bot = s.gateways[0].bots[0]
+        XCTAssertFalse(bot.conversations.contains { $0.id == "s11" })
+        XCTAssertEqual(bot.omittedConversationCount, 7)
+        XCTAssertNil(s.removedPin)
+        // Genuinely gone from the full roster: confirmed removed.
+        let gone = WatchConversationPin(gatewayID: "mac", profileSlug: "scout", conversationID: "deleted")
+        s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 3, now: t0, contentVisible: true, pinned: gone)
+        XCTAssertEqual(s.removedPin, gone)
+    }
+
+    func testCoordinatorRemembersWatchPinForLaterPushedSnapshots() async {
+        let (b, c) = make()
+        let pin = WatchConversationPin(gatewayID: "mac", profileSlug: "scout", conversationID: "s11")
+        _ = await c.handle(.refresh(flavor: .dev, pinned: pin))
+        XCTAssertEqual(b.lastPin, pin)
+        _ = c.makeSnapshot()   // periodic push: no request, same pin
+        XCTAssertEqual(b.lastPin, pin)
+        _ = await c.handle(.refresh(flavor: .dev, pinned: nil))
+        XCTAssertNil(b.lastPin, "clearing the selection clears the pin")
+    }
+
+    // MARK: Main chat resolution, per-bot freshness, live observation (device-test regressions)
+
+    func testMainChatFromRegistryLookupWhenRosterReportsNone() {
+        var o = observation()
+        let nas = o.gateways[1].id
+        let route = o.botsByGateway[nas]![0].route
+        o.mainChatByRoute[route] = .established(ids: ["reg-1"])
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        let bot = s.gateways[1].bots[0]
+        XCTAssertEqual(bot.mainChat?.id, "reg-1", "exists on the phone => resolved on the Watch")
+        XCTAssertEqual(bot.mainChatStatus, .established)
+    }
+
+    func testMainChatNotSetUpAndUnknownAreDistinctAndNeverInvented() {
+        var o = observation()
+        let nas = o.gateways[1].id
+        let route = o.botsByGateway[nas]![0].route
+        o.mainChatByRoute[route] = .notSetUp
+        var bot = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true).gateways[1].bots[0]
+        XCTAssertNil(bot.mainChat); XCTAssertEqual(bot.mainChatStatus, .notSetUp)
+        o.mainChatByRoute[route] = .unknown(diagnostic: "lookup: RosterError.notConnected")
+        bot = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 2, now: t0, contentVisible: true).gateways[1].bots[0]
+        XCTAssertNil(bot.mainChat); XCTAssertEqual(bot.mainChatStatus, .unknown)
+        XCTAssertEqual(bot.mainChatDiagnostic, "lookup: RosterError.notConnected")
+    }
+
+    func testSameBotSlugOnTwoMachinesResolvesMainChatIndependently() {
+        var o = observation()   // "scout" on both mac (roster canon1) and nas (none)
+        let mac = o.gateways[0].id, nas = o.gateways[1].id
+        o.mainChatByRoute[o.botsByGateway[mac]![0].route] = .established(ids: ["canon1"])
+        o.mainChatByRoute[o.botsByGateway[nas]![0].route] = .notSetUp
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].bots[0].mainChat?.id, "canon1")
+        XCTAssertNil(s.gateways[1].bots[0].mainChat)
+        XCTAssertEqual(s.gateways[1].bots[0].mainChatStatus, .notSetUp)
+    }
+
+    func testLookupFoundIdIsNotDuplicatedAsANamedConversation() {
+        var o = observation()
+        let nas = o.gateways[1].id
+        let route = o.botsByGateway[nas]![0].route
+        o.mainChatByRoute[route] = .established(ids: ["reg-1"])
+        o.sessionsByRoute[route] = [SessionSummary(id: "reg-1", title: "Bot Chat"), SessionSummary(id: "s2", title: "Docs")]
+        let ids = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+            .gateways[1].bots[0].conversations.map(\.id)
+        XCTAssertEqual(ids, ["reg-1", "s2"])
+    }
+
+    func testConversationFreshnessIsPerBotNotAllOrNothing() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        let atlas = FleetBot(route: Route(gatewayID: mac, profileSlug: ProfileSlug(rawValue: "atlas")), displayName: "Atlas")
+        o.botsByGateway[mac]?.append(atlas)
+        let scout = o.botsByGateway[mac]![0].route
+        o.sessionsObservedAtByRoute = [scout: t0.addingTimeInterval(-5)]
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertEqual(s.gateways[0].bots[0].conversationsObservedAt, t0.addingTimeInterval(-5))
+        XCTAssertNil(s.gateways[0].bots[1].conversationsObservedAt, "atlas never read; scout still shows its own time")
+    }
+
+    func testHeldOverRunningWorkKeepsTheLastGoodObservationTime() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        // Live Ops now reports a failure stamped "now"; the bridge remembered the last good read.
+        o.liveOps = LiveOpsSnapshot(gateways: [
+            LiveOpsGatewaySnapshot(gatewayID: mac, coverage: .failed(reason: "x"), operations: [], observedAt: t0.addingTimeInterval(500), hasEverReported: true)])
+        o.lastGoodLiveObservedAt = [mac: t0.addingTimeInterval(-30)]
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0.addingTimeInterval(501), contentVisible: true)
+        XCTAssertEqual(s.gateways[0].coverage, .heldOver)
+        XCTAssertEqual(s.gateways[0].observedAt, t0.addingTimeInterval(-30), "last real observation, not the failure stamp")
+        XCTAssertNil(s.approvals.first?.observedAt, "approvals never use a held-over time")
+    }
+
+    func testForegroundCadenceFetchesOnlyWhenWatchInstalledActiveAndUnlocked() async {
+        let (b, c) = make()
+        await c.refreshForWatchIfForeground(observing: false)
+        XCTAssertTrue(b.calls.isEmpty, "no Watch installed => no fetching")
+        b.isAppActive = false
+        await c.refreshForWatchIfForeground(observing: true)
+        XCTAssertTrue(b.calls.isEmpty, "backgrounded => no fetching")
+        b.isAppActive = true; b.isContentVisible = false
+        await c.refreshForWatchIfForeground(observing: true)
+        XCTAssertTrue(b.calls.isEmpty, "App Lock => no fetching")
+        b.isContentVisible = true
+        await c.refreshForWatchIfForeground(observing: true)
+        XCTAssertEqual(b.calls, ["refreshFleetRoutine"], "routine cadence respects list TTLs (not forced)")
+    }
+
+    func testLockedSnapshotLeaksNoNames() throws {
+        let s = WatchSnapshotBuilder.build(observation(), flavor: .dev, generation: 1, now: t0, contentVisible: false)
+        let json = String(data: try JSONEncoder().encode(s), encoding: .utf8) ?? ""
+        XCTAssertFalse(json.contains("Mac mini"))
+        XCTAssertFalse(json.contains("git push"))
+        XCTAssertFalse(s.contentVisible)
+    }
+
+    func testFleetAttentionAndUnmappedRouteStayHonest() {
+        var o = observation()
+        o.routeForSessionKey = { _, _ in nil }
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        XCTAssertNil(s.approvals[0].profileSlug, "unknown route renders unknown, never guessed")
+        XCTAssertNil(s.approvals[0].botName)
+    }
+
+    func testDevHostAndWatchEmbeddingIdentity() throws {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.aiowa.hermesfleet.dev")
+        let watch = Bundle.main.bundleURL.appendingPathComponent("Watch/HermesFleetDevWatch.app/Info.plist")
+        let info = try XCTUnwrap(NSDictionary(contentsOf: watch) as? [String: Any])
+        XCTAssertEqual(info["CFBundleIdentifier"] as? String, "com.aiowa.hermesfleet.dev.watchkitapp")
+        XCTAssertEqual(info["WKCompanionAppBundleIdentifier"] as? String, "com.aiowa.hermesfleet.dev")
+        XCTAssertNotEqual(info["WKRunsIndependentlyOfCompanionApp"] as? Bool, true)
+    }
+
+    // MARK: Avatars
+
+    private func bot(_ slug: String, gw: String = "mac", hasAvatar: Bool = false, meta: BotModeMetadata? = nil) -> FleetBot {
+        FleetBot(route: Route(gatewayID: GatewayID(rawValue: gw), profileSlug: ProfileSlug(rawValue: slug)),
+                 displayName: slug.capitalized, hasAvatar: hasAvatar, botModeMetadata: meta)
+    }
+
+    func testAvatarMatchesIPhoneRosterRules() {
+        let plain = bot("scout")
+        let a = WatchSnapshotBuilder.avatar(for: plain, imageDigest: nil)
+        XCTAssertEqual(a.shape, BotAvatarIdentity.defaultShape(forName: "scout"), "slug-derived default shape, like BotAvatar")
+        XCTAssertEqual(a.colorHex, String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: plain.route)))
+        let sameSlugOtherMachine = WatchSnapshotBuilder.avatar(for: bot("scout", gw: "nas"), imageDigest: nil)
+        XCTAssertEqual(sameSlugOtherMachine.colorHex, String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: bot("scout", gw: "nas").route)))
+
+        let styled = WatchSnapshotBuilder.avatar(for: bot("atlas", meta: BotModeMetadata(color: "#ff6482", shape: "hexagon")), imageDigest: nil)
+        XCTAssertEqual(styled.shape, "hexagon")
+        XCTAssertEqual(styled.colorHex, "#FF6482", "server color wins")
+
+        let badColor = WatchSnapshotBuilder.avatar(for: bot("atlas", meta: BotModeMetadata(color: "teal")), imageDigest: nil)
+        XCTAssertEqual(badColor.colorHex, String(format: "#%06X", BotAvatarIdentity.fallbackColorHex(route: bot("atlas").route)),
+                       "malformed color is not authoritative")
+
+        let blob = WatchSnapshotBuilder.avatar(for: bot("nova", meta: BotModeMetadata(shape: "blobatar:abc:round")), imageDigest: nil)
+        XCTAssertEqual(blob.shape, "blob")
+        XCTAssertEqual(blob.seed, "abcround")
+    }
+
+    func testThumbnailDigestOnlyForBotsThatStillHaveAnImage() {
+        XCTAssertNil(WatchSnapshotBuilder.avatar(for: bot("scout", hasAvatar: false), imageDigest: "d").imageDigest)
+        XCTAssertEqual(WatchSnapshotBuilder.avatar(for: bot("scout", hasAvatar: true), imageDigest: "d").imageDigest, "d")
+    }
+
+    func testSnapshotCarriesAvatarsAndRosterTitles() {
+        var o = observation()
+        let mac = o.gateways[0].id
+        var scout = o.botsByGateway[mac]![0]
+        scout.hasAvatar = true
+        scout.botModeMetadata = BotModeMetadata(title: "Scout Prime", shape: "drop")
+        o.botsByGateway[mac] = [scout]
+        o.avatarThumbnailDigestByRoute = [scout.route: "abc"]
+        let s = WatchSnapshotBuilder.build(o, flavor: .dev, generation: 1, now: t0, contentVisible: true)
+        let b = s.gateways[0].bots[0]
+        XCTAssertEqual(b.displayName, "Scout Prime", "same title the iPhone roster shows")
+        XCTAssertEqual(b.avatar?.shape, "drop")
+        XCTAssertEqual(b.avatar?.imageDigest, "abc")
+        XCTAssertEqual(s.approvals.first?.botName, "Scout Prime")
+    }
+
+    func testAvatarRequestAnsweredOnlyForExactDigestAndNeverWhileLocked() async {
+        let (b, c) = make()
+        let data = Data((0..<200).map { UInt8($0) })
+        let digest = WatchCodec.digest(data: data)
+        b.thumbnails["mac#scout"] = (digest, data)
+
+        guard case .avatar(let ok) = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: digest), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertEqual(ok.data, data)
+        XCTAssertTrue(ok.isValid)
+
+        guard case .avatar(let stale) = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: "old"), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertNil(stale.data, "a changed image is never sent under an old digest")
+
+        guard case .avatar(let other) = await c.handle(.avatar(.init(gatewayID: "nas", profileSlug: "scout", digest: digest), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertNil(other.data, "the same slug on another machine is a different bot")
+
+        b.isContentVisible = false
+        b.calls = []
+        guard case .avatar(let locked) = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: digest), flavor: .dev))
+        else { return XCTFail() }
+        XCTAssertNil(locked.data)
+        XCTAssertTrue(b.calls.isEmpty, "locked phone doesn't even look the image up")
+
+        guard case .rejected = await c.handle(.avatar(.init(gatewayID: "mac", profileSlug: "scout", digest: digest), flavor: .production))
+        else { return XCTFail("wrong flavor must be rejected") }
+    }
+
+    func testThumbnailerShrinksToWatchSizeAndFitsOneMessage() throws {
+        let edge = 1024
+        let ctx = try XCTUnwrap(CGContext(data: nil, width: edge, height: edge, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        for i in 0..<64 {   // busy content so compression has work to do
+            ctx.setFillColor(CGColor(red: Double(i % 8) / 8, green: Double(i / 8) / 8, blue: 0.5, alpha: 1))
+            ctx.fill(CGRect(x: (i % 8) * 128, y: (i / 8) * 128, width: 128, height: 128))
+        }
+        let image = try XCTUnwrap(ctx.makeImage())
+        let out = NSMutableData()
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+
+        let thumb = try XCTUnwrap(WatchAvatarThumbnailer.thumbnail(from: out as Data))
+        XCTAssertLessThanOrEqual(thumb.count, WatchAvatarImage.maxBytes)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(thumb as CFData, nil))
+        let props = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        XCTAssertLessThanOrEqual(props[kCGImagePropertyPixelWidth] as? Int ?? .max, WatchAvatarThumbnailer.edge)
+        XCTAssertNil(WatchAvatarThumbnailer.thumbnail(from: Data("not an image".utf8)))
+    }
+}

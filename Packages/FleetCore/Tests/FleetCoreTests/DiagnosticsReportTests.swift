@@ -13,7 +13,8 @@ final class DiagnosticsReportTests: XCTestCase {
         gateways: [DiagnosticsGatewaySection] = [],
         recentEvents: [DiagnosticsEvent] = [],
         surfaceContext: String? = nil,
-        reportID: String = "DF-231114-221320-A1B2"
+        reportID: String = "DF-231114-221320-A1B2",
+        userDescription: String? = nil
     ) -> DiagnosticsReportInput {
         DiagnosticsReportInput(
             generatedAt: fixedNow,
@@ -24,7 +25,8 @@ final class DiagnosticsReportTests: XCTestCase {
             deviceModel: "iPhone17,2",
             surfaceContext: surfaceContext,
             gateways: gateways,
-            recentEvents: recentEvents)
+            recentEvents: recentEvents,
+            userDescription: userDescription)
     }
 
     // MARK: - Header / device / context
@@ -138,10 +140,10 @@ final class DiagnosticsReportTests: XCTestCase {
         ]))
         XCTAssertTrue(text.contains("  22:13:20  Gateway connection — Offline"), text)
         XCTAssertTrue(text.contains("  22:13:20  Roster refresh — Timed out"), text)
-        XCTAssertFalse(text.contains("No recent errors."), text)
+        XCTAssertFalse(text.contains(DiagnosticsReport.noEventsText), text)
 
         let empty = DiagnosticsReport.render(makeInput())
-        XCTAssertTrue(empty.contains("RECENT EVENTS\n  No recent errors."),
+        XCTAssertTrue(empty.contains("RECENT EVENTS\n  No app errors were recorded. This doesn't rule out a problem — please describe what you saw."),
                       "an empty event ring says so in a real sentence: \(empty)")
     }
 
@@ -196,5 +198,37 @@ final class DiagnosticsReportTests: XCTestCase {
             now: Date(timeIntervalSince1970: 1_700_000_000 + 61), suffix: "0001")
         XCTAssertEqual(later, "DF-231114-221421-0001")
         XCTAssertEqual(DiagnosticsReport.makeReportID(now: fixedNow, suffix: "ABCD").prefix(3), "DF-")
+    }
+
+    // MARK: - DEV14 user description
+
+    func testUserDescriptionIsIncludedAndRedacted() {
+        let text = DiagnosticsReport.render(makeInput(
+            userDescription: "Chat froze after I opened https://my-box.example:8765/private?token=abc123\nBearer placeholder-credential-value was in my clipboard"))
+        XCTAssertTrue(text.contains("WHAT HAPPENED\n  Chat froze after I opened"), text)
+        XCTAssertTrue(text.contains("[ENDPOINT REDACTED]"), text)
+        XCTAssertTrue(text.contains("was in my clipboard"), "multi-line text keeps its second line: \(text)")
+        for secret in ["my-box.example", "abc123", "placeholder-credential-value", "/private"] {
+            XCTAssertFalse(text.contains(secret), "\(secret) must be masked: \(text)")
+        }
+    }
+
+    func testBlankDescriptionRendersNoSection() {
+        XCTAssertFalse(DiagnosticsReport.render(makeInput(userDescription: "  \n ")).contains("WHAT HAPPENED"))
+        XCTAssertFalse(DiagnosticsReport.render(makeInput()).contains("WHAT HAPPENED"))
+    }
+
+    func testLongDescriptionIsCapped() {
+        let long = String(repeating: "a", count: Redaction.reportDescriptionLimit + 500)
+        let text = DiagnosticsReport.render(makeInput(userDescription: long))
+        XCTAssertFalse(text.contains(String(repeating: "a", count: Redaction.reportDescriptionLimit + 1)))
+        XCTAssertTrue(text.contains(String(repeating: "a", count: Redaction.reportDescriptionLimit)))
+    }
+
+    func testEmptyEventsWordingDoesNotImplyHealthy() {
+        let text = DiagnosticsReport.render(makeInput())
+        XCTAssertTrue(text.contains("No app errors were recorded."), text)
+        XCTAssertTrue(text.contains("rule out a problem"), text)
+        XCTAssertFalse(text.contains("No recent errors."), text)
     }
 }

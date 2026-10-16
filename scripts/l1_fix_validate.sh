@@ -5,9 +5,14 @@
 # Evidence: docs/L1-fix.md + build/l1-fix/*.png + test result lines.
 # Run with: bash scripts/l1_fix_validate.sh
 set -u
+# Private per-run scratch (never a predictable shared /tmp name: a local
+# user could pre-create or symlink it and clobber files).
+SCRIPT_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hf_l1_fix_validate.XXXXXX") || { echo "FAIL: cannot create scratch dir" >&2; exit 2; }
+trap 'rm -rf "$SCRIPT_TMP"' EXIT
 cd "$(dirname "$0")/.."
 REPO="$(pwd)"
-WORK="${HERMES_FLEET_LIVE_WORKDIR:-${TMPDIR:-/tmp}/hermes-fleet-live}"
+. "$REPO/scripts/private_dir_lib.sh"
+WORK=$(hf_private_dir "${HERMES_FLEET_LIVE_WORKDIR:-$(hf_private_name hermes-fleet-live)}") || exit 2
 PASS=0
 FAIL=0
 declare -a FAILURES=()
@@ -77,11 +82,11 @@ DD="$REPO/build/L1Fix-DerivedData"
 if xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
     -destination "$DEST" -derivedDataPath "$DD" \
     -only-testing:HermesFleetAppTests \
-    test >/tmp/l1fix_xctest.log 2>&1; then
-  TESTLINE=$(grep -E 'Executed [0-9]+ tests, with [0-9]+ failures' /tmp/l1fix_xctest.log | tail -1)
+    test >$SCRIPT_TMP/l1fix_xctest.log 2>&1; then
+  TESTLINE=$(grep -E 'Executed [0-9]+ tests, with [0-9]+ failures' $SCRIPT_TMP/l1fix_xctest.log | tail -1)
   ok "app unit tests green: $TESTLINE"
 else
-  bad "app unit tests FAILED"; grep -E 'error:|failed' /tmp/l1fix_xctest.log | tail -10
+  bad "app unit tests FAILED"; grep -E 'error:|failed' $SCRIPT_TMP/l1fix_xctest.log | tail -10
 fi
 
 # --- 7. Live-gateway Release XCUITest (requires serve on :9119) --------------
@@ -90,11 +95,11 @@ if lsof -nP -iTCP:9119 -sTCP:LISTEN >/dev/null 2>&1; then
   if HERMES_FLEET_TOKEN_FILE="$WORK/.token" xcodebuild -project HermesFleetApp.xcodeproj -scheme HermesFleetApp \
       -destination "$DEST" -derivedDataPath "$DD" -configuration Release \
       -only-testing:HermesFleetAppUITests/L1FixLiveGatewayUITests \
-      test >/tmp/l1fix_ui_test.log 2>&1; then
-    TESTLINE=$(grep -E "Test Suite 'L1FixLiveGatewayUITests' (passed|failed)" /tmp/l1fix_ui_test.log | tail -1)
+      test >$SCRIPT_TMP/l1fix_ui_test.log 2>&1; then
+    TESTLINE=$(grep -E "Test Suite 'L1FixLiveGatewayUITests' (passed|failed)" $SCRIPT_TMP/l1fix_ui_test.log | tail -1)
     ok "live-gateway XCUITest $TESTLINE"
   else
-    bad "live-gateway XCUITest FAILED"; grep -E 'error:|Assertion' /tmp/l1fix_ui_test.log | tail -10
+    bad "live-gateway XCUITest FAILED"; grep -E 'error:|Assertion' $SCRIPT_TMP/l1fix_ui_test.log | tail -10
   fi
 else
   bad "no serve on :9119 — start with scripts/l1_start_serve.sh first"
