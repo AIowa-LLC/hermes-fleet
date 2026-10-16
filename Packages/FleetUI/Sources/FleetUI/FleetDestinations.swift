@@ -483,7 +483,7 @@ struct FleetChatsView: View {
             } label: {
                 HStack(spacing: FleetTheme.spacingSm) {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.title3.weight(.semibold))
                     Text("Chat")
                         .font(.headline)
                 }

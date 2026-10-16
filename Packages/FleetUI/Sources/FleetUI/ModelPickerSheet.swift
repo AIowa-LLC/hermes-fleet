@@ -175,7 +175,7 @@ public struct ModelPickerSheet: View {
         } label: {
             HStack(spacing: FleetTheme.spacingMd) {
                 Image(systemName: choice.isCurrent ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(choice.isCurrent ? theme.highlight : theme.textMuted)
                     .accessibilityHidden(true)
                 Text(choice.model)

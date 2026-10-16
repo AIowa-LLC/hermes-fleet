@@ -8,6 +8,7 @@ import FleetCore
 /// floating menu).
 struct GroupsHomeView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .headline) private var fabSide: CGFloat = 48
     let environment: AppEnvironment
     @State private var query = ""
     @State private var gatewayID: GatewayID?
@@ -143,9 +144,9 @@ struct GroupsHomeView: View {
             showingGroupCompose = true
         } label: {
             Image(systemName: "person.3")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.headline)
                 .foregroundStyle(theme.textPrimary)
-                .frame(width: 48, height: 48)
+                .frame(width: fabSide, height: fabSide)
                 .contentShape(Circle())
         }
         .buttonStyle(.fleetPressable)

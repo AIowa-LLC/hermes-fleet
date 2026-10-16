@@ -24,8 +24,10 @@ final class ExtensionKitTests: XCTestCase {
         XCTAssertTrue(yml.contains("FLEET_SHARED_GROUPS: \"NO\""), "the switch must default to NO")
         XCTAssertTrue(yml.contains("FLEET_ENTITLEMENTS_NO: \"\""), "switch off = no entitlements file")
         XCTAssertTrue(yml.contains("CODE_SIGN_ENTITLEMENTS: \"$(FLEET_ENTITLEMENTS_$(FLEET_SHARED_GROUPS))\""))
-        // No other path may apply entitlements unconditionally.
-        let applied = yml.components(separatedBy: "CODE_SIGN_ENTITLEMENTS").count - 1
+        // The production capability switch is separate from the Dev identity.
+        let appTarget = try XCTUnwrap(yml.components(separatedBy: "  HermesFleetApp:\n").dropFirst().first?
+            .components(separatedBy: "  HermesFleetAppTests:\n").first)
+        let applied = appTarget.components(separatedBy: "CODE_SIGN_ENTITLEMENTS").count - 1
         XCTAssertEqual(applied, 1, "CODE_SIGN_ENTITLEMENTS is set in exactly one, switch-gated place")
         XCTAssertFalse(yml.contains("entitlements:\n"), "no unconditional XcodeGen entitlements: block")
     }

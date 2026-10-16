@@ -28,6 +28,7 @@ import AVFoundation
 /// re-scannable from a lingering screen.
 struct GatewayPairingScannerView: View {
     @Environment(\.fleetTheme) private var theme
+    @ScaledMetric(relativeTo: .largeTitle) private var heroGlyphSize: CGFloat = 44
     private let draftStore: GatewayFormDraftStore?
     private let onInvitation: ((String) -> Void)?
     @State private var didReceiveInvitation = false
@@ -119,7 +120,7 @@ struct GatewayPairingScannerView: View {
                 // resolves. Brief non-spinner placeholder while TCC runs.
                 VStack(spacing: FleetTheme.spacingLg) {
                     Image(systemName: "camera.aperture")
-                        .font(.system(size: 44))
+                        .font(.system(size: min(heroGlyphSize, 88)))
                         .foregroundStyle(theme.textSecondary)
                         .accessibilityHidden(true)
                     Text("Checking camera access…")
@@ -161,7 +162,7 @@ struct GatewayPairingScannerView: View {
     private var deniedBody: some View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "video.slash")
-                .font(.system(size: 44))
+                .font(.system(size: min(heroGlyphSize, 88)))
                 .foregroundStyle(FleetTheme.statusDestructive)
                 .accessibilityHidden(true)
             Text(onInvitation == nil
@@ -244,7 +245,7 @@ struct GatewayPairingScannerView: View {
     private var fallbackBody: some View {
         VStack(spacing: FleetTheme.spacingLg) {
             Image(systemName: "qrcode.viewfinder")
-                .font(.system(size: 44))
+                .font(.system(size: min(heroGlyphSize, 88)))
                 .foregroundStyle(theme.highlight)
                 .accessibilityHidden(true)
             Text(onInvitation == nil

@@ -274,7 +274,7 @@ struct BotPetCell: View {
 
     private func badge(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .semibold))
+            .font(.caption2.weight(.semibold))
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Capsule().fill(theme.highlight.opacity(0.18)))

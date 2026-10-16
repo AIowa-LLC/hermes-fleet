@@ -296,3 +296,7 @@ historical references, not supported entry points.
 Remaining limits: names assembled from several run-time string pieces, scripts
 run only by hand, and temp locations that do not literally contain
 `/tmp/<name>` or `$TMPDIR/<name>` (for example a path joined from pieces in Python).
+
+### Dynamic Type font audit
+
+`bash scripts/font_style_audit.sh` rejects fixed point sizes in maintained app/UI sources. Use text styles or a declared `@ScaledMetric`. Reviewed scaled glyphs and the DEV17 match-code metric have narrow, documented exceptions; stale exceptions fail the guard. `scripts/font_style_audit_test.sh` verifies the positive and negative cases.

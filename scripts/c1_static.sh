@@ -40,6 +40,13 @@ else
   bad "FleetUI imports FleetNetworking:"; echo "$HITS"
 fi
 
+# --- Dynamic Type source audit -------------------------------------------------
+if bash scripts/font_style_audit.sh && bash scripts/font_style_audit_test.sh; then
+  ok "font style audit: maintained text uses Dynamic Type"
+else
+  bad "font style audit FAILED"
+fi
+
 # --- extension-safe module boundary --------------------------------------------
 if python3 scripts/extension_boundary_guard.py && bash scripts/extension_boundary_guard_test.sh; then
   ok "extension boundary: shared kit remains independent of app/UI/networking/persistence"

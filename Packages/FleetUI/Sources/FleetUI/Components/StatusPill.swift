@@ -19,7 +19,7 @@ public struct StatusPill: View {
         let semanticColor = theme.semanticStatusColor(for: status)
         HStack(spacing: FleetTheme.spacingXs) {
             Image(systemName: status.symbolName)
-                .font(.system(size: Self.symbolFontSize, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(semanticColor)
                 .accessibilityHidden(true)
             Text(status.label)
@@ -44,8 +44,6 @@ public struct StatusPill: View {
     static let strokeOpacity: Double = 0.25
     /// Status crossfade duration (seconds) — SPEC §15 budget 150–200 ms.
     static let crossfadeDuration: TimeInterval = 0.18
-    /// Pill glyph size (pt).
-    static let symbolFontSize: CGFloat = 11
 }
 
 #Preview("StatusPill — all states") {
