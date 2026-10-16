@@ -56,10 +56,14 @@ enum FleetServiceGraph {
         // user-added gateway reported a healthy-but-empty roster — the app
         // looked "Auth configured" yet never talked to the gateway.
         #if DEBUG && targetEnvironment(simulator)
-        return makeSimulatorEnvironment()
+        let environment = makeSimulatorEnvironment()
         #else
-        return makeProductionEnvironment()
+        let environment = makeProductionEnvironment()
         #endif
+        // The app's own URL scheme lets the pairing flow recognise `<scheme>://pair#…` links
+        // (the /pair web page opens the app with one). Conversation links share the scheme.
+        environment.pairing.appURLScheme = FleetAppIdentity.conversationURLScheme
+        return environment
     }
 
     /// Builds the H1 app-lock controller.

@@ -14,13 +14,33 @@ import FleetCore
 ///     offline…   unreachable on the first attempt, fine on retry
 ///     slow…      the preview takes a few seconds (cancel/lock timing)
 ///
+/// Version 2 links (`v=2…&k=…`) go through the approval path: confirming creates a request with
+/// the fixed match code `482913`, and polling reports it approved after
+/// `HERMES_FLEET_PAIRING_APPROVE_AFTER` seconds (default 4; `never` leaves it pending). The id
+/// prefix picks the owner's decision:
+///
+///     denied…    the owner denies the request
+///     lapsed…    the request expires unapproved
+///     pending…   never decided (cancel / background timing)
+///     (other)    approved after the delay
+///
 /// It touches no network. Real wire behaviour is verified against genuine TLS servers in the
 /// FleetNetworking tests; this exists only so the SwiftUI flow can be exercised without one.
 final class ScriptedPairingService: GatewayPairing, @unchecked Sendable {
     private let lock = NSLock()
     private var offlineServed: Set<String> = []
     private var redeemed: Set<String> = []
+    private var requestedAt: [String: Date] = [:]
+    private var requestSecrets: [String: String] = [:]
     private let instance = String(repeating: "ab12cd34", count: 4)
+    static let matchCode = "482913"
+
+    /// Seconds until the scripted owner approves; nil means never.
+    private var approveAfter: TimeInterval? {
+        let raw = ProcessInfo.processInfo.environment["HERMES_FLEET_PAIRING_APPROVE_AFTER"] ?? ""
+        if raw == "never" { return nil }
+        return TimeInterval(raw) ?? 4
+    }
 
     func preview(_ link: PairingInvitationLink) async throws(PairingFailure) -> PairingPreview {
         let id = link.invitationID
@@ -41,7 +61,45 @@ final class ScriptedPairingService: GatewayPairing, @unchecked Sendable {
             access: [PairingAccess(scope: PairingScope.fleetOperator.rawValue,
                                    summary: PairingScope.fleetOperator.summary)],
             expiresAt: Date().addingTimeInterval(600),
-            tlsFingerprint: SPKIFingerprint(sha256Digest: Data(repeating: 3, count: 32))!)
+            tlsFingerprint: link.pin ?? SPKIFingerprint(sha256Digest: Data(repeating: 3, count: 32))!,
+            approvalRequired: link.requiresApproval,
+            protocols: link.requiresApproval ? [1, 2] : [])
+    }
+
+    func requestApproval(
+        _ link: PairingInvitationLink, deviceName: String, deviceModel: String,
+        clientSecret: PairingClientSecret, expecting: PairingPreview
+    ) async throws(PairingFailure) -> PairingApprovalRequest {
+        guard link.requiresApproval else { throw .approvalNotSupported }
+        try? await Task.sleep(for: .milliseconds(300))
+        let conflict: Bool = lock.withLock {
+            if let existing = requestSecrets[link.invitationID], existing != clientSecret.rawValue { return true }
+            requestSecrets[link.invitationID] = clientSecret.rawValue
+            if requestedAt[link.invitationID] == nil { requestedAt[link.invitationID] = Date() }
+            return false
+        }
+        if conflict { throw .alreadyUsed }
+        return PairingApprovalRequest(
+            id: "req" + link.invitationID, matchCode: Self.matchCode,
+            expiresAt: Date().addingTimeInterval(600), pollInterval: 1,
+            gateway: expecting.gateway, scopes: expecting.access.map(\.scope),
+            tlsFingerprint: expecting.tlsFingerprint)
+    }
+
+    func pollApproval(
+        _ request: PairingApprovalRequest, clientSecret: PairingClientSecret
+    ) async throws(PairingFailure) -> PairingApprovalStatus {
+        let invitation = String(request.id.dropFirst(3))
+        let (secret, started) = lock.withLock { (requestSecrets[invitation], requestedAt[invitation]) }
+        guard secret == clientSecret.rawValue, let started else { throw .invalidRequest }
+        if invitation.hasPrefix("pending") { return .pending }
+        guard let approveAfter, Date().timeIntervalSince(started) >= approveAfter else { return .pending }
+        if invitation.hasPrefix("denied") { return .denied }
+        if invitation.hasPrefix("lapsed") { return .expired }
+        return .approved(PairingGrant(
+            gateway: request.gateway, deviceID: String(repeating: "0123abcd", count: 4),
+            credential: PairingDeviceCredential("hfd1." + String(repeating: "0123abcd", count: 4) + "." + String(repeating: "S", count: 43)),
+            tlsFingerprint: request.tlsFingerprint))
     }
 
     func redeem(
