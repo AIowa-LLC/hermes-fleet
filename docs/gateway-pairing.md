@@ -2,11 +2,21 @@
 
 Hermes Fleet connects to gateways chosen by the user. No maintainer endpoint or shared credential is compiled into the default configuration.
 
-## Current flow: QR invitation
+## Current flow: ask Hermes for a link, approve the code
 
-The default way to connect a server is the owner-issued QR invitation described in [qr-first-onboarding.md](qr-first-onboarding.md). The first server and every additional server (Settings > Connect Another Server, or **+** on the Gateways tab) use the same guidance: **Copy setup prompt** (a message to send to Hermes in the owner's private Telegram chat), **Scan pairing QR**, then review and **Connect this phone**. Cancelling, retrying or rescanning never removes servers that are already saved.
+The default way to connect a server is described in [universal-login.md](universal-login.md) and [qr-first-onboarding.md](qr-first-onboarding.md). The first server and every additional server (Settings > Connect Another Server, or **+** on the Gateways tab) use the same **Connect to Hermes** screen:
 
-The sections below describe the **advanced / legacy** routes. For additional servers they are reached from **Advanced setup** in the add-server sheet and are not the default.
+1. Ask Hermes for a link: send `/fleet pair` in a private chat with Hermes on any platform, or run `hermes fleet pair` on the computer.
+2. Open the link on the iPhone, scan its QR code, or tap **Paste link**.
+3. Review the server and tap **Connect this phone**, then approve the code Fleet shows with `/fleet approve <code>` (or `y` in the waiting terminal).
+
+Cancelling, retrying or rescanning never removes servers that are already saved. Failures are explained in plain words with **Try again** (see "Reachability diagnosis" in the contract). App behaviour and simulator testing: [universal-login-app.md](universal-login-app.md).
+
+### Legacy: v1 QR invitation (first connector release)
+
+Links with `v=1` still work: scan or open one, review, and **Connect this phone** redeems it directly with no approval step. For servers on the first connector release the setup message (a message to send to Hermes in the owner's private Telegram chat) is available under **Other ways to connect**. The v1 route is documented in [qr-first-onboarding.md](qr-first-onboarding.md).
+
+The sections below describe the **advanced / legacy** routes. For additional servers they are reached from **Other ways to connect** in the add-server sheet and are not the default.
 
 ## Advanced: owner sign-in (address-first)
 
@@ -18,7 +28,7 @@ The server must support authenticated `GET /api/fleet/connection` and owner-only
 
 ## Advanced manual setup
 
-Choose **Advanced setup** > **Enter gateway details manually** in the add-server sheet (or **Advanced gateway setup** inside owner sign-in) and provide:
+Choose **Other ways to connect** > **Enter gateway details manually** in the add-server sheet (or **Advanced gateway setup** inside owner sign-in) and provide:
 
 - a display name
 - the gateway endpoint
@@ -53,7 +63,7 @@ bash scripts/f2_generate_pairing_qr.sh \
 
 On the iPhone:
 
-1. Open **Add Gateway**, then **Advanced setup** > **Enter gateway details manually**.
+1. Open **Add Gateway**, then **Other ways to connect** > **Enter gateway details manually**.
 2. Choose **Scan Pairing Code**.
 3. Scan the newly generated QR code.
 4. Review the populated endpoint and credential fields.

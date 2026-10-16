@@ -12,8 +12,8 @@ FAIL=0
 declare -a FAILURES=()
 expected_test_count() {
   case "$1" in
-    FleetCore) echo 737 ;;
-    FleetNetworking) echo 722 ;;
+    FleetCore) echo 760 ;;
+    FleetNetworking) echo 743 ;;
     FleetPersistence) echo 64 ;;
     FleetSecurity) echo 50 ;;
     *) return 1 ;;

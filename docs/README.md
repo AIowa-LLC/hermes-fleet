@@ -34,7 +34,10 @@ the v0.1 document deferred or excluded.
 - [`groups-tab.md`](groups-tab.md) - Groups destination and room ownership
 - [`settings-and-about-tabs.md`](settings-and-about-tabs.md) - Settings and About surfaces
 - [`unread-indicators-and-read-state.md`](unread-indicators-and-read-state.md) - device-local conversation read state
+- [`universal-login.md`](universal-login.md) - the shared app and connector contract for connecting a phone (ask Hermes for a link, approve the code)
+- [`universal-login-app.md`](universal-login-app.md) - how the app implements it: screens, states, diagnosis, simulator testing
 - [`gateway-pairing.md`](gateway-pairing.md) - phone enrollment, manual entry, and legacy QR setup
+- [`qr-first-onboarding.md`](qr-first-onboarding.md) - first-server onboarding (current flow and the legacy v1 QR route)
 - [`Hermes live reporting`](../integrations/hermes-liveops/README.md) - observe Desktop runs across profile backend processes
 - [`dev-loop.md`](dev-loop.md) - local development loop, focused pull-request preflight, and the merge-queue integration gate
 - [`connection-recovery.md`](connection-recovery.md) - reconnect backoff, history-refetch rules and known limitations

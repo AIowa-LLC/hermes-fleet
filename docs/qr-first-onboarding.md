@@ -1,6 +1,18 @@
-# First-server QR onboarding
+# First-server onboarding
 
-A fresh Fleet installation shows the existing Fleet wing mark and one connection action: **Scan QR code**. It includes a copyable message for Hermes in a private Telegram conversation while the owner is at the host computer. The phone does not discover a host or create a network path. General users need a compatible, already-installed maintained Fleet host release and an HTTPS origin that the phone can reach and whose certificate iOS trusts. The app makes no host-discovery or automatic-install promise.
+## Current flow: Connect to Hermes
+
+A fresh Fleet installation shows **Connect to Hermes**: ask Hermes for a link (`/fleet pair` in any private chat with Hermes, or `hermes fleet pair` in a terminal on the host), open the link on the iPhone or scan its QR code (or paste it), then approve the code Fleet shows (`/fleet approve <code>` in the private chat, or `y` in the waiting terminal). It works from any messaging platform Hermes supports, the CLI or desktop; no Telegram, copy-paste prompt or screen access is required, and iOS does not have to trust the server certificate in advance.
+
+The link is not a credential. It carries a one-time invitation and the SHA-256 of the server's TLS key; on its own it can only create a pending request that the owner approves by its match code. The phone then collects its device credential with a secret only it holds. The contract is [universal-login.md](universal-login.md); the app side is described in [universal-login-app.md](universal-login-app.md). Owner sign-in, manual gateway setup and the first connector release's Telegram setup message sit under **Other ways to connect**. Cancelling, retrying or rescanning never removes servers that are already saved, and production and Dev namespaces remain separate. Conversation deep links are unchanged.
+
+Camera denial offers the app Settings action and Cancel. Simulator scan, paste and approval fixtures are compiled only for DEBUG simulators; report fixture UI results separately from live host readiness, owner authorization, phone network reachability and physical-device camera scanning.
+
+## Legacy flow: v1 QR invitation (first connector release)
+
+The remainder of this page documents the v1 route, still accepted when a link has `v=1` and kept for servers on the first connector release. It is no longer the default guidance.
+
+On the legacy route, a fresh Fleet installation showed the existing Fleet wing mark and one connection action: **Scan QR code**. It includes a copyable message for Hermes in a private Telegram conversation while the owner is at the host computer. The phone does not discover a host or create a network path. General users need a compatible, already-installed maintained Fleet host release and an HTTPS origin that the phone can reach and whose certificate iOS trusts. The app makes no host-discovery or automatic-install promise.
 
 Before any invitation is issued, the host must verify that the actual incoming event is a private Telegram message from the verified owner authorized to manage this Hermes server. An allowlist or home channel alone is insufficient authority. The maintained Hermes Fleet host release's documented readiness report checks host capability for the exact source, runtime source, and Hermes home selection. It does not prove authority for the live Telegram event, forwarding, phone reachability or trust, or local QR display; those remain separate gates. Use the report to confirm that a compatible owner-bound issuer is installed and ready for the selected home and runtime. The host must verify that its configured HTTPS origin matches the invitation origin, is reachable from the phone, and presents a certificate trusted by iOS. Multi-label DNS HTTPS on a private network or tailnet can be used when the phone is a member of that network and trusts the certificate; public internet access and Funnel are not required. The computer must provide a private local QR display.
 
