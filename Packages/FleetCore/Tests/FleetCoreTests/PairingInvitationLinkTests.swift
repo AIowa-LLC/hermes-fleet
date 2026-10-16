@@ -7,6 +7,8 @@ import XCTest
 final class PairingInvitationLinkTests: XCTestCase {
     private let id = "AbCdEfGhIjKlMnOpQrStUv"                       // 22
     private let secret = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"   // 43
+    /// Base64url (no padding) of 32 bytes 0x00...0x1f.
+    private let pin = PairingInvitationLink.base64URLEncode(Data(0..<32))
 
     private func link(
         host: String = "gateway.example.test", port: String = "", path: String = "/pair",
@@ -123,8 +125,8 @@ final class PairingInvitationLinkTests: XCTestCase {
     }
 
     func testUnknownVersionIsUnsupportedNotMisread() {
-        XCTAssertThrowsError(try PairingInvitationLink.parse(link(fragment: "v=2&i=\(id)&s=\(secret)"))) {
-            XCTAssertEqual($0 as? PairingInvitationLink.ParseError, .unsupportedVersion(2))
+        XCTAssertThrowsError(try PairingInvitationLink.parse(link(fragment: "v=3&i=\(id)&s=\(secret)&k=\(pin)"))) {
+            XCTAssertEqual($0 as? PairingInvitationLink.ParseError, .unsupportedVersion(3))
         }
     }
 
@@ -191,6 +193,156 @@ final class PairingInvitationLinkTests: XCTestCase {
         for terminal: PairingFailure in [.expired, .alreadyUsed, .cancelled, .invalidInvitation, .malformedLink,
                                          .insecureDestination, .untrustedCertificate, .identityMismatch] {
             XCTAssertFalse(terminal.isRetryable, "\(terminal)")
+        }
+    }
+
+    // MARK: v2 (approval) links
+
+    private func v2(
+        host: String = "gateway.example.test", fragment: String? = nil
+    ) -> String {
+        link(host: host, fragment: fragment ?? "v=2&i=\(id)&s=\(secret)&k=\(pin)")
+    }
+
+    func testParsesAV2LinkWithPin() throws {
+        let parsed = try PairingInvitationLink.parse(v2())
+        XCTAssertEqual(parsed.version, 2)
+        XCTAssertTrue(parsed.requiresApproval)
+        XCTAssertEqual(parsed.pin?.sha256Digest, Data(0..<32))
+        XCTAssertEqual(parsed.invitationID, id)
+        XCTAssertEqual(parsed.origin.absoluteString, "https://gateway.example.test")
+    }
+
+    func testV1LinkIsUnchangedAndHasNoPin() throws {
+        let parsed = try PairingInvitationLink.parse(link())
+        XCTAssertEqual(parsed.version, 1)
+        XCTAssertFalse(parsed.requiresApproval)
+        XCTAssertNil(parsed.pin)
+    }
+
+    func testV2RequiresAWellFormedPin() {
+        let canonical = pin
+        let lastChar = canonical.last!
+        // The final base64 character carries 2 spare bits that must be zero.
+        let nonCanonical = String(canonical.dropLast()) + (lastChar == "f" ? "g" : "f")
+        let bad: [String] = [
+            "",                                            // missing
+            String(canonical.dropLast()),                  // 42 chars
+            canonical + "A",                               // 44 chars
+            canonical + "=",                               // padded
+            String(canonical.dropLast(1)) + "=",           // padding in place of a character
+            "+" + canonical.dropFirst(),                    // standard-alphabet character
+            String(canonical.dropFirst()) + "/",           // standard-alphabet character
+            String(canonical.dropFirst()) + "!",
+            nonCanonical,
+        ]
+        for value in bad {
+            XCTAssertThrowsError(try PairingInvitationLink.parse(v2(fragment: "v=2&i=\(id)&s=\(secret)&k=\(value)")), value) {
+                XCTAssertEqual($0 as? PairingInvitationLink.ParseError, .malformedFields, value)
+            }
+        }
+        XCTAssertThrowsError(try PairingInvitationLink.parse(v2(fragment: "v=2&i=\(id)&s=\(secret)"))) {
+            XCTAssertEqual($0 as? PairingInvitationLink.ParseError, .malformedFields)
+        }
+        // An all-zero digest is a valid canonical spelling.
+        XCTAssertNoThrow(try PairingInvitationLink.parse(v2(fragment: "v=2&i=\(id)&s=\(secret)&k=\(String(repeating: "A", count: 43))")))
+    }
+
+    func testRejectsMixedAndDuplicateFields() {
+        let bad = [
+            "v=1&i=\(id)&s=\(secret)&k=\(pin)",                    // v1 never carries a pin
+            "v=2&i=\(id)&s=\(secret)&k=\(pin)&k=\(pin)",          // duplicate pin
+            "v=2&v=2&i=\(id)&s=\(secret)&k=\(pin)",
+            "v=2&i=\(id)&s=\(secret)&k=\(pin)&o=aHR0cHM6Ly9nYXRld2F5LmV4YW1wbGUudGVzdA", // origin belongs to the app-scheme form
+            "v=1&v=2&i=\(id)&s=\(secret)&k=\(pin)",
+        ]
+        for fragment in bad {
+            XCTAssertThrowsError(try PairingInvitationLink.parse(v2(fragment: fragment)), fragment)
+        }
+    }
+
+    func testV2HostRulesAreUnchanged() {
+        for host in ["localhost", "192.168.1.1", "single", "[::1]", "xn--bcher-kva.example.test"] {
+            XCTAssertThrowsError(try PairingInvitationLink.parse(v2(host: host)), host)
+        }
+        XCTAssertThrowsError(try PairingInvitationLink.parse(link(fragment: "v=2&i=\(id)&s=\(secret)&k=\(pin)", scheme: "http")))
+    }
+
+    func testDescriptionsRedactSecretAndPin() throws {
+        let parsed = try PairingInvitationLink.parse(v2())
+        for text in ["\(parsed)", String(reflecting: parsed)] {
+            XCTAssertFalse(text.contains(secret), text)
+            XCTAssertFalse(text.contains(pin), text)
+            XCTAssertTrue(text.contains("gateway.example.test"))
+        }
+    }
+
+    // MARK: app-scheme form
+
+    private func origin64(_ origin: String) -> String {
+        PairingInvitationLink.base64URLEncode(Data(origin.utf8))
+    }
+
+    private func appLink(
+        scheme: String = "hermes-fleet-dev", host: String = "pair", origin: String? = nil,
+        fragment: String? = nil
+    ) -> String {
+        let o = origin ?? origin64("https://gateway.example.test")
+        return "\(scheme)://\(host)#\(fragment ?? "v=2&i=\(id)&s=\(secret)&k=\(pin)&o=\(o)")"
+    }
+
+    func testParsesTheAppSchemeForm() throws {
+        let parsed = try PairingInvitationLink.parse(appLink(), appURLScheme: "hermes-fleet-dev")
+        XCTAssertEqual(parsed.origin.absoluteString, "https://gateway.example.test")
+        XCTAssertEqual(parsed.version, 2)
+        XCTAssertEqual(parsed.pin?.sha256Digest, Data(0..<32))
+        let url = try XCTUnwrap(URL(string: appLink()))
+        XCTAssertTrue(PairingInvitationLink.looksLikePairingLink(url, appURLScheme: "hermes-fleet-dev"))
+        XCTAssertEqual(try PairingInvitationLink.parse(url, appURLScheme: "hermes-fleet-dev").invitationID, id)
+    }
+
+    func testAppSchemeKeepsPortAndFindsTheLinkInProse() throws {
+        let origin = origin64("https://gateway.example.test:8443")
+        let parsed = try PairingInvitationLink.parse(
+            "Open this: \(appLink(origin: origin)) thanks", appURLScheme: "hermes-fleet-dev")
+        XCTAssertEqual(parsed.origin.absoluteString, "https://gateway.example.test:8443")
+    }
+
+    func testAppSchemeOnlyAcceptsTheAppsOwnScheme() {
+        XCTAssertThrowsError(try PairingInvitationLink.parse(appLink()))                                  // no scheme configured
+        XCTAssertThrowsError(try PairingInvitationLink.parse(appLink(), appURLScheme: "hermes-fleet"))    // someone else's scheme
+        XCTAssertThrowsError(try PairingInvitationLink.parse(appLink(scheme: "other-app"), appURLScheme: "hermes-fleet-dev"))
+        let conversation = URL(string: "hermes-fleet-dev://conversation?gateway=a")!
+        XCTAssertFalse(PairingInvitationLink.looksLikePairingLink(conversation, appURLScheme: "hermes-fleet-dev"),
+                       "conversation deep links on the same scheme are not pairing links")
+        XCTAssertThrowsError(try PairingInvitationLink.parse(appLink(host: "conversation"), appURLScheme: "hermes-fleet-dev"))
+    }
+
+    func testAppSchemeAppliesTheSameHostRulesToTheDecodedOrigin() {
+        let badOrigins = [
+            "http://gateway.example.test", "https://localhost", "https://192.168.1.1",
+            "https://single", "https://user@gateway.example.test", "https://gateway.example.test/path",
+            "https://gateway.example.test?x=1", "ftp://gateway.example.test", "gateway.example.test",
+            "https://gateway.example.test:0", "https://gateway.example.test:70000",
+        ]
+        for origin in badOrigins {
+            XCTAssertThrowsError(
+                try PairingInvitationLink.parse(appLink(origin: origin64(origin)), appURLScheme: "hermes-fleet-dev"), origin)
+        }
+    }
+
+    func testAppSchemeRequiresV2PinAndOriginAndRejectsMalformedOrigin() {
+        let bad = [
+            "v=1&i=\(id)&s=\(secret)&o=\(origin64("https://gateway.example.test"))",
+            "v=2&i=\(id)&s=\(secret)&o=\(origin64("https://gateway.example.test"))",       // no pin
+            "v=2&i=\(id)&s=\(secret)&k=\(pin)",                                              // no origin
+            "v=2&i=\(id)&s=\(secret)&k=\(pin)&o=not*base64",
+            "v=2&i=\(id)&s=\(secret)&k=\(pin)&o=\(origin64("https://gateway.example.test"))=",   // padded
+            "v=2&i=\(id)&s=\(secret)&k=\(pin)&o=\(origin64("https://gateway.example.test"))&o=\(origin64("https://other.example.test"))",
+        ]
+        for fragment in bad {
+            XCTAssertThrowsError(
+                try PairingInvitationLink.parse(appLink(fragment: fragment), appURLScheme: "hermes-fleet-dev"), fragment)
         }
     }
 }
