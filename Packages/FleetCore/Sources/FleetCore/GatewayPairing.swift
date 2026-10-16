@@ -53,17 +53,98 @@ public struct PairingPreview: Sendable, Equatable {
     /// The key (SPKI) the gateway presented when this preview was fetched over a
     /// system-trusted connection. Redemption must see the very same key.
     public let tlsFingerprint: SPKIFingerprint
+    /// Whether the gateway says the owner must approve this phone's request (a v2 invitation).
+    /// False for a legacy invitation and for gateways that predate the field.
+    public let approvalRequired: Bool
+    /// Pairing protocol versions the gateway announced (`[1, 2]`); empty when it did not say.
+    public let protocols: [Int]
 
     public init(
         gateway: PairingGatewayIdentity, label: String, access: [PairingAccess],
-        expiresAt: Date, tlsFingerprint: SPKIFingerprint
+        expiresAt: Date, tlsFingerprint: SPKIFingerprint,
+        approvalRequired: Bool = false, protocols: [Int] = []
     ) {
         self.gateway = gateway
         self.label = label
         self.access = access
         self.expiresAt = expiresAt
         self.tlsFingerprint = tlsFingerprint
+        self.approvalRequired = approvalRequired
+        self.protocols = protocols
     }
+}
+
+// MARK: - Approval (v2)
+
+/// The random secret that binds a pending approval request to the phone that made it. The
+/// gateway returns the credential only to a poll that presents it. Memory-only: never
+/// persisted, logged or placed in an error; losing it (app killed) just lets the request expire.
+public struct PairingClientSecret: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let rawValue: String
+
+    /// Exactly 32 random bytes, base64url without padding (43 characters).
+    public static func generate() -> PairingClientSecret {
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        return PairingClientSecret(rawValue: PairingInvitationLink.base64URLEncode(Data(bytes)))
+    }
+
+    /// For tests and transports that rebuild a secret; rejects anything that is not 43 base64url characters.
+    public init?(validating text: String) {
+        guard text.utf8.count == 43, PairingInvitationLink.base64URLDecode(text) != nil else { return nil }
+        self.rawValue = text
+    }
+
+    private init(rawValue: String) { self.rawValue = rawValue }
+
+    public var description: String { "[REDACTED]" }
+    public var debugDescription: String { "PairingClientSecret(redacted)" }
+}
+
+/// A pending request the owner has to approve by its match code.
+public struct PairingApprovalRequest: Sendable, Equatable {
+    public let id: String
+    /// Six decimal digits the owner compares with what they approve.
+    public let matchCode: String
+    public let expiresAt: Date
+    /// Seconds between polls the gateway asks for (already clamped by the client).
+    public let pollInterval: TimeInterval
+    /// Identity the gateway reported, already checked against the preview.
+    public let gateway: PairingGatewayIdentity
+    /// The access the person confirmed in the preview; the approved credential must match it.
+    public let scopes: [String]
+    /// The key the gateway presented (it equals the link's pin). Every later poll must see it.
+    public let tlsFingerprint: SPKIFingerprint
+
+    public init(
+        id: String, matchCode: String, expiresAt: Date, pollInterval: TimeInterval,
+        gateway: PairingGatewayIdentity, scopes: [String], tlsFingerprint: SPKIFingerprint
+    ) {
+        self.id = id
+        self.matchCode = matchCode
+        self.expiresAt = expiresAt
+        self.pollInterval = pollInterval
+        self.gateway = gateway
+        self.scopes = scopes
+        self.tlsFingerprint = tlsFingerprint
+    }
+
+    /// `482913` -> `482 913`.
+    public var spacedMatchCode: String {
+        guard matchCode.count == 6 else { return matchCode }
+        return "\(matchCode.prefix(3)) \(matchCode.suffix(3))"
+    }
+}
+
+/// What a poll of a pending request reports.
+public enum PairingApprovalStatus: Sendable, Equatable {
+    case pending
+    /// Approved by the owner: the credential, to be saved exactly like a redeemed grant.
+    case approved(PairingGrant)
+    /// Approved and already collected (or the collection window closed). No credential.
+    case delivered
+    case denied
+    case expired
 }
 
 /// The device-specific credential a redeemed invitation yields. Redacted when printed.
@@ -118,6 +199,14 @@ public enum PairingFailure: Error, Sendable, Equatable {
     case pairingUnavailable
     /// The phone could not reach the gateway (offline, DNS, timeout). A link does not create connectivity.
     case unreachable
+    /// The host name did not resolve (DNS failure).
+    case hostNotFound
+    /// The gateway did not answer in time.
+    case timedOut
+    /// The gateway's address refused the connection.
+    case connectionRefused
+    /// This phone has no network connection.
+    case offline
     /// The gateway's certificate is not trusted by this phone.
     case untrustedCertificate
     /// The server identity changed between steps or did not match the link.
@@ -133,11 +222,27 @@ public enum PairingFailure: Error, Sendable, Equatable {
     case couldNotSave
     /// Saving failed and remote revocation or local cleanup was not confirmed.
     case rollbackUnconfirmed
+    /// The gateway answered `approval_not_supported`: it only supports direct redemption.
+    case approvalNotSupported
+    /// The gateway answered `approval_required`: this invitation must be approved by its owner.
+    case approvalRequired
+    /// The gateway does not know this request, or the client secret did not match.
+    case invalidRequest
 
     /// Whether trying the very same link again can help.
     public var isRetryable: Bool {
         switch self {
-        case .unreachable, .rateLimited, .interrupted, .serverError: return true
+        case .unreachable, .hostNotFound, .timedOut, .connectionRefused, .offline,
+             .rateLimited, .interrupted, .serverError: return true
+        default: return false
+        }
+    }
+
+    /// Whether the phone could not get a response from the gateway at all (as opposed to the
+    /// gateway answering with a refusal).
+    public var isNetworkFailure: Bool {
+        switch self {
+        case .unreachable, .hostNotFound, .timedOut, .connectionRefused, .offline: return true
         default: return false
         }
     }
@@ -169,11 +274,39 @@ public protocol GatewayPairing: Sendable {
     ) async throws(PairingFailure) -> PairingGrant
     /// Tell the gateway to revoke this device credential (best effort; never throws).
     func revoke(origin: URL, credential: PairingDeviceCredential, expecting: SPKIFingerprint?) async -> PairingRevocationOutcome
+
+    // v2 (owner approval). Defaults answer "not supported" so a seam that only knows direct
+    // redemption keeps working.
+
+    /// Create (or, for the same `clientSecret`, re-read) the pending request for a v2 link.
+    /// `expecting` is the preview the person confirmed; the key and identity must match it.
+    func requestApproval(
+        _ link: PairingInvitationLink, deviceName: String, deviceModel: String,
+        clientSecret: PairingClientSecret, expecting: PairingPreview
+    ) async throws(PairingFailure) -> PairingApprovalRequest
+    /// Ask whether the owner decided. Safe to repeat: the credential is returned on every
+    /// poll until it is first used or its collection window closes.
+    func pollApproval(
+        _ request: PairingApprovalRequest, clientSecret: PairingClientSecret
+    ) async throws(PairingFailure) -> PairingApprovalStatus
 }
 
 public extension GatewayPairing {
     func revoke(origin: URL, credential: PairingDeviceCredential) async -> PairingRevocationOutcome {
         await revoke(origin: origin, credential: credential, expecting: nil)
+    }
+
+    func requestApproval(
+        _ link: PairingInvitationLink, deviceName: String, deviceModel: String,
+        clientSecret: PairingClientSecret, expecting: PairingPreview
+    ) async throws(PairingFailure) -> PairingApprovalRequest {
+        throw .approvalNotSupported
+    }
+
+    func pollApproval(
+        _ request: PairingApprovalRequest, clientSecret: PairingClientSecret
+    ) async throws(PairingFailure) -> PairingApprovalStatus {
+        throw .approvalNotSupported
     }
 }
 
