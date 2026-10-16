@@ -136,6 +136,7 @@ public struct FleetTabView: View {
                     FirstRunSetupView(environment: environment)
                 case .configured:
                     tabShell
+                        .pairingLinkPresenter(environment.pairing)
                 }
             }
         }

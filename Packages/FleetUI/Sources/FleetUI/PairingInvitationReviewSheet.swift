@@ -19,7 +19,7 @@ struct PairingInvitationReviewSheet: View {
                 VStack(alignment: .leading, spacing: FleetTheme.spacingXl) {
                     switch coordinator.phase {
                     case .idle, .awaitingLink:
-                        statusCard("Scan an invitation QR code to continue.", symbol: "qrcode.viewfinder")
+                        statusCard("Scan or paste a Hermes link to continue.", symbol: "qrcode.viewfinder")
                     case .previewing(let host):
                         statusCard("Checking the invitation for \(host)…", symbol: "lock.shield")
                             .accessibilityIdentifier("fleet.pairing.previewing")
@@ -35,6 +35,21 @@ struct PairingInvitationReviewSheet: View {
                         ProgressView()
                             .tint(theme.highlight)
                             .accessibilityIdentifier("fleet.pairing.redeeming")
+                    case .requesting(let preview):
+                        statusCard("Asking \(preview.gateway.origin.host ?? "the server") to connect this phone…", symbol: "lock.shield")
+                            .accessibilityIdentifier("fleet.pairing.requesting")
+                        ProgressView()
+                            .tint(theme.highlight)
+                    case .awaitingApproval(let code, let expiresAt):
+                        PairingAwaitingApprovalView(
+                            code: code, expiresAt: expiresAt,
+                            gatewayName: coordinator.pendingRequest?.gateway.displayName,
+                            host: coordinator.pendingRequest?.gateway.origin.host,
+                            onCancel: { leaveFlow() })
+                    case .denied:
+                        PairingEndedView(kind: .denied) { leaveFlow() }
+                    case .expired:
+                        PairingEndedView(kind: .expired) { leaveFlow() }
                     case .completed(let name):
                         statusCard("\(name) was added to Fleet.", symbol: "checkmark.circle.fill")
                         doneButton
@@ -47,7 +62,7 @@ struct PairingInvitationReviewSheet: View {
                 .frame(maxWidth: .infinity)
             }
             .background(theme.background.ignoresSafeArea())
-            .navigationTitle("Review invitation")
+            .navigationTitle("Connect to Hermes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -60,7 +75,7 @@ struct PairingInvitationReviewSheet: View {
             }
         }
         .tint(theme.highlight)
-        .interactiveDismissDisabled(!coordinator.canCancel || requiresCleanupRecovery)
+        .interactiveDismissDisabled(!coordinator.canCancel || requiresCleanupRecovery || isAwaitingApproval)
         .onDisappear {
             if coordinator.canCancel, !requiresCleanupRecovery { coordinator.dismiss() }
         }
@@ -100,6 +115,13 @@ struct PairingInvitationReviewSheet: View {
                         .font(.footnote)
                         .foregroundStyle(theme.textSecondary)
                         .accessibilityIdentifier("fleet.pairing.permission-explanation")
+                    if preview.approvalRequired {
+                        Text("After you tap Connect, Fleet shows a code. Approve it in your chat with Hermes, or in the terminal running `hermes fleet pair`.")
+                            .font(.footnote)
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("fleet.pairing.approval-hint")
+                    }
                 }
             }
 
@@ -126,7 +148,7 @@ struct PairingInvitationReviewSheet: View {
                         .foregroundStyle(FleetTheme.statusNeedsIntervention)
                     Text(failure == .rollbackUnconfirmed && !coordinator.canRetry
                          ? "This phone couldn't verify cleanup and has no retry available. Ask the owner to check the gateway's device list and revoke this phone before creating or scanning another invitation."
-                         : PairingCopy.message(for: failure, host: host))
+                         : PairingCopy.message(for: failure, host: host, linkIsPinned: coordinator.linkIsPinned))
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -135,7 +157,8 @@ struct PairingInvitationReviewSheet: View {
             }
 
             if coordinator.canRetry {
-                Button(failure == .rollbackUnconfirmed ? "Retry cleanup" : "Retry") {
+                Button(failure == .rollbackUnconfirmed ? "Retry cleanup"
+                       : (coordinator.diagnosis?.actionTitle ?? "Retry")) {
                     coordinator.retry()
                 }
                     .buttonStyle(.borderedProminent)
@@ -170,6 +193,11 @@ struct PairingInvitationReviewSheet: View {
         guard coordinator.canCancel, !requiresCleanupRecovery else { return }
         coordinator.dismiss()
         dismiss()
+    }
+
+    private var isAwaitingApproval: Bool {
+        if case .awaitingApproval = coordinator.phase { return true }
+        return false
     }
 
     private var requiresCleanupRecovery: Bool {
