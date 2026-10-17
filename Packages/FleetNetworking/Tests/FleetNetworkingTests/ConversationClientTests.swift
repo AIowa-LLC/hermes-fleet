@@ -183,6 +183,97 @@ final class ConversationClientTests: XCTestCase {
         XCTAssertEqual(session.messages[1].text, "hello!")
     }
 
+    // MARK: #188 long-chat resume (omit_messages + 4130)
+
+    private final class ResumeParamsLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _all: [[String: Any]] = []
+        var all: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return _all }
+        func append(_ params: [String: Any]) { lock.lock(); _all.append(params); lock.unlock() }
+    }
+
+    func testOmitMessagesFlagIsSentOnlyWhenRequested() async throws {
+        let log = ResumeParamsLog()
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, params) = Self.extractRequest(frame) else { return [] }
+                if method == "session.resume" {
+                    log.append(params)
+                    return [Self.responseFrame(id: id, result: [
+                        "session_id": "sess-long",
+                        "message_count": 30000,
+                        "messages": [],
+                        "messages_omitted": true,
+                    ])]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        _ = try await client.resumeSession(sessionID: "sess-long", lastEventID: nil, profile: "default")
+        let omitted = try await client.resumeSession(
+            sessionID: "sess-long", lastEventID: nil, profile: "default", omitMessages: true)
+        XCTAssertEqual(omitted.messageCount, 30000)
+        XCTAssertTrue(omitted.messages.isEmpty)
+        _ = try await client.resumeSession(
+            sessionID: "sess-long", lastEventID: nil, profile: "default", omitMessages: false)
+
+        let all = log.all
+        XCTAssertEqual(all.count, 3)
+        XCTAssertNil(all[0]["omit_messages"], "default resume frame stays unchanged")
+        XCTAssertEqual(all[1]["omit_messages"] as? Bool, true)
+        XCTAssertNil(all[2]["omit_messages"], "omitMessages false must not send the flag")
+    }
+
+    func testTooLongRefusalSurfacesAsSessionTooLongWithCount() async throws {
+        let script = InProcessWebSocketServer.Script(
+            onOpen: [Self.readyFrame()],
+            onText: { frame in
+                guard let (id, method, _) = Self.extractRequest(frame) else { return [] }
+                if method == "session.resume" {
+                    return [Self.errorFrame(
+                        id: id, code: 4130,
+                        message: "This session is too long to reload safely (25000 messages; limit 20000)")]
+                }
+                return []
+            }
+        )
+        let server = try InProcessWebSocketServer(script: script)
+        try await server.start()
+        defer { server.stop() }
+
+        let transport = makeTransport(serverPort: server.listeningPort)
+        try await transport.connect()
+        defer { Task { await transport.disconnect() } }
+
+        let client = GatewayConversationClient(gatewayID: GatewayID(rawValue: "workstation"), transport: transport)
+        do {
+            _ = try await client.resumeSession(sessionID: "sess-long", profile: "default")
+            XCTFail("expected sessionTooLongToReload")
+        } catch let error as ConversationError {
+            XCTAssertEqual(error, .sessionTooLongToReload(messageCount: 25000))
+        }
+    }
+
+    func testFourOneThirtyMappingParsesCountAndKeepsOtherCodes() {
+        let long = JSONRPCError(
+            code: 4130, message: "This session is too long to reload safely (812 messages; limit 20000)")
+        XCTAssertEqual(GatewayConversationClient.mapRPCError(long), .sessionTooLongToReload(messageCount: 812))
+        let unparseable = JSONRPCError(code: 4130, message: "too long")
+        XCTAssertEqual(GatewayConversationClient.mapRPCError(unparseable), .sessionTooLongToReload(messageCount: nil))
+        let notFound = JSONRPCError(code: 4007, message: "session gone")
+        XCTAssertEqual(GatewayConversationClient.mapRPCError(notFound), .sessionNotFound("session gone"))
+    }
+
     // MARK: session.resume
 
     func testResumeSessionSendsSessionIDAndProfileAndDecodes() async throws {

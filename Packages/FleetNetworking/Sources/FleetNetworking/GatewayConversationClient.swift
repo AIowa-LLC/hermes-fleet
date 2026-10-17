@@ -67,6 +67,15 @@ public struct GatewayConversationClient: ConversationProviding {
     }
 
     public func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
+        try await resumeSession(sessionID: sessionID, lastEventID: lastEventID, profile: profile, omitMessages: false)
+    }
+
+    /// #188: `omitMessages: true` adds `omit_messages: true` (the gateway's
+    /// tip-only too-long guard; the result carries `messages: []`). The param
+    /// is sent ONLY when requested, so the default wire frame is unchanged.
+    public func resumeSession(
+        sessionID: String, lastEventID: Int?, profile: String?, omitMessages: Bool
+    ) async throws -> ConversationSession {
         // M9 fail-closed guard (precedes the connected-state check on purpose).
         guard RoutingGuard.isValidSessionKey(sessionID) else {
             throw ConversationError.invalidSessionKey("session_id is not a safe session key: \(sessionID)")
@@ -84,6 +93,9 @@ public struct GatewayConversationClient: ConversationProviding {
         // resume it becomes the server-side resume filter.
         if let lastEventID {
             params["last_seen"] = .number(Double(lastEventID))
+        }
+        if omitMessages {
+            params["omit_messages"] = .bool(true)
         }
         let paramsValue = JSONValue.object(params)
         do {
@@ -408,6 +420,11 @@ public struct GatewayConversationClient: ConversationProviding {
             // `_sess_nowait` rejects a runtime id the gateway no longer holds
             // (prompt.submit / session.interrupt paths) with 4001.
             return .sessionNotFound(Redaction.safeText(error.message))
+        case 4130:
+            // #188: `session.resume` refuses a lineage over the reload limit
+            // (`This session is too long to reload safely (N messages; limit
+            // M)`). Only the count is kept; the server text is not echoed.
+            return .sessionTooLongToReload(messageCount: parsedMessageCount(error.message))
         case 4007:
             // `session.resume` does its own DB lookup and reports an unknown
             // stored session with 4007 (methods_session.py). Both codes mean
@@ -418,6 +435,12 @@ public struct GatewayConversationClient: ConversationProviding {
         default:
             return .rpcFailed("\(Redaction.safeText(error.message)) (\(error.code))")
         }
+    }
+
+    /// The first decimal run in a 4130 message is the lineage size
+    /// (`... (N messages; limit M)`). Nil when absent or unparseable.
+    static func parsedMessageCount(_ message: String) -> Int? {
+        message.split(whereSeparator: { !$0.isNumber }).first.flatMap { Int($0) }
     }
 
     static func mapTransportError(_ error: TransportError) -> ConversationError {

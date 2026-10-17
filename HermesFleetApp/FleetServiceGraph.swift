@@ -513,11 +513,23 @@ enum FleetServiceGraph {
                 // only it — advertises `client.capabilities`.
                 configuration: .conversation
             )
+            // #188: paged latest-first history over the SAME dashboard REST
+            // credential/session construction as the cron client. Used only
+            // when a chat is too long for session.history.
+            let pagingSession = makeGatewayHTTPSession(gateway: gateway, pinStore: pinStore)
+            let historyPager = DashboardSessionMessagesClient(
+                gatewayID: gateway.id,
+                baseURL: base,
+                httpCredential: makeDashboardHTTPCredential(
+                    gateway: gateway, credentialStore: credentialStore, pinStore: pinStore, urlSession: pagingSession),
+                urlSession: pagingSession
+            )
             return GatewayConversationSession(
                 gatewayID: gateway.id,
                 displayName: gateway.displayName,
                 endpoint: gateway.endpoint,
-                transport: transport
+                transport: transport,
+                historyPager: historyPager
             )
         }
     }

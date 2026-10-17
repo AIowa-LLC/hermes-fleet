@@ -1304,6 +1304,45 @@ enum ConversationHeaderChips {
         !model.transcript.suffix(3).contains { !($0.artifacts ?? []).isEmpty }
     }
 
+    /// #188: "Load earlier messages" at the top of a paged transcript. The
+    /// oldest visible row is captured before the request and kept at the top
+    /// edge after the older rows prepend, so the reading position holds.
+    @ViewBuilder
+    private func olderHistoryControl(_ model: ConversationViewModel, proxy: ScrollViewProxy) -> some View {
+        VStack(spacing: 6) {
+            if let notice = model.pagedHistoryNotice, model.olderHistoryError == nil {
+                Text(notice)
+                    .font(.footnote)
+                    .foregroundStyle(theme.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            if model.isLoadingOlderHistory {
+                ProgressView()
+                    .accessibilityLabel("Loading earlier messages")
+            } else {
+                if let error = model.olderHistoryError {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                Button(model.olderHistoryError == nil ? "Load earlier messages" : "Try again") {
+                    let anchor = ToolActivityGrouping.group(model.transcript).first?.id
+                    Task {
+                        await model.loadOlderHistory()
+                        if let anchor {
+                            proxy.scrollTo(anchor, anchor: .top)
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("fleet.conversation.load-earlier")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+    }
+
     private func transcriptList(_ model: ConversationViewModel) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -1317,6 +1356,12 @@ enum ConversationHeaderChips {
                 // itself and always render as their own live row below.
                 let blocks = ToolActivityGrouping.group(model.transcript)
                 LazyVStack(spacing: 12) {
+                    // #188: paged chats load older messages on demand, from
+                    // the top of the transcript.
+                    if model.isPagedHistory,
+                       model.hasOlderHistory || model.isLoadingOlderHistory || model.olderHistoryError != nil {
+                        olderHistoryControl(model, proxy: proxy)
+                    }
                     ForEach(blocks) { block in
                         switch block {
                         case .row(let row):

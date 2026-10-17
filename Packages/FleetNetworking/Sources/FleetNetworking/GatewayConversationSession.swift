@@ -14,8 +14,13 @@ import FleetCore
 ///   - a reconnect + replay re-hydrates exactly what this session missed;
 ///   - `reauthenticate()` (M11) re-mints a FRESH ticket — never a silent
 ///     retry with the same credential.
-public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ServerPromptCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
+public actor GatewayConversationSession: ConversationSessionProviding, ApprovalsCapable, ServerPromptCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable, SessionHistoryPagingCapable {
     public let gatewayID: GatewayID
+
+    /// #188: paged latest-first history over the dashboard REST surface, for
+    /// chats too large for `session.history`. Nil when the gateway has no
+    /// dashboard base (the conversation then cannot page).
+    public let historyPager: (any SessionHistoryPaging)?
 
     /// The connectivity half (M3): reachable/unreachable + connect/disconnect.
     private let connection: SingleGatewayConnection
@@ -70,9 +75,11 @@ public actor GatewayConversationSession: ConversationSessionProviding, Approvals
         gatewayID: GatewayID,
         displayName: String,
         endpoint: URL?,
-        transport: GatewayWebSocketTransport
+        transport: GatewayWebSocketTransport,
+        historyPager: (any SessionHistoryPaging)? = nil
     ) {
         self.gatewayID = gatewayID
+        self.historyPager = historyPager
         let connection = SingleGatewayConnection(
             gatewayID: gatewayID,
             displayName: displayName,
