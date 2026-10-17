@@ -507,7 +507,7 @@ public struct FleetTabView: View {
            !screen.isDeviceLocalRoom,
            !environment.gateways.contains(where: { $0.id == id }),
            screen != .gatewayConnection(id) {
-            ContentUnavailableView("Gateway unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer registered."))
+            ContentUnavailableView("Gateway Unavailable", systemImage: "server.rack", description: Text("This saved destination belongs to a gateway that is no longer in your fleet."))
         } else {
         switch screen {
         case .bots(let gatewayID):
@@ -522,7 +522,7 @@ public struct FleetTabView: View {
             if let room = environment.room(for: id) {
                 RoomChatView(room: room, environment: environment)
             } else {
-                ContentUnavailableView("Group unavailable", systemImage: "person.3", description: Text("This exact group has not been resolved. Refresh its gateway to try again."))
+                ContentUnavailableView("Group Unavailable", systemImage: "person.3", description: Text("Fleet couldn't find this group on its gateway. Refresh the gateway and try again."))
             }
         case .conversation(let route, let sessionID, _):
             ConversationView(environment: environment, route: route, sessionID: sessionID)

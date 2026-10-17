@@ -117,10 +117,16 @@ struct GatewayFormSheet: View {
                     // gated on explicit confirmation below.
                     Section {
                         Label {
-                            Text("Password will be sent unencrypted to a public address.")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(FleetTheme.statusDestructive)
-                                .fixedSize(horizontal: false, vertical: true)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("This gateway uses HTTP")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(FleetTheme.statusDestructive)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("Fleet can't verify that the connection is encrypted. A trusted encrypted tunnel (like a VPN) may protect it, but avoid sending a password over HTTP on public or untrusted networks. Use HTTPS when you can.")
+                                    .font(.caption)
+                                    .foregroundStyle(theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         } icon: {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(FleetTheme.statusDestructive)

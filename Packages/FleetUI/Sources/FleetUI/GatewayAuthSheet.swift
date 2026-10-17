@@ -103,7 +103,7 @@ struct GatewayAuthSheet: View {
                             .font(.caption)
                             .foregroundStyle(FleetTheme.statusDestructive)
                     } header: {
-                        Text("Error")
+                        Text("Couldn't update sign-in")
                             .foregroundStyle(FleetTheme.statusDestructive)
                     }
                 }

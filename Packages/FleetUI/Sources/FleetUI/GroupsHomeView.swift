@@ -62,16 +62,21 @@ struct GroupsHomeView: View {
             }
             if groups.isEmpty && archiveRooms.isEmpty {
                 Section {
-                    ContentUnavailableView(
-                        hasActiveFilter ? "No matching groups" : "No groups yet",
-                        systemImage: "person.3",
-                        description: Text(
-                            hasActiveFilter
-                                ? "Clear the search or gateway filter to see every group in the fleet."
-                                : "Groups you create or join appear here, across every connected gateway."
+                    if !query.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                            .accessibilityIdentifier("fleet.groups.empty")
+                    } else {
+                        ContentUnavailableView(
+                            hasActiveFilter ? "No Matching Groups" : "No Groups Yet",
+                            systemImage: "person.3",
+                            description: Text(
+                                hasActiveFilter
+                                    ? "Clear the gateway filter to see groups from every connected gateway."
+                                    : "Groups you create or join appear here, across every connected gateway."
+                            )
                         )
-                    )
-                    .accessibilityIdentifier("fleet.groups.empty")
+                        .accessibilityIdentifier("fleet.groups.empty")
+                    }
                 }
             } else if !groups.isEmpty {
                 Section("Groups") {

@@ -55,7 +55,7 @@ public struct GatewaysView: View {
                 if let gateway = environment.gateway(for: connectionGatewayID) {
                     connectionDetails(gateway)
                 } else {
-                    ContentUnavailableView("Gateway removed", systemImage: "server.rack", description: Text("This connection is no longer registered on this phone."))
+                    ContentUnavailableView("Gateway Removed", systemImage: "server.rack", description: Text("This gateway is no longer saved on this phone."))
                 }
             } else if environment.gateways.isEmpty {
                 emptyState

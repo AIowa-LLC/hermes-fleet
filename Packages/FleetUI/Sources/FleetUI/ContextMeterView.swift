@@ -123,9 +123,9 @@ public struct ContextBreakdownSheet: View {
                     list(breakdown)
                 } else {
                     ContentUnavailableView {
-                        Label("No Breakdown", systemImage: "chart.bar")
+                        Label("No Breakdown Yet", systemImage: "chart.bar")
                     } description: {
-                        Text("Send a message first — the context breakdown needs a built session.")
+                        Text("Send a message first. The context breakdown appears once the conversation has a session.")
                     }
                 }
             }

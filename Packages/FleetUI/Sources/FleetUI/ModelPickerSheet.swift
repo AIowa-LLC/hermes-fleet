@@ -34,19 +34,19 @@ public struct ModelPickerSheet: View {
                         .foregroundStyle(theme.textSecondary)
                 } else if let error = model.modelLoadError, model.modelChoices == nil {
                     ContentUnavailableView {
-                        Label("Models Unavailable", systemImage: "cpu")
+                        Label("Models Unavailable", systemImage: "exclamationmark.triangle")
                     } description: {
                         Text(error)
                     }
                 } else if filteredChoices.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Models Found", systemImage: "magnifyingglass")
-                    } description: {
-                        if searchText.isEmpty {
-                            Text("This gateway reported no models.")
-                        } else {
-                            Text("No model matches this search.")
+                    if searchText.isEmpty {
+                        ContentUnavailableView {
+                            Label("No Models Found", systemImage: "cpu")
+                        } description: {
+                            Text("This gateway didn't list any models. Refresh the model list to check again.")
                         }
+                    } else {
+                        ContentUnavailableView.search(text: searchText)
                     }
                 } else {
                     choicesList
@@ -123,7 +123,7 @@ public struct ModelPickerSheet: View {
                     }
                 }
                 if let error = model.modelLoadError {
-                    Text("Live refresh failed — showing the last list. \(error)")
+                    Text("Couldn't refresh the model list. Showing the last list the gateway sent. \(error)")
                         .font(FleetTheme.secondaryFont)
                         .foregroundStyle(FleetTheme.statusDegraded)
                         .padding(FleetTheme.spacingLg)

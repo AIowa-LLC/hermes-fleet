@@ -33,9 +33,9 @@ struct ArtifactsView: View {
         List {
             if entries.isEmpty {
                 ContentUnavailableView(
-                    "No artifacts yet",
+                    "No Artifacts Yet",
                     systemImage: "photo.on.rectangle",
-                    description: Text("Images your agents generate in conversations will collect here, with the conversation they came from."))
+                    description: Text("Images your bots generate in conversations appear here, with the conversation they came from."))
                     .accessibilityIdentifier("fleet.artifacts.empty")
             }
             ForEach(sections, id: \.gatewayID) { section in

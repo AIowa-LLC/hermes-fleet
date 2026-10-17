@@ -19,9 +19,9 @@ public struct KanbanHomeView: View {
         Group {
             if environment.gateways.isEmpty {
                 ContentUnavailableView {
-                    Label("No gateways", systemImage: "server.rack")
+                    Label("No Gateways", systemImage: "server.rack")
                 } description: {
-                    Text("Register a Hermes gateway to work its Kanban board.")
+                    Text("Add a gateway to open its Kanban board.")
                 }
                 .accessibilityIdentifier("kanban.home.empty")
             } else if environment.gateways.count == 1, let only = environment.gateways.first {

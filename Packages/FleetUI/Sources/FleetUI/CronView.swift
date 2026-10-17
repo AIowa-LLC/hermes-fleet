@@ -207,7 +207,7 @@ public struct CronView: View {
         ContentUnavailableView {
             Label("Cron Unavailable", systemImage: "clock.badge.exclamationmark")
         } description: {
-            Text("This gateway has no dashboard cron surface wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to view and manage its cron jobs.")
         }
         .accessibilityIdentifier("cron.unavailable")
     }

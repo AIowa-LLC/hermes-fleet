@@ -394,7 +394,11 @@ struct FleetChatsView: View {
                         hasQuery: !query.isEmpty,
                         hasGatewayFilter: gatewayID != nil,
                         hasUsableSessions: usableSessionCount > 0)
-                    ContentUnavailableView(empty.title, systemImage: "bubble.left.and.bubble.right", description: Text(empty.description))
+                    if !query.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                    } else {
+                        ContentUnavailableView(empty.title, systemImage: "bubble.left.and.bubble.right", description: Text(empty.description))
+                    }
                 }
             }
             if !query.isEmpty {

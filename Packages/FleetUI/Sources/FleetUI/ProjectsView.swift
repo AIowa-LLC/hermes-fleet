@@ -261,7 +261,7 @@ public struct ProjectsView: View {
         ContentUnavailableView(
             "No Projects",
             systemImage: "folder",
-            description: Text("No sessions grouped into projects on this gateway yet.")
+            description: Text("This gateway has no sessions grouped into projects yet.")
         )
         .accessibilityIdentifier("fleet.projects.empty")
     }
@@ -341,7 +341,7 @@ public struct ProjectDrillView: View {
                 ContentUnavailableView(
                     "Project Unavailable",
                     systemImage: "exclamationmark.triangle",
-                    description: Text("Could not load this project's sessions from the gateway.")
+                    description: Text("Fleet couldn't load this project's sessions. Check the gateway connection and try again.")
                 )
                 .accessibilityIdentifier("fleet.projects.drill.error")
             } else {
@@ -375,9 +375,9 @@ public struct ProjectDrillView: View {
     private func projectBody(_ project: ProjectNode) -> some View {
         if project.repos.isEmpty {
             ContentUnavailableView(
-                "No Repos",
+                "No Repositories",
                 systemImage: "folder.badge.questionmark",
-                description: Text("This project has no repository structure yet.")
+                description: Text("This project doesn't have any repositories yet.")
             )
             .accessibilityIdentifier("fleet.projects.drill.empty")
         } else {

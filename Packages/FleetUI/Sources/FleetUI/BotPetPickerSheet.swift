@@ -85,7 +85,7 @@ public struct BotPetPickerSheet: View {
         ContentUnavailableView {
             Label("Pets Unavailable", systemImage: "pawprint")
         } description: {
-            Text("This gateway does not expose Hermes Pets. Update the gateway to choose a pet avatar.")
+            Text("This gateway doesn't support pets yet. Update the gateway to choose a pet avatar.")
         }
         .accessibilityIdentifier("fleet.bot.pet.unsupported")
     }
@@ -93,7 +93,7 @@ public struct BotPetPickerSheet: View {
     /// Transient failure: retryable, visually distinct from unsupported.
     private func retryableFailureState(_ message: String) -> some View {
         ContentUnavailableView {
-            Label("Could Not Load Pets", systemImage: "wifi.exclamationmark")
+            Label("Couldn't Load Pets", systemImage: "wifi.exclamationmark")
         } description: {
             Text(message)
         } actions: {

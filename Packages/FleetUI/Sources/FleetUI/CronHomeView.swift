@@ -28,9 +28,9 @@ public struct CronHomeView: View {
         Group {
             if environment.gateways.isEmpty {
                 ContentUnavailableView {
-                    Label("No gateways", systemImage: "server.rack")
+                    Label("No Gateways", systemImage: "server.rack")
                 } description: {
-                    Text("Register a Hermes gateway to manage its cron jobs.")
+                    Text("Add a gateway to view and manage its cron jobs.")
                 }
                 .accessibilityIdentifier("cron.home.empty")
             } else {
