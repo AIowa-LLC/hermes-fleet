@@ -101,11 +101,9 @@ public struct FleetSettingsView: View {
                                 Text(accent.label)
                                 if accent == currentAccent {
                                     Image(systemName: "checkmark")
-                                        .accessibilityHidden(true)
                                 }
                             }
                         }
-                        .accessibilityAddTraits(accent == currentAccent ? .isSelected : [])
                         .accessibilityIdentifier("fleet.settings.accent.\(accent.rawValue)")
                     }
                 } label: {
