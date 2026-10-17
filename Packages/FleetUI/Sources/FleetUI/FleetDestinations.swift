@@ -284,8 +284,7 @@ struct FleetChatsView: View {
             }
             if !environment.loadingRoutes.isEmpty {
                 if entries.isEmpty && environment.sessionsByRoute.isEmpty {
-                    ProgressView("Refreshing conversations…")
-                        .accessibilityIdentifier("fleet.chats.loading.first")
+                    FleetSkeletonList(identifier: "fleet.chats.loading.first")
                 } else {
                     HStack(spacing: FleetTheme.spacingSm) {
                         ProgressView()

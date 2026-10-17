@@ -1293,35 +1293,42 @@ public struct RoomChatView: View {
         }
     }
 
-    @ViewBuilder
     private var managedByDesktopBanner: some View {
-        // FOS-6: bounded banner (SPEC §18 legacy/tombstone banners). The
-        // Continue action (diagnostic 2026-09-15 fix B) offers promotion
-        // into a hosted room; it disappears while the flow is in flight.
+        FleetNoticeStack(managedByDesktopItems)
+    }
+
+    /// FOS-6: bounded banner (SPEC §18 legacy/tombstone banners). The
+    /// Continue action (diagnostic 2026-09-15 fix B) offers promotion
+    /// into a hosted room; it disappears while the flow is in flight.
+    /// Severity order: a failed continue (warning) ranks above the
+    /// informational legacy banner, whose Continue action is the retry path.
+    private var managedByDesktopItems: [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
+        if let continueError {
+            items.append(FleetNoticeItem(
+                continueError,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .warning,
+                id: "fleet.room.legacy.continue.error"
+            ))
+        }
         if isContinuing {
-            FleetNoticeBar(
+            items.append(FleetNoticeItem(
                 "Continuing this room as an interactive Group…",
                 systemImage: "arrow.triangle.2.circlepath",
                 id: "fleet.room.legacy.banner"
-            )
+            ))
         } else {
-            FleetNoticeBar(
+            items.append(FleetNoticeItem(
                 "Read only · Managed by Hermes Desktop. Recent history only — the full transcript stays on Desktop.",
                 systemImage: "lock.fill",
                 id: "fleet.room.legacy.banner",
                 actionTitle: "Continue as Interactive Group",
                 actionID: "fleet.room.legacy.continue",
                 action: { showingContinueConfirm = true }
-            )
+            ))
         }
-        if let continueError {
-            FleetNoticeBar(
-                continueError,
-                systemImage: "exclamationmark.triangle.fill",
-                tone: .warning,
-                id: "fleet.room.legacy.continue.error"
-            )
-        }
+        return items
     }
 
     private var disbandedBanner: some View {

@@ -272,27 +272,33 @@ public struct KanbanBoardView: View {
     }
 
     /// Mutation/auxiliary outcome banners (hidden in select mode).
-    @ViewBuilder
     private func noticeBars(_ model: KanbanBoardViewModel) -> some View {
+        FleetNoticeStack(noticeItems(model))
+    }
+
+    /// Mutation errors rank above the auxiliary outcome note.
+    private func noticeItems(_ model: KanbanBoardViewModel) -> [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
         if let message = model.mutationErrorMessage {
-            FleetNoticeBar(
+            items.append(FleetNoticeItem(
                 message,
                 systemImage: "exclamationmark.triangle.fill",
                 tone: .error,
                 id: "kanban.board.mutation-error",
                 actionTitle: "Dismiss",
                 actionID: "kanban.board.mutation-error.dismiss",
-                action: { model.mutationErrorMessage = nil })
+                action: { model.mutationErrorMessage = nil }))
         }
         if let message = model.auxOutcomeMessage {
-            FleetNoticeBar(
+            items.append(FleetNoticeItem(
                 message,
                 systemImage: "sparkles",
                 id: "kanban.board.aux-note",
                 actionTitle: "Dismiss",
                 actionID: "kanban.board.aux.dismiss",
-                action: { model.auxOutcomeMessage = nil })
+                action: { model.auxOutcomeMessage = nil }))
         }
+        return items
     }
 
     /// Bulk action bar: move/unassign/archive the selected set.

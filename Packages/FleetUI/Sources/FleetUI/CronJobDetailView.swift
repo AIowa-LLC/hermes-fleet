@@ -287,7 +287,10 @@ struct CronJobDetailView: View {
                     error,
                     systemImage: "exclamationmark.triangle.fill",
                     tone: .error,
-                    id: "cron.detail.runs.error")
+                    id: "cron.detail.runs.error",
+                    actionTitle: "Retry",
+                    actionID: "cron.detail.runs.retry",
+                    action: { Task { await model.loadRuns(id: jobID, profile: profileScope) } })
             } else if model.detailRuns.isEmpty {
                 // Honest empty state: script jobs short-circuit before the
                 // session store, so they have NO run sessions by design.

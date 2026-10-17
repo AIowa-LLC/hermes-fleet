@@ -96,6 +96,95 @@ public struct FleetNoticeBar: View {
     }
 }
 
+/// Severity order for stacked notices: info < warning < error.
+extension FleetNoticeBar.Tone: Comparable {
+    fileprivate var severityRank: Int {
+        switch self {
+        case .info: 0
+        case .warning: 1
+        case .error: 2
+        }
+    }
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.severityRank < rhs.severityRank
+    }
+}
+
+/// One entry of a `FleetNoticeStack`. Mirrors `FleetNoticeBar`'s inits.
+public struct FleetNoticeItem: Identifiable {
+    public let id: String
+    public let text: String
+    public let systemImage: String
+    public let tone: FleetNoticeBar.Tone
+    public let actionTitle: String?
+    public let actionID: String?
+    public let action: (() -> Void)?
+
+    public init(
+        _ text: String,
+        systemImage: String = "info.circle",
+        tone: FleetNoticeBar.Tone = .info,
+        id: String,
+        actionTitle: String? = nil,
+        actionID: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        self.id = id
+        self.text = text
+        self.systemImage = systemImage
+        self.tone = tone
+        self.actionTitle = actionTitle
+        self.actionID = actionID
+        self.action = action
+    }
+}
+
+/// Renders several notices at once, highest severity first (error, warning,
+/// info). Ties keep their input order.
+public struct FleetNoticeStack: View {
+    private let items: [FleetNoticeItem]
+
+    public init(_ items: [FleetNoticeItem]) {
+        self.items = items
+    }
+
+    /// Stable sort by tone, descending. Exposed for tests.
+    public static func ordered(_ items: [FleetNoticeItem]) -> [FleetNoticeItem] {
+        items.enumerated().sorted { lhs, rhs in
+            if lhs.element.tone != rhs.element.tone {
+                return lhs.element.tone > rhs.element.tone
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: FleetTheme.spacingSm) {
+            ForEach(Self.ordered(items)) { item in
+                if let actionTitle = item.actionTitle, let action = item.action {
+                    FleetNoticeBar(
+                        item.text,
+                        systemImage: item.systemImage,
+                        tone: item.tone,
+                        id: item.id,
+                        actionTitle: actionTitle,
+                        actionID: item.actionID,
+                        action: action
+                    )
+                } else {
+                    FleetNoticeBar(
+                        item.text,
+                        systemImage: item.systemImage,
+                        tone: item.tone,
+                        id: item.id
+                    )
+                }
+            }
+        }
+    }
+}
+
 #Preview("FleetNoticeBar") {
     VStack(spacing: FleetTheme.spacingLg) {
         FleetNoticeBar(

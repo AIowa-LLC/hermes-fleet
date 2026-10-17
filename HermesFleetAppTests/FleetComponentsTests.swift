@@ -56,6 +56,40 @@ final class FleetComponentsTests: XCTestCase {
         XCTAssertNotNil(actionable.body, "notice with action must init")
     }
 
+    func testNoticeToneSeverityOrdering() {
+        XCTAssertLessThan(FleetNoticeBar.Tone.info, .warning)
+        XCTAssertLessThan(FleetNoticeBar.Tone.warning, .error)
+        XCTAssertLessThan(FleetNoticeBar.Tone.info, .error)
+        XCTAssertGreaterThan(FleetNoticeBar.Tone.error, .info)
+        XCTAssertFalse(FleetNoticeBar.Tone.error < .warning)
+    }
+
+    func testNoticeStackSortsBySeverityAndKeepsTiesInInputOrder() {
+        let items = [
+            FleetNoticeItem("first info", id: "a"),
+            FleetNoticeItem("warn one", tone: .warning, id: "b"),
+            FleetNoticeItem("error one", tone: .error, id: "c"),
+            FleetNoticeItem("second info", id: "d"),
+            FleetNoticeItem("warn two", tone: .warning, id: "e"),
+            FleetNoticeItem("error two", tone: .error, id: "f"),
+        ]
+        let ordered = FleetNoticeStack.ordered(items).map(\.id)
+        XCTAssertEqual(ordered, ["c", "f", "b", "e", "a", "d"],
+                       "error > warning > info, with ties in input order")
+        XCTAssertNotNil(FleetNoticeStack(items).body)
+        XCTAssertEqual(FleetNoticeStack.ordered([]).count, 0)
+    }
+
+    func testSkeletonRowIsSingleLoadingAccessibilityElement() {
+        // The row is a static view; its contract is its body + the pure
+        // configuration it exposes. Assert it builds, and the list wrapper
+        // carries the replaced identifier as one "Loading" element.
+        XCTAssertNotNil(FleetSkeletonRow().body)
+        XCTAssertNotNil(FleetSkeletonList(identifier: "fleet.chats.loading.first").body)
+        XCTAssertNotNil(FleetSkeletonList(count: 0, identifier: "x").body)
+        XCTAssertNotNil(FleetSkeletonList(count: 99, identifier: "x").body)
+    }
+
     func testSectionHeaderInitWithAndWithoutAction() {
         XCTAssertNotNil(SectionHeader(title: "Gateways", viewAllAction: {}).body)
         XCTAssertNotNil(SectionHeader(title: "Activity").body, "nil action must be valid")

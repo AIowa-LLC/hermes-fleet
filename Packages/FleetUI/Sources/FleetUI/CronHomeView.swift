@@ -485,27 +485,35 @@ struct CronGatewayJobs: View {
         // descendant and REPLACES the per-button profile ids above.
     }
 
+    /// Error (with Retry) ranks above the informational notice.
+    private func jobsNoticeItems(model: CronDashboardModel, profile: ProfileSlug) -> [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
+        if let error = model.errorMessage, !model.jobs.isEmpty {
+            items.append(FleetNoticeItem(
+                error,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .error,
+                id: "cron.error",
+                actionTitle: "Retry",
+                actionID: "cron.retry",
+                action: { Task { await model.refresh(profile: profile.rawValue) } }))
+        }
+        if let notice = model.notice {
+            items.append(FleetNoticeItem(notice, systemImage: "info.circle", id: "cron.notice"))
+        }
+        return items
+    }
+
     private func jobsList(model: CronDashboardModel, profile: ProfileSlug) -> some View {
         Group {
             // Notice/error live IN the model-owning view (the legacy pane's
             // contract); rendering them from a parent's List-section closure
             // escapes observation tracking and never updates.
-            if let notice = model.notice {
-                FleetNoticeBar(notice, systemImage: "info.circle", id: "cron.notice")
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
-            // The bar carries the message for a populated list; the branches
-            // below render it as the section's own state (never both).
-            if let error = model.errorMessage, !model.jobs.isEmpty {
-                FleetNoticeBar(
-                    error,
-                    systemImage: "exclamationmark.triangle.fill",
-                    tone: .error,
-                    id: "cron.error",
-                    actionTitle: "Retry",
-                    actionID: "cron.retry",
-                    action: { Task { await model.refresh(profile: profile.rawValue) } })
+            // The bars carry the message for a populated list, error first;
+            // the branches below render it as the section's own state (never both).
+            let notices = jobsNoticeItems(model: model, profile: profile)
+            if !notices.isEmpty {
+                FleetNoticeStack(notices)
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
