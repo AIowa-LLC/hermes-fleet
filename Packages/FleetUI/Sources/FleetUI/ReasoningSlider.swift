@@ -368,6 +368,6 @@ public struct ReasoningSliderOverlay: View {
             Task { await model.adjust(step) }
         }
         .accessibilityIdentifier("fleet.conversation.reasoning.slider")
-        .sensoryFeedback(.selection, trigger: model.level)
+        .fleetHaptic(.selection, trigger: model.level)
     }
 }

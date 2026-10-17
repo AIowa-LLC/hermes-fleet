@@ -322,7 +322,8 @@ public struct ConversationView: View {
                 showingAddActions = false
             }
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
+        .fleetHaptic(.send, trigger: sendPulse)
+        .fleetHaptic(.failure, trigger: viewModel?.errorMessage != nil) { _, failed in failed }
         .background(theme.background.ignoresSafeArea())
     }
 
