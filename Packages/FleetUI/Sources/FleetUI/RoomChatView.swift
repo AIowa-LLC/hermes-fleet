@@ -1482,6 +1482,22 @@ public struct RoomChatView: View {
                 if viewModel.driverWorking {
                     StatusPill(status: .executing(.working))
                 }
+                Spacer(minLength: 0)
+                // Find in Conversation lives in the header row, not the nav
+                // toolbar: a fifth primary item pushes Rename/Disband into the
+                // overflow menu. Same 44pt control and identifier as 1:1.
+                Button {
+                    if findActive { closeFind() } else { openFind() }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(findActive ? theme.highlight : theme.textSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.fleetPressable)
+                .accessibilityLabel("Find in Conversation")
+                .accessibilityIdentifier("fleet.room.find")
             }
             // Source-qualified member chips: gateway label always present so
             // cross-machine members never collapse.
@@ -1982,17 +1998,6 @@ public struct RoomChatView: View {
 
     @ToolbarContentBuilder
     private var toolbarControls: some ToolbarContent {
-        // Parity with 1:1 (ConversationView compact header): Find in
-        // Conversation is always offered; it reads only the loaded transcript.
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                if findActive { closeFind() } else { openFind() }
-            } label: {
-                Image(systemName: "magnifyingglass")
-            }
-            .accessibilityLabel("Find in Conversation")
-            .accessibilityIdentifier("fleet.room.find")
-        }
         // RC-84 P1: Group Info — compact known state (participants, gateways,
         // capabilities). Always offered: it never mutates anything.
         ToolbarItem(placement: .primaryAction) {
