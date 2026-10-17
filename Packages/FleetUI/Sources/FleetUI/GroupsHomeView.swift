@@ -13,6 +13,7 @@ struct GroupsHomeView: View {
     @State private var query = ""
     @State private var gatewayID: GatewayID?
     @State private var showingGroupCompose = false
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     // MARK: Room lists
 
@@ -133,7 +134,11 @@ struct GroupsHomeView: View {
         }
         .navigationTitle("Groups")
         .searchable(text: $query, prompt: "Search groups and members")
-        .refreshable { await environment.loadRooms() }
+        .refreshable {
+            await environment.loadRooms()
+            refreshOutcome.record(failed: false)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         .task { await environment.loadRooms() }
     }
 

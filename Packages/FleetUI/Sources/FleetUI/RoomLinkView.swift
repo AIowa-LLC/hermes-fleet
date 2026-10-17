@@ -380,6 +380,7 @@ public struct RoomLinkView: View {
     private let environment: AppEnvironment
     @State private var showingPromotionConfirm = false
     @State private var ttlPresetIndex = 0
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(room: FleetRoom, environment: AppEnvironment) {
         self.environment = environment
@@ -419,7 +420,11 @@ public struct RoomLinkView: View {
         .navigationTitle("RoomLink")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.start() }
-        .refreshable { await viewModel.refresh() }
+        .refreshable {
+            await viewModel.refresh()
+            refreshOutcome.record(failed: viewModel.errorMessage != nil)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         // FOS-8 (SPEC §9): the takeover confirmation re-states lineage and
         // the fencing contract. The dialog opens ONLY when the operator
         // assertion is on — without it, the Take over tap surfaces the

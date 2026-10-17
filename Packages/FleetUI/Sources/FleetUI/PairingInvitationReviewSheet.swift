@@ -76,9 +76,16 @@ struct PairingInvitationReviewSheet: View {
         }
         .tint(theme.highlight)
         .interactiveDismissDisabled(!coordinator.canCancel || requiresCleanupRecovery || isAwaitingApproval)
+        .fleetHaptic(.pairingComplete, trigger: isPairingCompleted) { _, completed in completed }
         .onDisappear {
             if coordinator.canCancel, !requiresCleanupRecovery { coordinator.dismiss() }
         }
+    }
+
+    /// True only once the coordinator reports a successful pairing; drives `pairingComplete`.
+    private var isPairingCompleted: Bool {
+        if case .completed = coordinator.phase { return true }
+        return false
     }
 
     private func previewContent(_ preview: PairingPreview) -> some View {

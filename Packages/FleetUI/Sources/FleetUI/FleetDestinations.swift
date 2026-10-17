@@ -119,6 +119,7 @@ struct FleetChatsView: View {
     @State private var showingCompose = false
     @State private var pendingDeleteEntry: FleetChatEntry?
     @State private var archivedNotice: String?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     /// Codex-style cleanup: locally hidden conversations (archive). The
     /// gateway has no archive RPC on this client's seam yet — archive is an
@@ -470,7 +471,12 @@ struct FleetChatsView: View {
                 .accessibilityHidden(true)
         }
         .navigationTitle("Chats").searchable(text: $query, prompt: "Conversations and bots")
-        .refreshable { await refresh(force: true) }.task { await refresh() }
+        .refreshable {
+            await refresh(force: true)
+            refreshOutcome.record(failed: false)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
+        .task { await refresh() }
     }
 
     /// A single, labeled Chat button with a larger target and shared material

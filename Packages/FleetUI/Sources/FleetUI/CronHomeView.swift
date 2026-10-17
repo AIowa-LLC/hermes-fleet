@@ -19,6 +19,7 @@ public struct CronHomeView: View {
     /// and never an empty sheet: the sheet itself resolves the scope and names
     /// anything that blocks it.
     @State private var createTarget: CronCreateRequest?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -102,7 +103,9 @@ public struct CronHomeView: View {
         .scrollContentBackground(.hidden)
         .refreshable {
             await CronSectionCache.shared.refreshAll()
+            refreshOutcome.record(failed: false)
         }
+        .fleetRefreshHaptics(refreshOutcome)
     }
 }
 

@@ -16,6 +16,7 @@ struct CronJobDetailView: View {
 
     @State private var isShowingEdit = false
     @State private var isConfirmingDelete = false
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     private var profileScope: String { profile.rawValue }
 
@@ -66,7 +67,11 @@ struct CronJobDetailView: View {
         .background(theme.background)
         .navigationTitle(model.detail?.name ?? "Job")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await model.refreshDetail(id: jobID, profile: profileScope) }
+        .refreshable {
+            await model.refreshDetail(id: jobID, profile: profileScope)
+            refreshOutcome.record(failed: model.detailError != nil)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         .task(id: jobID) {
             await model.refreshDetail(id: jobID, profile: profileScope)
         }

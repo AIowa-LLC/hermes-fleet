@@ -17,6 +17,7 @@ public struct CronView: View {
     @State private var model: CronDashboardModel?
     @State private var isShowingForm = false
     @State private var pendingDelete: CronJobRecord?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
@@ -148,7 +149,9 @@ public struct CronView: View {
         .scrollContentBackground(.hidden)
         .refreshable {
             await model.refresh(profile: profileScope)
+            refreshOutcome.record(failed: model.errorMessage != nil)
         }
+        .fleetRefreshHaptics(refreshOutcome)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

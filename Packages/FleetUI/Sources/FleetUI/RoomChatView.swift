@@ -959,6 +959,7 @@ public struct RoomChatView: View {
             .navigationTitle(viewModel.roomName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarControls }
+            .fleetHaptic(.failure, trigger: viewModel.errorMessage != nil) { _, failed in failed }
             .onChange(of: draft) { _, value in
                 RoomDraftStore.save(value, for: viewModel.room.id)
             }
