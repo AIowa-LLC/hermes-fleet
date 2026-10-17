@@ -1312,7 +1312,7 @@ enum ConversationHeaderChips {
             if let notice = model.pagedHistoryNotice, model.olderHistoryError == nil {
                 Text(notice)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
                     .multilineTextAlignment(.center)
             }
             if model.isLoadingOlderHistory {
@@ -1322,7 +1322,7 @@ enum ConversationHeaderChips {
                 if let error = model.olderHistoryError {
                     Text(error)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.textSecondary)
                         .multilineTextAlignment(.center)
                 }
                 Button(model.olderHistoryError == nil ? "Load earlier messages" : "Try again") {
