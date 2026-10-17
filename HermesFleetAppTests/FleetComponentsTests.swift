@@ -257,3 +257,36 @@ final class FleetHapticsWiringGuardTests: XCTestCase {
                       "route haptics through FleetHaptic / .fleetHaptic:\n" + violations.joined(separator: "\n"))
     }
 }
+
+/// DEV19: user-visible error text in FleetUI goes through
+/// `Redaction.userFacingErrorDescription`, never the log-oriented
+/// `safeErrorDescription`, whose `String(describing:)` fallback renders raw
+/// Swift dumps (enum cases with payloads, NSError userInfo) on screen.
+final class UserFacingErrorTextGuardTests: XCTestCase {
+
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent() // HermesFleetAppTests/
+        .deletingLastPathComponent() // repo root
+
+    func testFleetUIUsesTheUserFacingErrorDescription() throws {
+        let sourcesRoot = Self.repoRoot.appendingPathComponent("Packages/FleetUI/Sources/FleetUI")
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(
+            at: sourcesRoot, includingPropertiesForKeys: nil))
+        var scanned = 0
+        var violations: [String] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            scanned += 1
+            let relative = url.path.replacingOccurrences(of: sourcesRoot.path + "/", with: "")
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for (number, line) in text.components(separatedBy: .newlines).enumerated() {
+                if line.trimmingCharacters(in: .whitespaces).hasPrefix("//") { continue }
+                if line.contains("Redaction.safeErrorDescription(") {
+                    violations.append("\(relative):\(number + 1)")
+                }
+            }
+        }
+        XCTAssertGreaterThan(scanned, 50, "guard must actually scan the FleetUI sources")
+        XCTAssertTrue(violations.isEmpty,
+                      "use Redaction.userFacingErrorDescription for UI text:\n" + violations.joined(separator: "\n"))
+    }
+}

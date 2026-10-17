@@ -3219,11 +3219,11 @@ public final class AppEnvironment {
         } catch let error as RosterError {
             guard !Task.isCancelled,
                   sessionReadGenerations[route, default: 0] == generation else { return }
-            sessionReadErrors[route] = Redaction.safeErrorDescription(error)
+            sessionReadErrors[route] = Redaction.userFacingErrorDescription(error)
         } catch {
             guard !Task.isCancelled,
                   sessionReadGenerations[route, default: 0] == generation else { return }
-            sessionReadErrors[route] = Redaction.safeErrorDescription(error)
+            sessionReadErrors[route] = Redaction.userFacingErrorDescription(error)
         }
     }
 

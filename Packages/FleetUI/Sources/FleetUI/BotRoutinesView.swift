@@ -205,7 +205,7 @@ public final class BotRoutinesViewModel {
     // MARK: helpers
 
     static func describe(_ error: any Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }
 

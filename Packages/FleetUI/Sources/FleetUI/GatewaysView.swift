@@ -403,7 +403,7 @@ public struct GatewaysView: View {
 
     /// Non-secret description for a registry operation failure.
     static func describe(_ error: Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 
     // MARK: P1-8 — confirmed removal + bounded undo

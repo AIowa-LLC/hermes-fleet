@@ -3357,7 +3357,7 @@ public final class ConversationViewModel {
     }
 
     static func nonSecret(_ error: any Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 
     /// Human-readable replay hydration notice (non-secret; spec §30 answers

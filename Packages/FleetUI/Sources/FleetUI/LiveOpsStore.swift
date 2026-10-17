@@ -461,7 +461,7 @@ public final class LiveOpsStore {
             actionErrors[id] = nil
             return nil
         } catch {
-            let message = Redaction.safeErrorDescription(error)
+            let message = Redaction.userFacingErrorDescription(error)
             actionErrors[id] = message
             return message
         }
@@ -533,7 +533,7 @@ public final class LiveOpsStore {
             actionErrors[id] = nil
             return nil
         } catch {
-            let message = Redaction.safeErrorDescription(error)
+            let message = Redaction.userFacingErrorDescription(error)
             actionErrors[id] = message
             return message
         }
@@ -571,7 +571,7 @@ public final class LiveOpsStore {
         } catch let error as LiveOpsControlError {
             return .failure(error)
         } catch {
-            return .failure(.rpcFailed(Redaction.safeErrorDescription(error)))
+            return .failure(.rpcFailed(Redaction.userFacingErrorDescription(error)))
         }
     }
 
@@ -585,7 +585,7 @@ public final class LiveOpsStore {
         } catch let error as LiveOpsControlError {
             return .failure(error)
         } catch {
-            return .failure(.rpcFailed(Redaction.safeErrorDescription(error)))
+            return .failure(.rpcFailed(Redaction.userFacingErrorDescription(error)))
         }
     }
 }

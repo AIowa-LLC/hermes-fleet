@@ -464,6 +464,6 @@ struct GatewayFormSheet: View {
 
     /// Non-secret error description for inline display (mirrors GatewaysView).
     static func nonSecret(_ error: any Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }

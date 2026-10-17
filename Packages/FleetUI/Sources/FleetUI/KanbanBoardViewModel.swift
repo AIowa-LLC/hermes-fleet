@@ -221,7 +221,7 @@ public final class KanbanBoardViewModel {
     private func record(_ error: any Error) {
         guard !Redaction.isCancellation(error) else { return }
         let detail = (error as? KanbanBoardError)?.diagnosticDetail
-            ?? Redaction.safeErrorDescription(error)
+            ?? Redaction.userFacingErrorDescription(error)
         diagnostics?.record(category: "Kanban", detail: detail)
     }
 
@@ -317,7 +317,7 @@ public final class KanbanBoardViewModel {
             await loadSnapshot(initial: false)
             return true
         } catch {
-            mutationErrorMessage = Redaction.safeErrorDescription(error)
+            mutationErrorMessage = Redaction.userFacingErrorDescription(error)
             return false
         }
     }
@@ -448,7 +448,7 @@ public final class KanbanBoardViewModel {
                 : (outcome.reason ?? "Specifier declined")
             await loadSnapshot(initial: false)
         } catch {
-            mutationErrorMessage = Redaction.safeErrorDescription(error)
+            mutationErrorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 
@@ -468,7 +468,7 @@ public final class KanbanBoardViewModel {
             }
             await loadSnapshot(initial: false)
         } catch {
-            mutationErrorMessage = Redaction.safeErrorDescription(error)
+            mutationErrorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 
@@ -499,7 +499,7 @@ public final class KanbanBoardViewModel {
                 : "Dispatched: \(result.promoted ?? 0) promoted, \(spawned) spawned"
             await loadSnapshot(initial: false)
         } catch {
-            mutationErrorMessage = Redaction.safeErrorDescription(error)
+            mutationErrorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 
@@ -611,7 +611,7 @@ public final class KanbanBoardViewModel {
             accessIssue = nil
         } catch {
             if Redaction.isCancellation(error) { return }
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
             record(error)
             if let issue = (error as? KanbanBoardError)?.accessIssue {
                 // Definitive: stop everything automatic. A stale snapshot

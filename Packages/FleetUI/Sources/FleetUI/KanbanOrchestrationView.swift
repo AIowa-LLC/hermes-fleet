@@ -106,7 +106,7 @@ public struct KanbanOrchestrationView: View {
             autoDecompose = loaded?.autoDecompose ?? true
             autoPromoteChildren = loaded?.autoPromoteChildren ?? true
         } catch {
-            failureMessage = Redaction.safeErrorDescription(error)
+            failureMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 

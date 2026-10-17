@@ -88,7 +88,7 @@ public final class BotManagementController {
             sectionsSyncErrors[gatewayID] = nil
         } catch {
             sectionsByGateway[gatewayID] = []
-            sectionsSyncErrors[gatewayID] = Redaction.safeErrorDescription(error)
+            sectionsSyncErrors[gatewayID] = Redaction.userFacingErrorDescription(error)
         }
     }
 
@@ -147,7 +147,7 @@ public final class BotManagementController {
             let name = try await seam.createProfile(spec)
             return name
         } catch {
-            lastCreateError = Redaction.safeErrorDescription(error)
+            lastCreateError = Redaction.userFacingErrorDescription(error)
             throw error
         }
     }
@@ -452,20 +452,20 @@ public final class BotManagementController {
                 petGalleryByRoute[route] = []
                 petGalleryPhaseByRoute[route] = .unsupported
             } else if petGalleryByRoute[route]?.isEmpty != false {
-                petGalleryPhaseByRoute[route] = .failed(Redaction.safeErrorDescription(error))
+                petGalleryPhaseByRoute[route] = .failed(Redaction.userFacingErrorDescription(error))
             } else {
                 // W3 review finding 1: local pets stay visible and the
                 // hydrate failure is honest, transient, and retryable —
                 // never a silent permanent spinner over .hydrating.
                 petGalleryPhaseByRoute[route] =
-                    .loaded(.hydrateFailed(Redaction.safeErrorDescription(error)))
+                    .loaded(.hydrateFailed(Redaction.userFacingErrorDescription(error)))
             }
         } catch {
             if petGalleryByRoute[route]?.isEmpty != false {
-                petGalleryPhaseByRoute[route] = .failed(Redaction.safeErrorDescription(error))
+                petGalleryPhaseByRoute[route] = .failed(Redaction.userFacingErrorDescription(error))
             } else {
                 petGalleryPhaseByRoute[route] =
-                    .loaded(.hydrateFailed(Redaction.safeErrorDescription(error)))
+                    .loaded(.hydrateFailed(Redaction.userFacingErrorDescription(error)))
             }
         }
     }

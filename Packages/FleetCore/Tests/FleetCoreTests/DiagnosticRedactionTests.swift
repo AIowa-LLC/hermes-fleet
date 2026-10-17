@@ -89,4 +89,70 @@ final class DiagnosticRedactionTests: XCTestCase {
         let text = Redaction.safeErrorDescription(urlError(NSURLErrorNotConnectedToInternet))
         XCTAssertTrue(text.contains("NSURLErrorDomain"))
     }
+
+    // MARK: user-facing text never shows a raw Swift dump
+
+    private enum PlainPayloadError: Error {
+        case connectionClosed(reason: String)
+    }
+
+    private enum AuthoredError: Error, CustomStringConvertible {
+        case tooLarge
+        var description: String { "The file is too large to attach." }
+    }
+
+    private struct EmptyLocalizedError: LocalizedError {
+        var errorDescription: String? { nil }
+    }
+
+    private struct TokenLocalizedError: LocalizedError {
+        var errorDescription: String? { "upstream said token=abc123secret" }
+    }
+
+    func testUserFacingPlainSwiftErrorIsGenericAndOmitsPayload() {
+        let text = Redaction.userFacingErrorDescription(
+            PlainPayloadError.connectionClosed(reason: "wss://gw.example.test/ws?ticket=SYNTH"))
+        XCTAssertEqual(text, "Something went wrong (PlainPayloadError). Try again.")
+        XCTAssertFalse(text.contains("connectionClosed"))
+        XCTAssertFalse(text.contains("SYNTH"))
+    }
+
+    func testUserFacingKeepsAuthoredDescription() {
+        XCTAssertEqual(Redaction.userFacingErrorDescription(AuthoredError.tooLarge),
+                       "The file is too large to attach.")
+    }
+
+    func testUserFacingLocalizedErrorIsRedacted() {
+        let text = Redaction.userFacingErrorDescription(TokenLocalizedError())
+        XCTAssertFalse(text.contains("abc123secret"))
+    }
+
+    func testUserFacingEmptyLocalizedErrorFallsBackToGeneric() {
+        XCTAssertEqual(Redaction.userFacingErrorDescription(EmptyLocalizedError()),
+                       "Something went wrong (EmptyLocalizedError). Try again.")
+    }
+
+    func testUserFacingCancellationAndDecoding() {
+        XCTAssertEqual(Redaction.userFacingErrorDescription(CancellationError()),
+                       "The request was cancelled.")
+        let decoding = DecodingError.dataCorrupted(
+            .init(codingPath: [], debugDescription: "Unexpected character at offset 7"))
+        XCTAssertEqual(Redaction.userFacingErrorDescription(decoding),
+                       "The gateway sent a response Fleet couldn't read.")
+    }
+
+    func testUserFacingForeignNSErrorDoesNotDumpUserInfo() {
+        let error = NSError(domain: "com.example.synthetic", code: 7,
+                            userInfo: ["URL": "https://gw.example.test/?token=SYNTH"])
+        let text = Redaction.userFacingErrorDescription(error)
+        XCTAssertFalse(text.contains("gw.example.test"))
+        XCTAssertFalse(text.contains("SYNTH"))
+        XCTAssertTrue(text.hasPrefix("Something went wrong"))
+    }
+
+    func testUserFacingPOSIXErrorUsesSystemCopy() {
+        let text = Redaction.userFacingErrorDescription(POSIXError(.ECONNREFUSED))
+        XCTAssertFalse(text.contains("POSIXError"))
+        XCTAssertFalse(text.isEmpty)
+    }
 }

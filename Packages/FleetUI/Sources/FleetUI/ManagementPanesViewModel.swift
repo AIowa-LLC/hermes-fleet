@@ -202,6 +202,6 @@ public final class ManagementPanesViewModel {
 
     /// Non-secret error description for display.
     static func describe(_ error: any Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }

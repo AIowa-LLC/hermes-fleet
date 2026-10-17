@@ -275,6 +275,6 @@ public final class ServerPromptViewModel {
     }
 
     nonisolated private static func nonSecret(_ error: Error) -> String {
-        Redaction.safeErrorDescription(error)
+        Redaction.userFacingErrorDescription(error)
     }
 }

@@ -144,7 +144,7 @@ public struct KanbanTaskDetailView: View {
             detail = try await boardOperator.fetchTaskDetail(id: taskID)
             errorMessage = nil
         } catch {
-            errorMessage = Redaction.safeErrorDescription(error)
+            errorMessage = Redaction.userFacingErrorDescription(error)
         }
     }
 

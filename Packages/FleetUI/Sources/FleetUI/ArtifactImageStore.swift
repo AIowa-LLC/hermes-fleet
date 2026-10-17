@@ -150,7 +150,7 @@ public final class ArtifactImageStore {
             } catch let error as ArtifactTransportError {
                 outcome = .failed(error)
             } catch {
-                outcome = .failed(.transferFailed(detail: Redaction.safeErrorDescription(error)))
+                outcome = .failed(.transferFailed(detail: Redaction.userFacingErrorDescription(error)))
             }
             // The fence is read on the MainActor hop that writes state, so a
             // clear landing while the transfer was in flight always wins.
