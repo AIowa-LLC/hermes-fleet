@@ -188,7 +188,11 @@ public final class ConversationViewModel {
     /// The authoritative, full history lives in `allRows` (and the persisted
     /// cache), so capping the window never loses history.
     public var transcript: [ConversationRow] {
-        var rows = Array(allRows.suffix(maxDisplayRows))
+        // #188: a paged transcript shows everything the user has loaded. The
+        // cap would otherwise trim the older pages they just asked for (and
+        // any live rows appended after them); the loaded set is bounded by
+        // the user's own paging.
+        var rows = Array(allRows.suffix(isPagedHistory ? allRows.count : maxDisplayRows))
         // Offset of the display window inside the authoritative array (the
         // window is a suffix, so allRows index = offset + row index).
         let offset = allRows.count - rows.count
@@ -334,6 +338,18 @@ public final class ConversationViewModel {
     /// history fetch failed. Cached rows (if any) stay rendered; a retry
     /// rides the next reconnect/replay hydration.
     public private(set) var historyLoadError: String?
+    /// #188: the transcript is PAGED (newest-first over REST) because the chat
+    /// is too long for `session.history`. Stays true for the open session;
+    /// every authoritative refetch then goes through the pager.
+    public private(set) var isPagedHistory = false
+    /// #188: older rows exist beyond the loaded window (paged mode only).
+    public private(set) var hasOlderHistory = false
+    /// #188: an older-page request is in flight (guards concurrent loads).
+    public private(set) var isLoadingOlderHistory = false
+    /// #188: non-secret reason the last "Load earlier messages" failed.
+    public private(set) var olderHistoryError: String?
+    /// #188: calm, non-secret note shown while paged loading is active.
+    public private(set) var pagedHistoryNotice: String?
     /// Best-effort session metadata from session.info.
     public private(set) var sessionTitle: String?
     /// The session's working directory (session.info `cwd`; the opened
@@ -444,6 +460,24 @@ public final class ConversationViewModel {
     /// (highest observed): applying is what matters for lossless rendering.
     private var lastAppliedEventID: Int?
     private var rowCounter = 0
+    /// #188: the paged-history seam (nil when the session cannot page).
+    @ObservationIgnored private var historyPager: (any SessionHistoryPaging)?
+    /// #188: rows from the top (newest) down to the OLDEST loaded row,
+    /// inclusive. This is the next older page's `offset`. It is built from RAW
+    /// `returned` counts. New tip rows only make it stale-low, which overlaps
+    /// already-loaded rows (dedupe handles that); it never skips rows.
+    @ObservationIgnored private var pagedNextOffset = 0
+    /// #188: count of older pages applied since paged mode began.
+    @ObservationIgnored private var pagedOlderPageCount = 0
+    /// #188: bumped by every applied newest-page merge and by entering paged
+    /// mode. An older page that started before a bump is discarded, because
+    /// its offset was computed against the older state.
+    @ObservationIgnored private var pagedGeneration = 0
+    /// #188: a stream gap reported an oversized (refused) inbound frame. When
+    /// an authoritative refetch then fails, the chat pages instead.
+    @ObservationIgnored private var oversizedFrameSeen = false
+    /// #188: page size for both the newest page and older pages.
+    static let pagedHistoryPageSize = 200
     /// P0-8: reasoning/thinking deltas that arrive BEFORE this turn's
     /// `message.start` (live wire order: reasoning streams first). Buffered
     /// here instead of attaching to the PREVIOUS turn's completed assistant
@@ -553,6 +587,11 @@ public final class ConversationViewModel {
             self.slashCommands = capable.slashCommands
         } else {
             self.slashCommands = UnsupportedSlashCommandProviding()
+        }
+        // #188: the paged-history seam, same one-cast discipline. Nil means
+        // a too-long chat can still open, but cannot page its transcript.
+        if let capable = session as? SessionHistoryPagingCapable {
+            self.historyPager = capable.historyPager
         }
     }
 
@@ -666,13 +705,11 @@ public final class ConversationViewModel {
                 if let sessionID {
                     // t_8401d3c3: declare the client's last applied event id on
                     // every (re)subscribe so the resume point travels with the
-                    // subscription itself.
-                    let resumed = try await session.conversation.resumeSession(
-                        sessionID: sessionID,
-                        lastEventID: lastAppliedEventID,
-                        profile: route.profileSlug.rawValue
-                    )
+                    // subscription itself. #188: a too-long refusal falls back
+                    // to the omit-messages resume + paged transcript.
+                    let (resumed, paged) = try await resumeOpeningSession(sessionID: sessionID)
                     guard isCurrent(token) else { return false }
+                    if paged { enterPagedHistory() }
                     settleRefreshArmed = false
                     openedSessionID = resumed.sessionID
                     openedStoredSessionID = Self.durableSessionID(
@@ -714,6 +751,64 @@ public final class ConversationViewModel {
         Task { await approvalViewModel?.restorePendingApprovals() }
         phase = .ready
         return true
+    }
+
+    /// #188: `session.resume` with the long-chat fallback. A 4130 refusal
+    /// (lineage over the reload limit) re-resumes with `omit_messages` and
+    /// reports `paged == true`; the caller applies paged mode only after its
+    /// fence check. Every other failure rethrows unchanged, so a chat that
+    /// opens today takes exactly the same path. Without a pager the 4130
+    /// rethrows and surfaces the long-chat open message.
+    private func resumeOpeningSession(
+        sessionID: String
+    ) async throws -> (session: ConversationSession, paged: Bool) {
+        do {
+            let resumed = try await session.conversation.resumeSession(
+                sessionID: sessionID,
+                lastEventID: lastAppliedEventID,
+                profile: route.profileSlug.rawValue
+            )
+            return (resumed, false)
+        } catch ConversationError.sessionTooLongToReload(let count) where historyPager != nil {
+            do {
+                let resumed = try await session.conversation.resumeSession(
+                    sessionID: sessionID,
+                    lastEventID: lastAppliedEventID,
+                    profile: route.profileSlug.rawValue,
+                    omitMessages: true
+                )
+                return (resumed, true)
+            } catch ConversationError.notConnected {
+                throw ConversationError.notConnected
+            } catch {
+                // The omit resume is the only way to open this chat, so its
+                // failure is reported as the long-chat message, not the raw
+                // transport text.
+                throw ConversationError.sessionTooLongToReload(messageCount: count)
+            }
+        }
+    }
+
+    /// #188: switch the transcript to paged loading. Resets the paging cursor
+    /// and the older-page state; the caller's next authoritative refetch
+    /// loads the newest page through the pager.
+    private func enterPagedHistory() {
+        guard historyPager != nil else { return }
+        isPagedHistory = true
+        pagedNextOffset = 0
+        pagedOlderPageCount = 0
+        pagedGeneration &+= 1
+        hasOlderHistory = false
+        olderHistoryError = nil
+        oversizedFrameSeen = false
+        pagedHistoryNotice = Self.pagedHistoryNoticeCopy
+    }
+
+    /// #188: the session's durable id for the REST path. Mirrors
+    /// `durableSessionID` (listed ?? stored ?? runtime); the open session already
+    /// resolved it into `openedStoredSessionID`.
+    private func pagedSessionKey(runtimeID: String) -> String {
+        openedStoredSessionID ?? runtimeID
     }
 
     /// t_e77c614c — whether `token` still names the newest operation. A `nil`
@@ -2209,6 +2304,9 @@ public final class ConversationViewModel {
     func handleStreamGap(_ gap: EventGap) {
         guard let sid = openedSessionID else { return }
         if let gapSession = gap.sessionID, gapSession != sid { return }
+        // #188: a refused oversized frame is the signal that a full-history
+        // refetch cannot succeed for this chat (see refetchHistoryOnce).
+        if gap.reason == .oversizedFrame { oversizedFrameSeen = true }
         markHistoryGap()
         scheduleGapRecovery()
     }
@@ -2483,7 +2581,10 @@ public final class ConversationViewModel {
         // placeholder stays armed only if nothing ever landed (still loading,
         // not failed-slate) — retry rides the next reconnect/replay hydration.
         do {
-            let history = try await session.history.fetchSessionHistory(sessionID: sessionID)
+            // #188: paged mode reads the newest page over REST, never the
+            // whole-lineage session.history frame.
+            let fetched = try await fetchAuthoritativeSnapshot(sessionID: sessionID)
+            let messages = fetched.messages
             if Task.isCancelled { return .cancelled }
             guard isCurrent(token) else { return .superseded }
             guard sequence == refetchSequence else { return .superseded }
@@ -2495,7 +2596,7 @@ public final class ConversationViewModel {
             // A turn that began in flight is already covered by the revision
             // (messageStart bumps it); one still open now must not be replaced.
             if isStreaming, !allowDuringStream { return .rejectedStale }
-            if history.messages.isEmpty {
+            if messages.isEmpty {
                 // An empty snapshot is authoritative only for the moment the CALL
                 // began: if live rows arrived since (even between retries), a
                 // server that has not persisted them yet must not erase them.
@@ -2518,22 +2619,41 @@ public final class ConversationViewModel {
                 snapshotGeneration &+= 1
                 return .applied
             }
-            if hydratedFromCache {
+            if isPagedHistory {
+                // #188: the newest page replaces only the tail; older pages
+                // the user already loaded stay (see mergeLatestPage).
+                let previousRows = allRows
+                allRows = Self.mergeLatestPage(
+                    existing: allRows, latest: messages, nextRowID: { nextRowID() }
+                )
+                carryDerivedRowState(into: &allRows, from: previousRows)
+                adoptHistoryReactions(into: Array(allRows.suffix(messages.count)), from: messages)
+                if let page = fetched.latestPage {
+                    pagedGeneration &+= 1
+                    // Older pages are counted from the top; until one loads,
+                    // the newest page alone defines the next offset.
+                    if pagedOlderPageCount == 0 {
+                        pagedNextOffset = page.returned
+                        hasOlderHistory = page.hasOlder
+                    }
+                }
+            } else if hydratedFromCache {
                 // H1 flash-free swap (see applyOpenedSession): preserve row
                 // identities across the cache→authoritative handoff.
                 let previousRows = allRows
                 allRows = Self.mergePreservingIDs(
-                    existing: allRows, authoritative: history.messages,
+                    existing: allRows, authoritative: messages,
                     nextRowID: { nextRowID() }
                 )
                 // Cards D+E: preserved row identities keep their cited
                 // artifacts (the wire's history projection carries no tool
                 // results) and any in-flight generation animation.
                 carryDerivedRowState(into: &allRows, from: previousRows)
+                adoptHistoryReactions(into: allRows, from: messages)
             } else {
-                allRows = history.messages.map { Self.row(from: $0, id: nextRowID()) }
+                allRows = messages.map { Self.row(from: $0, id: nextRowID()) }
+                adoptHistoryReactions(into: allRows, from: messages)
             }
-            adoptHistoryReactions(into: allRows, from: history.messages)
             if gapGeneration == gapGenerationAtRequest { historyMayBeIncomplete = false }
             hydratedFromCache = false
             isHistoryHydrationInProgress = false
@@ -2549,9 +2669,116 @@ public final class ConversationViewModel {
         } catch {
             if Task.isCancelled || error is CancellationError { return .cancelled }
             guard isCurrent(token) else { return .superseded }
+            // #188: a chat whose full history cannot cross the frame cap pages
+            // from now on. The refetch repeats through the pager.
+            if !isPagedHistory, oversizedFrameSeen, historyPager != nil {
+                enterPagedHistory()
+                return await refetchHistoryOnce(
+                    sessionID: sessionID, fencedBy: token,
+                    originRevision: originRevision, allowDuringStream: allowDuringStream)
+            }
+            if let paging = error as? SessionHistoryPagingError {
+                if case .unsupported = paging {
+                    // Chat stays open, composer stays usable; the cache rows
+                    // (if any) remain on screen. Clear the loading placeholder
+                    // so the honest notice is what the user sees.
+                    historyLoadError = Self.pagingUnsupportedCopy
+                    if allRows.isEmpty { isHistoryHydrationInProgress = false }
+                } else {
+                    historyLoadError = "History unavailable — \(Self.nonSecret(error))"
+                }
+                return .failed
+            }
             historyLoadError = "History unavailable — \(Self.nonSecret(error))"
             return .failed
         }
+    }
+
+    /// #188: the authoritative snapshot for an authoritative refetch. Paged
+    /// mode reads the newest page over REST and never the whole-lineage
+    /// `session.history` frame; the page's raw counts travel with the messages
+    /// so bookkeeping applies only when the snapshot is applied.
+    private struct AuthoritativeSnapshot {
+        let messages: [SessionMessage]
+        let latestPage: SessionHistoryPage?
+    }
+
+    private func fetchAuthoritativeSnapshot(sessionID: String) async throws -> AuthoritativeSnapshot {
+        guard isPagedHistory, let pager = historyPager else {
+            let history = try await session.history.fetchSessionHistory(sessionID: sessionID)
+            return AuthoritativeSnapshot(messages: history.messages, latestPage: nil)
+        }
+        let page = try await pager.fetchLatestPage(
+            sessionID: pagedSessionKey(runtimeID: sessionID),
+            profile: route.profileSlug.rawValue,
+            offset: 0,
+            limit: Self.pagedHistoryPageSize
+        )
+        return AuthoritativeSnapshot(messages: page.messages, latestPage: page)
+    }
+
+    /// #188: explicit user action — load the next OLDER page of a paged chat.
+    ///
+    /// Offsets count the RAW newest-first rows already covered, so the next
+    /// page starts exactly where the loaded window ends. Rows whose durable id
+    /// is already loaded are skipped. New tip rows that arrived since the last
+    /// page only shift offsets toward overlap, never toward a gap, so dedupe
+    /// covers them. Concurrent calls are ignored (one request in flight).
+    public func loadOlderHistory() async {
+        guard isPagedHistory, hasOlderHistory, !isLoadingOlderHistory,
+              let pager = historyPager, let runtimeID = openedSessionID else { return }
+        isLoadingOlderHistory = true
+        olderHistoryError = nil
+        defer { isLoadingOlderHistory = false }
+        let generation = pagedGeneration
+        let offset = pagedNextOffset
+        do {
+            let page = try await pager.fetchLatestPage(
+                sessionID: pagedSessionKey(runtimeID: runtimeID),
+                profile: route.profileSlug.rawValue,
+                offset: offset,
+                limit: Self.pagedHistoryPageSize
+            )
+            // A newer tip merge, a re-entered paged mode, or a different open
+            // session makes this page's offset stale: discard it, and the next
+            // tap requests again from the current cursor.
+            guard isPagedHistory, generation == pagedGeneration,
+                  openedSessionID == runtimeID else { return }
+            prependOlderPage(page)
+        } catch {
+            if Task.isCancelled || error is CancellationError { return }
+            guard isPagedHistory, openedSessionID == runtimeID else { return }
+            olderHistoryError = "Earlier messages did not load — \(Self.nonSecret(error))"
+        }
+    }
+
+    /// #188: prepend one older page. Rows already loaded (by durable row id)
+    /// and rows at or above the oldest loaded id are skipped, so the transcript
+    /// never duplicates or reorders. Prepended rows keep the ascending numeric
+    /// row id order.
+    private func prependOlderPage(_ page: SessionHistoryPage) {
+        // The page covers raw rows [offset, offset + returned) from the top.
+        pagedNextOffset = page.offset + page.returned
+        hasOlderHistory = page.hasOlder
+        pagedOlderPageCount += 1
+        let loadedIDs = Set(allRows.compactMap(\.rowID))
+        let oldestLoaded = allRows.compactMap { $0.rowID.flatMap { Int($0) } }.min()
+        let fresh: [(id: Int, message: SessionMessage)] = page.messages.compactMap { message in
+            guard let rowID = message.rowID, let numeric = Int(rowID),
+                  !loadedIDs.contains(rowID) else { return nil }
+            if let oldestLoaded, numeric >= oldestLoaded { return nil }
+            return (numeric, message)
+        }
+        .sorted { $0.id < $1.id }
+        guard !fresh.isEmpty else {
+            olderHistoryError = nil
+            return
+        }
+        let messages = fresh.map(\.message)
+        let rows = messages.map { Self.row(from: $0, id: nextRowID()) }
+        allRows = rows + allRows
+        adoptHistoryReactions(into: rows, from: messages)
+        Task { await persistTranscript() }
     }
 
     /// The transcript-mutating rendering switch (the former `apply` body).
@@ -3242,6 +3469,10 @@ public final class ConversationViewModel {
             switch conversation {
             case .sessionNotFound(let detail):
                 phase = .failed("Session not found: \(detail). Start a new conversation.")
+            case .sessionTooLongToReload(let count):
+                // #188: the chat cannot be reloaded in one piece and this
+                // gateway could not page it either.
+                phase = .failed(Self.longChatOpenCopy(messageCount: count))
             default:
                 phase = .failed(Self.nonSecret(error))
             }
@@ -3358,6 +3589,40 @@ public final class ConversationViewModel {
 
     static func nonSecret(_ error: any Error) -> String {
         Redaction.safeErrorDescription(error)
+    }
+
+    /// #188: merge the NEWEST page into the transcript. Older loaded rows
+    /// (durable id numerically below the page's oldest row) are kept as they
+    /// are. The page's rows replace the tail, with `mergePreservingIDs`
+    /// keeping the identities of rows already on screen.
+    static func mergeLatestPage(
+        existing: [ConversationRow],
+        latest: [SessionMessage],
+        nextRowID: () -> String
+    ) -> [ConversationRow] {
+        let numericIDs = latest.compactMap { $0.rowID.flatMap { Int($0) } }
+        guard let oldestLatest = numericIDs.min() else {
+            return mergePreservingIDs(existing: existing, authoritative: latest, nextRowID: nextRowID)
+        }
+        let older = existing.filter { row in
+            guard let rowID = row.rowID, let numeric = Int(rowID) else { return false }
+            return numeric < oldestLatest
+        }
+        let tail = mergePreservingIDs(existing: existing, authoritative: latest, nextRowID: nextRowID)
+        return older + tail
+    }
+
+    static let pagedHistoryNoticeCopy =
+        "This is a long chat. The newest messages load first."
+
+    static let pagingUnsupportedCopy =
+        "This chat is too long to load all at once, and this gateway can't send it in pages. New messages still work here. To see earlier history, update Hermes on the gateway or open the chat in Hermes Desktop."
+
+    static func longChatOpenCopy(messageCount: Int?) -> String {
+        if let messageCount {
+            return "This chat is too long to open on this gateway (\(messageCount) messages). Update Hermes on the gateway, or start a new chat with this bot."
+        }
+        return "This chat is too long to open on this gateway. Update Hermes on the gateway, or start a new chat with this bot."
     }
 
     /// Human-readable replay hydration notice (non-secret; spec §30 answers
