@@ -102,19 +102,7 @@ public struct CronView: View {
                     .font(FleetTheme.monoCaptionFont)
                     .foregroundStyle(theme.textSecondary)
                     .accessibilityIdentifier("cron.attribution")
-                if let notice = model.notice {
-                    FleetNoticeBar(notice, systemImage: "info.circle", id: "cron.notice")
-                }
-                if let error = model.errorMessage, !model.jobs.isEmpty {
-                    FleetNoticeBar(
-                        error,
-                        systemImage: "exclamationmark.triangle.fill",
-                        tone: .error,
-                        id: "cron.error",
-                        actionTitle: "Retry",
-                        actionID: "cron.retry",
-                        action: { Task { await model.refresh(profile: profileScope) } })
-                }
+                FleetNoticeStack(cronNoticeItems(model))
             }
 
             if model.isLoading && model.jobs.isEmpty {
@@ -181,6 +169,26 @@ public struct CronView: View {
                 })
 
         }
+    }
+
+    /// Severity-ranked notices for a populated dashboard: error (with Retry)
+    /// above the informational notice.
+    private func cronNoticeItems(_ model: CronDashboardModel) -> [FleetNoticeItem] {
+        var items: [FleetNoticeItem] = []
+        if let error = model.errorMessage, !model.jobs.isEmpty {
+            items.append(FleetNoticeItem(
+                error,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .error,
+                id: "cron.error",
+                actionTitle: "Retry",
+                actionID: "cron.retry",
+                action: { Task { await model.refresh(profile: profileScope) } }))
+        }
+        if let notice = model.notice {
+            items.append(FleetNoticeItem(notice, systemImage: "info.circle", id: "cron.notice"))
+        }
+        return items
     }
 
     private var emptyContent: some View {

@@ -662,17 +662,13 @@ public struct FleetRosterView: View {
 
     // MARK: States
 
+    /// Cold load (no roster snapshot yet): skeleton rows, not a spinner.
     private var refreshing: some View {
-        ContentUnavailableView {
-            Label {
-                Text("Loading Roster")
-            } icon: {
-                ProgressView()
-            }
-        } description: {
-            Text("Refreshing every gateway's profiles…")
+        List {
+            FleetSkeletonList(identifier: "fleet.roster.loading")
         }
-        .accessibilityIdentifier("fleet.roster.loading")
+        .listStyle(.plain)
+        .background(theme.background.ignoresSafeArea())
     }
 
     private var emptyFleet: some View {
