@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import Observation
 import FleetCore
 import FleetPersistence
@@ -848,6 +849,14 @@ enum RoomLatestScrollGeometry {
     }
 }
 
+/// Retry availability shared by the failure card and the outcome-unknown
+/// card. Pure so the gating is testable without a live room.
+enum RoomRetryAvailability {
+    static func isEnabled(canRetry: Bool, isSending: Bool, isMutating: Bool) -> Bool {
+        canRetry && !isSending && !isMutating
+    }
+}
+
 private struct RoomComposerFramePreferenceKey: PreferenceKey {
     static let defaultValue = CGRect.null
 
@@ -899,6 +908,21 @@ public struct RoomChatView: View {
     @State private var scrollViewportFrame = CGRect.null
     @State private var composerFrame = CGRect.null
     @FocusState private var composing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Parity with the 1:1 floating Latest chevron (ConversationView): the
+    /// same scaled glyph size, so Dynamic Type grows it the same way.
+    @ScaledMetric(relativeTo: .title) private var latestChevronSize: CGFloat = 30
+    /// Find in Conversation (parity with the 1:1 find bar): view-local search
+    /// over the loaded transcript; never mutates the room or talks to the
+    /// gateway.
+    @State private var findActive = false
+    @State private var findQuery = ""
+    @State private var findMatches: [ConversationFindPolicy.Match] = []
+    @State private var findIndex = 0
+    /// Bumped on each match navigation so the transcript scrolls to it.
+    @State private var findScrollPulse = 0
+    @State private var findTargetRowID: String?
+    @FocusState private var findFieldFocused: Bool
 
     public init(room: FleetRoom, environment: AppEnvironment) {
         self.environment = environment
@@ -1074,10 +1098,11 @@ public struct RoomChatView: View {
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 // At-bottom detection tolerates lazy height estimation. This
                 // observer only confirms arrival — unfollowing is user-driven
-                // (see phase observer).
+                // (see phase observer). 64pt matches the 1:1 threshold
+                // (ConversationView) so both surfaces agree on "at bottom".
                 geometry.contentSize.height
                     - geometry.contentOffset.y
-                    - geometry.visibleRect.height <= 160
+                    - geometry.visibleRect.height <= 64
             } action: { _, atBottom in
                 isAtBottomLatest = atBottom
                 if isUserInteractingWithScroll && !isProgrammaticFollow
@@ -1103,51 +1128,31 @@ public struct RoomChatView: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                // The explicit Latest control (SPEC §9 Groups): visible only
-                // while the user is reading earlier history.
-                if !followingLatest {
-                    HStack {
-                        Spacer()
-                        Button {
-                            if let target = latestScrollTarget {
-                                // Mark the follow as programmatic before
-                                // changing visibility. Adaptive iPad scroll
-                                // containers can emit one more interaction
-                                // phase while the inset is being removed;
-                                // setting the guard first prevents that late
-                                // geometry callback from immediately
-                                // re-opening Latest.
-                                isProgrammaticFollow = true
-                                isUserInteractingWithScroll = false
-                                followingLatest = true
-                                // Let the inset removal commit before asking
-                                // the adaptive scroll container to move. A
-                                // same-turn scroll can deliver a stale
-                                // non-bottom geometry callback and re-open
-                                // Latest immediately.
-                                Task { @MainActor in
-                                    await Task.yield()
-                                    proxy.scrollTo(target, anchor: .bottom)
-                                    // Bounded settle window: if the geometry
-                                    // observer never confirms (edge layouts),
-                                    // stop suppressing after 1.5s (test load
-                                    // slows scroll settling).
-                                    try? await Task.sleep(for: .milliseconds(1500))
-                                    isProgrammaticFollow = false
-                                }
-                            }
-                        } label: {
-                            Label("Latest", systemImage: "arrow.down")
-                                .font(.caption.weight(.semibold))
-                        }
-                        .buttonStyle(.fleetPressable)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("fleet.room.timeline.latest")
-                    }
-                    .padding(.horizontal, FleetTheme.spacingLg)
-                    .frame(minHeight: 44)
+                if findActive {
+                    findBar
                 }
+            }
+            // Parity with the 1:1 floating chevron: zero permanent chrome,
+            // bottom-trailing above the composer, shown only while reading
+            // earlier history.
+            .overlay(alignment: .bottomTrailing) {
+                // The ScrollView frame includes the bottom composer inset, so
+                // lift the chevron above the measured composer (1:1 parity:
+                // it sits above the composer, not on it).
+                floatingLatestChevron(proxy: proxy)
+                    .padding(.bottom, composerFrame.isNull ? 0 : composerFrame.height)
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: showingJumpToLatest)
+            .onChange(of: findScrollPulse) { _, _ in
+                guard let target = findTargetRowID else { return }
+                if reduceMotion { proxy.scrollTo(target, anchor: .center) }
+                else { withAnimation(.snappy) { proxy.scrollTo(target, anchor: .center) } }
+            }
+            // Keep matches fresh while the transcript grows under a live query.
+            .onChange(of: viewModel.transcript.last?.id) { _, _ in
+                guard findActive,
+                      !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                recomputeFind(resetIndex: false)
             }
         }
         .onPreferenceChange(RoomLatestScrollTargetFramePreferenceKey.self) { frame in
@@ -1159,6 +1164,235 @@ public struct RoomChatView: View {
         .onPreferenceChange(RoomComposerFramePreferenceKey.self) { frame in
             composerFrame = frame
         }
+    }
+
+    // MARK: Latest (parity with the 1:1 floating chevron)
+
+    /// The Latest affordance shows only while the user is reading earlier
+    /// history on a non-empty transcript. The 1:1 gate is "has user turns";
+    /// a group transcript may be bot-only, so any loaded row is the honest
+    /// equivalent of "there is something to jump to".
+    private var showingJumpToLatest: Bool {
+        !viewModel.transcript.isEmpty && !followingLatest
+    }
+
+    /// Floating jump-to-latest chevron: same glyph, scaling, placement, and
+    /// accessibility label as ConversationView. Keeps the group identifier.
+    @ViewBuilder
+    private func floatingLatestChevron(proxy: ScrollViewProxy) -> some View {
+        if showingJumpToLatest {
+            Button {
+                jumpToLatest(proxy: proxy)
+            } label: {
+                // Scaled frame rather than a fixed point-size font: the same
+                // 30pt base (capped at 60) and Dynamic Type growth as 1:1.
+                Image(systemName: "chevron.down.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: min(latestChevronSize, 60), height: min(latestChevronSize, 60))
+                    .foregroundStyle(theme.highlight, theme.surface)
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Latest")
+            .accessibilityIdentifier("fleet.room.timeline.latest")
+            .padding(.trailing, FleetTheme.spacingLg)
+            .padding(.bottom, FleetTheme.spacingSm)
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        }
+    }
+
+    /// Explicit Latest jump. Marks the follow as programmatic before the
+    /// visibility change so a late stale geometry callback cannot re-open
+    /// Latest, then scrolls with the same Reduce Motion rule as 1:1.
+    private func jumpToLatest(proxy: ScrollViewProxy) {
+        guard let target = latestScrollTarget else { return }
+        isProgrammaticFollow = true
+        isUserInteractingWithScroll = false
+        followingLatest = true
+        Task { @MainActor in
+            await Task.yield()
+            if reduceMotion {
+                proxy.scrollTo(target, anchor: .bottom)
+            } else {
+                withAnimation(.snappy) { proxy.scrollTo(target, anchor: .bottom) }
+            }
+            // Bounded settle window: if the geometry observer never confirms
+            // (edge layouts), stop suppressing after 1.5s.
+            try? await Task.sleep(for: .milliseconds(1500))
+            isProgrammaticFollow = false
+        }
+    }
+
+    // MARK: Find in Conversation (parity with the 1:1 find bar)
+
+    /// Opens the find bar fresh (empty query, no stale matches).
+    private func openFind() {
+        findQuery = ""
+        findMatches = []
+        findIndex = 0
+        findTargetRowID = nil
+        findActive = true
+    }
+
+    /// Closes find and restores steady-state chrome. The conversation state
+    /// (scroll position, following) is left untouched.
+    private func closeFind() {
+        findActive = false
+        findQuery = ""
+        findMatches = []
+        findIndex = 0
+        findTargetRowID = nil
+        findFieldFocused = false
+    }
+
+    /// "n of m", "No matches" for a live no-result query, empty while blank.
+    private var findStatusText: String {
+        guard !findQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        guard !findMatches.isEmpty else { return "No matches" }
+        return ConversationFindPolicy.positionText(index: findIndex, count: findMatches.count)
+    }
+
+    /// Only message entries are conversation content. The failure flavor is
+    /// turn chrome, which the 1:1 policy excludes the same way.
+    static func findSearchable(_ entries: [RoomTranscriptEntry]) -> [ConversationFindPolicy.SearchableText] {
+        entries.compactMap { entry in
+            guard case .message = entry.flavor, let text = entry.text, !text.isEmpty else { return nil }
+            return ConversationFindPolicy.SearchableText(id: entry.id, text: text)
+        }
+    }
+
+    /// Recomputes matches over the loaded transcript. `resetIndex` is true
+    /// for a fresh query and false when the transcript grew under a live
+    /// query, so the user keeps their place.
+    private func recomputeFind(resetIndex: Bool = true) {
+        let previousTarget = findTargetRowID
+        findMatches = ConversationFindPolicy.matches(
+            searchable: Self.findSearchable(viewModel.transcript), query: findQuery)
+        guard !findMatches.isEmpty else {
+            findIndex = 0
+            findTargetRowID = nil
+            return
+        }
+        findIndex = resetIndex ? 0 : min(max(findIndex, 0), findMatches.count - 1)
+        findTargetRowID = findMatches[findIndex].rowID
+        if findTargetRowID != previousTarget {
+            // Manual navigation stops live-follow; the floating chevron
+            // carries the way back.
+            followingLatest = false
+            findScrollPulse += 1
+        }
+    }
+
+    /// Previous/next match with wrap-around.
+    private func advanceFind(direction: Int) {
+        guard !findMatches.isEmpty else { return }
+        findIndex = direction >= 0
+            ? ConversationFindPolicy.nextIndex(current: findIndex, count: findMatches.count)
+            : ConversationFindPolicy.previousIndex(current: findIndex, count: findMatches.count)
+        findTargetRowID = findMatches[findIndex].rowID
+        followingLatest = false
+        findScrollPulse += 1
+    }
+
+    /// Find bar: field, position, prev/next, close. Docks at the top of the
+    /// transcript. Typing is debounced so long transcripts are not rescanned
+    /// per keystroke.
+    private var findBar: some View {
+        HStack(spacing: FleetTheme.spacingSm) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityHidden(true)
+                TextField("Find in conversation", text: $findQuery)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.textPrimary)
+                    .tint(theme.highlight)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($findFieldFocused)
+                    .onSubmit { advanceFind(direction: 1) }
+                    .accessibilityIdentifier("fleet.room.find.field")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(theme.background, in: Capsule())
+            .overlay(Capsule().strokeBorder(theme.border, lineWidth: 1))
+
+            Text(findStatusText)
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+                .accessibilityIdentifier("fleet.room.find.count")
+
+            Button {
+                advanceFind(direction: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .disabled(findMatches.isEmpty)
+            .accessibilityLabel("Previous match")
+            .accessibilityIdentifier("fleet.room.find.prev")
+
+            Button {
+                advanceFind(direction: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .disabled(findMatches.isEmpty)
+            .accessibilityLabel("Next match")
+            .accessibilityIdentifier("fleet.room.find.next")
+
+            Button {
+                closeFind()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.fleetPressable)
+            .accessibilityLabel("Close find")
+            .accessibilityIdentifier("fleet.room.find.close")
+        }
+        .padding(.horizontal, FleetTheme.spacingSm)
+        .padding(.vertical, 2)
+        .background(theme.surface)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.border)
+                .frame(height: 1)
+        }
+        // `.contain` keeps the field, stepper, and close button their own
+        // identifiers instead of inheriting the bar's.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("fleet.room.find.bar")
+        .task(id: findQuery) {
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            recomputeFind()
+        }
+        .onAppear { findFieldFocused = true }
+    }
+
+    /// Copy Message payload for a transcript row. Only message rows (user or
+    /// member text) offer it; failure rows and empty text do not.
+    private func copyablePayload(for entry: RoomTranscriptEntry) -> String? {
+        guard case .message = entry.flavor else { return nil }
+        return MessageCopyPolicy.copyPayload(text: entry.text)
     }
 
     // MARK: Open-at-latest convergence (t_363bc529)
@@ -1249,6 +1483,22 @@ public struct RoomChatView: View {
                 if viewModel.driverWorking {
                     StatusPill(status: .executing(.working))
                 }
+                Spacer(minLength: 0)
+                // Find in Conversation lives in the header row, not the nav
+                // toolbar: a fifth primary item pushes Rename/Disband into the
+                // overflow menu. Same 44pt control and identifier as 1:1.
+                Button {
+                    if findActive { closeFind() } else { openFind() }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(findActive ? theme.highlight : theme.textSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.fleetPressable)
+                .accessibilityLabel("Find in Conversation")
+                .accessibilityIdentifier("fleet.room.find")
             }
             // Source-qualified member chips: gateway label always present so
             // cross-machine members never collapse.
@@ -1377,6 +1627,12 @@ public struct RoomChatView: View {
                                 Label(action.title, systemImage: action.symbol)
                             }
                             .buttonStyle(.fleetPressable)
+                            // Parity with the 1:1 Retry: a retry-class action
+                            // stays visible but disabled while unavailable or
+                            // while a send/mutation is in flight.
+                            .disabled(Self.isRetryClass(action) && !retryAvailable)
+                            .accessibilityHint(Self.isRetryClass(action) && !retryAvailable
+                                ? "Retry is unavailable right now" : "")
                             .accessibilityIdentifier("fleet.room.failure.action.\(action.id)")
                         }
                         if viewModel.capabilities.canStop {
@@ -1409,6 +1665,8 @@ public struct RoomChatView: View {
                         Label("Retry", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.fleetPressable)
+                    .disabled(!retryAvailable)
+                    .accessibilityHint(retryAvailable ? "" : "Retry is unavailable right now")
                     .accessibilityIdentifier("fleet.room.retry-indeterminate")
                 }
             }
@@ -1586,6 +1844,29 @@ public struct RoomChatView: View {
             }
         }
         .id(entry.id)
+        // Parity with 1:1 Copy Message: long-press copies the row's literal
+        // text. Group rows have no reactions, so this is the only item.
+        .contextMenu {
+            if let payload = copyablePayload(for: entry) {
+                Button {
+                    UIPasteboard.general.string = payload
+                    UIAccessibility.post(notification: .announcement, argument: "Message copied")
+                } label: {
+                    Label("Copy Message", systemImage: "doc.on.doc")
+                }
+                .accessibilityIdentifier("fleet.room.message.copy")
+            }
+        }
+        // Parity with the 1:1 find ring: the active match gets a decorative
+        // border (the find bar carries the accessible match position).
+        .overlay {
+            if findActive, let target = findTargetRowID, entry.id == target {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(theme.highlight.opacity(0.7), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
         .background {
             GeometryReader { geometry in
                 Color.clear.preference(
@@ -1674,6 +1955,24 @@ public struct RoomChatView: View {
         draft = ""
         composing = false
     }
+    /// Retry availability for the failure and outcome-unknown surfaces. Same
+    /// rule the 1:1 Retry follows: capability-gated, and never while another
+    /// send or mutation is in flight.
+    private var retryAvailable: Bool {
+        RoomRetryAvailability.isEnabled(
+            canRetry: viewModel.capabilities.canRetry,
+            isSending: viewModel.isSending,
+            isMutating: viewModel.isMutating)
+    }
+
+    /// Actions that re-issue the room's retry command (see `perform`).
+    private static func isRetryClass(_ action: BotFailureCopy.Action) -> Bool {
+        switch action {
+        case .retry, .compressThenResume: return true
+        default: return false
+        }
+    }
+
     /// D22: map a typed recovery action to its behavior. Retry-class actions
     /// ride the room command seam; the others explain the honest next step
     /// (this client cannot re-authenticate a provider or edit gateway config
