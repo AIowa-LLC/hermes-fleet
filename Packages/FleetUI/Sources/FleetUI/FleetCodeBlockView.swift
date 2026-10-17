@@ -48,7 +48,7 @@ struct FleetCodeBlockView: View {
             RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
                 .strokeBorder(appearance.chromeInk.swiftUIColor.opacity(0.14), lineWidth: 0.5)
         }
-        .sensoryFeedback(.success, trigger: copyCount)
+        .fleetHaptic(.success, trigger: copyCount)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier("fleet.conversation.code.block")

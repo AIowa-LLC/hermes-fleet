@@ -43,6 +43,7 @@ public struct FleetDashboardView: View {
     @State private var now = Date()
     /// P0.2a: the Home approval row whose full command is being reviewed.
     @State private var reviewingItem: LiveOpsAttentionItem?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment) {
         self.environment = environment
@@ -148,7 +149,9 @@ public struct FleetDashboardView: View {
         .refreshable {
             // One coalesced bounded summary refresh (joins in-flight work).
             await environment.refreshSummaryIfDue()
+            refreshOutcome.record(failed: false)
         }
+        .fleetRefreshHaptics(refreshOutcome)
         .task {
             // Home entry: at most one due roster refresh per gateway,
             // bounded by the roster service (≤3 in flight, 10s deadline).

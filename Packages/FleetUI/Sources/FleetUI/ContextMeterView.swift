@@ -97,6 +97,7 @@ public struct ContextMeterView: View {
 /// R9-T3 — context breakdown sheet: per-category token rows (UPPERCASE-KEY
 /// mono, the Health dashboard pattern) + the usage summary.
 public struct ContextBreakdownSheet: View {
+    @State private var refreshOutcome = FleetRefreshOutcome()
     @Environment(\.fleetTheme) private var theme
     @Bindable var model: ConversationToolingViewModel
 
@@ -146,7 +147,9 @@ public struct ContextBreakdownSheet: View {
             .refreshable {
                 await model.loadBreakdown()
                 await model.refreshUsage()
+                refreshOutcome.record(failed: false)
             }
+            .fleetRefreshHaptics(refreshOutcome)
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("context.breakdown.sheet")

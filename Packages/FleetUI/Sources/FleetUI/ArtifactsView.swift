@@ -16,6 +16,7 @@ struct ArtifactsView: View {
 
     @State private var entries: [FleetArtifactLibrary.Entry] = []
     @State private var previewTarget: PreviewTarget?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     /// Entries grouped by gateway, preserving newest-first order.
     private var sections: [(gatewayID: GatewayID, entries: [FleetArtifactLibrary.Entry])] {
@@ -57,7 +58,11 @@ struct ArtifactsView: View {
         .navigationTitle("Artifacts")
         .navigationBarTitleDisplayMode(.inline)
         .task { reload() }
-        .refreshable { reload() }
+        .refreshable {
+            reload()
+            refreshOutcome.record(failed: false)
+        }
+        .fleetRefreshHaptics(refreshOutcome)
         .sheet(item: $previewTarget) { target in
             ArtifactPreviewSheet(
                 reference: target.reference,

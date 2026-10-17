@@ -21,6 +21,7 @@ public struct ProjectsView: View {
     private let focusPath: String?
     @State private var model: ProjectsBrowserViewModel?
     @State private var drillPath: [ProjectDrillRoute] = []
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug, focusPath: String? = nil) {
         self.environment = environment
@@ -133,7 +134,9 @@ public struct ProjectsView: View {
         }
         .refreshable {
             await model.reload(profile: profileScope)
+            refreshOutcome.record(failed: model.errorMessage != nil)
         }
+        .fleetRefreshHaptics(refreshOutcome)
     }
 
     /// R10-T3 round 2 — tap-through context: the referenced path is

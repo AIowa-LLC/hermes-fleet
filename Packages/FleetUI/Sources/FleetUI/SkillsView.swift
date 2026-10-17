@@ -15,6 +15,7 @@ public struct SkillsView: View {
     private let profile: ProfileSlug
     @State private var model: ManagementPanesViewModel?
     @State private var query = ""
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, profile: ProfileSlug) {
         self.environment = environment
@@ -92,7 +93,9 @@ public struct SkillsView: View {
         }
         .refreshable {
             await model.refresh(profile: profileScope)
+            refreshOutcome.record(failed: model.errorMessage != nil)
         }
+        .fleetRefreshHaptics(refreshOutcome)
     }
 
     private func skillRow(_ skill: ProfileSkill, model: ManagementPanesViewModel) -> some View {

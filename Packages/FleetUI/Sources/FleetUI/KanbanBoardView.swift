@@ -25,6 +25,7 @@ public struct KanbanBoardView: View {
     @State private var selectedTaskIDs: Set<String> = []
     @State private var selectMode = false
     @State private var detailCard: KanbanDetailPresentation?
+    @State private var refreshOutcome = FleetRefreshOutcome()
 
     public init(environment: AppEnvironment, gatewayID: GatewayID, board: String? = nil) {
         self.environment = environment
@@ -254,7 +255,11 @@ public struct KanbanBoardView: View {
                     }
                     .padding(FleetTheme.spacingLg)
                 }
-                .refreshable { await model.refresh() }
+                .refreshable {
+                    await model.refresh()
+                    refreshOutcome.record(failed: model.errorMessage != nil)
+                }
+                .fleetRefreshHaptics(refreshOutcome)
                 if selectMode && !selectedTaskIDs.isEmpty {
                     bulkActionBar(model)
                         .padding(.horizontal, FleetTheme.spacingLg)
