@@ -106,6 +106,7 @@ Gateway => FOS2GatewayDetail U7GatewayQrLockSettings
 Splash|Launch => Splash
 Tab|Screen|Navigation|Destination => U3TabNavigation FOS3FourRootShell
 Accessib => FOS8Accessibility
+LongChat|SessionHistoryPaging|DashboardSessionMessages => LongChatPaging
 RULES
 
 # Validate CORE and every rule suite against the canonical inventory.

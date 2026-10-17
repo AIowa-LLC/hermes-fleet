@@ -1377,9 +1377,14 @@ enum ConversationHeaderChips {
                     let anchor = ToolActivityGrouping.group(model.transcript).first?.id
                     Task {
                         await model.loadOlderHistory()
-                        if let anchor {
-                            proxy.scrollTo(anchor, anchor: .top)
-                        }
+                        guard let anchor else { return }
+                        // Re-anchor only after the prepended rows have laid
+                        // out: in the same update the lazy stack still keeps
+                        // the content offset at the top, so the reader would
+                        // land on the oldest NEW row instead of their place.
+                        await Task.yield()
+                        try? await Task.sleep(for: .milliseconds(80))
+                        proxy.scrollTo(anchor, anchor: .top)
                     }
                 }
                 .buttonStyle(.bordered)

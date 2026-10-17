@@ -1501,8 +1501,53 @@ private extension String {
 /// (message.start → deltas → message.complete) after each prompt.submit, a
 /// no-op replay (nothing to replay), and scripted history. Makes the U3
 /// Conversation canvas fully walkable in the simulator without a live gateway.
-private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable {
+/// DEV19 #188 UI fixture (`HERMES_FLEET_LONG_CHAT_FIXTURE=1`): every resumed
+/// conversation is a synthetic 25,000-message lineage. A normal
+/// `session.resume` is refused exactly like the gateway's 4130 guard; the
+/// `omit_messages` resume succeeds and history pages newest-first through
+/// `ScriptedLongChatPager` (offset counts from the newest row; rows return
+/// oldest→newest; durable row ids 1…25000). `HERMES_FLEET_LONG_CHAT_UNSUPPORTED=1`
+/// makes the pager report an older gateway without the paged route.
+enum ScriptedLongChat {
+    static let total = 25_000
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LONG_CHAT_FIXTURE"] == "1"
+    }
+    static var isUnsupported: Bool {
+        ProcessInfo.processInfo.environment["HERMES_FLEET_LONG_CHAT_UNSUPPORTED"] == "1"
+    }
+
+    static func text(for row: Int) -> String { "Long chat message \(row)" }
+}
+
+struct ScriptedLongChatPager: SessionHistoryPaging {
+    func fetchLatestPage(sessionID: String, profile: String?, offset: Int, limit: Int) async throws -> SessionHistoryPage {
+        if ScriptedLongChat.isUnsupported {
+            throw SessionHistoryPagingError.unsupported("route not found")
+        }
+        let limit = min(max(limit, 1), 500)
+        let upper = max(0, ScriptedLongChat.total - max(0, offset))
+        let lower = max(0, upper - limit)
+        let messages = (lower..<upper).map { index -> SessionMessage in
+            let row = index + 1
+            return SessionMessage(
+                role: row % 2 == 1 ? .user : .assistant,
+                text: ScriptedLongChat.text(for: row),
+                timestamp: 1_757_000_000 + Double(row),
+                rowID: String(row))
+        }
+        // A short, deterministic delay so the loading state is observable.
+        try? await Task.sleep(for: .milliseconds(150))
+        return SessionHistoryPage(messages: messages, offset: offset, limit: limit, returned: messages.count)
+    }
+}
+
+private struct ScriptedConversationSession: ConversationSessionProviding, ApprovalsCapable, ConversationToolingCapable, AttachmentStagingCapable, ReactionCapable, SlashCommandCapable, ReasoningCapable, SessionHistoryPagingCapable {
     let gatewayID: GatewayID
+    /// DEV19 #188: paged history only under the long-chat fixture.
+    var historyPager: (any SessionHistoryPaging)? {
+        ScriptedLongChat.isEnabled ? ScriptedLongChatPager() : nil
+    }
     private let client: ScriptedConversationClient
     /// R9-T1: scripted approvals seam (records respond/yolo calls so the
     /// approval banner is fully walkable in the simulator + UI tests).
@@ -1905,7 +1950,28 @@ private final class ScriptedConversationClient: ConversationProviding, @unchecke
         )
     }
 
+    func resumeSession(
+        sessionID: String, lastEventID: Int?, profile: String?, omitMessages: Bool
+    ) async throws -> ConversationSession {
+        if ScriptedLongChat.isEnabled, omitMessages {
+            return ConversationSession(
+                sessionID: sessionID,
+                storedSessionID: "stored-\(sessionID)",
+                messageCount: ScriptedLongChat.total,
+                messages: [],
+                model: "scripted-model",
+                provider: "simulator",
+                profileName: nil
+            )
+        }
+        return try await resumeSession(sessionID: sessionID, lastEventID: lastEventID, profile: profile)
+    }
+
     func resumeSession(sessionID: String, lastEventID: Int? = nil, profile: String? = nil) async throws -> ConversationSession {
+        // DEV19 #188: the gateway's 4130 too-long refusal.
+        if ScriptedLongChat.isEnabled {
+            throw ConversationError.sessionTooLongToReload(messageCount: ScriptedLongChat.total)
+        }
         // R10-T2: fixture durable rows (row_id-stamped, one carrying a
         // seeded reaction) so long-press Tapback targets DURABLE rows in
         // the simulator + UI tests — mirroring what a real session.resume
