@@ -495,7 +495,11 @@ struct FleetChatsView: View {
                         .font(.title3.weight(.semibold))
                     Text("Chat")
                         .font(.headline)
+                        .lineLimit(1)
                 }
+                // DEV19 AX5: the floating pill stops growing at the first
+                // accessibility size so it never covers the list it floats over.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)

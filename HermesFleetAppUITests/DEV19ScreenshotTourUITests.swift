@@ -64,27 +64,32 @@ final class DEV19ScreenshotTourUITests: XCTestCase {
         }
     }
 
+    /// Deep-links to the Default bot (`HERMES_FLEET_AUTO_NAV=bot-detail`)
+    /// and opens its scripted session — no drawer navigation, so the tour
+    /// also reaches the conversation at the largest text sizes.
     private func openScriptedConversation(_ app: XCUIApplication) {
-        UITabNavigation.openGatewaysTab(app)
-        tapIfPresent(element(app, "fleet.gateways.row.workstation"))
-        UITabNavigation.openGatewayBots(app)
-        tapIfPresent(element(app, "fleet.roster.row.workstation#default"))
-        tapIfPresent(element(app, "fleet.bot-detail.sessions.row.workstation.default.s1"))
+        let row = element(app, "fleet.bot-detail.sessions.row.workstation.default.s1")
+        var attempts = 0
+        while !(row.exists && row.isHittable) && attempts < 12 {
+            app.swipeUp(velocity: .slow)
+            attempts += 1
+        }
+        tapIfPresent(row)
     }
 
     func testTourBotsGatewaysAndSettings() throws {
-        let app = makeApp()
-        app.launch()
-        UITabNavigation.openBotsTab(app)
-        shot("01-bots-roster")
-        UITabNavigation.openGatewaysTab(app)
-        shot("02-gateways")
-        UITabNavigation.openSettings(app)
-        shot("03-settings")
+        for (autoNav, name) in [("roster", "01-bots-roster"), ("fleet", "02-fleet-gateways"),
+                                ("settings", "03-settings"), ("chats", "03b-chats")] {
+            let app = makeApp(["HERMES_FLEET_AUTO_NAV": autoNav])
+            app.launch()
+            Thread.sleep(forTimeInterval: 2.5)
+            shot(name)
+            app.terminate()
+        }
     }
 
     func testTourLongChatPaged() throws {
-        let app = makeApp(["HERMES_FLEET_LONG_CHAT_FIXTURE": "1"])
+        let app = makeApp(["HERMES_FLEET_LONG_CHAT_FIXTURE": "1", "HERMES_FLEET_AUTO_NAV": "bot-detail"])
         app.launch()
         openScriptedConversation(app)
         _ = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Long chat message 25000"))
@@ -103,7 +108,7 @@ final class DEV19ScreenshotTourUITests: XCTestCase {
     }
 
     func testTourLongChatUnsupported() throws {
-        let app = makeApp(["HERMES_FLEET_LONG_CHAT_FIXTURE": "1", "HERMES_FLEET_LONG_CHAT_UNSUPPORTED": "1"])
+        let app = makeApp(["HERMES_FLEET_LONG_CHAT_FIXTURE": "1", "HERMES_FLEET_LONG_CHAT_UNSUPPORTED": "1", "HERMES_FLEET_AUTO_NAV": "bot-detail"])
         app.launch()
         openScriptedConversation(app)
         _ = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "can't send it in pages"))
@@ -112,7 +117,7 @@ final class DEV19ScreenshotTourUITests: XCTestCase {
     }
 
     func testTourConversationThinking() throws {
-        let app = makeApp(["HERMES_FLEET_REASONING_DEMO": "1", "HERMES_FLEET_REASONING_DEMO_HOLD_MS": "6000"])
+        let app = makeApp(["HERMES_FLEET_REASONING_DEMO": "1", "HERMES_FLEET_REASONING_DEMO_HOLD_MS": "6000", "HERMES_FLEET_AUTO_NAV": "bot-detail"])
         app.launch()
         openScriptedConversation(app)
         let composer = app.textFields["fleet.conversation.composer"]

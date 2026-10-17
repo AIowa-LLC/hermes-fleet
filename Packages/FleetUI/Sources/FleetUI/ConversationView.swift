@@ -613,7 +613,7 @@ public struct ConversationView: View {
                 Image(systemName: "chevron.left")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: headerGlyphSide, height: headerGlyphSide)
+                    .frame(width: min(headerGlyphSide, Self.maxChromeGlyph), height: min(headerGlyphSide, Self.maxChromeGlyph))
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -627,7 +627,7 @@ public struct ConversationView: View {
                 Image(systemName: "sidebar.leading")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
-                    .frame(width: headerGlyphSide, height: headerGlyphSide)
+                    .frame(width: min(headerGlyphSide, Self.maxChromeGlyph), height: min(headerGlyphSide, Self.maxChromeGlyph))
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
@@ -708,6 +708,9 @@ public struct ConversationView: View {
         .frame(minHeight: 44)
         .padding(.horizontal, FleetTheme.spacingSm)
         .padding(.vertical, 4)
+        // DEV19 AX5: header chrome stops growing past accessibility XL (the
+        // size its UI test pins) so the identity never collapses at AX4/AX5.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
         .background(theme.surface)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -1764,7 +1767,8 @@ enum ConversationHeaderChips {
                         Image(systemName: "plus")
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(theme.textSecondary)
-                            .frame(width: composerGlyphSide, height: composerGlyphSide)
+                            .frame(width: min(composerGlyphSide, Self.maxChromeGlyph), height: min(composerGlyphSide, Self.maxChromeGlyph))
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
                     }
@@ -1812,7 +1816,8 @@ enum ConversationHeaderChips {
                         Image(systemName: model.isListening ? "stop.circle.fill" : "mic.fill")
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary))
-                            .frame(width: composerGlyphSide, height: composerGlyphSide)
+                            .frame(width: min(composerGlyphSide, Self.maxChromeGlyph), height: min(composerGlyphSide, Self.maxChromeGlyph))
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
                     }
@@ -1852,7 +1857,8 @@ enum ConversationHeaderChips {
                         Image(systemName: "arrow.up")
                             .font(.callout.weight(.bold))
                             .foregroundStyle(theme.onHighlight)
-                            .frame(width: sendGlyphSide, height: sendGlyphSide)
+                            .frame(width: min(sendGlyphSide, Self.maxChromeGlyph), height: min(sendGlyphSide, Self.maxChromeGlyph))
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility3)
                             .background(Circle().fill(theme.highlight))
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
@@ -2401,6 +2407,10 @@ enum ConversationHeaderChips {
     @ScaledMetric(relativeTo: .title3) private var composerGlyphSide: CGFloat = 36
     @ScaledMetric(relativeTo: .callout) private var sendGlyphSide: CGFloat = 30
     @ScaledMetric(relativeTo: .callout) private var headerGlyphSide: CGFloat = 32
+    /// DEV19 AX5: chrome glyph frames (header back/menu, composer plus/mic/
+    /// send) scale with Dynamic Type up to this side, so at the largest
+    /// sizes the composer field and header identity keep their room.
+    static let maxChromeGlyph: CGFloat = 56
     @ScaledMetric(relativeTo: .title) private var latestChevronSize: CGFloat = 30
 
     private func submit(_ model: ConversationViewModel) async {

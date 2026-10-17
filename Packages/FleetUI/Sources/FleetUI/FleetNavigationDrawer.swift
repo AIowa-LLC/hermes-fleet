@@ -258,6 +258,7 @@ struct FleetNavigationDrawer: View {
             Button(action: onNewChat) {
                 Label("Chat", systemImage: "square.and.pencil")
                     .font(.body.weight(.semibold))
+                    .lineLimit(1)
                     .foregroundStyle(theme.onHighlight)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
@@ -290,6 +291,10 @@ struct FleetNavigationDrawer: View {
         .padding(.horizontal, FleetTheme.spacingMd)
         .padding(.top, FleetTheme.spacingSm)
         .padding(.bottom, FleetTheme.spacingSm)
+        // DEV19 AX5: the pinned footer stops growing at the first
+        // accessibility size so the compose pill never breaks mid-word and
+        // never crowds the destination list (rows above keep full scaling).
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private func sectionHeading(_ title: String) -> some View {
