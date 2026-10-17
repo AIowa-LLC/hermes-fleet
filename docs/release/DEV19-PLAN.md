@@ -1,6 +1,6 @@
 # DEV19 plan — UI, UX and QOL polish (final public TestFlight candidate)
 
-Status: **approved 2026-10-16; in implementation.**
+Status: **implemented 2026-10-17; candidate 0.2.0 (98) — see DEV19-RELEASE-NOTES.md.**
 Baseline: DEV18 = `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f` (com.aiowa.hermesfleet.dev 0.1.0 (18), owner-verified).
 Release target: production identity (`com.aiowa.hermesfleet`), external TestFlight candidate.
 
