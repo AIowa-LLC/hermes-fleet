@@ -43,7 +43,7 @@ public struct ModelPickerSheet: View {
                         ContentUnavailableView {
                             Label("No Models Found", systemImage: "cpu")
                         } description: {
-                            Text("This gateway didn't list any models. Refresh the model list to check again.")
+                            Text("This gateway didn't list any models.")
                         }
                     } else {
                         ContentUnavailableView.search(text: searchText)
