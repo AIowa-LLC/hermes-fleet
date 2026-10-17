@@ -231,3 +231,76 @@ final class FleetChatsWiringGuardTests: XCTestCase {
                       "the settled-claim copy must be gated on the live refresh state")
     }
 }
+
+/// DEV19 L5 — accessibility source guards.
+///
+/// An icon-only `Button { } label: { Image(systemName:) }` must carry its own
+/// `.accessibilityLabel` (VoiceOver otherwise reads the SF Symbol name). The
+/// check is a line/indentation scan of the FleetUI screens touched by the L5
+/// sweep: it matches a `} label: {` whose body is a bare `Image(systemName:`
+/// with no Text/Label, and fails when the trailing modifier run has no
+/// `.accessibilityLabel(`.
+final class AccessibilityIconButtonGuardTests: XCTestCase {
+
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent() // HermesFleetAppTests/
+        .deletingLastPathComponent() // repo root
+
+    private static let uiDirectory = "Packages/FleetUI/Sources/FleetUI/"
+
+    private static let scopedFiles = [
+        "ConversationView.swift", "RoomChatView.swift", "FleetNavigationDrawer.swift",
+        "FleetSettingsView.swift", "GatewaysView.swift", "GatewayDetailView.swift",
+        "ApprovalBanner.swift", "FleetTabView.swift", "GatewayPairingScannerView.swift",
+        "BotDetailView.swift", "BotsView.swift", "PairingAwaitingApprovalView.swift",
+        "GroupsHomeView.swift",
+        "Components/FleetListRow.swift", "Components/StatusPill.swift",
+        "Components/FleetNoticeBar.swift", "Components/GatewayRunningBadge.swift",
+    ]
+
+    func testIconOnlyButtonLabelsCarryAccessibilityLabel() throws {
+        var failures: [String] = []
+        for file in Self.scopedFiles {
+            let url = Self.repoRoot.appendingPathComponent(Self.uiDirectory + file)
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let lines = text.components(separatedBy: "\n")
+            for (index, line) in lines.enumerated()
+            where line.trimmingCharacters(in: .whitespaces).hasSuffix("} label: {") {
+                let indent = String(line.prefix { $0 == " " })
+                var end = index + 1
+                while end < lines.count, lines[end] != indent + "}" { end += 1 }
+                let body = lines[(index + 1)..<end]
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty && !$0.hasPrefix("//") }
+                guard let first = body.first, first.hasPrefix("Image(systemName:") else { continue }
+                if body.contains(where: {
+                    $0.hasPrefix("Text(") || $0.hasPrefix("Label") || $0.contains("accessibilityLabel(")
+                }) {
+                    continue
+                }
+                var next = end + 1
+                var modifiers: [String] = []
+                while next < lines.count,
+                      lines[next].trimmingCharacters(in: .whitespaces).hasPrefix(".") {
+                    modifiers.append(lines[next].trimmingCharacters(in: .whitespaces))
+                    next += 1
+                }
+                if modifiers.contains(where: { $0.hasPrefix(".accessibilityLabel(") }) { continue }
+                failures.append("\(file):\(index + 1): \(first)")
+            }
+        }
+        XCTAssertTrue(failures.isEmpty,
+                      "icon-only Button labels need .accessibilityLabel: \(failures)")
+    }
+
+    /// Reduce Motion pins for the conversation copy-confirmation fade touched
+    /// in the L5 sweep.
+    func testConversationCopyConfirmationHonorsReduceMotion() throws {
+        let url = Self.repoRoot.appendingPathComponent(Self.uiDirectory + "ConversationView.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(source.contains("withAnimation(reduceMotion ? nil : .easeIn(duration: 0.15))"),
+                      "copy confirmation fade must be gated on Reduce Motion")
+        XCTAssertTrue(source.contains("withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25))"),
+                      "copy confirmation dismissal must be gated on Reduce Motion")
+    }
+}

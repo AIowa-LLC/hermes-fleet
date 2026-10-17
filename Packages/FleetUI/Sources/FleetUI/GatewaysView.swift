@@ -597,7 +597,10 @@ private struct GatewayRowView: View {
                 .font(.title3)
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize()
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
+        .accessibilityLabel("Gateway actions")
         .accessibilityIdentifier("fleet.gateways.row.\(gateway.id.rawValue).menu")
     }
 

@@ -611,6 +611,7 @@ public struct ConversationView: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: headerGlyphSide, height: headerGlyphSide)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
@@ -624,6 +625,7 @@ public struct ConversationView: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: headerGlyphSide, height: headerGlyphSide)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.fleetPressable)
@@ -1704,6 +1706,7 @@ enum ConversationHeaderChips {
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(theme.textSecondary)
                             .frame(width: composerGlyphSide, height: composerGlyphSide)
+                            .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
@@ -1751,6 +1754,7 @@ enum ConversationHeaderChips {
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(model.isListening ? AnyShapeStyle(FleetTheme.statusDestructive) : AnyShapeStyle(theme.textPrimary))
                             .frame(width: composerGlyphSide, height: composerGlyphSide)
+                            .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
@@ -1791,6 +1795,8 @@ enum ConversationHeaderChips {
                             .foregroundStyle(theme.onHighlight)
                             .frame(width: sendGlyphSide, height: sendGlyphSide)
                             .background(Circle().fill(theme.highlight))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.fleetPressable)
                     .disabled(model.phase != .ready || (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
@@ -2741,13 +2747,13 @@ private struct ConversationBubbleView: View {
         // Copy exactly the visible row's raw text, including Markdown and
         // intentional surrounding whitespace.
         UIPasteboard.general.string = row.text
-        withAnimation(.easeIn(duration: 0.15)) { showingCopyConfirmation = true }
+        withAnimation(reduceMotion ? nil : .easeIn(duration: 0.15)) { showingCopyConfirmation = true }
         UIAccessibility.post(notification: .announcement, argument: "Message copied")
         copyConfirmationResetTask?.cancel()
         copyConfirmationResetTask = Task {
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { showingCopyConfirmation = false }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { showingCopyConfirmation = false }
         }
     }
 

@@ -70,6 +70,7 @@ public struct SectionHeader<D: Hashable>: View {
             .font(FleetTheme.sectionHeaderFont)
             .foregroundStyle(theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.isHeader)
     }
 
     @ViewBuilder
