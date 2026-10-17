@@ -83,6 +83,7 @@ public struct FleetSettingsView: View {
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption2)
                             .foregroundStyle(theme.textSecondary)
+                            .accessibilityHidden(true)
                     }
                 }
                 .accessibilityLabel("Appearance, \(appearanceController.selection.label)")
@@ -100,9 +101,11 @@ public struct FleetSettingsView: View {
                                 Text(accent.label)
                                 if accent == currentAccent {
                                     Image(systemName: "checkmark")
+                                        .accessibilityHidden(true)
                                 }
                             }
                         }
+                        .accessibilityAddTraits(accent == currentAccent ? .isSelected : [])
                         .accessibilityIdentifier("fleet.settings.accent.\(accent.rawValue)")
                     }
                 } label: {
@@ -120,6 +123,7 @@ public struct FleetSettingsView: View {
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption2)
                             .foregroundStyle(theme.textSecondary)
+                            .accessibilityHidden(true)
                     }
                 }
                 .accessibilityLabel("Accent, \(currentAccent?.label ?? "Custom")")

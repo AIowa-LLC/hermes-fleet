@@ -59,6 +59,7 @@ public struct ApprovalBanner: View {
             } icon: {
                 Image(systemName: "exclamationmark.shield.fill")
                     .foregroundStyle(FleetTheme.statusNeedsIntervention)
+                    .accessibilityHidden(true)
             }
             .accessibilityIdentifier("approval.banner.title")
 
@@ -199,6 +200,7 @@ public struct ApprovalBanner: View {
         HStack(spacing: 4) {
             Image(systemName: "faceid")
                 .font(.caption.weight(.semibold))
+                .accessibilityHidden(true)
             Text(text)
                 .font(.body.weight(.semibold))
         }

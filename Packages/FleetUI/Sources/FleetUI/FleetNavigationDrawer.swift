@@ -278,6 +278,8 @@ struct FleetNavigationDrawer: View {
                     .frame(width: 40, height: 40)
                     .background(.ultraThinMaterial, in: Circle())
                     .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Settings")
@@ -329,6 +331,8 @@ struct FleetNavigationDrawer: View {
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 34, height: 34)
                 .background(FleetTheme.neutralFill, in: Circle())
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)

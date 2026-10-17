@@ -1242,6 +1242,7 @@ public struct RoomChatView: View {
                 Image(systemName: viewModel.isManagedByDesktop ? "lock.fill" : "bolt.fill")
                     .font(.caption2)
                     .foregroundStyle(viewModel.isManagedByDesktop ? theme.textSecondary : theme.highlight)
+                    .accessibilityHidden(true)
                 Text(viewModel.roomName)
                     .font(.headline.weight(.bold))
                     .foregroundStyle(theme.textPrimary)
@@ -1630,6 +1631,7 @@ public struct RoomChatView: View {
                 HStack(spacing: FleetTheme.spacingSm) {
                     Image(systemName: "chevron.up.forward")
                         .foregroundStyle(theme.textSecondary)
+                        .accessibilityHidden(true)
                     TextField(
                         viewModel.capabilities.canSend ? "Message the room (@ to mention)" : "Read only",
                         text: $draft
