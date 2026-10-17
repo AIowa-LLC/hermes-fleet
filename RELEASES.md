@@ -5,6 +5,34 @@ map to one source commit and one tag. The Build 90 record below retains its
 source-to-archive attestation and tag limitations rather than asserting a
 proven link that the retained evidence cannot establish.
 
+## 0.2.0 (98) — DEV19 candidate
+
+- Distribution: **not uploaded.** Prepared as the final public (external) TestFlight
+  candidate; upload, external-group assignment, and App Store submission are separate
+  owner decisions.
+- Source SHA: `250e3ec232cc0187bb55019a769bb6ed69158d9e` (local branch
+  `release/dev19-0.2.0-98`; local-first, not pushed or tagged). Baseline DEV18
+  `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f`.
+- Identity: `com.aiowa.hermesfleet`, version `0.2.0`, build `98`. Build 98 is the next
+  number after the last locally recorded production build (97); App Store Connect's
+  counter was not readable from this machine, so confirm 98 is unused before upload.
+- Exported IPA: 20,281,022 bytes; SHA-256
+  `fc73f5be15430c183f37cf4b874b1037efe5e310f7d37af15df0252c1b39d76b`. Export method
+  `app-store-connect` (not TestFlight Internal Only); App Store profile, no device list,
+  `get-task-allow` disabled; `ITSAppUsesNonExemptEncryption=false`; privacy manifest
+  present and verified.
+- Archive file-tree SHA-256: `4423d45ae13ce673e3951e995adc44d5364ddb58cd93763a9055b147d004ea3b`.
+- Release preflight at the exact SHA: archive content, distribution export, exported-IPA
+  inspection, and privacy validation PASS. Apple credentialed validation: not run.
+- Gates at the exact SHA: `scripts/c1_ci_validate.sh` PASS (static; packages FleetCore
+  767+21, FleetNetworking 763, FleetPersistence 64, FleetSecurity 60, FleetClientKit 52,
+  FleetWatchKit 96; hosted unit bundle 1,296; UI matrix 62 suites / 325 tests, 0
+  failures); public safety guard PASS; gitleaks no leaks.
+- What changed and known limitations: `docs/release/DEV19-RELEASE-NOTES.md`.
+- Not run: physical-device acceptance, live-gateway acceptance (including a real
+  >20k-message chat), and the DEV18→98 on-device upgrade. Simulator results are not
+  real-device acceptance.
+
 ## 0.2.0 (97)
 
 - Distribution: Internal TestFlight only, through the existing `AIowa` internal group.

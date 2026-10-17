@@ -8,8 +8,9 @@ submission are separate decisions.
 | App | Hermes Fleet (production identity) |
 | Bundle ID | `com.aiowa.hermesfleet` |
 | Version (build) | `0.2.0` (`98` — see "Build number") |
+| IPA SHA-256 | `fc73f5be15430c183f37cf4b874b1037efe5e310f7d37af15df0252c1b39d76b` (20,281,022 bytes) |
 | Baseline | DEV18 `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f` (owner-verified) |
-| Source commit | _filled in at archive time_ |
+| Source commit | `250e3ec232cc0187bb55019a769bb6ed69158d9e` |
 | Export method | `app-store-connect` (`scripts/release_export_options.plist`), not TestFlight Internal Only |
 
 ## What changed since DEV18
