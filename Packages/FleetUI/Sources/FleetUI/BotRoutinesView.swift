@@ -500,7 +500,7 @@ public struct BotRoutinesView: View {
         ContentUnavailableView {
             Label("Routines Unavailable", systemImage: "calendar.badge.exclamationmark")
         } description: {
-            Text("This gateway has no management session wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to view and manage its routines.")
         }
         .accessibilityIdentifier("routines.unavailable")
     }

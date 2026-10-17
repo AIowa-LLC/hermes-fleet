@@ -111,7 +111,11 @@ public struct BotsView: View {
                     .foregroundStyle(theme.textSecondary)
             }
         } description: {
-            Text("No profiles reported for this gateway. Connect and refresh the roster.")
+            Text("This gateway didn't report any bots. Refresh the roster to check again.")
+        } actions: {
+            Button("Refresh") {
+                Task { await environment.refreshRoster() }
+            }
         }
         .accessibilityIdentifier("fleet.bots.empty")
     }

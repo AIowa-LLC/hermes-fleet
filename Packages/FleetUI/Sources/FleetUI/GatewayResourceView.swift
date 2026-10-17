@@ -83,9 +83,9 @@ struct GatewayResourceView: View {
                 content(selected).id(Route(gatewayID: gatewayID, profileSlug: selected))
             } else if selected != nil {
                 ContentUnavailableView(
-                    "Profile unavailable",
+                    "Profile Unavailable",
                     systemImage: "person.crop.circle.badge.questionmark",
-                    description: Text("The selected profile is no longer available. Choose another profile explicitly to continue.")
+                    description: Text("The selected profile is no longer available. Choose another profile to continue.")
                 )
             } else {
                 chooser
@@ -178,9 +178,9 @@ struct GatewayResourceView: View {
 
     private var profilesUnavailable: some View {
         ContentUnavailableView(
-            "Profiles unavailable",
+            "Profiles Unavailable",
             systemImage: "person.crop.circle",
-            description: Text("Refresh this gateway's Bots to discover valid profiles.")
+            description: Text("Refresh this gateway's bots to find its profiles.")
         )
     }
 

@@ -698,7 +698,7 @@ public struct FleetRosterView: View {
                     .foregroundStyle(theme.textSecondary)
             }
         } description: {
-            Text("No profiles reported. Refresh to re-probe every gateway.")
+            Text("No gateway reported any bots. Refresh to check every gateway again.")
         }
         .accessibilityIdentifier("fleet.roster.no-bots")
     }

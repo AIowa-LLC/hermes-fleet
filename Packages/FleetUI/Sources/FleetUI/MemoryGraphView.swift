@@ -397,7 +397,7 @@ public struct MemoryGraphView: View {
         ContentUnavailableView {
             Label("Memory Graph Unavailable", systemImage: "sparkles")
         } description: {
-            Text("This gateway has no learning session wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to explore its memory.")
         }
         .accessibilityIdentifier("memorygraph.unavailable")
     }

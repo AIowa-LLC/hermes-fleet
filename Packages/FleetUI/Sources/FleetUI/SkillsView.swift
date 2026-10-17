@@ -182,7 +182,7 @@ public struct SkillsView: View {
         ContentUnavailableView {
             Label("Skills Unavailable", systemImage: "wrench.and.screwdriver")
         } description: {
-            Text("This gateway has no management session wired. Reconnect and try again.")
+            Text("Reconnect to this gateway to view and manage its skills.")
         }
         .accessibilityIdentifier("skills.unavailable")
     }

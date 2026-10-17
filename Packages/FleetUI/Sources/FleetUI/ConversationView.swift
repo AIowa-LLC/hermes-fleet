@@ -2342,7 +2342,7 @@ enum ConversationHeaderChips {
             }
         } description: {
             Text(isGatewayPresent
-                ? "This gateway has no conversation session wired."
+                ? "Fleet can't open this conversation right now. Reconnect to the gateway and try again."
                 : "This conversation's gateway is no longer in your fleet.")
         } actions: {
             // B87 follow-up: the compact in-canvas header (with its own back

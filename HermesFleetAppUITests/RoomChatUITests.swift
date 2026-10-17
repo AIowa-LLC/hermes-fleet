@@ -451,7 +451,7 @@ final class RoomChatUITests: XCTestCase {
         let composer = app.textFields["fleet.room.composer.field"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10), "bridged room opens after creation")
         XCTAssertFalse(
-            app.staticTexts["Gateway unavailable"].exists,
+            app.staticTexts["Gateway Unavailable"].exists,
             "device-local room must bypass the registered-gateway guard")
         composer.tap()
         composer.typeText("Bridge check-in")
@@ -495,7 +495,7 @@ final class RoomChatUITests: XCTestCase {
                 .waitForExistence(timeout: 10),
             "persisted bridged room opens after relaunch")
         XCTAssertFalse(
-            relaunched.staticTexts["Gateway unavailable"].exists,
+            relaunched.staticTexts["Gateway Unavailable"].exists,
             "reopened bridged room must not be treated as a missing gateway")
         let restoredReply = relaunched.descendants(matching: .any)["fleet.room.entry.4"]
         XCTAssertTrue(restoredReply.waitForExistence(timeout: 10))

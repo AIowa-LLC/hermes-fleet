@@ -472,7 +472,7 @@ public struct BotDetailView: View {
                     .foregroundStyle(theme.textSecondary)
             }
         } description: {
-            Text("This bot is not in the current roster. Refresh the fleet.")
+            Text("This bot isn't in the current roster. Refresh the fleet to check for it again.")
         }
         .accessibilityIdentifier("fleet.bot-detail.unknown")
     }
