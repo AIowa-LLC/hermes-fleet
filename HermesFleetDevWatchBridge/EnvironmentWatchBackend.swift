@@ -239,7 +239,9 @@ final class EnvironmentWatchBackend: WatchBridgeBackend {
             log.error("watch send failed at submit: \(category, privacy: .public)")
             let diagnostic = WatchSendDiagnostic(stage: "submit", category: category)
             switch error {
-            case .notConnected, .sessionNotFound, .invalidRequest, .invalidSessionKey:
+            // #188: a too-long refusal comes from resume, before anything was
+            // submitted, so it is a definite failure like the cases above.
+            case .notConnected, .sessionNotFound, .invalidRequest, .invalidSessionKey, .sessionTooLongToReload:
                 return WatchSendResult(.failed(reason: Redaction.safeErrorDescription(error)), diagnostic)
             case .rpcFailed, .malformedPayload, .gapUnrecoverable:
                 // The gateway may have processed it before failing.
