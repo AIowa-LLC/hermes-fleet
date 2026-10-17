@@ -76,6 +76,9 @@ public struct ConversationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
+    /// GitHub #107: bumps once per turn when the first assistant text lands;
+    /// drives the single `.selection` haptic for that turn.
+    @State private var firstTokenCounter = 0
     @State private var showingTimeline = false
     @State private var followingLatest = true
     /// Dogfood top-space fix: bumped by the toolbar/menu "Latest" action;
@@ -1022,6 +1025,21 @@ private struct WorkingDots: View {
     }
 }
 
+/// GitHub #107: the thinking placeholder glyph. A gentle SF Symbol pulse while
+/// the turn has produced nothing yet; static under Reduce Motion.
+private struct ThinkingGlyph: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: "sparkle")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(theme.textSecondary)
+            .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+            .accessibilityHidden(true)
+    }
+}
+
 /// Header chip string helpers.
 enum ConversationHeaderChips {
     /// Last path component of a working directory ("/a/b/hermes-fleet" ->
@@ -1194,24 +1212,51 @@ enum ConversationHeaderChips {
     private func workingIndicator(_ model: ConversationViewModel) -> some View {
         TimelineView(.periodic(from: model.turnStartedAt ?? .now, by: 1)) { timeline in
             let elapsed = Int(timeline.date.timeIntervalSince(model.turnStartedAt ?? timeline.date))
-            HStack(spacing: 6) {
-                if reduceMotion {
-                    Image(systemName: "ellipsis")
-                        .font(.caption.weight(.semibold))
+            if model.conversationPresence == .thinking {
+                thinkingRow(elapsed: elapsed)
+            } else {
+                HStack(spacing: 6) {
+                    if reduceMotion {
+                        Image(systemName: "ellipsis")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
+                    } else {
+                        WorkingDots()
+                    }
+                    Text("Working for \(Self.workingDuration(elapsed))")
+                        .font(FleetTheme.monoCaptionFont)
                         .foregroundStyle(theme.textSecondary)
-                } else {
-                    WorkingDots()
+                        .monospacedDigit()
                 }
-                Text("Working for \(Self.workingDuration(elapsed))")
-                    .font(FleetTheme.monoCaptionFont)
-                    .foregroundStyle(theme.textSecondary)
-                    .monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Working for \(Self.workingSpoken(elapsed))")
+                .accessibilityIdentifier("fleet.conversation.working")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Working for \(Self.workingSpoken(elapsed))")
-            .accessibilityIdentifier("fleet.conversation.working")
         }
+    }
+
+    /// GitHub #107: the pre-text placeholder, in the assistant's position
+    /// (flat, leading-aligned, like an assistant row). A breathing sparkle plus
+    /// "Thinking", with the clock once 3s have elapsed. Shares the working
+    /// identifier so the one-indicator-per-turn contract holds.
+    private func thinkingRow(elapsed: Int) -> some View {
+        let spoken = ConversationPresence.showsElapsed(elapsed)
+            ? "Thinking, \(Self.workingSpoken(elapsed))"
+            : "Thinking"
+        return HStack(spacing: 6) {
+            ThinkingGlyph()
+            Text(ConversationPresence.showsElapsed(elapsed)
+                 ? "Thinking · \(Self.workingDuration(elapsed))"
+                 : "Thinking…")
+                .font(FleetTheme.monoCaptionFont)
+                .foregroundStyle(theme.textSecondary)
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
+        .accessibilityIdentifier("fleet.conversation.working")
     }
 
     /// 7s / 1m 05s — compact elapsed format.
@@ -1402,6 +1447,8 @@ enum ConversationHeaderChips {
                     if model.isWorking {
                         workingIndicator(model)
                     }
+                    // GitHub #107 — the transcript's last row is the streaming
+                    // row; the caret inside ConversationBubbleView marks it.
                     // H1 (t_01c9d411): while an EXISTING session's history is
                     // still in flight and no row has rendered yet, show a
                     // HIG-native loading placeholder — never a bare blank
@@ -1417,6 +1464,13 @@ enum ConversationHeaderChips {
                 // count — the display window caps, P2-8) so it only fires
                 // when rows actually arrive.
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.transcript.last?.id)
+                .onChange(of: model.conversationPresence) { old, new in
+                    // Once per turn: the first streamed text moves the turn
+                    // into `.streaming` (it only leaves that state when the
+                    // turn ends, so this fires exactly once per turn).
+                    if new == .streaming, old != .streaming { firstTokenCounter += 1 }
+                }
+                .fleetHaptic(.selection, trigger: firstTokenCounter)
             }
             .accessibilityIdentifier("fleet.conversation.transcript")
             // B87 round 2 (ported from RoomChatView's FOS-8 follow pattern):
@@ -2567,6 +2621,29 @@ private struct ToolActivityGroupView: View {
 /// magenta-gradient capsules; assistant replies are left-aligned surface
 /// cards; timestamps render under each bubble (caption2 secondary) whenever
 /// the row carries one.
+/// GitHub #107: soft caret marking the actively streaming assistant text. A
+/// 2pt bar at the body line height, fading gently; static under Reduce Motion.
+private struct StreamingCaret: View {
+    @Environment(\.fleetTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 20
+    @State private var dimmed = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(theme.textSecondary)
+            .frame(width: 2, height: lineHeight)
+            .opacity(dimmed ? 0.25 : 0.9)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    dimmed = true
+                }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
 private struct ConversationBubbleView: View {
     @Environment(\.fleetTheme) private var theme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
@@ -2833,6 +2910,11 @@ private struct ConversationBubbleView: View {
                         markdown: row.text,
                         isStreaming: row.isStreaming,
                         identity: row.id)
+                    // GitHub #107: trailing soft caret on the streaming row
+                    // only; removed with `isStreaming` when the turn ends.
+                    if row.isStreaming {
+                        StreamingCaret()
+                    }
                 }
             }
             // Dogfood r7 (decision 1, ChatGPT/Hermex parity): the assistant

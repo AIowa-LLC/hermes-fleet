@@ -3,6 +3,7 @@ import FleetCore
 import FleetNetworking
 import FleetPersistence
 import FleetUI
+@testable import FleetUI
 
 /// U3 hosted tests — the `ConversationViewModel` (FleetUI) over SCRIPTED
 /// FleetCore seams: full create/resume → prompt.submit → incremental streaming
@@ -2014,5 +2015,42 @@ final class ConversationViewModelTests: XCTestCase {
             nextRowID: { counter += 1; return "fresh-\(counter)" }
         )
         XCTAssertEqual(mergedContent.map(\.id), ["row-A", "row-B"])
+    }
+}
+
+/// GitHub #107 (DEV19 L7): the presence decision behind the thinking
+/// placeholder, the working line and the streaming caret. Pure: no model.
+final class ConversationPresenceStateTests: XCTestCase {
+
+    func testIdleWhenNoTurnIsInFlight() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: false, hasAssistantTextThisTurn: false, hasToolActivity: false), .idle)
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: false, hasAssistantTextThisTurn: true, hasToolActivity: true), .idle)
+    }
+
+    func testThinkingBeforeAnyTextOrToolActivity() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: false, hasToolActivity: false), .thinking)
+    }
+
+    func testWorkingWhenToolActivityStartedBeforeText() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: false, hasToolActivity: true), .working)
+    }
+
+    func testStreamingOnceAssistantTextArrives() {
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: true, hasToolActivity: false), .streaming)
+        // Text wins over tool activity: the row is streaming, not working.
+        XCTAssertEqual(ConversationPresence.state(
+            isTurnActive: true, hasAssistantTextThisTurn: true, hasToolActivity: true), .streaming)
+    }
+
+    func testElapsedClockAppearsAtThreeSeconds() {
+        XCTAssertFalse(ConversationPresence.showsElapsed(0))
+        XCTAssertFalse(ConversationPresence.showsElapsed(2))
+        XCTAssertTrue(ConversationPresence.showsElapsed(3))
+        XCTAssertTrue(ConversationPresence.showsElapsed(42))
     }
 }

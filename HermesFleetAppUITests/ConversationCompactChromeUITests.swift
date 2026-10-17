@@ -151,8 +151,10 @@ final class ConversationCompactChromeUITests: XCTestCase {
         let working = firstMatch(in: app, identifier: "fleet.conversation.working")
         XCTAssertTrue(working.waitForExistence(timeout: 10),
                       "the working indicator must render during a turn")
-        XCTAssertTrue(working.label.contains("Working for"),
-                      "indicator announces elapsed time (got \(working.label))")
+        // GitHub #107: before any text the indicator is the "Thinking"
+        // placeholder; once tool activity starts it reads "Working for Ns".
+        XCTAssertTrue(working.label.contains("Thinking") || working.label.contains("Working for"),
+                      "indicator announces the in-flight state (got \(working.label))")
         let stop = firstMatch(in: app, identifier: "fleet.conversation.stop")
         XCTAssertTrue(stop.waitForExistence(timeout: 5),
                       "the stop control must render while streaming")
