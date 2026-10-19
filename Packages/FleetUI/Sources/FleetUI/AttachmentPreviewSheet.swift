@@ -29,7 +29,10 @@ enum AttachmentPreviewThumbnail {
     /// The chip renders at 32 pt; 96 px covers @3x with headroom.
     static let maxPixelSize = 96
 
-    static func pngData(from bytes: Data, maxPixelSize: Int = maxPixelSize) -> Data? {
+    static func pngData(
+        from bytes: Data,
+        maxPixelSize: Int = AttachmentPreviewThumbnail.maxPixelSize
+    ) -> Data? {
         guard maxPixelSize > 0,
               let source = CGImageSourceCreateWithData(
                 bytes as CFData,
@@ -111,7 +114,11 @@ struct AttachmentChip: View {
                 .strokeBorder(theme.border, lineWidth: 1))
         // `.contain`, not `.combine`: the chip now holds two actions (open the
         // preview, remove the attachment) and combining would swallow both.
+        // The caption label is carried ON the container because
+        // `R10AttachmentTrayUITests` reads it (`chip.label` must still carry
+        // the name and size that the combined element used to expose).
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(attachment.caption)
         .accessibilityIdentifier("fleet.conversation.attachment.chip.\(attachment.displayName)")
         .task(id: attachment.id) { await loadThumbnail() }
     }
