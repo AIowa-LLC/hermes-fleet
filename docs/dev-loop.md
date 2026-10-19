@@ -94,8 +94,9 @@ Xcode **27.0 / 27A266a** explicitly, matching DEV19's retained archives and loca
 validation. The static/deep lanes reject a different compiler or simulator SDK.
 Simulator jobs use the existing per-checkout lane helper so they create the
 required device instead of depending on the image's pre-created device names.
-UI lanes explicitly boot that device, wait for `simctl bootstatus -b`, and open
-its Simulator before compilation/test launch. An unprepared Xcode 27 device
+UI lanes explicitly boot that device and wait for `simctl bootstatus -b` before
+compilation/test launch. Preparation uses CoreSimulator directly; the selected
+Xcode 27 image does not provide the former `Simulator.app` bundle. An unprepared device
 stalled XCTest while loading Accessibility before any test case began; the
 660-second watchdog correctly failed that invocation. The preparation step
 changes runner startup only and retains all assertions and failure checks.

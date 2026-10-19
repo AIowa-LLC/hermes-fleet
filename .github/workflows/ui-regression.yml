@@ -44,7 +44,6 @@ jobs:
         run: |
           simulator_id="$(bash scripts/lane_simulator.sh ensure iphone --boot)"
           xcrun simctl bootstatus "$simulator_id" -b
-          open -a "$DEVELOPER_DIR/Applications/Simulator.app" --args -CurrentDeviceUDID "$simulator_id"
       - name: Run full deterministic UI shard
         run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
       - name: Upload xcresults and xcodebuild logs
