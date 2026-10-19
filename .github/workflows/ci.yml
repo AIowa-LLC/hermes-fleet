@@ -24,13 +24,21 @@ concurrency:
 jobs:
   static-guards:
     name: Static guards (xcodegen drift, boundaries, safety, gitleaks)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Verify released Xcode toolchain
+        run: |
+          actual_xcode="$(xcodebuild -version)"
+          printf '%s\n' "$actual_xcode"
+          test "$actual_xcode" = $'Xcode 27.0\nBuild version 27A266a'
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = "27.0"
       - name: Install tools (xcodegen, gitleaks)
         run: brew install xcodegen gitleaks
       - name: Static phase
@@ -66,7 +74,9 @@ jobs:
 
   packages:
     name: Package tests (FleetCore, Networking, Persistence, Security)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -86,7 +96,10 @@ jobs:
 
   units:
     name: Hosted unit tests (HermesFleetAppTests)
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
     timeout-minutes: 40
     steps:
       - name: Checkout
@@ -111,7 +124,10 @@ jobs:
     # candidate. PRs use changed-area preflight; remaining suites stay in the
     # separate full regression workflow.
     if: github.event_name == 'merge_group'
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
     timeout-minutes: 45
     steps:
       - name: Checkout merge candidate
@@ -136,7 +152,10 @@ jobs:
     # PR evidence. Missing/mismatched proof runs fresh UI. Critical smoke
     # always executes on the exact merge-group candidate.
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: macos-latest
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      HERMES_FLEET_LANE_SIM: "1"
     timeout-minutes: 75
     strategy:
       fail-fast: true

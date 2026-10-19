@@ -64,7 +64,7 @@ Local `make dev-check` gives each worktree its own simulator (`HF-<repo>-<id>`, 
 do not need to take turns. Precedence for every runner, including the focused
 preflight, hosted units, critical smoke and iPad smoke: `HERMES_FLEET_SIM_UDID`
 (explicit device) over `HERMES_FLEET_LANE_SIM=1` (lane simulator, default for
-local `dev-check`, off when `CI=true`) over the unchanged first-available-iPhone
+local `dev-check` and explicitly enabled by the hosted simulator jobs) over the unchanged first-available-iPhone
 selection that hosted CI uses. Runners record the selection and UDID in their
 evidence metadata. Full details, the iPad variant and cleanup commands
 (`shutdown`, `delete`, `gc`) are in
@@ -89,8 +89,14 @@ success and failure, including successful retries.
 Job ceilings are safety limits, not speed promises: static 15 minutes, packages
 25, units 40, focused partitions 75, critical smoke 45, deep shards 150. Measure
 actual runtimes before tightening these or changing shard balance. Hosted units
-and simulator startup can still dominate. Xcode/runner pinning requires separate
-validation; provenance records the selected environment.
+and simulator startup can still dominate. CI and the deep UI lane select the `xcode-27` hosted image and the released
+Xcode **27.0 / 27A266a** explicitly, matching DEV19's retained archives and local
+validation. The static/deep lanes reject a different compiler or simulator SDK.
+Simulator jobs use the existing per-checkout lane helper so they create the
+required device instead of depending on the image's pre-created device names.
+Provenance records the selected toolchain, runtime and device. The deployment
+floor remains iOS 26.0; this release-baseline CI run does not establish acceptance
+on every older OS/runtime combination.
 
 ## Hosted unit diagnostics
 
