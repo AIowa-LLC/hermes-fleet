@@ -156,7 +156,10 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       HERMES_FLEET_LANE_SIM: "1"
-    timeout-minutes: 75
+    # The released Xcode 27 image needs more fresh-build and simulator time
+    # than the historical runtime weights. Keep every selected test, the
+    # per-process progress watchdog, and the same deep-lane recovery ceiling.
+    timeout-minutes: 150
     strategy:
       fail-fast: true
       max-parallel: 6

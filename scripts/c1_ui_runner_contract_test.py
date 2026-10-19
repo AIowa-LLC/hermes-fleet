@@ -309,7 +309,8 @@ class RuntimeWeightContract(unittest.TestCase):
         self.assertEqual(set(n for b in buckets for n in b), set(weights))
         self.assertEqual(sum(map(len, buckets)), len(weights))
         # Historical work per partition must leave setup/variance margin
-        # inside the unchanged 75-minute job ceiling. This is not an ETA.
+        # inside the original 75-minute ceiling. Keep this historical balance
+        # bound on the released Xcode 27 image too; it is not an ETA.
         self.assertLessEqual(max(sum(weights[n] for n in b) for b in buckets), 55 * 60)
 
 

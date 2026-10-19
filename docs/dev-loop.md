@@ -87,7 +87,7 @@ metadata. Another worker's results are never deleted. CI retains evidence on
 success and failure, including successful retries.
 
 Job ceilings are safety limits, not speed promises: static 15 minutes, packages
-25, units 40, focused partitions 75, critical smoke 45, deep shards 150. Measure
+25, units 40, focused partitions 150, critical smoke 45, deep shards 150. Measure
 actual runtimes before tightening these or changing shard balance. Hosted units
 and simulator startup can still dominate. CI and the deep UI lane select the `xcode-27` hosted image and the released
 Xcode **27.0 / 27A266a** explicitly, matching DEV19's retained archives and local
@@ -206,12 +206,20 @@ method-count-balanced partitions assigned 14-15 suites per job; three hit the
 The saved raw logs also contained failed image-test attempts, so timeout is not
 evidence that the remaining product checks would pass.
 
-The revised preflight retains the same 75-minute job limit and complete suite
-selection, but splits the work into twelve runtime-weighted partitions with a
-six-job concurrency cap. Queue time and total suite work still exist. This is
-not a blanket timeout extension or permission to skip unfinished regressions.
+That scheduling correction retained the 75-minute job limit and complete suite
+selection by splitting work into twelve runtime-weighted partitions with a
+six-job concurrency cap. Queue time and total suite work still exist.
 Focused reproduction of the image and deep-history checks remains separate
 from this scheduling correction.
+
+The DEV19 release-baseline run on Xcode 27.0 subsequently reached that
+75-minute limit while partition 3 was running its third of five suites. Its
+first two suites completed, including one explicitly reported recovered retry;
+the unfinished suites did not pass. The released-toolchain preflight now uses
+the same 150-minute ceiling as the deep lane. The twelve partitions, complete
+selection, assertions, retry reporting, fail-fast policy and 660-second process
+progress watchdog remain unchanged. Historical weights remain balancing hints,
+not timing promises; a longer ceiling is not evidence that a test passed.
 
 ## Development speed and exact-tree UI evidence
 
