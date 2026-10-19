@@ -122,6 +122,11 @@ same palette. The card shows:
   session-scoped only, theme-highlight colored; failures surface inline,
   never silent
 - attachments and message reactions
+- attachment previews: a staged photo renders a thumbnail in the composer tray
+  and opens full-screen with pinch-zoom; a staged document (PDF, Office/iWork,
+  and the text family) opens in QuickLook from a temporary copy of the staged
+  bytes that is removed when the sheet closes. Formats the app cannot render
+  (SVG, ICO, archives) say so plainly rather than showing an empty container
 - generated-image artifacts: an `image_generate` result is retrieved through
   the owning gateway's authenticated media API and renders inline on the tool
   row that cited it (device-local observed-artifact library behind the
