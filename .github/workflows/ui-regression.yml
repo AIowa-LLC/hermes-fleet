@@ -40,6 +40,11 @@ jobs:
           printf '%s\n' "$actual_xcode"
           test "$actual_xcode" = $'Xcode 27.0\nBuild version 27A266a'
           test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = "27.0"
+      - name: Prepare isolated UI simulator
+        run: |
+          simulator_id="$(bash scripts/lane_simulator.sh ensure iphone --boot)"
+          xcrun simctl bootstatus "$simulator_id" -b
+          open -a "$DEVELOPER_DIR/Applications/Simulator.app" --args -CurrentDeviceUDID "$simulator_id"
       - name: Run full deterministic UI shard
         run: bash scripts/c1_ui_matrix.sh --shard ${{ matrix.shard }} --shards ${{ matrix.shards }}
       - name: Upload xcresults and xcodebuild logs

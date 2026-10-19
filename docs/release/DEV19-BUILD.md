@@ -17,7 +17,8 @@ Use Xcode 27.0 (27A266a), Swift 6 language mode, XcodeGen and the installed iOS/
 simulator runtimes. The deployment floor remains 26.0. `project.yml` is authoritative;
 always run `xcodegen generate` and commit its generated project when changing it.
 CI selects the `xcode-27` image and Xcode 27.0 explicitly; hosted simulator jobs
-create their own lane device. The older floating `macos-latest` default built with
+create their own lane device. UI lanes boot it, wait for boot completion and
+open Simulator before running XCTest. The older floating `macos-latest` default built with
 Xcode 26.6/iOS 26.5, where the unchanged long-chat newest-page assertions failed.
 Those results remain separate compatibility evidence; no assertion is relaxed
 by matching the toolchain used for the distributed build.
