@@ -56,8 +56,8 @@ case "$(hf_private_name hermes-fleet-live)" in *"-$(id -u)") pass "default name 
 
 # 8. Supported scripts fail closed (exit 2, nothing written) on a bad dir.
 BAD="$T/bad-workdir"; mkdir "$BAD" && chmod 755 "$BAD"
-for s in l1_ats_check l1_secrets_scan l1_start_serve l1_live_contract l1_live_contract2 l1_live_contract3_lean; do
-  out=$(HERMES_FLEET_LIVE_WORKDIR="$BAD" bash "scripts/$s.sh" 2>&1); rc=$?
+for s in l1_ats_check.sh l1_secrets_scan.sh l1_start_serve.sh l1_live_contract.sh l1_live_contract2.sh l1_live_contract3_lean.sh; do
+  out=$(HERMES_FLEET_LIVE_WORKDIR="$BAD" bash "scripts/$s" 2>&1); rc=$?
   if [ "$rc" = 2 ] && [ -z "$(ls -A "$BAD")" ]; then pass "$s refuses a non-private work directory"; else fail "$s rc=$rc wrote=$(ls -A "$BAD")"; fi
 done
 ln -s "$T/target" "$T/wd-link"
