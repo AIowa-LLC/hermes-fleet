@@ -6,6 +6,10 @@ Hermes Fleet is a native iPhone control plane for user-owned Hermes Agent deploy
 
 Hermes Fleet is under active development. The current project targets **iOS 26**, uses **Swift 6**, and is generated from `project.yml` with XcodeGen.
 
+Released DEV19: Hermes Fleet Dev **0.1.0 (19)** and public TestFlight **0.2.0 (98)**.
+See [release records](RELEASES.md) and [build instructions](docs/release/DEV19-BUILD.md).
+
+
 This repository contains source code and development tooling. It does not require an AIowa-hosted relay or shared operator account.
 The capability list describes source behavior; consult [`RELEASES.md`](RELEASES.md) for the exact contents and status of a distributed build.
 

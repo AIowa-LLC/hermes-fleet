@@ -7,7 +7,8 @@ scheme are separate from production. Production keeps its existing identifiers
 and data. `project.yml` is authoritative; regenerate with `xcodegen generate`.
 
 Run the repository gates before delivery. The local Dev wrapper requires a clean
-checkout, an explicit full source SHA and an unused Dev build number:
+checkout, an explicit full source SHA and a Dev build number. Use the existing `19` for local DEV19 reproduction; any future
+distribution requires its own approved unused number:
 
 ```sh
 bash scripts/fleet_dev_build.sh simulator --sha "$SOURCE_SHA" --build "$DEV_BUILD"
@@ -28,3 +29,6 @@ is a blocker; these scripts do not register devices or change account settings.
 Phone enrollment also requires the server-side owner-enrollment API. App build
 delivery does not deploy that backend or change the server's authentication,
 tunnel or firewall configuration.
+
+The completed DEV19 identities and exact-source reproduction commands are in
+[DEV19 build instructions](release/DEV19-BUILD.md).

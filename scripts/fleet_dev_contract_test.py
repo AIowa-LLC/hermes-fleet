@@ -351,16 +351,20 @@ class DevContract(unittest.TestCase):
         with self.assertRaises(ValueError): guard.watch_project(bad)
         with self.assertRaises(ValueError): guard.watch_project(text.replace('com.aiowa.hermesfleet.dev.watchkitapp', 'com.aiowa.hermesfleet.watchkitapp'))
 
-    def test_version_counter_is_separate_and_production_unchanged(self):
+    def test_released_version_counters_remain_separate(self):
         config = (ROOT/'Config/FleetDev.xcconfig').read_text()
         self.assertIn('MARKETING_VERSION = 0.1.0', config)
-        self.assertIn('CURRENT_PROJECT_VERSION = 1', config)
+        self.assertRegex(config, r'(?m)^CURRENT_PROJECT_VERSION = 19$')
         project = (ROOT/'project.yml').read_text()
-        baseline = subprocess.check_output(['git', '-C', str(ROOT), 'show', 'origin/main:project.yml'], text=True)
+        # Exact released values also work in shallow CI checkouts.
         import re
-        for key in ['CURRENT_PROJECT_VERSION', 'MARKETING_VERSION']:
-            original = re.search(r'^    ' + key + r': (.+)$', baseline, re.M).group(0)
-            self.assertIn(original, project)
+        for target in ['HermesFleetDev', 'HermesFleetDevWatch']:
+            block = re.search(r'^  ' + target + r':\n(.*?)(?=^  \S)', project, re.M | re.S).group(1)
+            self.assertRegex(block, r'(?m)^        CURRENT_PROJECT_VERSION: 19$')
+            self.assertRegex(block, r'(?m)^        MARKETING_VERSION: 0.1.0$')
+        for key, value in [('CURRENT_PROJECT_VERSION', '98'), ('MARKETING_VERSION', '0.2.0')]:
+            actual = re.search(r'^    ' + key + r': (.+)$', project, re.M).group(1)
+            self.assertEqual(actual, value)
         p = plistlib.loads((ROOT/'HermesFleetApp/Info.plist').read_bytes())
         self.assertEqual(p['CFBundleURLTypes'][0]['CFBundleURLSchemes'], ['hermes-fleet'])
 

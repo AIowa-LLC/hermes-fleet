@@ -1,13 +1,17 @@
-# DEV19 — final public TestFlight candidate
+# DEV19 — released TestFlight builds
 
-Status: candidate, not uploaded. Upload, external distribution, and App Store
-submission are separate decisions.
+Status: Hermes Fleet Dev `0.1.0 (19)` was verified Testing in internal **AIowa Dev**
+on 2026-10-17. Production `0.2.0 (98)` completed Apple validation and was verified
+Testing in public **Beta Crew** on 2026-10-18. These are release-owner confirmations,
+recorded during reconciliation; see [release records](../../RELEASES.md).
+
+[Join public TestFlight](https://testflight.apple.com/join/SRp1Z7Sb).
 
 | Field | Value |
 |---|---|
 | App | Hermes Fleet (production identity) |
 | Bundle ID | `com.aiowa.hermesfleet` |
-| Version (build) | `0.2.0` (`98` — see "Build number") |
+| Version (build) | `0.2.0` (`98`) |
 | IPA SHA-256 | `fc73f5be15430c183f37cf4b874b1037efe5e310f7d37af15df0252c1b39d76b` (20,281,022 bytes) |
 | Baseline | DEV18 `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f` (owner-verified) |
 | Source commit | `250e3ec232cc0187bb55019a769bb6ed69158d9e` |
@@ -81,11 +85,14 @@ submission are separate decisions.
 - Multilingual voice (#185), offline outbox, Inbox, iPad layout, Liquid Glass,
   push and Live Activities remain deferred.
 
-## Build number
-Local records top out at production `0.2.0 (97)` (RELEASES.md, local archives). App
-Store Connect was not readable from this machine (not signed in), so `98` is
-**unverified** against ASC. If ASC already holds 98 for 0.2.0, re-archive with the
-next free number: `bash scripts/archive_and_export.sh <N> <sha>`.
+## Build identities and reproduction
+
+Production `com.aiowa.hermesfleet` is `0.2.0 (98)`, source
+`250e3ec232cc0187bb55019a769bb6ed69158d9e`. Dev
+`com.aiowa.hermesfleet.dev` is `0.1.0 (19)`, source
+`38867cb3e96220f97202ecf7e64dc872e0e05f12`. Their counters are independent;
+cleanup does not allocate a new version or build. See
+[DEV19 build instructions](DEV19-BUILD.md) for exact-source local reproduction.
 
 ## Public TestFlight — What to Test
 

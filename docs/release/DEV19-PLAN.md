@@ -1,8 +1,10 @@
-# DEV19 plan — UI, UX and QOL polish (final public TestFlight candidate)
+# DEV19 implementation plan — historical record
 
-Status: **implemented 2026-10-17; candidate 0.2.0 (98) — see DEV19-RELEASE-NOTES.md.**
-Baseline: DEV18 = `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f` (com.aiowa.hermesfleet.dev 0.1.0 (18), owner-verified).
-Release target: production identity (`com.aiowa.hermesfleet`), external TestFlight candidate.
+Status: **completed; Dev 0.1.0 (19) and public 0.2.0 (98) are in TestFlight.**
+See [release notes](DEV19-RELEASE-NOTES.md) and [release records](../../RELEASES.md)
+for confirmed identities, dates and source commits. The lane instructions below
+record the original development plan and are not pending cleanup work.
+Baseline: DEV18 = `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f` (owner-verified).
 
 ## Goal and guardrails
 
@@ -127,9 +129,10 @@ first-token haptic through L3's `FleetHaptics`. Static under Reduce Motion.
   Xcode watchdog stall. Re-run them separately through `scripts/c1_ui_matrix.sh`; these stalls
   don't count as product failures.
 
-## Open questions
+## Resolved release decisions
 
-1. Is DEV18 = `main@3ff41b79`? If not, which SHA?
-2. Do you have DEV18 notes or tester feedback to add? Those should come before my picks.
-3. Does the public build ship as the production bundle (0.2.0 build 98+) or as the Dev app?
-4. Is L1 (#188) in scope? It's the only lane that touches networking.
+- DEV18 baseline: `3ff41b79d10ea35ef9af4dda26d46a3c6b99725f`.
+- L1 (#188) shipped, together with L2–L7 and the largest-text follow-up.
+- Production ships as `com.aiowa.hermesfleet`, `0.2.0 (98)`; the independent
+  Dev app ships as `com.aiowa.hermesfleet.dev`, `0.1.0 (19)`.
+- Deferred limitations remain documented in the release notes and accessibility audit.

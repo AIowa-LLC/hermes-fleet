@@ -13,6 +13,8 @@ xcuserdata/
 .build/
 .swiftpm/
 Package.resolved
+# Preserve the reviewed DEV19 app dependency graph for reproducible builds.
+!/HermesFleetApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # Local agent/automation scratch state (never ship)
 .hermes/
@@ -27,9 +29,6 @@ xcodespeed/
 # SwiftCoverage / test artifacts
 *.profraw
 
-# OS
-.DS_Store
-
 # Local environment overrides (endpoints, device IDs, credentials)
 .env
 .env.*
@@ -39,3 +38,14 @@ xcodespeed/
 /hosted/
 /local/
 /evidence.md
+
+# Local test caches
+.pytest_cache/
+
+# Distribution outputs and private signing material
+*.ipa
+*.xcarchive/
+*.dSYM/
+*.p12
+*.p8
+*.mobileprovision
