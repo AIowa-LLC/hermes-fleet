@@ -6,7 +6,8 @@ import XCTest
 /// injects the pick so the suite never drives the system photo/document
 /// picker), the chip renders with name + size, send succeeds, and the
 /// transcript shows the `@file:` ref. The failure-hook pass proves the
-/// never-silent error banner.
+/// never-silent error banner. The preview pass opens the staged document's
+/// preview sheet from the same chip.
 final class R10AttachmentTrayUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -205,6 +206,30 @@ final class R10AttachmentTrayUITests: XCTestCase {
                 .matching(identifier: "fleet.conversation.attachment.chip.notes.md")
                 .firstMatch.waitForExistence(timeout: 2),
             "chip should clear after send")
+    }
+
+    /// R10-T5: the staged document's chip opens its preview sheet, and Done
+    /// dismisses it. The fixture hook stages `notes.md`, which classifies as a
+    /// document, so this exercises the QuickLook path end to end.
+    func testAttachmentChipOpensDocumentPreview() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["HERMES_FLEET_ATTACHMENT_PICK"] = "1"
+        app.launchEnvironment["HERMES_FLEET_NAV_RESET"] = "1"
+        app.launch()
+        openConversation(app)
+
+        _ = firstMatch(in: app, identifier: "fleet.conversation.attachment.chip.notes.md")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.attachment.preview.notes.md"))
+
+        // The sheet is the app's own surface (provenance + Done), independent
+        // of whether QuickLook can render the document in this simulator.
+        _ = firstMatch(in: app, identifier: "fleet.conversation.attachment.preview")
+        tap(firstMatch(in: app, identifier: "fleet.conversation.attachment.preview.done"))
+
+        let sheet = app.descendants(matching: .any)
+            .matching(identifier: "fleet.conversation.attachment.preview")
+            .firstMatch
+        XCTAssertFalse(sheet.waitForExistence(timeout: 2), "preview sheet should dismiss via Done")
     }
 
     func testWireFailureSurfacesErrorBannerNeverSilent() throws {
